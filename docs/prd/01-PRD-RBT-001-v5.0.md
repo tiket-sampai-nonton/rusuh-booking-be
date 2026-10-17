@@ -4,8 +4,8 @@
 |-------|-------|
 | **Product / Feature** | Rusuh Booking Tiket — platform penjualan tiket konser untuk *war tiket* |
 | **Document ID** | PRD-RBT-001 |
-| **Version** | 5.0 |
-| **Date** | 2026-10-17 |
+| **Version** | 5.1 |
+| **Date** | 2026-10-18 |
 | **Status** | Draft (restrukturisasi format). Baseline requirement tetap PRD v4.6 Final Canonical; seluruh requirement `NOT_VERIFIED` sampai ada evidence |
 | **Product Owner** | Pak Dinda (CEO), PT. Tiga Sekawan Angin Ribut (pemilik bisnis) |
 | **Contributors** | Tim PT. Tiket Sampai Nonton Sentosa (BE-1, BE-2, WEB-1, WEB-2, MOB-1) |
@@ -23,6 +23,7 @@
 
 | Version | Date | Author | Summary of change |
 |---------|------|--------|-------------------|
+| 5.1 | 2026-10-18 | Tim PT. Tiket Sampai Nonton Sentosa | Approval 14 Oktober 2026 dicatat (§14); repository di organisasi GitHub `tiket-sampai-nonton` (CON-06). Tidak ada perubahan requirement |
 | 5.0 | 2026-10-17 | Tim PT. Tiket Sampai Nonton Sentosa | Restrukturisasi ke template PRD (ISO-aligned) sebagai bagian set dokumen RBT (PRD, SRS, HLD, SDD, ADR, Test Plan, Handbook). Isi teknis PRD v4.6 dipindahkan ke dokumen tersebut (Appendix C). **Tidak ada perubahan requirement, alur customer, maupun jaminan** |
 | 4.6 | 2026-10-16 | Tim | Sikap CAP/PACELC per komponen; outbox hanya Booking dan Payment; idempotensi consumer tanpa tabel inbox |
 | 4.5 | 2026-10-16 | Tim | Valkey sebagai in-memory store; prinsip SOLID; alasan best practice tech stack |
@@ -512,7 +513,7 @@ Mekanisme pengiriman (polling CDN di waiting room, SSE di halaman beli) dan alas
 | Business | CON-03 | Komponen teknologi mengikuti tech radar organisasi; komponen di luar daftar ADOPT harus dikonfirmasi (OI-02) | Diganti via ADR bila HOLD |
 | Business | CON-04 | Biaya cloud PoC dibatasi kredit AWS US$200 | Cloud hanya dipakai di Sprint 2, dengan budget alert dan teardown |
 | Assessment | CON-05 | Setup lokal untuk assessor: Docker Compose, tanpa AWS dan tanpa private registry | Assessor tidak dapat menjalankan alur |
-| Assessment | CON-06 | Repository GitHub public (akun pribadi); PDF requirement, notulen, `.env`, dan state infrastruktur tidak di-commit; `.kiro/steering`, `specs/`, dan log AI wajib di-commit | Pelanggaran aturan assessment atau kebocoran data |
+| Assessment | CON-06 | Repository GitHub public di organisasi `tiket-sampai-nonton`: `rusuh-booking-be`, `rusuh-booking-web`, `rusuh-booking-mobile` (ADR-017); PDF requirement, notulen, `.env`, dan state infrastruktur tidak di-commit; `.kiro/steering`, `specs/`, dan log AI wajib di-commit | Pelanggaran aturan assessment atau kebocoran data |
 | Regulatory | CON-07 | NIK diperlakukan sebagai data pribadi (GR-15): tidak dilog dalam bentuk asli, ditampilkan tersamar, dihapus setelah masa retensi. Regulasi acuan perlu dikonfirmasi (OI-08) | Risiko privasi dan hukum |
 | Product | CON-08 | Mobile: Android wajib; iOS bila platform dan akun Apple Developer tersedia (OI-03, OI-06) | Scope mobile berkurang |
 
@@ -646,9 +647,9 @@ Risiko teknis (bottleneck panggilan sinkron, kehilangan data antrean in-memory, 
 
 | Role | Name | Decision | Date |
 |------|------|----------|------|
-| CEO (pemilik bisnis) | Pak Dinda, PT. Tiga Sekawan Angin Ribut | | |
-| CTO | Pak Jabon, PT. Tiga Sekawan Angin Ribut | | |
-| CFO | Pak Rahman, PT. Tiga Sekawan Angin Ribut | | |
+| CEO (pemilik bisnis) | Pak Dinda, PT. Tiga Sekawan Angin Ribut | Approved | 2026-10-14 |
+| CTO | Pak Jabon, PT. Tiga Sekawan Angin Ribut | Approved | 2026-10-14 |
+| CFO | Pak Rahman, PT. Tiga Sekawan Angin Ribut | Approved | 2026-10-14 |
 | Penyusun | Tim PT. Tiket Sampai Nonton Sentosa | | |
 
 ---

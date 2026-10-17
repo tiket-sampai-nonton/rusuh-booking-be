@@ -10,7 +10,7 @@
 | **Author(s)** | Tim PT. Tiket Sampai Nonton Sentosa |
 | **Approvers** | Pak Dinda (CEO), Pak Jabon (CTO), Pak Rahman (CFO), PT. Tiga Sekawan Angin Ribut |
 | **Classification** | Internal |
-| **Source documents** | PRD-RBT-001 v5.0; PRD v4.6 (sumber pemecahan) |
+| **Source documents** | PRD-RBT-001 v5.1; PRD v4.6 (sumber pemecahan) |
 
 > **Reference basis.** Disusun dengan mengacu pada isi *Software Requirements Specification* pada **ISO/IEC/IEEE 29148:2018**, dengan quality requirement diklasifikasikan menurut **ISO/IEC 25010:2023**. Tailoring dicatat di Appendix C.
 >
@@ -125,11 +125,11 @@ Guest session dan data pembeli (§3.2.1); daftar dan detail event (§3.2.2–3.2
 
 | ID | Document | Version |
 |----|----------|---------|
-| REF-01 | PRD-RBT-001 | 5.0 |
-| REF-02 | AD-RBT-001 (HLD) | 1.0 |
-| REF-03 | SDD-RBT-001 | 1.0 |
-| REF-04 | ADR-RBT (ADR-001 … ADR-016) | 1.0 |
-| REF-05 | TP-RBT-001 (Test Plan) | 1.0 |
+| REF-01 | PRD-RBT-001 | 5.1 |
+| REF-02 | AD-RBT-001 (HLD) | 1.2 |
+| REF-03 | SDD-RBT-001 | 1.2 |
+| REF-04 | ADR-RBT (ADR-001 … ADR-018) | 1.1 |
+| REF-05 | TP-RBT-001 (Test Plan) | 1.1 |
 | REF-06 | ISO/IEC/IEEE 29148:2018 | — |
 | REF-07 | ISO/IEC 25010:2023 | — |
 | REF-08 | PDF *Evaluasi Expertise Solution Development 2026 H2*; notulen grooming 14 Oktober 2026 | — |

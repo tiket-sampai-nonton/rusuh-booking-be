@@ -68,12 +68,14 @@ Satu pipeline `.github/workflows/ci.yml` dengan stage berurutan (matrix per modu
 | `case-coverage` | unit test `-race` + ambang coverage logika **80%** (`COVERAGE_MIN`) |
 | `code-rank` | SonarCloud (quality gate) |
 | `build` | compile + isolation build `GOWORK=off` |
-| `package` | docker build per service |
-| `scan-package` | Trivy scan image, lalu `scan-package-verify` (gagal bila severity `IMAGE_FAIL_SEVERITY`, default CRITICAL) |
-| `publish` | push image ke GHCR, hanya dari `main` |
+| `package` | docker build per service, **linux/arm64** (runner ARM GitHub; ganti lewat variable `ARM_RUNNER`) |
+| `scan-package` | Trivy scan image + **SBOM CycloneDX** (artifact `sbom-<service>`), lalu `scan-package-verify` (gagal bila severity `IMAGE_FAIL_SEVERITY`, default CRITICAL) |
+| `publish` | push image ke GHCR, hanya dari `main`; digest dicatat di ringkasan run |
 | `deployment-dev`, `deployment-prod` | **manual** (Run workflow, pilih `deploy_env`); sementara placeholder |
 
 `ci-ok` adalah satu-satunya check yang perlu diwajibkan di ruleset `main`; ia lulus bila semua stage lulus atau dilewati.
+
+Integration test (Compose) dan BDD (godog) belum masuk pipeline; keduanya dijalankan lokal dan ditambahkan sebagai stage sesudah `case-coverage` saat fitur pertama dengan PostgreSQL, Valkey, dan RabbitMQ siap (Handbook §2).
 
 Coverage dihitung atas kode logika. `cmd/`, `internal/delivery/`, `internal/config/`, dan `_mock/` dikecualikan karena hanya bootstrap dan wiring (dibuktikan lewat run dan health check). Lokal: `make cover`.
 

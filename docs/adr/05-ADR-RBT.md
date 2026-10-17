@@ -3,8 +3,8 @@
 | Field | Value |
 |-------|-------|
 | **Document ID** | ADR-RBT |
-| **Version** | 1.0 |
-| **Date** | 2026-10-17 |
+| **Version** | 1.1 |
+| **Date** | 2026-10-18 |
 | **Deciders** | Tim PT. Tiket Sampai Nonton Sentosa (BE-1, BE-2, WEB-1, WEB-2, MOB-1) |
 | **Source** | PRD v4.6 §1.4, §5.25, §7, §9.7, §9.8, §13.4, Lampiran L; keputusan tim 14–16 Oktober 2026 |
 
@@ -32,6 +32,8 @@
 | ADR-014 | Notifikasi giliran: peringatan + push + jendela klaim 3 menit, tanpa prioritas | 2026-10-15 | CN-04 | GR-08, AS-06, AS-24, AS-25 |
 | ADR-015 | Tech stack sesuai tech radar dan alasan best practice | 2026-10-16 | CN-09 | SRS-C-02 |
 | ADR-016 | Struktur proyek mengikuti standar proyek organisasi | 2026-10-17 | CN-02, CN-09 | SRS-C-08 |
+| ADR-017 | Tiga repository terpisah (backend, web, mobile) dalam satu organisasi GitHub | 2026-10-17 | CN-02, CN-05 | CON-06, SRS-C-08 |
+| ADR-018 | Konsistensi lintas service dengan saga koreografi dan kompensasi | 2026-10-18 | CN-03, CN-04 | NFR-10, SRS-Q-REL-04, BR-06 |
 
 ---
 
@@ -223,7 +225,7 @@
 
 **Considered options.** Satu sikap untuk seluruh sistem; **sikap per komponen menurut akibat bila data salah**.
 
-**Decision.** CP untuk stok dan uang (PostgreSQL, satu primary); fail closed untuk penerbitan nomor antrean; AP untuk cache, Status Document, dan notifikasi. Tanpa transaksi terdistribusi (2PC/saga). Rincian tabel ada di HLD §4.3.
+**Decision.** CP untuk stok dan uang (PostgreSQL, satu primary); fail closed untuk penerbitan nomor antrean; AP untuk cache, Status Document, dan notifikasi. Tanpa transaksi terdistribusi (2PC); alur pemesanan lintas service memakai saga koreografi dengan kompensasi (ADR-018). Rincian tabel ada di HLD §4.3.
 
 **Consequences.** Positif: konsistensi kuat hanya di tempat yang membutuhkan; tidak ada oversell saat partisi. Negatif: hold gagal sementara saat primary tidak terjangkau; join ditolak beberapa detik saat Valkey gagal.
 
@@ -369,7 +371,7 @@ Prinsip pemilihan: **(1)** sesuai tech radar klien, **(2)** setiap komponen puny
 | Payment | **Midtrans Sandbox (Core API)** | Webhook bersignature, status API untuk rekonsiliasi, custom expiry diselaraskan dengan TTL; data kartu tidak pernah menyentuh sistem | Integrasi aktual, bukan mock; sesuai grooming (GR-13) |
 | Observability | **OpenTelemetry → Prometheus + Grafana**, Jaeger lokal | Standar vendor-neutral; trace lintas service dan event; dashboard disimpan di repo | Metrik antrean, konversi, dan expiry real-time (NFR-09) dengan biaya rendah |
 | Testing | Go `testing` (race), **godog**, **Apidog**, **Katalon**, **Appium**, **k6**, **Zephyr Scale** | Piramida test lengkap; acceptance criteria ditulis Gherkin; k6 membuktikan klaim kapasitas | Setiap klaim proposal ditautkan ke test ID dan evidence |
-| Keamanan | gosec, govulncheck, CodeQL, Trivy, ZAP, secret scanning | Shift-left: dicek di setiap PR, bukan di akhir | Repo public tetap aman; temuan high/critical menjadi release blocker |
+| Keamanan | gosec, govulncheck, SonarCloud, Trivy, ZAP, secret scanning | Shift-left: dicek di setiap PR, bukan di akhir | Repo public tetap aman; temuan high/critical menjadi release blocker |
 
 
 **Confirmation.** Review tech radar pada kickoff; komponen HOLD diganti lewat ADR baru.
@@ -386,7 +388,7 @@ Prinsip pemilihan: **(1)** sesuai tech radar klien, **(2)** setiap komponen puny
 | **Related requirements** | SRS-C-08 |
 | **Affected components** | CMP-QUEUE, CMP-BOOKING, CMP-PAYMENT, CMP-NOTIF, CMP-PLATFORM |
 
-**Context.** Organisasi memiliki standar struktur proyek Go yang wajib diikuti: hexagon per domain di `internal/<domain>/` dengan `port/{inbound,outbound}`, `domain/{entity,valueobject,dto,mapper}`, `application/usecase`, `infrastructure/*`; `internal/shared/entity`, `internal/config`, `internal/delivery/server.go` sebagai composition root; `pkg/` untuk utilitas bersama; `_mock/` hasil generate; `assets/`, `deployments/`, `docs/`; `.gitlab-ci.yml`; interface berawalan `I`. Struktur di PRD v4.6 (Lampiran F) memakai `domain/application/adapter` dengan port dalam satu file dan wiring di `cmd`. RBT berbeda dari contoh standar karena memuat 4 service, web, mobile, dan artefak wajib assessment dalam satu repository GitHub public.
+**Context.** Organisasi memiliki standar struktur proyek Go yang wajib diikuti: hexagon per domain di `internal/<domain>/` dengan `port/{inbound,outbound}`, `domain/{entity,valueobject,dto,mapper}`, `application/usecase`, `infrastructure/*`; `internal/shared/entity`, `internal/config`, `internal/delivery/server.go` sebagai composition root; `pkg/` untuk utilitas bersama; `_mock/` hasil generate; `assets/`, `deployments/`, `docs/`; `.gitlab-ci.yml`; interface berawalan `I`. Struktur di PRD v4.6 (Lampiran F) memakai `domain/application/adapter` dengan port dalam satu file dan wiring di `cmd`. RBT berbeda dari contoh standar karena repository backend memuat 4 service dan artefak wajib assessment; web dan mobile berada di repository terpisah (ADR-017).
 
 **Decision drivers.** Kepatuhan pada standar organisasi (wajib); batas antar-service yang ditegakkan compiler; kode bersama tidak disalin 4 kali; aturan assessment (GitHub public, `.kiro/`, `specs/`, Docker Compose untuk assessor).
 
@@ -400,7 +402,7 @@ Prinsip pemilihan: **(1)** sesuai tech radar klien, **(2)** setiap komponen puny
 | Worker | `cmd/main.go` dengan flag `--mode=api` atau `--mode=worker` + `internal/delivery/worker.go` | Mempertahankan satu entry point sesuai standar |
 | Migration, Dockerfile | `services/<svc>/deployments/{Dockerfile,migrations}` | Standar tidak punya folder migration; `deployments/` adalah tempat konfigurasi deployment |
 | `.gitlab-ci.yml` | Diganti GitHub Actions (`.github/workflows/`) | Assessment mewajibkan repository GitHub public; stage pipeline sama dengan standar, satu `ci.yml` bertahap |
-| Root monorepo | Tambahan `services/`, `web/`, `mobile/`, `tests/`, `tools/`, `.kiro/`, `specs/`, `docker-compose.yaml`, `Makefile`, `go.work` | Standar mendefinisikan satu service; RBT memuat beberapa proyek dan artefak assessment |
+| Root monorepo backend | Tambahan `services/`, `tests/`, `tools/`, `.kiro/`, `specs/`, `docker-compose.yaml`, `Makefile`, `go.work` | Standar mendefinisikan satu service; RBT memuat beberapa proyek dan artefak assessment |
 | Kontrak | `docs/contracts/{openapi,events}` | Dokumentasi berada di `docs/` |
 
 **Consequences.**
@@ -408,6 +410,70 @@ Prinsip pemilihan: **(1)** sesuai tech radar klien, **(2)** setiap komponen puny
 - Negatif: lebih banyak folder per service; `go.work` perlu dikelola; CI berbeda dari standar sampai repository dipindah ke GitLab.
 
 **Confirmation.** Review struktur di setiap PR (CODEOWNERS); `depguard` untuk aturan lapisan; `make mock` menghasilkan `_mock/` tanpa diff; checklist `.kiro/steering/structure.md`.
+
+---
+
+## ADR-017: Tiga repository terpisah (backend, web, mobile) dalam satu organisasi GitHub
+
+| Field | Value |
+|-------|-------|
+| **Status** | Accepted (mengubah ruang lingkup root monorepo di ADR-016) |
+| **Date** | 2026-10-17 |
+| **Concerns** | CN-02, CN-05 |
+| **Related requirements** | CON-06, SRS-C-08 |
+| **Affected components** | CMP-QUEUE, CMP-BOOKING, CMP-PAYMENT, CMP-NOTIF, CMP-PLATFORM, CMP-WEB, CMP-MOBILE |
+
+**Context.** PRD v4.6 Lampiran F dan ADR-016 menaruh 4 service, web, dan mobile dalam satu repository. Penilaian assessment dilakukan per orang, dan tim ingin pipeline CI/CD serta kepemilikan setiap domain terlihat terpisah. Toolchain backend (Go) dan frontend (Node, Expo) juga berbeda.
+
+**Considered options.** (A) Satu monorepo untuk backend, web, dan mobile; (B) tiga repository dalam satu organisasi: backend (4 service), web, mobile; (C) satu repository per service ditambah web dan mobile.
+
+**Decision.** Pilih **B**: organisasi `tiket-sampai-nonton` dengan `rusuh-booking-be`, `rusuh-booking-web`, dan `rusuh-booking-mobile`.
+
+| Aspek | Keputusan |
+|---|---|
+| Dokumen sistem | Hanya di `rusuh-booking-be/docs/`; web dan mobile menautkannya |
+| Kontrak API dan event | Sumber kebenaran `rusuh-booking-be/docs/contracts/`; web dan mobile mengunci ref di `docs/contracts/REF`, menyalin kontrak, dan membangkitkan tipe |
+| Pipeline | Satu pipeline per repository (Engineering Handbook §2) |
+| Rilis mobile | APK dari GitHub Actions ke GitHub Releases saat tag `v*` |
+| Test lintas service | `rusuh-booking-be/tests/`; E2E web dan mobile di repository masing-masing |
+
+**Consequences.**
+- Positif: pipeline, CODEOWNERS, dan riwayat commit per domain jelas; toolchain tidak bercampur; repository web dan mobile tetap bisa dikembangkan dengan mock kontrak sebelum backend siap.
+- Negatif: perubahan kontrak perlu koordinasi lintas repository (ref dikunci dan diperbarui lewat PR); tiga set ruleset dan CODEOWNERS dikelola; E2E penuh hanya di lingkungan yang menjalankan ketiganya.
+
+**Confirmation.** PR yang mengubah `docs/contracts/` ditinjau BE-1, BE-2, dan satu FE (CODEOWNERS); web dan mobile memperbarui `docs/contracts/REF` lewat PR.
+
+---
+
+## ADR-018: Konsistensi lintas service dengan saga koreografi dan kompensasi
+
+| Field | Value |
+|-------|-------|
+| **Status** | Accepted (memperjelas ADR-009 dan ADR-010; desain tidak berubah) |
+| **Date** | 2026-10-18 |
+| **Concerns** | CN-03, CN-04 |
+| **Related requirements** | NFR-10, SRS-Q-REL-04, BR-06 |
+| **Affected components** | CMP-QUEUE, CMP-BOOKING, CMP-PAYMENT, CMP-NOTIF |
+
+**Context.** Stok dan uang hanya diubah Booking Service dalam satu transaksi PostgreSQL, sehingga stok tidak memerlukan transaksi terdistribusi. Namun satu pemesanan tetap melewati beberapa service (Queue → Booking → Payment → Booking → Notification), dan kegagalan di tengah alur harus dipulihkan. Frasa "tanpa 2PC/saga" di PRD v4.6 dapat dibaca seolah alur ini tidak memiliki kompensasi.
+
+**Considered options.** (A) Transaksi terdistribusi (2PC); (B) saga orkestrasi dengan orchestrator atau workflow engine; (C) saga koreografi: setiap langkah adalah transaksi lokal, service bereaksi lewat event (outbox) dan panggilan internal, kegagalan dikompensasi secara lokal.
+
+**Decision.** Pilih **C**. Tanpa 2PC dan tanpa orchestrator.
+
+| Langkah | Service | Kompensasi |
+|---|---|---|
+| Giliran antrean diklaim, alokasi dibuat | Queue → Booking | `POST /internal/v1/allocations/{id}:release` (`QUEUE_ENTRY_GONE`); rekonsiliasi alokasi yatim |
+| Booking dibuat, stok dan kuota di-hold | Booking | TTL habis: `EXPIRED`, hold dan kuota dilepas, NIK bebas dipakai lagi (setelah resolve pembayaran) |
+| Pembayaran dimulai (`payment-lock`, transaksi gateway) | Payment | `payment.failed` hanya informasi; hold tetap sampai TTL |
+| Settlement diterima | Payment → Booking | Tepat waktu: `PAID`. Terlambat: `REVIEW`, hold dan kuota dilepas, `booking.review` → Payment membuat `refund_cases` |
+| Notifikasi | Notification | Tidak ada kompensasi: efek samping dengan retry dan DLQ |
+
+**Consequences.**
+- Positif: invariant stok tetap dijaga satu transaksi ACID; tidak ada orchestrator yang menjadi titik gagal tunggal; setiap langkah dapat diuji terpisah.
+- Negatif: alur tersebar di beberapa consumer sehingga butuh correlation ID dan tracing; konsistensi antar service eventual; rekonsiliasi terjadwal wajib berjalan.
+
+**Confirmation.** TC-PAY-03, TC-PAY-04, TC-PAY-09, TC-CAP-03; outbox lag kembali 0 setelah broker pulih; rekonsiliasi tidak menemukan selisih.
 
 ---
 

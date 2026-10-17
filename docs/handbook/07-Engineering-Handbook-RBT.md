@@ -3,8 +3,8 @@
 | Field | Value |
 |-------|-------|
 | **Document ID** | EHB-RBT |
-| **Version** | 1.1 |
-| **Date** | 2026-10-17 |
+| **Version** | 1.2 |
+| **Date** | 2026-10-18 |
 | **Owner** | BE-1 (+ semua owner) |
 | **Source** | PRD v4.6 §18.4, §18.5, §21.3, Lampiran G, H, K; standar proyek organisasi (ADR-016) |
 
@@ -16,6 +16,7 @@
 |---------|------|--------|-------------------|
 | 1.0 | 2026-10-17 | Tim PT. Tiket Sampai Nonton Sentosa | Dipecah dari PRD v4.6 |
 | 1.1 | 2026-10-17 | Tim PT. Tiket Sampai Nonton Sentosa | Ditambah standar struktur proyek (§0); path disesuaikan; deviasi CI dicatat |
+| 1.2 | 2026-10-18 | Tim PT. Tiket Sampai Nonton Sentosa | Tiga repository di organisasi; ruleset yang berlaku; pipeline bertahap dengan image arm64 dan SBOM; SonarCloud menggantikan SonarCloud |
 
 ---
 
@@ -42,16 +43,16 @@ Checklist ini juga ditulis di `.kiro/steering/structure.md` dan diperiksa saat c
 
 *Sumber: PRD v4.6 §21.3*
 
-**GitHub, repository public di akun pribadi.**
+**GitHub, tiga repository public di organisasi `tiket-sampai-nonton`: `rusuh-booking-be`, `rusuh-booking-web`, `rusuh-booking-mobile` (ADR-017).**
 
 | Aspek | Keputusan |
 |---|---|
-| Struktur | `services/{queue,booking,payment,notification}` (struktur standar per service), `pkg/`, `web/`, `mobile/`, `deployments/`, `docs/` (termasuk `docs/contracts/`), `tests/`, `.kiro/`, `specs/` |
+| Struktur | `rusuh-booking-be`: `services/{queue,booking,payment,notification}` (struktur standar per service), `pkg/`, `deployments/`, `docs/` (termasuk `docs/contracts/`), `tests/`, `.kiro/`, `specs/`. Web dan mobile di `rusuh-booking-web` dan `rusuh-booking-mobile` (ADR-017) |
 | Branching | Trunk-based; `feat/<REQ-ID>-<slug>` |
-| Ruleset `main` | PR wajib, ≥1 approval (≥2 untuk `services/booking`, `services/payment`, `docs/contracts/`), CODEOWNERS, CI hijau, linear history |
-| CODEOWNERS | `services/queue`, `services/notification`, `pkg/`, `deployments/` → BE-1; `services/booking`, `services/payment` → BE-2; `docs/contracts/` → BE-1 + BE-2 + satu FE; `web/` → WEB-1/WEB-2; `web/app/pay/` → WEB-2 + BE-2; `mobile/` → MOB-1 |
+| Ruleset `main` | PR wajib dengan ≥1 approval; force push dan penghapusan branch diblokir; bypass hanya admin organisasi. Check `ci-ok` dapat diwajibkan setelah pipeline stabil |
+| CODEOWNERS | Per repository. Backend: `services/queue`, `services/notification`, `deployments/` → BE-1; `services/booking`, `services/payment` → BE-2; `pkg/` → BE-1 + BE-2; `docs/contracts/` → BE-1 + BE-2 + satu FE. Web → WEB-1/WEB-2, halaman `/pay` → WEB-2 + BE-2. Mobile → MOB-1 |
 | Commit | Conventional Commits + Requirement ID |
-| Security | Secret scanning + push protection, Dependabot, CodeQL |
+| Security | Secret scanning + push protection, Dependabot, SonarCloud, gosec, govulncheck, gitleaks, Trivy |
 | Tidak di-commit | PDF requirement, notulen grooming, `.env`, Terraform state |
 | Wajib di-commit | `.kiro/steering`, `specs/`, `docs/ai-log/` (aturan assessment) |
 
@@ -62,15 +63,16 @@ Checklist ini juga ditulis di `.kiro/steering/structure.md` dan diperiksa saat c
 
 > **Deviasi dari standar:** standar proyek memakai `.gitlab-ci.yml`. Repository RBT wajib GitHub public (aturan assessment), sehingga pipeline memakai GitHub Actions dengan tahapan yang sama. Bila repository dipindah ke GitLab, setiap job di bawah dipetakan satu-satu ke stage `.gitlab-ci.yml` (ADR-016).
 >
-> **Implementasi di `rusuh-booking-be`:** satu pipeline `.github/workflows/ci.yml` (matrix per modul/service, hanya modul yang berubah) dengan stage berurutan code-quality → verify-code-quality → case-coverage → code-rank → build → package → scan-package → publish → deployment-dev → deployment-prod. Ambang coverage logika 80%; `code-rank` memakai SonarCloud; `deployment-*` dijalankan manual dan masih berupa placeholder sampai Terraform dan role AWS siap. Satu check `ci-ok` dipakai sebagai required check di ruleset `main`. Daftar rinci di README repo BE bagian "CI/CD".
+> Placeholder (SonarCloud, AWS) dan job `ci-ok` dijelaskan di README `rusuh-booking-be` bagian "CI/CD".
 
 *Sumber: PRD v4.6 §18.4*
 
-- Per service (path filter `services/<name>/**`): lint → unit + race + coverage → integration (Compose) → godog → gosec/govulncheck/CodeQL → build image arm64 → SBOM + Trivy → push digest ECR.
-- Contract: validasi OpenAPI + JSON Schema event; contract test producer/consumer.
+- Backend (`rusuh-booking-be`, satu `ci.yml`, matrix per service yang berubah): code-quality (golangci-lint + depguard, go vet, gosec, govulncheck, hadolint, gitleaks) → verify-code-quality → case-coverage (unit + race, coverage logika ≥ 80%) → code-rank (SonarCloud) → build (+ isolation build) → package (image arm64) → scan-package (Trivy + SBOM CycloneDX) → publish (push, digest dicatat) → deployment-dev → deployment-prod (manual).
+- Integration test (Compose) dan BDD (godog): dijalankan lokal terhadap Docker Compose; masuk pipeline sebagai stage sesudah case-coverage saat fitur pertama dengan PostgreSQL, Valkey, dan RabbitMQ siap.
+- Contract: validasi OpenAPI + JSON Schema event dan contract test producer/consumer; masuk pipeline bersama integration test setelah kontrak final.
 - Architecture: depguard memastikan tidak ada import lintas service.
-- Infra: fmt → validate → tflint/checkov → plan (komentar PR) → approval → apply → smoke.
-- Web/mobile: typecheck → lint → unit → build → Katalon/Appium smoke.
+- Infra (saat `deployments/terraform` dibuat): fmt → validate → tflint/checkov → plan (komentar PR) → approval → apply → smoke.
+- Web dan mobile: pipeline di repository masing-masing (typecheck → lint → unit → build); Katalon/Appium smoke sebelum rilis kandidat.
 
 
 ## 3. Local Setup

@@ -5,8 +5,8 @@
 | **System** | Rusuh Booking Tiket |
 | **Design subjects** | CMP-QUEUE, CMP-BOOKING, CMP-PAYMENT, CMP-NOTIF, CMP-PLATFORM (web dan mobile dirinci di kontrak dan wireframe) |
 | **Document ID** | SDD-RBT-001 |
-| **Version** | 1.1 |
-| **Date** | 2026-10-17 |
+| **Version** | 1.2 |
+| **Date** | 2026-10-18 |
 | **Status** | Draft. Desain baseline = PRD v4.6 Final Canonical; implementasi `NOT_VERIFIED` |
 | **Issuing organization** | Tim Rusuh Booking Tiket |
 | **Author(s)** | Tim PT. Tiket Sampai Nonton Sentosa (BE-1, BE-2) |
@@ -26,6 +26,7 @@
 |---------|------|--------|-------------------|
 | 1.0 | 2026-10-17 | Tim PT. Tiket Sampai Nonton Sentosa | Dipecah dari PRD v4.6 §7.4, §9.5, §9.8, §11, §16.2, Lampiran A–F, J, M, N |
 | 1.1 | 2026-10-17 | Tim PT. Tiket Sampai Nonton Sentosa | Struktur proyek, aturan dependency, dan prinsip desain kode disesuaikan dengan standar proyek organisasi (ADR-016); menggantikan Lampiran F v4.6 |
+| 1.2 | 2026-10-18 | Tim PT. Tiket Sampai Nonton Sentosa | §4.1.3 hanya repository backend; web dan mobile di repository terpisah (ADR-017); deskripsi pipeline |
 
 ---
 
@@ -175,7 +176,7 @@ services/booking/
 | `assets/` | Default `event_settings` | Default konfigurasi event | Pemetaan metode/status Midtrans | `templates/{eticket,expired,review}.txt.tmpl` |
 | `deployments/` | Dockerfile, migrations schema `queue` | Dockerfile, migrations schema `booking` | Dockerfile, migrations schema `payment` | Dockerfile, migrations schema `notification` |
 
-#### 4.1.3 Struktur Repository (monorepo)
+#### 4.1.3 Struktur Repository `rusuh-booking-be` (monorepo backend)
 
 ```text
 .
@@ -199,20 +200,18 @@ services/booking/
 │   ├── telemetry/                         # Logging, metrics, tracing
 │   ├── clock/                             # Clock abstraction
 │   └── go.mod
-├── web/                                   # Next.js + TypeScript + Tailwind (termasuk /pay/{bookingId})
-├── mobile/                                # React Native + TypeScript
 ├── deployments/                           # Deployment configurations (lintas service)
 │   ├── compose/                           # postgres-init.sql, keys/ (lokal)
 │   ├── edge/nginx.conf
 │   ├── observability/{prometheus.yml,grafana/,otel-collector.yaml}
 │   └── terraform/{modules/{network,edge,alb,asg,stateful,iam-oidc,budget},environments/staging}
 ├── docs/                                  # Documentation
-│   ├── docs/contracts/{openapi/{public.yaml,internal-booking.yaml,internal-payment.yaml},events/*.schema.json}
+│   ├── contracts/{openapi/{public.yaml,internal-booking.yaml,internal-payment.yaml},events/*.schema.json}
 │   └── {prd,adr,evidence,ai-log}/
 ├── tests/{features/*.feature,k6/*.js,apidog/,contract/}   # Test lintas service
 ├── tools/{migrate,seed}/                  # Utilitas dev: migrasi semua service (deployments/migrations), seed data
 ├── .kiro/steering/{product.md,tech.md,structure.md,code-principles.md,security-privacy.md,invariants.md,testing-review.md}
-├── specs/{queue-service,booking-service,payment-service,notification-service,platform,web,mobile,deployment}/
+├── specs/{queue-service,booking-service,payment-service,notification-service,platform}/
 ├── .github/{CODEOWNERS,pull_request_template.md,dependabot.yml,workflows/}   # CI/CD (deviasi, lihat §4.1.4)
 ├── .golangci.yml                          # depguard: larangan import lintas services/*
 ├── docker-compose.yaml                    # Entry point assessor (memakai deployments/)
@@ -220,6 +219,8 @@ services/booking/
 ├── go.work                                # Workspace: services/* + pkg
 └── README.md
 ```
+
+Web (Next.js, termasuk `/pay/{bookingId}`) dan mobile (React Native) berada di repository terpisah `rusuh-booking-web` dan `rusuh-booking-mobile` dalam organisasi `tiket-sampai-nonton` (ADR-017). Keduanya merujuk kontrak di `docs/contracts/` repository ini dengan ref yang dikunci.
 
 #### 4.1.4 Kesesuaian dengan Standar dan Deviasi
 
@@ -235,7 +236,7 @@ services/booking/
 | `_mock/` hasil generate | Sesuai | `mockgen` dari interface di `port/` dan `pkg/` (`make mock`) |
 | `assets/`, `deployments/`, `docs/`, `go.mod` | Sesuai | Migration SQL dan Dockerfile di `deployments/` per service |
 | `.gitlab-ci.yml` | **Deviasi** | Assessment mewajibkan repository GitHub public; CI memakai GitHub Actions (`.github/workflows/`). Stage pipeline sama dengan standar (code-quality → verify-code-quality → case-coverage → code-rank → build → package → scan-package → publish → deployment-dev → deployment-prod) dan dapat diterjemahkan ke `.gitlab-ci.yml` bila repo dipindah ke GitLab |
-| Root monorepo (`services/`, `web/`, `mobile/`, `tests/`, `tools/`, `.kiro/`, `specs/`, `docker-compose.yaml`, `Makefile`, `go.work`) | Tambahan | Standar mendefinisikan satu proyek service; RBT memuat 4 service, 2 klien, dan artefak wajib assessment |
+| Root monorepo (`services/`, `tests/`, `tools/`, `.kiro/`, `specs/`, `docker-compose.yaml`, `Makefile`, `go.work`) | Tambahan | Standar mendefinisikan satu proyek service; RBT memuat 4 service, 2 klien, dan artefak wajib assessment |
 
 #### 4.1.5 Jalur Evolusi
 

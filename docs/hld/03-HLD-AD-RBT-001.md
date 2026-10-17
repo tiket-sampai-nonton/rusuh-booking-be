@@ -4,13 +4,13 @@
 |-------|-------|
 | **System of interest** | Rusuh Booking Tiket |
 | **Document ID** | AD-RBT-001 |
-| **Version** | 1.1 |
-| **Date** | 2026-10-17 |
+| **Version** | 1.2 |
+| **Date** | 2026-10-18 |
 | **Status** | Draft. Desain baseline = PRD v4.6 Final Canonical; implementasi `NOT_VERIFIED` |
 | **Architect(s)** | Tim PT. Tiket Sampai Nonton Sentosa (BE-1, BE-2) |
 | **Reviewers / Approvers** | Pak Dinda (CEO), Pak Jabon (CTO), Pak Rahman (CFO), PT. Tiga Sekawan Angin Ribut |
 | **Classification** | Internal |
-| **Source documents** | PRD-RBT-001 v5.0, SRS-RBT-001 v1.0, ADR-RBT |
+| **Source documents** | PRD-RBT-001 v5.1, SRS-RBT-001 v1.0, ADR-RBT |
 
 > **Reference basis.** Disusun dengan mengacu pada **ISO/IEC/IEEE 42010:2022**. AD ini mengidentifikasi stakeholder dan concern, mendefinisikan viewpoint yang membingkai concern tersebut, menyajikan satu view per viewpoint, mencatat correspondence antar-elemen, serta merujuk keputusan dan rationale ke ADR. Diagram memakai Mermaid: flowchart bergaya C4 untuk struktur, UML sequence untuk perilaku.
 >
@@ -24,6 +24,7 @@
 |---------|------|--------|-------------------|
 | 1.0 | 2026-10-17 | Tim PT. Tiket Sampai Nonton Sentosa | Dipecah dari PRD v4.6 §7–§10, §12.3, §13–§18, Lampiran O; ditambah stakeholder/concern, viewpoint, correspondence |
 | 1.1 | 2026-10-17 | Tim PT. Tiket Sampai Nonton Sentosa | Path dan struktur repository disesuaikan dengan standar proyek organisasi (ADR-016) |
+| 1.2 | 2026-10-18 | Tim PT. Tiket Sampai Nonton Sentosa | Tiga repository (ADR-017); saga koreografi (ADR-018); SonarCloud menggantikan SonarCloud |
 
 ---
 
@@ -52,10 +53,10 @@ Platform penjualan tiket untuk *war tiket* yang memisahkan beban: **lonjakan pen
 
 | Document | Relationship |
 |----------|--------------|
-| PRD-RBT-001 v5.0 | Konteks bisnis, goals, user story |
+| PRD-RBT-001 v5.1 | Konteks bisnis, goals, user story |
 | SRS-RBT-001 v1.0 | Requirement yang dialokasikan ke arsitektur ini |
-| SDD-RBT-001 v1.0 | Desain rinci per service |
-| ADR-RBT (ADR-001 … ADR-016) | Keputusan dan rationale |
+| SDD-RBT-001 v1.2 | Desain rinci per service |
+| ADR-RBT (ADR-001 … ADR-018) | Keputusan dan rationale |
 | TP-RBT-001 | Pembuktian quality scenario |
 | Engineering Handbook | CI/CD, Compose lokal, praktik repo |
 
@@ -226,7 +227,7 @@ flowchart LR
 | Komunikasi sinkron | Hanya 2 titik: Queue→Booking (reservasi alokasi, supply) dan Booking→Payment (resolve) |
 | Komunikasi async | RabbitMQ; transactional outbox di Booking dan Payment; consumer idempoten tanpa tabel inbox (§9.8 [v4.6 → SDD §4.5.2]) |
 | Data | Satu cluster PostgreSQL, **schema + user DB terpisah per service**, tanpa FK/join lintas schema; dapat dipindah ke instance sendiri tanpa perubahan kode |
-| Repo | Monorepo; satu proyek dan `go.mod` per service sesuai standar proyek (ADR-016), disatukan `go.work`; batas antar-service ditegakkan Go `internal/` dan linter (depguard) di CI |
+| Repo | Tiga repository di organisasi `tiket-sampai-nonton` (ADR-017). `rusuh-booking-be` adalah monorepo backend: satu proyek dan `go.mod` per service sesuai standar proyek (ADR-016), disatukan `go.work`; batas antar-service ditegakkan Go `internal/` dan linter (depguard) di CI |
 
 Trade-off lengkap di Lampiran L [v4.6 → ADR Appendix A].
 
@@ -417,13 +418,13 @@ Rusuh Booking Tiket tidak memakai satu sikap untuk seluruh sistem. Sikap setiap 
 | Valkey: cache | Status Document, snapshot supply, ringkasan ketersediaan SSE | **AP**: data boleh basi; bila hilang dibaca ulang dari sumbernya | **EL** | Angka sisa atau posisi telat 1–2 detik; keputusan admit/hold tetap divalidasi server | Dihitung ulang dari PostgreSQL |
 | CDN (Status Document) | Status antrean | **AP**: `stale-if-error` | **EL** | Posisi telat beberapa detik | Otomatis |
 | RabbitMQ + outbox | Event domain | **AP** untuk producer: transaksi tetap commit; event tertahan di `outbox_events` | **EL**: publish di luar transaksi | Email/push tertunda, tidak hilang; transaksi tidak pernah menunggu broker (NFR-10) | Publisher mengirim ulang setelah broker pulih; consumer idempoten (§9.8 [v4.6 → SDD §4.5.2]) |
-| Antar-service (Booking ↔ Payment ↔ Queue) | Status lintas service | Tanpa transaksi terdistribusi (tanpa 2PC/saga) | Eventual (§9.6 [v4.6 → HLD §4.3]) | Status pembayaran di layar bisa telat beberapa detik | Outbox + rekonsiliasi terjadwal (§16.3 [v4.6 → HLD §4.7.1]) |
+| Antar-service (Booking ↔ Payment ↔ Queue) | Status lintas service | Tanpa transaksi terdistribusi (tanpa 2PC); saga koreografi dengan kompensasi (ADR-018) | Eventual (§9.6 [v4.6 → HLD §4.3]) | Status pembayaran di layar bisa telat beberapa detik | Outbox + rekonsiliasi terjadwal (§16.3 [v4.6 → HLD §4.7.1]) |
 
 **Kenapa stok tidak AP.** Bila dua sisi partisi sama-sama boleh menulis stok, keduanya dapat menjual unit yang sama: tiket ganda atau janji "Jangan PHP" yang dilanggar. Menolak sementara lebih jujur daripada menerima lalu membatalkan. Biaya CP kecil karena tulisan stok dibatasi slot aktif (< 250/detik di Tier L).
 
 **Kenapa antrean tidak CP penuh.** Replikasi sinkron di setiap join menambah latensi pada jalur 20.000+ join/detik. Kehilangan beberapa detik join terakhir saat failover dapat dipulihkan dari `entry_audit` dan tidak mengubah stok atau uang. Penerbitan nomor tetap fail closed sehingga FIFO tidak pernah bercabang.
 
-**Kenapa tidak ada transaksi terdistribusi.** Semua yang menyentuh stok ada di satu service (§7.1 [v4.6 → HLD §4.2.1]), sehingga konsistensi kuat cukup dengan satu transaksi PostgreSQL. Hubungan antar-service cukup eventual karena outbox menjamin event tidak hilang dan rekonsiliasi mendeteksi selisih.
+**Kenapa tidak ada transaksi terdistribusi.** Semua yang menyentuh stok ada di satu service (§7.1 [v4.6 → HLD §4.2.1]), sehingga konsistensi kuat cukup dengan satu transaksi PostgreSQL. Hubungan antar-service cukup eventual karena outbox menjamin event tidak hilang dan rekonsiliasi mendeteksi selisih. Alur pemesanan lintas service berjalan sebagai **saga koreografi** tanpa orchestrator: setiap langkah adalah transaksi lokal, dan kegagalan dikompensasi lewat release alokasi, kedaluwarsa hold, atau refund case (ADR-018).
 
 Bukti: C.7 (stok, uji paralel), M.1 (Lua, 10.000 join paralel tanpa celah seq), TC-CAP-01..03 dan TC-MSG-01..03 (diuji pada implementasi).
 
@@ -1046,7 +1047,7 @@ JWT EdDSA; private key hanya di service penerbit; public key didistribusikan. Ku
 - Strict JSON, body limit, parameterized SQL, allowlist validation.
 - Signature Midtrans, order, dan amount diverifikasi.
 - Secret via SSM dan GitHub Actions secrets; deploy dengan OIDC role.
-- Repo public: secret scanning + push protection, CodeQL, Dependabot. PDF requirement dan notulen grooming tidak di-commit.
+- Repo public: secret scanning + push protection, SonarCloud, Dependabot. PDF requirement dan notulen grooming tidak di-commit.
 
 #### Threats
 
@@ -1282,7 +1283,7 @@ Harga build (2 sprint, 5 orang), operasi per event, dan maintenance bulanan disu
 | Edge | CloudFront + WAF + ALB | Perlu cek radar | Lampiran O [v4.6 → HLD Appendix B] |
 | IaC | Terraform | Perlu cek radar | — |
 | CI/CD | GitHub Actions + OIDC ke AWS | — | — |
-| Security scan | gosec, govulncheck, CodeQL, Trivy, ZAP, secret scanning | Perlu cek radar | — |
+| Security scan | gosec, govulncheck, SonarCloud, Trivy, ZAP, secret scanning | Perlu cek radar | — |
 
 Komponen "Perlu cek radar" dikonfirmasi pada kickoff; bila HOLD, diganti melalui ADR.
 

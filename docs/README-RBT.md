@@ -3,8 +3,8 @@
 | Field | Value |
 |-------|-------|
 | **Document ID** | README-RBT |
-| **Version** | 1.0 |
-| **Date** | 2026-10-17 |
+| **Version** | 1.1 |
+| **Date** | 2026-10-18 |
 | **Source** | PRD v4.6 Final Canonical (16 Oktober 2026), dipecah tanpa mengubah requirement, alur customer, kontrak API publik, maupun jaminan |
 
 **Struktur proyek kode wajib mengikuti standar proyek organisasi** (hexagon per domain dengan `port/inbound`/`port/outbound`, `domain/{entity,valueobject,dto,mapper}`, `application/usecase`, `infrastructure`, `delivery`, `_mock`). Detail di SDD §4.1, Engineering Handbook §0, dan ADR-016; struktur monorepo Lampiran F v4.6 tidak dipakai lagi.
@@ -20,11 +20,11 @@ PRD v4.6 menggabungkan PRD, SRS, HLD, LLD, keputusan arsitektur, rencana penguji
 | # | File | Document ID | Acuan | Isi |
 |---|------|-------------|-------|-----|
 | 00 | `00-README-RBT.md` | README-RBT | ISO/IEC/IEEE 15289 (set dokumen) | Peta dokumen, konvensi ID, tabel konversi v4.6, riwayat |
-| 01 | `01-PRD-RBT-001-v5.0.md` | PRD-RBT-001 v5.0 | Praktik industri; konsep BRS/StRS ISO/IEC/IEEE 29148, ISO 9241-210, ISO/IEC 25010 | Masalah, goals, metrik, persona, user story + acceptance criteria, business rules, asumsi, rilis, risiko, wireframe |
+| 01 | `01-PRD-RBT-001-v5.0.md` | PRD-RBT-001 v5.1 | Praktik industri; konsep BRS/StRS ISO/IEC/IEEE 29148, ISO 9241-210, ISO/IEC 25010 | Masalah, goals, metrik, persona, user story + acceptance criteria, business rules, asumsi, rilis, risiko, wireframe |
 | 02 | `02-SRS-RBT-001.md` | SRS-RBT-001 | ISO/IEC/IEEE 29148:2018, ISO/IEC 25010:2023 | Requirement "shall" per capability, interface, quality, data, constraint, RTM |
 | 03 | `03-HLD-AD-RBT-001.md` | AD-RBT-001 | ISO/IEC/IEEE 42010:2022 | Stakeholder, concern, viewpoint, 8 view, correspondence, risiko teknis |
 | 04 | `04-SDD-RBT-001.md` | SDD-RBT-001 | IEEE 1016-2009; notasi UML (ISO/IEC 19505) | Struktur modul, kontrak, DDL, locking, state machine, algoritme, konfigurasi |
-| 05 | `05-ADR-RBT.md` | ADR-RBT | Konsep decision & rationale ISO/IEC/IEEE 42010; format Nygard/MADR | ADR-001 … ADR-016 + matriks trade-off |
+| 05 | `05-ADR-RBT.md` | ADR-RBT | Konsep decision & rationale ISO/IEC/IEEE 42010; format Nygard/MADR | ADR-001 … ADR-018 + matriks trade-off |
 | 06 | `06-TP-RBT-001.md` | TP-RBT-001 | ISO/IEC/IEEE 29119-3:2021, 29119-4 | Strategi, release gate, katalog test, harness, evidence, technical defense |
 | 07 | `07-Engineering-Handbook-RBT.md` | EHB-RBT | Praktik engineering | Repository, pipeline, Docker Compose, Git/CI/security/logging, aturan AI/Kiro |
 
@@ -552,3 +552,17 @@ PRD v4.6 adalah kontrak requirement, desain, verification plan, dan dasar teknis
 | ISO/IEC/IEEE 12207:2017 | Berlaku | https://committee.iso.org/standard/63712.html |
 
 Semua dokumen "disusun dengan mengacu pada" standar di atas, bukan klaim "conform to". Klaim kepatuhan formal memerlukan pemeriksaan klausul pada teks standar resmi.
+
+---
+
+## 7. Perubahan Setelah Restrukturisasi
+
+Perubahan berikut adalah keputusan tim sesudah PRD v4.6. Tidak ada yang mengubah requirement, alur customer, kontrak API publik, maupun jaminan.
+
+| Tanggal | Perubahan | Dokumen |
+|---|---|---|
+| 2026-10-17 | Struktur proyek mengikuti standar organisasi | ADR-016, SDD §4.1, Handbook §0 |
+| 2026-10-17 | Tiga repository di organisasi `tiket-sampai-nonton` (be, web, mobile) | ADR-017, PRD CON-06, SDD §4.1.3, Handbook §1 |
+| 2026-10-17 | Pipeline satu `ci.yml` bertahap; image arm64 dan SBOM; SonarCloud menggantikan SonarCloud; integration dan BDD masuk pipeline saat fitur pertama siap | Handbook §2, TP, HLD, ADR-015 |
+| 2026-10-14 | Approval PRD oleh CEO, CTO, CFO | PRD §14 |
+| 2026-10-18 | Alur pemesanan dinyatakan sebagai saga koreografi dengan kompensasi (tanpa 2PC, tanpa orchestrator) | ADR-018, ADR-009, HLD §4.3, TP |
