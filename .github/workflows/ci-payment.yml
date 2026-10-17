@@ -30,7 +30,7 @@ jobs:
         working-directory: services/payment
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: services/payment/go.mod
           cache-dependency-path: services/payment/go.mod
