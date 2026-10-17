@@ -1,6 +1,6 @@
 # Build context: root repository.
 #   docker build -f services/booking/deployments/Dockerfile -t rusuh-booking-booking .
-FROM golang:1.24-alpine AS build
+FROM golang:1.27-alpine AS build
 WORKDIR /src
 COPY pkg/ pkg/
 COPY services/booking/ services/booking/
