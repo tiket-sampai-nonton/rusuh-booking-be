@@ -29,7 +29,7 @@ jobs:
       run:
         working-directory: services/notification
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-go@v5
         with:
           go-version-file: services/notification/go.mod
@@ -56,6 +56,6 @@ jobs:
     needs: verify
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Docker build
         run: docker build -f services/notification/deployments/Dockerfile -t rusuh-booking-notification:${{ github.sha }} .
