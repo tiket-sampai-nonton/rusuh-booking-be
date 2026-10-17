@@ -1,0 +1,16 @@
+# Binaries and build output
+/bin/
+/out/
+*.exe
+*.test
+*.out
+coverage.*
+
+# Env (keep the examples)
+.env
+!.env.example
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store

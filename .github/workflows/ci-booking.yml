@@ -1,0 +1,61 @@
+name: ci-booking
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "services/booking/**"
+      - "pkg/**"
+      - ".golangci.yml"
+      - ".github/workflows/ci-booking.yml"
+  pull_request:
+    paths:
+      - "services/booking/**"
+      - "pkg/**"
+      - ".golangci.yml"
+      - ".github/workflows/ci-booking.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-booking-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/booking
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: services/booking/go.mod
+          cache-dependency-path: services/booking/go.mod
+
+      - name: Generate mocks
+        run: go generate ./internal/... && go mod tidy
+
+      - name: Lint
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.5.0
+          working-directory: services/booking
+          args: --config=${{ github.workspace }}/.golangci.yml
+      - name: Vet
+        run: go vet ./...
+      - name: Test
+        run: go test -race -count=1 ./...
+
+      - name: Isolation build (tanpa go.work)
+        run: GOWORK=off go build ./...
+
+  docker:
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Docker build
+        run: docker build -f services/booking/deployments/Dockerfile -t rusuh-booking-booking:${{ github.sha }} .

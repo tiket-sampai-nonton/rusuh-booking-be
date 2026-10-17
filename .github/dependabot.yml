@@ -1,0 +1,34 @@
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: "/pkg"
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: gomod
+    directory: "/services/queue"
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: gomod
+    directory: "/services/booking"
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: gomod
+    directory: "/services/payment"
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: gomod
+    directory: "/services/notification"
+    schedule:
+      interval: weekly
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+  - package-ecosystem: docker
+    directory: "/services/booking/deployments"
+    schedule:
+      interval: weekly

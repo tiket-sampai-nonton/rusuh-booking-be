@@ -1,0 +1,166 @@
+version: "2"
+
+linters:
+  default: standard
+  enable:
+    - depguard
+    - errorlint
+    - misspell
+    - unconvert
+    - bodyclose
+  settings:
+    depguard:
+      rules:
+        queue-domain:
+          files: ["**/services/queue/internal/queue/domain/**"]
+          deny:
+            - pkg: "github.com/tiket-sampai-nonton/rusuh-booking-be/pkg"
+              desc: "domain hanya boleh standard library (Handbook §0)"
+            - pkg: "github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/port"
+              desc: "domain tidak bergantung pada port"
+            - pkg: "github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/application"
+              desc: "domain tidak bergantung pada application"
+            - pkg: "github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/infrastructure"
+              desc: "domain tidak bergantung pada infrastructure"
+            - pkg: "net/http"
+              desc: "domain bebas framework/transport"
+            - pkg: "database/sql"
+              desc: "domain bebas driver"
+        queue-port:
+          files: ["**/services/queue/internal/queue/port/**"]
+          deny:
+            - pkg: "github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/application"
+              desc: "port tidak bergantung pada application"
+            - pkg: "github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/infrastructure"
+              desc: "port tidak bergantung pada infrastructure"
+        queue-application:
+          files: ["**/services/queue/internal/queue/application/**"]
+          deny:
+            - pkg: "github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/infrastructure"
+              desc: "usecase hanya bergantung pada port (SDD §4.3)"
+            - pkg: "net/http"
+              desc: "usecase bebas transport"
+        queue-infrastructure:
+          files: ["**/services/queue/internal/queue/infrastructure/**"]
+          deny:
+            - pkg: "github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/application"
+              desc: "adapter memanggil port, bukan usecase langsung"
+
+        booking-domain:
+          files: ["**/services/booking/internal/booking/domain/**"]
+          deny:
+            - pkg: "github.com/tiket-sampai-nonton/rusuh-booking-be/pkg"
+              desc: "domain hanya boleh standard library (Handbook §0)"
+            - pkg: "github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/port"
+              desc: "domain tidak bergantung pada port"
+            - pkg: "github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/application"
+              desc: "domain tidak bergantung pada application"
+            - pkg: "github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/infrastructure"
+              desc: "domain tidak bergantung pada infrastructure"
+            - pkg: "net/http"
+              desc: "domain bebas framework/transport"
+            - pkg: "database/sql"
+              desc: "domain bebas driver"
+        booking-port:
+          files: ["**/services/booking/internal/booking/port/**"]
+          deny:
+            - pkg: "github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/application"
+              desc: "port tidak bergantung pada application"
+            - pkg: "github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/infrastructure"
+              desc: "port tidak bergantung pada infrastructure"
+        booking-application:
+          files: ["**/services/booking/internal/booking/application/**"]
+          deny:
+            - pkg: "github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/infrastructure"
+              desc: "usecase hanya bergantung pada port (SDD §4.3)"
+            - pkg: "net/http"
+              desc: "usecase bebas transport"
+        booking-infrastructure:
+          files: ["**/services/booking/internal/booking/infrastructure/**"]
+          deny:
+            - pkg: "github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/application"
+              desc: "adapter memanggil port, bukan usecase langsung"
+
+        payment-domain:
+          files: ["**/services/payment/internal/payment/domain/**"]
+          deny:
+            - pkg: "github.com/tiket-sampai-nonton/rusuh-booking-be/pkg"
+              desc: "domain hanya boleh standard library (Handbook §0)"
+            - pkg: "github.com/tiket-sampai-nonton/rusuh-booking-be/services/payment/internal/payment/port"
+              desc: "domain tidak bergantung pada port"
+            - pkg: "github.com/tiket-sampai-nonton/rusuh-booking-be/services/payment/internal/payment/application"
+              desc: "domain tidak bergantung pada application"
+            - pkg: "github.com/tiket-sampai-nonton/rusuh-booking-be/services/payment/internal/payment/infrastructure"
+              desc: "domain tidak bergantung pada infrastructure"
+            - pkg: "net/http"
+              desc: "domain bebas framework/transport"
+            - pkg: "database/sql"
+              desc: "domain bebas driver"
+        payment-port:
+          files: ["**/services/payment/internal/payment/port/**"]
+          deny:
+            - pkg: "github.com/tiket-sampai-nonton/rusuh-booking-be/services/payment/internal/payment/application"
+              desc: "port tidak bergantung pada application"
+            - pkg: "github.com/tiket-sampai-nonton/rusuh-booking-be/services/payment/internal/payment/infrastructure"
+              desc: "port tidak bergantung pada infrastructure"
+        payment-application:
+          files: ["**/services/payment/internal/payment/application/**"]
+          deny:
+            - pkg: "github.com/tiket-sampai-nonton/rusuh-booking-be/services/payment/internal/payment/infrastructure"
+              desc: "usecase hanya bergantung pada port (SDD §4.3)"
+            - pkg: "net/http"
+              desc: "usecase bebas transport"
+        payment-infrastructure:
+          files: ["**/services/payment/internal/payment/infrastructure/**"]
+          deny:
+            - pkg: "github.com/tiket-sampai-nonton/rusuh-booking-be/services/payment/internal/payment/application"
+              desc: "adapter memanggil port, bukan usecase langsung"
+
+        notification-domain:
+          files: ["**/services/notification/internal/notification/domain/**"]
+          deny:
+            - pkg: "github.com/tiket-sampai-nonton/rusuh-booking-be/pkg"
+              desc: "domain hanya boleh standard library (Handbook §0)"
+            - pkg: "github.com/tiket-sampai-nonton/rusuh-booking-be/services/notification/internal/notification/port"
+              desc: "domain tidak bergantung pada port"
+            - pkg: "github.com/tiket-sampai-nonton/rusuh-booking-be/services/notification/internal/notification/application"
+              desc: "domain tidak bergantung pada application"
+            - pkg: "github.com/tiket-sampai-nonton/rusuh-booking-be/services/notification/internal/notification/infrastructure"
+              desc: "domain tidak bergantung pada infrastructure"
+            - pkg: "net/http"
+              desc: "domain bebas framework/transport"
+            - pkg: "database/sql"
+              desc: "domain bebas driver"
+        notification-port:
+          files: ["**/services/notification/internal/notification/port/**"]
+          deny:
+            - pkg: "github.com/tiket-sampai-nonton/rusuh-booking-be/services/notification/internal/notification/application"
+              desc: "port tidak bergantung pada application"
+            - pkg: "github.com/tiket-sampai-nonton/rusuh-booking-be/services/notification/internal/notification/infrastructure"
+              desc: "port tidak bergantung pada infrastructure"
+        notification-application:
+          files: ["**/services/notification/internal/notification/application/**"]
+          deny:
+            - pkg: "github.com/tiket-sampai-nonton/rusuh-booking-be/services/notification/internal/notification/infrastructure"
+              desc: "usecase hanya bergantung pada port (SDD §4.3)"
+            - pkg: "net/http"
+              desc: "usecase bebas transport"
+        notification-infrastructure:
+          files: ["**/services/notification/internal/notification/infrastructure/**"]
+          deny:
+            - pkg: "github.com/tiket-sampai-nonton/rusuh-booking-be/services/notification/internal/notification/application"
+              desc: "adapter memanggil port, bukan usecase langsung"
+
+  exclusions:
+    generated: lax
+    paths:
+      - "_mock/"
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/tiket-sampai-nonton/rusuh-booking-be

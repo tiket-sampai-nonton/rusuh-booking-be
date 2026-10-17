@@ -1,0 +1,170 @@
+name: rusuh-booking-be
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: rbt
+      POSTGRES_PASSWORD: rbt-local-only
+      POSTGRES_DB: rbt
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./deployments/compose/postgres-init.sql:/docker-entrypoint-initdb.d/00-init.sql:ro
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rbt -d rbt"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  valkey:
+    image: valkey/valkey:8.1
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  queue:
+    build:
+      context: .
+      dockerfile: services/queue/deployments/Dockerfile
+    image: rusuh-booking-queue:local
+    environment:
+      SERVICE_PORT: "8081"
+      LOG_LEVEL: INFO
+      VALKEY_ADDR: valkey:6379
+      POSTGRES_ADDR: postgres:5432
+      RABBITMQ_ADDR: rabbitmq:5672
+    ports:
+      - "8081:8081"
+    depends_on:
+      valkey:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    restart: unless-stopped
+
+  booking-api:
+    build:
+      context: .
+      dockerfile: services/booking/deployments/Dockerfile
+    image: rusuh-booking-booking:local
+    command: ["--mode=api"]
+    environment:
+      SERVICE_PORT: "8082"
+      LOG_LEVEL: INFO
+      POSTGRES_ADDR: postgres:5432
+      RABBITMQ_ADDR: rabbitmq:5672
+      VALKEY_ADDR: valkey:6379
+    ports:
+      - "8082:8082"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+    restart: unless-stopped
+
+  booking-worker:
+    build:
+      context: .
+      dockerfile: services/booking/deployments/Dockerfile
+    image: rusuh-booking-booking:local
+    command: ["--mode=worker"]
+    environment:
+      SERVICE_PORT: "8082"
+      LOG_LEVEL: INFO
+      POSTGRES_ADDR: postgres:5432
+      RABBITMQ_ADDR: rabbitmq:5672
+      VALKEY_ADDR: valkey:6379
+    ports:
+      - "8092:8082"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+    restart: unless-stopped
+
+  payment-api:
+    build:
+      context: .
+      dockerfile: services/payment/deployments/Dockerfile
+    image: rusuh-booking-payment:local
+    command: ["--mode=api"]
+    environment:
+      SERVICE_PORT: "8083"
+      LOG_LEVEL: INFO
+      POSTGRES_ADDR: postgres:5432
+      RABBITMQ_ADDR: rabbitmq:5672
+    ports:
+      - "8083:8083"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    restart: unless-stopped
+
+  payment-worker:
+    build:
+      context: .
+      dockerfile: services/payment/deployments/Dockerfile
+    image: rusuh-booking-payment:local
+    command: ["--mode=worker"]
+    environment:
+      SERVICE_PORT: "8083"
+      LOG_LEVEL: INFO
+      POSTGRES_ADDR: postgres:5432
+      RABBITMQ_ADDR: rabbitmq:5672
+    ports:
+      - "8093:8083"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    restart: unless-stopped
+
+  notification:
+    build:
+      context: .
+      dockerfile: services/notification/deployments/Dockerfile
+    image: rusuh-booking-notification:local
+    environment:
+      SERVICE_PORT: "8084"
+      LOG_LEVEL: INFO
+      POSTGRES_ADDR: postgres:5432
+      RABBITMQ_ADDR: rabbitmq:5672
+    ports:
+      - "8084:8084"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  pgdata:

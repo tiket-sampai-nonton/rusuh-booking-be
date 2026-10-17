@@ -1,0 +1,471 @@
+# Architecture Decision Records — Rusuh Booking Tiket
+
+| Field | Value |
+|-------|-------|
+| **Document ID** | ADR-RBT |
+| **Version** | 1.0 |
+| **Date** | 2026-10-17 |
+| **Deciders** | Tim PT. Tiket Sampai Nonton Sentosa (BE-1, BE-2, WEB-1, WEB-2, MOB-1) |
+| **Source** | PRD v4.6 §1.4, §5.25, §7, §9.7, §9.8, §13.4, Lampiran L; keputusan tim 14–16 Oktober 2026 |
+
+> **Reference basis.** Format mengikuti Nygard ADR / MADR dan mencatat elemen *architecture decision* dan *rationale* pada ISO/IEC/IEEE 42010:2022. Satu keputusan per ADR. ADR yang sudah Accepted tidak diubah; perubahan dibuat dengan ADR baru yang menggantikannya.
+>
+> Semua ADR di bawah berstatus **Accepted** sebagai baseline PoC. Perubahan scope, data model, urutan lock, batas service, atau topologi deployment wajib melalui ADR baru (v4.6 Final Canonical Release Statement).
+
+## Index
+
+| ADR | Title | Date | Concerns (HLD) | Related requirements |
+|-----|-------|------|----------------|----------------------|
+| ADR-001 | Empat service sesuai aktor requirement, schema per service, monorepo | 2026-10-15 | CN-02, CN-03 | SRS-C-01, NFR-04 |
+| ADR-002 | Reservasi stok tingkat event saat admission | 2026-10-15 | CN-03, CN-04 | GR-01, SRS §3.2.9 |
+| ADR-003 | Waiting room via polling Status Document di CDN; SSE hanya di halaman detail | 2026-10-15 | CN-07 | FR-06–FR-08, NFR-01, NFR-06, SRS §3.2.25 |
+| ADR-004 | Guest checkout tanpa OTP email | 2026-10-15 | CN-06 | GR-05, AS-04 |
+| ADR-005 | Aturan NIK: validasi struktur, kuota pembeli dan pemegang terpisah, cek langsung tanpa kunci | 2026-10-15 | CN-06 | GR-03, GR-14, BR-01, BR-02, SRS §3.2.11 |
+| ADR-006 | Ubah pesanan hanya sebelum "Bayar", penggantian atomik, sisa unit dipegang | 2026-10-15 | CN-04 | AS-21, AS-22, SRS §3.2.23 |
+| ADR-007 | Rekonsiliasi pembayaran sebelum melepas stok; refund manual | 2026-10-15 | CN-04 | GR-09, FR-23, AS-09 |
+| ADR-008 | PostgreSQL sebagai otoritas stok dan uang; Valkey hanya antrean, rate limit, cache | 2026-10-16 | CN-03 | NFR-04, SRS-Q-REL-02..03 |
+| ADR-009 | Sikap CAP/PACELC per komponen | 2026-10-16 | CN-03 | SRS-Q-REL-02..04 |
+| ADR-010 | Outbox hanya di Booking dan Payment; consumer idempoten tanpa tabel inbox; RabbitMQ + JSON | 2026-10-16 | CN-03, CN-04 | NFR-10, FR-25 |
+| ADR-011 | REST internal dan JWT EdDSA | 2026-10-15 | CN-02, CN-06 | NFR-07, NFR-08 |
+| ADR-012 | Edge CloudFront + WAF + ALB dan compute EC2 Auto Scaling Group | 2026-10-14 | CN-05, CN-06 | NFR-01, NFR-03 |
+| ADR-013 | Snapshot konfigurasi per sesi; aturan jaminan dikunci saat penjualan dibuka | 2026-10-15 | CN-04 | GR-12, AS-26, SRS §3.2.26 |
+| ADR-014 | Notifikasi giliran: peringatan + push + jendela klaim 3 menit, tanpa prioritas | 2026-10-15 | CN-04 | GR-08, AS-06, AS-24, AS-25 |
+| ADR-015 | Tech stack sesuai tech radar dan alasan best practice | 2026-10-16 | CN-09 | SRS-C-02 |
+| ADR-016 | Struktur proyek mengikuti standar proyek organisasi | 2026-10-17 | CN-02, CN-09 | SRS-C-08 |
+
+---
+
+## ADR-001: Empat service sesuai aktor requirement, schema per service, monorepo
+
+| Field | Value |
+|-------|-------|
+| **Status** | Accepted (menggantikan modular monolith v4.1) |
+| **Date** | 2026-10-15 |
+| **Concerns** | CN-02, CN-03 |
+| **Affected components** | CMP-QUEUE, CMP-BOOKING, CMP-PAYMENT, CMP-NOTIF |
+
+**Context.** Requirement menyebut aktor Queue Service, Booking Service, Payment Service, dan Notification Service. Beban join antrean berbeda jauh dari beban transaksi. Oversell harus mustahil walaupun sistem terdistribusi. Tim hanya 2 BE.
+
+**Decision drivers.** Keterlacakan ke aktor requirement; tidak ada oversell; skala waiting room terpisah; kolaborasi 2 BE; operasional sederhana.
+
+**Considered options.** (A) 4 service + schema per service; (B) modular monolith; (C) microservices granular (stok, kuota, tiket terpisah).
+
+**Decision.** Pilih **A**: 4 service dalam satu monorepo (satu proyek dan `go.mod` per service sesuai standar proyek, disatukan `go.work`; satu binary per service dengan mode api/worker; lihat ADR-016), satu cluster PostgreSQL dengan schema dan user DB terpisah per service, tanpa FK/join lintas schema. Semua yang menyentuh stok berada di Booking Service dan berubah dalam satu transaksi. Komunikasi sinkron hanya Queue→Booking dan Booking↔Payment; sisanya asinkron via RabbitMQ.
+
+**Consequences.**
+- Positif: oversell dicegah oleh satu transaksi; Queue di-scale terpisah; pembagian kerja jelas (BE-1 Queue + Notification, BE-2 Booking + Payment); schema dapat dipindah ke instance sendiri tanpa ubah kode.
+- Negatif: 4 image dan kontrak antar-service; koordinasi kontrak (dibekukan D2).
+
+**Confirmation.** Kode service di `internal/` (tidak dapat diimpor service lain); `depguard` di CI; contract test; TC-BKG-07.
+
+---
+
+## ADR-002: Reservasi stok tingkat event saat admission
+
+| Field | Value |
+|-------|-------|
+| **Status** | Accepted |
+| **Date** | 2026-10-15 (v4.2, disempurnakan v4.3) |
+| **Concerns** | CN-03, CN-04 |
+| **Affected components** | CMP-BOOKING, CMP-QUEUE |
+
+**Context.** GR-01: pembeli yang masuk halaman beli pasti dapat tiket. Notulen bertentangan (D-2 vs KP-3/KP-4). Stok puluhan ribu tidak dapat di-hold untuk 1 juta pengantre. Pembeli belum memilih kategori saat giliran tiba.
+
+**Considered options.** Hold saat masuk antrean; reservasi per kategori saat admission; reservasi 1 unit; **reservasi tingkat event N = min(3, sisa kuota, stok bebas) saat admission**.
+
+**Decision.** Giliran hanya diberikan bila Booking berhasil mereservasi N unit tingkat event. Unit dikonversi menjadi hold kategori saat "Lanjut ke Pembayaran". Invariant dijaga DB: `allocated + held + sold ≤ total_capacity`, `total_capacity = Σ kapasitas kategori`, hold ≤ reservasi sendiri.
+
+**Consequences.**
+- Positif: jaminan "hingga N tiket" selalu benar (dibuktikan harness); sisa stok 1–2 tetap terjual; kategori favorit tidak terkunci.
+- Negatif: kategori favorit tidak dijamin (dikomunikasikan, AS-10); admission ditahan saat stok bebas 0 tetapi masih ada yang mungkin kembali.
+
+**Confirmation.** TC-ADM-01..05, TC-BKG-12; harness Test Plan Annex B.
+
+---
+
+## ADR-003: Waiting room via polling Status Document di CDN; SSE hanya di halaman detail
+
+| Field | Value |
+|-------|-------|
+| **Status** | Accepted |
+| **Date** | 2026-10-15 (v4.4) |
+| **Concerns** | CN-07 |
+| **Affected components** | CMP-QUEUE, CMP-EDGE, CMP-WEB, CMP-MOBILE, CMP-BOOKING |
+
+**Context.** Requirement meminta posisi "real time" tanpa angka latensi. Inti yang diminta: tidak PHP dan adil. Pengantre hingga 1 juta. Di mobile, koneksi persisten putus saat jaringan berpindah, dan aplikasi di background tidak menerima polling, SSE, maupun WebSocket; yang benar-benar menolong adalah push notification (ADR-014).
+
+**Considered options.** Polling ke origin; WebSocket/SSE di waiting room; **polling satu dokumen status per event yang di-cache CDN**.
+
+**Decision.** Waiting room membaca Status Document dari CDN (cache 1 s); posisi dihitung di klien dari nomor antrean bertanda tangan; interval polling dikendalikan server. "Real time" = near-real-time dengan batas keterlambatan terukur (SRS-F-25-01). SSE hanya di halaman detail (jumlah koneksi dibatasi slot aktif) dengan fallback polling otomatis.
+
+**Consequences.**
+- Positif: beban origin konstan terhadap jumlah pengantre; tanpa 1 juta koneksi persisten; keadilan tidak dipengaruhi latensi karena urutan dari seq server; interval dapat dituning tanpa rilis aplikasi.
+- Negatif: keterlambatan beberapa detik; bila panitia meminta < 1 s di waiting room, biaya naik (AS-20, OI-07).
+
+**Confirmation.** TC-PERF-01, TC-QUE-14, TC-QUE-15, TC-SSE-01..03.
+
+---
+
+## ADR-004: Guest checkout tanpa OTP email
+
+| Field | Value |
+|-------|-------|
+| **Status** | Accepted (menggantikan modul Identity & Auth v4.1) |
+| **Date** | 2026-10-15 |
+| **Concerns** | CN-06 |
+| **Affected components** | CMP-QUEUE, CMP-WEB, CMP-MOBILE |
+
+**Context.** Grooming KP-7/D-6: login tidak wajib, email wajib. OTP untuk 1 juta pengantre mahal dan menambah friksi.
+
+**Considered options.** Login/akun; OTP email; **guest + email diketik dua kali tanpa OTP**.
+
+**Decision.** Identitas customer = visitor token bertanda tangan + NIK pembeli (HMAC) + email. Email diketik dua kali; tiket juga tampil di layar dan via tautan.
+
+**Consequences.** Positif: friksi rendah, biaya rendah. Negatif: risiko salah ketik email (dimitigasi konfirmasi ganda dan tiket di layar).
+
+**Confirmation.** TC-GST-01..05, TC-TKT-01.
+
+---
+
+## ADR-005: Aturan NIK — validasi struktur, kuota pembeli dan pemegang terpisah, cek langsung tanpa kunci
+
+| Field | Value |
+|-------|-------|
+| **Status** | Accepted |
+| **Date** | 2026-10-15 |
+| **Concerns** | CN-06 |
+| **Affected components** | CMP-BOOKING, CMP-QUEUE, CMP-PLATFORM |
+
+**Context.** BR-01 (maks 3 tiket per NIK) bertentangan dengan arahan CTO KP-13 (setiap tiket NIK berbeda). Validasi NIK harus internal (GR-14). Pembeli ingin tahu lebih awal bila NIK pemegang tidak bisa dipakai.
+
+**Considered options.** Satu counter gabungan vs dua hitungan terpisah; Dukcapil vs validasi struktur; mengunci NIK selama sesi vs cek langsung tanpa kunci.
+
+**Decision.** NIK pemegang maks 1 tiket per event (unique index); NIK pembeli maks 3 tiket per event; dua hitungan terpisah per event. Validasi struktur NIK internal. Cek NIK pemegang langsung saat diketik, dibatasi 10 NIK berbeda per sesi, tanpa mengunci; cek final atomik saat hold.
+
+**Consequences.** Positif: sesuai dua aturan sumber; perlindungan calo dari aturan pemegang; tidak ada celah memblokir NIK orang lain. Negatif: NIK palsu berformat benar lolos (Dukcapil sebagai opsi lanjutan); bentrok bersamaan ditangkap saat hold.
+
+**Confirmation.** TC-BKG-01..03, TC-BKG-08..11.
+
+---
+
+## ADR-006: Ubah pesanan hanya sebelum "Bayar", penggantian atomik, sisa unit dipegang
+
+| Field | Value |
+|-------|-------|
+| **Status** | Accepted |
+| **Date** | 2026-10-15 (v4.4) |
+| **Concerns** | CN-04 |
+| **Affected components** | CMP-BOOKING, CMP-PAYMENT, CMP-WEB, CMP-MOBILE |
+
+**Context.** Pembeli perlu mengoreksi pesanan setelah "Lanjut ke Pembayaran". Mengubah setelah transaksi gateway dibuat berisiko transfer ke VA lama.
+
+**Considered options.** Tidak bisa ubah; bebas ubah selama TTL Booking (batalkan transaksi gateway); **ubah hanya sebelum "Bayar"**. Lepas hold lalu pilih ulang vs **penggantian atomik**. Sisa unit dilepas saat hold vs **dipegang sampai terkunci**.
+
+**Decision.** Ubah pesanan diizinkan sampai menekan "Bayar Sekarang" dan selama TTL Booking; maks 3 kali; penggantian atomik (`PUT /bookings/{id}/items`); sisa unit dipegang sampai terkunci; TTL Pembayaran tidak di-reset; Payment memanggil `payment-lock` sebelum membuat transaksi.
+
+**Consequences.** Positif: jaminan N tetap berlaku saat kembali ke detail; tidak ada risiko VA ganda; kategori yang dipegang tidak hilang di tengah perubahan. Negatif: state `EDITABLE` menambah kompleksitas (dimitigasi harness dan flag per event).
+
+**Confirmation.** TC-EDT-01..06, TC-NAV-01..03.
+
+---
+
+## ADR-007: Rekonsiliasi pembayaran sebelum melepas stok; refund manual
+
+| Field | Value |
+|-------|-------|
+| **Status** | Accepted |
+| **Date** | 2026-10-15 |
+| **Concerns** | CN-04 |
+| **Affected components** | CMP-BOOKING, CMP-PAYMENT |
+
+**Context.** GR-09: gateway yang lambat tidak boleh membuat pembeli di-PHP. Webhook dapat terlambat. Dukungan refund API berbeda per metode.
+
+**Considered options.** Release langsung saat TTL; **resolve ke gateway sebelum release**. Refund otomatis vs **refund manual**.
+
+**Decision.** Saat TTL Pembayaran habis, booking `VERIFYING` (stok ditahan) dan Payment melakukan `resolve(CHECK_AND_CANCEL)`. Tepat waktu dinilai dari `settlement_time`. Pembayaran setelah batas → `REVIEW` dan refund manual oleh Ops.
+
+**Consequences.** Positif: pembayaran sah tidak dibatalkan; stok orang lain tidak diambil. Negatif: stok tertahan hingga masa tenggang 3 menit; proses Ops manual.
+
+**Confirmation.** TC-PAY-04, TC-PAY-06..08.
+
+---
+
+## ADR-008: PostgreSQL sebagai otoritas stok dan uang; Valkey hanya antrean, rate limit, cache
+
+| Field | Value |
+|-------|-------|
+| **Status** | Accepted |
+| **Date** | 2026-10-16 (v4.5) |
+| **Concerns** | CN-03 |
+| **Affected components** | CMP-BOOKING, CMP-PAYMENT, CMP-QUEUE, DS-PG, DS-VK |
+
+**Context.** Antrean butuh operasi atomik berlatensi rendah (INCR, sorted set, Lua). Stok dan uang butuh jaminan transaksi terkuat. Replikasi in-memory bersifat async.
+
+**Considered options.** Valkey juga untuk stok dan sesi; **Valkey hanya antrean/rate limit/cache, stok di PostgreSQL**. Client `valkey-go` (pure Go) vs client berbasis core native (CGO). Redis OSS vs Valkey.
+
+**Decision.** PostgreSQL 16 untuk seluruh stok, alokasi, hold, sesi, kuota, NIK pemegang, booking, pembayaran. Valkey 8.1 + `valkey-go` hanya untuk antrean, rate limit, dan cache; semua data Valkey dapat dipulihkan atau dihitung ulang.
+
+**Consequences.** Positif: failover Valkey tidak pernah menyebabkan oversell atau hilangnya tiket yang dijanjikan; tulisan stok dibatasi slot aktif (< 250/detik di Tier L) sehingga PostgreSQL bukan bottleneck; lisensi BSD; ElastiCache for Valkey lebih murah. Negatif: dua data store untuk dioperasikan.
+
+**Confirmation.** TC-CAP-01, TC-CAP-02; benchmark Lua (SDD §4.9).
+
+---
+
+## ADR-009: Sikap CAP/PACELC per komponen
+
+| Field | Value |
+|-------|-------|
+| **Status** | Accepted |
+| **Date** | 2026-10-16 (v4.6) |
+| **Concerns** | CN-03 |
+
+**Context.** Sistem terdistribusi harus memilih antara konsistensi dan ketersediaan saat partisi.
+
+**Considered options.** Satu sikap untuk seluruh sistem; **sikap per komponen menurut akibat bila data salah**.
+
+**Decision.** CP untuk stok dan uang (PostgreSQL, satu primary); fail closed untuk penerbitan nomor antrean; AP untuk cache, Status Document, dan notifikasi. Tanpa transaksi terdistribusi (2PC/saga). Rincian tabel ada di HLD §4.3.
+
+**Consequences.** Positif: konsistensi kuat hanya di tempat yang membutuhkan; tidak ada oversell saat partisi. Negatif: hold gagal sementara saat primary tidak terjangkau; join ditolak beberapa detik saat Valkey gagal.
+
+**Confirmation.** TC-CAP-01..03, TC-MSG-01..03.
+
+---
+
+## ADR-010: Outbox hanya di Booking dan Payment; consumer idempoten tanpa tabel inbox; RabbitMQ + JSON
+
+| Field | Value |
+|-------|-------|
+| **Status** | Accepted (menggantikan `consumer_inbox` di v4.5) |
+| **Date** | 2026-10-16 (v4.6) |
+| **Concerns** | CN-03, CN-04 |
+| **Affected components** | CMP-BOOKING, CMP-PAYMENT, CMP-QUEUE, CMP-NOTIF, DS-MQ |
+
+**Context.** Dual write berbahaya hanya untuk event yang membawa akibat uang atau tiket. RabbitMQ mengirim at-least-once.
+
+**Considered options.** Outbox di semua producer / publish langsung di semua / **outbox hanya Booking dan Payment**. Tabel `consumer_inbox` per service vs **idempotensi dari data bisnis**. Protobuf vs **JSON + JSON Schema**. Amazon SQS vs **RabbitMQ**.
+
+**Decision.** Transactional outbox di Booking dan Payment; Queue mem-publish `queue.turn.*` langsung dengan publisher confirm; Notification hanya consumer. Idempotensi consumer lewat guard state, Lua idempoten, dan unique key bisnis. RabbitMQ dengan retry berjenjang dan DLQ; payload JSON.
+
+**Consequences.** Positif: customer tidak mungkin sudah bayar tanpa tiket karena crash; tabel pendukung turun 13 → 8; mudah diinspeksi dan dijalankan lokal. Negatif: email/push at-least-once (dinyatakan jujur).
+
+**Confirmation.** TC-MSG-01..03, TC-CAP-03.
+
+---
+
+## ADR-011: REST internal dan JWT EdDSA
+
+| Field | Value |
+|-------|-------|
+| **Status** | Accepted |
+| **Date** | 2026-10-15 |
+| **Concerns** | CN-02, CN-06 |
+
+**Context.** Hanya dua titik komunikasi sinkron. Autoscaling tanpa sticky session. Swagger/OpenAPI ADOPT di radar; gRPC belum.
+
+**Considered options.** gRPC vs **REST/JSON + OpenAPI 3.1**. Session store terpusat vs **JWT EdDSA**.
+
+**Decision.** API internal REST/JSON dengan service token JWT berumur pendek di jaringan privat. Token visitor, queue, admission, payment page, ticket link, dan service memakai JWT EdDSA (Ed25519); private key hanya di service penerbit; `jti` untuk token sekali pakai; kunci di SSM dengan rotasi `kid`.
+
+**Consequences.** Positif: tidak ada session store; aman untuk autoscaling; signature kecil dan cepat. Negatif: revokasi token bergantung pada TTL pendek dan `jti`.
+
+**Confirmation.** TC-SEC-01, TC-API-02.
+
+---
+
+## ADR-012: Edge CloudFront + WAF + ALB dan compute EC2 Auto Scaling Group
+
+| Field | Value |
+|-------|-------|
+| **Status** | Accepted |
+| **Date** | 2026-10-14 (v4.1, tanpa Kong) |
+| **Concerns** | CN-05, CN-06 |
+| **Affected components** | CMP-EDGE, semua service |
+
+**Context.** Polling status hingga 1 juta klien, bot saat jam buka, kredit AWS US$200, assessor harus bisa menjalankan lokal.
+
+**Considered options.** Kong / API Gateway vs **CloudFront + WAF + ALB**; container orchestrator vs **EC2 ASG (Graviton)**.
+
+**Decision.** CloudFront menyerap polling Status Document dan event list; WAF managed rules, rate-based rule, dan challenge saat jam buka; ALB path routing per service, origin hanya dari CloudFront. Compute EC2 ASG terpisah untuk Queue dan Core, scheduled scale-out sebelum jam buka. Lokal: nginx edge di Docker Compose meniru routing dan cache.
+
+**Consequences.** Positif: proteksi bot dan DDoS managed; biaya PoC dalam kredit. Negatif: status radar CloudFront/WAF/ALB perlu konfirmasi (OI-02).
+
+**Confirmation.** TC-SEC-02, TC-ASG-01, TC-PERF-01.
+
+---
+
+## ADR-013: Snapshot konfigurasi per sesi; aturan jaminan dikunci saat penjualan dibuka
+
+| Field | Value |
+|-------|-------|
+| **Status** | Accepted |
+| **Date** | 2026-10-15 (v4.4) |
+| **Concerns** | CN-04 |
+| **Affected components** | CMP-BOOKING, CMP-QUEUE |
+
+**Context.** GR-12: TTL configurable. Mengubah aturan di tengah penjualan membuat aturan berbeda antara pengantre sebelum dan sesudah perubahan.
+
+**Considered options.** Konfigurasi global dibaca setiap request vs **snapshot per sesi + aturan jaminan dikunci**.
+
+**Decision.** Nilai TTL dan fitur disalin ke admission saat giliran diberikan; aturan pembentuk jaminan dikunci pada `rules_locked_at`; validasi silang gagal sejak awal; setiap perubahan diaudit.
+
+**Consequences.** Positif: perubahan tidak pernah memendekkan waktu orang yang sedang berjalan. Negatif: kesalahan konfigurasi aturan harus diputuskan sebelum jam buka.
+
+**Confirmation.** TC-CFG-01..04.
+
+---
+
+## ADR-014: Notifikasi giliran — peringatan + push + jendela klaim 3 menit, tanpa prioritas
+
+| Field | Value |
+|-------|-------|
+| **Status** | Accepted (claim window 2 → 3 menit) |
+| **Date** | 2026-10-15 (v4.4) |
+| **Concerns** | CN-04 |
+| **Affected components** | CMP-QUEUE, CMP-NOTIF, CMP-MOBILE |
+
+**Context.** Aplikasi mobile di background tidak menerima polling. Giliran hangus merugikan pembeli; kesempatan kedua merugikan pengantre lain.
+
+**Considered options.** Jendela panjang (10 menit); kesempatan kedua dengan prioritas; **peringatan sebelum giliran + push + jendela 3 menit, tanpa prioritas**.
+
+**Decision.** Banner "giliran sebentar lagi" dan push `TURN_SOON`; push `TURN_ARRIVED`; claim window 3 menit (PROPOSED, configurable); giliran hangus tanpa prioritas; missed turn rate dipantau (> 5% → naikkan).
+
+**Consequences.** Positif: mengurangi giliran hangus tanpa menahan stok lama; urutan tidak pernah diubah. Negatif: push best effort; pembeli yang lalai antre ulang dari belakang.
+
+**Confirmation.** TC-QUE-09, TC-QUE-13.
+
+---
+
+## ADR-015: Tech stack sesuai tech radar dan alasan best practice
+
+| Field | Value |
+|-------|-------|
+| **Status** | Accepted (PostgreSQL, Valkey, RabbitMQ dikonfirmasi ADOPT 16 Okt; komponen "perlu cek radar" dikonfirmasi saat kickoff) |
+| **Date** | 2026-10-16 (v4.5) |
+| **Concerns** | CN-09 |
+
+**Context.** Proposal tender harus sesuai tech radar klien dan dapat dipertahankan saat technical defense. Daftar stack ada di HLD §4.8.
+
+**Decision.** Stack mengikuti tabel di HLD §4.8. Prinsip pemilihan dan alasan per komponen:
+
+*Sumber: PRD v4.6 §7.3*
+
+Prinsip pemilihan: **(1)** sesuai tech radar klien, **(2)** setiap komponen punya satu tugas yang jelas, **(3)** yang menyentuh stok dan uang memakai teknologi dengan jaminan transaksi terkuat, **(4)** semuanya dapat dijalankan assessor secara lokal tanpa AWS, **(5)** biaya dikendalikan oleh desain, bukan oleh diskon.
+
+| Komponen | Pilihan | Alasan best practice | Nilai untuk tender |
+|---|---|---|---|
+| Bahasa backend | **Go 1.26** + `net/http` standard library | Goroutine murah untuk ribuan koneksi bersamaan (join, SSE); binary tunggal tanpa runtime; memori kecil per instance; race detector bawaan untuk menguji konkurensi; dependency minimal mengurangi CVE | Instance kecil (t4g) cukup, biaya compute rendah; ADOPT di radar |
+| Database transaksi | **PostgreSQL 16** | Transaksi ACID, row lock, partial unique index, dan constraint trigger menegakkan invariant stok di database itu sendiri, bukan hanya di kode; `SKIP LOCKED` untuk worker expiry | Jawaban paling kuat untuk "bagaimana menjamin tidak oversell": dijaga constraint, dibuktikan harness (Lampiran C.7 [v4.6 → SDD §4.7.1]) |
+| In-memory store | **Valkey 8.1** + **`valkey-go`** | Struktur data yang tepat untuk antrean (INCR, sorted set, TTL) dan Lua atomik untuk join/admit; lisensi open source BSD di bawah Linux Foundation; kompatibel penuh dengan perintah dan Lua Redis 7.2; `valkey-go` pure Go (tanpa CGO), mendukung cluster, auto-pipelining, dan `EVALSHA` | ElastiCache for Valkey dipatok lebih murah dibanding engine Redis OSS; tidak ada risiko lisensi bagi klien |
+| Broker | **RabbitMQ** + transactional outbox (Booking, Payment) | Retry berjenjang, DLQ, dan publisher confirm bawaan; outbox menulis state dan event dalam satu commit sehingga event yang membawa akibat uang/tiket tidak hilang walau proses crash atau broker mati; consumer idempoten lewat guard state dan unique key; manual ack setelah efek durable | Kegagalan email/notifikasi tidak pernah membatalkan transaksi (NFR-10); dapat dijalankan lokal |
+| Komunikasi | **REST/JSON + OpenAPI 3.1**, satu kontrak untuk web dan mobile | Kontrak-first: tipe FE di-generate dari kontrak, mock Apidog untuk FE sejak hari pertama; tidak ada logika per klien di backend | Memenuhi FR-24/NFR-08; tim FE tidak menunggu BE |
+| Real-time | **Polling ke CDN** di waiting room, **SSE** di halaman detail | Beban origin konstan terhadap jumlah pengantre; SSE hanya untuk pembeli yang sudah lolos antrean (jumlah dibatasi slot aktif); fallback polling otomatis | 1 juta pengantre tanpa 1 juta koneksi terbuka; biaya per penjualan didominasi request CDN yang murah |
+| Token | **JWT EdDSA** (Ed25519) | Signature kecil dan verifikasi cepat; private key hanya di service penerbit, service lain cukup public key; `jti` untuk token sekali pakai | Tidak ada session store terpusat; aman untuk autoscaling tanpa sticky session |
+| Web | **Next.js (App Router) + TypeScript + Tailwind** | Satu codebase untuk halaman customer dan payment page; payment page satu origin dengan API (cookie HttpOnly, tanpa CORS); TypeScript strict dari kontrak | Payment page sama dipakai di WebView mobile (SCP-01): satu implementasi, dua platform |
+| Mobile | **React Native + TypeScript** | Satu developer mobile dapat mengirim Android dan iOS; logika posisi antrean (`queue-position.ts`) dipakai bersama web | Mengurangi risiko jadwal dengan 1 FE mobile |
+| Edge | **CloudFront + AWS WAF + ALB** | CDN menyerap polling status; WAF challenge dan rate-based rule menahan bot di tepi; ALB path routing per service; origin hanya menerima dari CloudFront | Perlindungan bot dan DDoS managed tanpa operasi tambahan |
+| Compute | **EC2 Auto Scaling Group** (Graviton t4g/c7g) | ASG Queue terpisah karena beban join berbeda dari beban transaksi; scheduled scale-out sebelum jam buka; Graviton memberi harga per vCPU lebih rendah | Biaya PoC dalam kredit; skala production terukur per tier (§17 [v4.6 → HLD §4.7]) |
+| IaC & CI/CD | **Terraform** + **GitHub Actions dengan OIDC** | Infrastruktur dapat direview dan diulang; OIDC menghapus access key jangka panjang; image dibangun sekali dan di-deploy per digest | Assessor dapat mengaudit seluruh infra dari repo |
+| Lokal | **Docker Compose** + nginx edge | Seluruh sistem (4 service, PostgreSQL, Valkey, RabbitMQ, Mailpit, observability) jalan dengan satu perintah; nginx meniru routing ALB dan cache CloudFront | Clean-room assessor tanpa AWS dan tanpa private registry |
+| Payment | **Midtrans Sandbox (Core API)** | Webhook bersignature, status API untuk rekonsiliasi, custom expiry diselaraskan dengan TTL; data kartu tidak pernah menyentuh sistem | Integrasi aktual, bukan mock; sesuai grooming (GR-13) |
+| Observability | **OpenTelemetry → Prometheus + Grafana**, Jaeger lokal | Standar vendor-neutral; trace lintas service dan event; dashboard disimpan di repo | Metrik antrean, konversi, dan expiry real-time (NFR-09) dengan biaya rendah |
+| Testing | Go `testing` (race), **godog**, **Apidog**, **Katalon**, **Appium**, **k6**, **Zephyr Scale** | Piramida test lengkap; acceptance criteria ditulis Gherkin; k6 membuktikan klaim kapasitas | Setiap klaim proposal ditautkan ke test ID dan evidence |
+| Keamanan | gosec, govulncheck, CodeQL, Trivy, ZAP, secret scanning | Shift-left: dicek di setiap PR, bukan di akhir | Repo public tetap aman; temuan high/critical menjadi release blocker |
+
+
+**Confirmation.** Review tech radar pada kickoff; komponen HOLD diganti lewat ADR baru.
+
+---
+
+## ADR-016: Struktur proyek mengikuti standar proyek organisasi
+
+| Field | Value |
+|-------|-------|
+| **Status** | Accepted (menggantikan struktur monorepo Lampiran F PRD v4.6) |
+| **Date** | 2026-10-17 |
+| **Concerns** | CN-02, CN-09 |
+| **Related requirements** | SRS-C-08 |
+| **Affected components** | CMP-QUEUE, CMP-BOOKING, CMP-PAYMENT, CMP-NOTIF, CMP-PLATFORM |
+
+**Context.** Organisasi memiliki standar struktur proyek Go yang wajib diikuti: hexagon per domain di `internal/<domain>/` dengan `port/{inbound,outbound}`, `domain/{entity,valueobject,dto,mapper}`, `application/usecase`, `infrastructure/*`; `internal/shared/entity`, `internal/config`, `internal/delivery/server.go` sebagai composition root; `pkg/` untuk utilitas bersama; `_mock/` hasil generate; `assets/`, `deployments/`, `docs/`; `.gitlab-ci.yml`; interface berawalan `I`. Struktur di PRD v4.6 (Lampiran F) memakai `domain/application/adapter` dengan port dalam satu file dan wiring di `cmd`. RBT berbeda dari contoh standar karena memuat 4 service, web, mobile, dan artefak wajib assessment dalam satu repository GitHub public.
+
+**Decision drivers.** Kepatuhan pada standar organisasi (wajib); batas antar-service yang ditegakkan compiler; kode bersama tidak disalin 4 kali; aturan assessment (GitHub public, `.kiro/`, `specs/`, Docker Compose untuk assessor).
+
+**Considered options.** (A) Setiap service menjadi proyek penuh sesuai standar di `services/<svc>/`, `pkg/` bersama di root via `go.work`; (B) satu proyek dengan 4 hexagon di `internal/{queue,booking,payment,notification}` dan `cmd/<svc>/main.go`; (C) tetap struktur v4.6.
+
+**Decision.** Pilih **A**. Setiap `services/<svc>/` mengikuti standar sepenuhnya (SDD-RBT-001 §4.1). Penyesuaian yang diperlukan dicatat sebagai deviasi:
+
+| Elemen | Penyesuaian | Alasan |
+|---|---|---|
+| `pkg/` | Di root sebagai module bersama, bukan per service | Dipakai 4 service; menghindari 4 salinan |
+| Worker | `cmd/main.go` dengan flag `--mode=api` atau `--mode=worker` + `internal/delivery/worker.go` | Mempertahankan satu entry point sesuai standar |
+| Migration, Dockerfile | `services/<svc>/deployments/{Dockerfile,migrations}` | Standar tidak punya folder migration; `deployments/` adalah tempat konfigurasi deployment |
+| `.gitlab-ci.yml` | Diganti GitHub Actions (`.github/workflows/`) | Assessment mewajibkan repository GitHub public; tahapan pipeline setara |
+| Root monorepo | Tambahan `services/`, `web/`, `mobile/`, `tests/`, `tools/`, `.kiro/`, `specs/`, `docker-compose.yaml`, `Makefile`, `go.work` | Standar mendefinisikan satu service; RBT memuat beberapa proyek dan artefak assessment |
+| Kontrak | `docs/contracts/{openapi,events}` | Dokumentasi berada di `docs/` |
+
+**Consequences.**
+- Positif: konsisten dengan proyek organisasi lain; reviewer dan tim maintenance langsung familiar; port inbound/outbound eksplisit memudahkan mock dan contract test; `internal/` mencegah import lintas service tanpa bergantung linter.
+- Negatif: lebih banyak folder per service; `go.work` perlu dikelola; CI berbeda dari standar sampai repository dipindah ke GitLab.
+
+**Confirmation.** Review struktur di setiap PR (CODEOWNERS); `depguard` untuk aturan lapisan; `make mock` menghasilkan `_mock/` tanpa diff; checklist `.kiro/steering/structure.md`.
+
+---
+
+## Appendix A — Architecture Trade-Off Matrix
+
+*Sumber: PRD v4.6 Lampiran L*
+
+### Gaya Arsitektur
+
+| Kriteria | 4 service + schema per service (dipilih) | Modular monolith (v4.1) | Microservices granular (stok, kuota, tiket terpisah) |
+|---|---|---|---|
+| Kesesuaian dengan aktor requirement | Tinggi | Sedang (logical service) | Tinggi tetapi berlebihan |
+| Risiko oversell | Rendah: stok di satu service | Rendah | Tinggi: perlu saga/kompensasi |
+| Skala waiting room | Queue di-scale terpisah | Perlu mode khusus | Baik |
+| Kolaborasi 2 BE | Jelas: BE-1 Queue+Notification, BE-2 Booking+Payment | Jelas per modul | Terlalu banyak kontrak |
+| Operasional | Menengah (4 image, 1 cluster data) | Rendah | Tinggi |
+| Evolusi | Schema → instance terpisah tanpa ubah kode | Butuh pemisahan data dulu | Sudah terpisah |
+
+### Keputusan Desain Kunci
+
+| Keputusan | Alternatif | Alasan dipilih |
+|---|---|---|
+| Reservasi saat admission | Hold saat masuk antrean | Stok puluhan ribu tidak dapat di-hold untuk 1 juta pengantre; jaminan diberikan di titik yang mungkin dijamin |
+| Reservasi tingkat event (bukan kategori) | Reservasi per kategori | Customer belum memilih kategori saat admission; tingkat event menjamin ada tiket tanpa mengunci kategori favorit |
+| Reservasi `min(3, sisa kuota, stok bebas)` unit | 1 unit | Menjamin order penuh hingga 3 tiket; sisa stok 1–2 tetap terjual; unit sisa kembali saat pesanan terkunci |
+| Kuota pembeli dan pemegang terpisah | Satu counter gabungan | Sesuai dua aturan sumber (BR-01 dan arahan CTO); perlindungan calo datang dari aturan pemegang; lebih mudah dijelaskan ke customer |
+| Cek NIK pemegang langsung tanpa kunci | Mengunci NIK selama sesi | Sederhana; bentrok bersamaan sangat jarang dan tidak menghilangkan reservasi; mengunci NIK membuka celah memblokir NIK orang lain |
+| Status antrean dari CDN, near-real-time | Polling ke origin; WebSocket/SSE | Kebutuhan sebenarnya "jujur dan adil", bukan latensi sub-detik; urutan dari seq server sehingga latensi tidak memengaruhi keadilan; beban origin konstan; tanpa 1 juta koneksi persisten; sederhana untuk mobile |
+| Interval polling dikirim server | Hardcode di aplikasi | Dapat dituning saat penjualan tanpa rilis aplikasi mobile |
+| Ubah pesanan hanya sebelum "Bayar" | Bebas ubah selama TTL Booking (batalkan transaksi gateway); tidak bisa ubah | Tanpa pembatalan transaksi di gateway dan tanpa risiko transfer ke VA lama; tetap memberi ruang koreksi |
+| Sisa unit dipegang sampai pesanan terkunci | Dilepas saat hold | Menjaga jaminan N saat customer kembali menambah tiket; ongkos throughput kecil (≤ TTL Booking) |
+| Penggantian atomik saat ubah | Lepas hold lalu pilih ulang | Kategori yang sedang dipegang tidak bisa diambil orang lain di tengah perubahan |
+| Push + peringatan sebelum giliran + jendela 3 menit | Jendela panjang (10 menit); kesempatan kedua dengan prioritas | Mengurangi giliran hangus tanpa menahan stok lama; urutan antrean tidak pernah diubah |
+| Snapshot konfigurasi per sesi + aturan jaminan dikunci | Konfigurasi global dibaca setiap request | Perubahan tidak pernah memendekkan waktu orang yang sedang berjalan atau mengubah aturan di tengah penjualan |
+| Zona peluang | Hanya posisi | Menjawab "jangan PHP" di antrean secara terukur |
+| Guest + email tanpa OTP | OTP email | OTP untuk 1 juta pengantre mahal dan menambah friksi; tiket juga tampil di layar |
+| Validasi struktur NIK | Dukcapil | Grooming: validasi internal; Dukcapil opsi lanjutan |
+| Resolve sebelum release | Release langsung saat TTL | Mencegah pembayaran sah dibatalkan karena webhook telat |
+| Refund manual | Refund otomatis | Dukungan refund API berbeda per metode (VA); risiko refund ganda; kasus jarang |
+| REST internal | gRPC | Swagger ADOPT; dua titik sinkron saja |
+| Valkey hanya untuk antrean, rate limit, cache | Valkey juga untuk stok dan sesi | Replikasi in-memory bersifat async sehingga failover dapat menghilangkan hold yang sudah dijanjikan; PostgreSQL sudah cukup karena tulisan stok dibatasi slot aktif (< 250/detik di Tier L) |
+| `valkey-go` | Client berbasis core native (CGO) | Pure Go: build arm64 dan image Alpine sederhana, `go run` di Compose tanpa toolchain tambahan |
+| CP untuk stok/uang, AP untuk tampilan dan notifikasi (§9.7 [v4.6 → HLD §4.3]) | Satu sikap untuk seluruh sistem | Sikap dipilih menurut akibat bila data salah; konsistensi kuat hanya di tempat yang membutuhkannya |
+| Outbox hanya di Booking dan Payment | Outbox di semua producer; publish langsung di semua producer | Dual write hanya berbahaya untuk event uang/tiket; push antrean memang best effort |
+| Consumer idempoten lewat data bisnis | Tabel `consumer_inbox` per service | Idempotensi sudah dijamin guard state, Lua, dan unique key; 4 tabel dan satu library lebih sedikit |
+| RabbitMQ + JSON | Protobuf | Mudah diinspeksi di UI dan DLQ; JSON Schema cukup untuk evolusi |
+
+### Evaluasi Teknologi
+
+| Lapisan | Pilihan | Alternatif | Trade-off |
+|---|---|---|---|
+| Bahasa BE | Go | Java/Kotlin | ADOPT; concurrency dan deployment ringkas |
+| Web | Next.js + TS + Tailwind | React SPA | ADOPT; payment page same-origin |
+| Mobile | React Native TS | Kotlin/Compose, SwiftUI | ADOPT; satu codebase untuk 1 developer |
+| DB | PostgreSQL | MySQL | Row lock, partial unique index, constraint |
+| In-memory store | Valkey 8.1 + `valkey-go` | Redis OSS, PostgreSQL | Lua atomik, sorted set, TTL; lisensi BSD; lebih murah di ElastiCache; bukan source of truth stok |
+| Broker | RabbitMQ | Amazon SQS | Retry/DLQ dan dapat dijalankan lokal |
+| Edge | CloudFront + WAF + ALB | Kong, API Gateway | Managed, cache Status Document, challenge |
+| Observability | OTel → Prometheus/Grafana | CloudWatch penuh | Biaya rendah, dapat dijalankan assessor |
+
+---
