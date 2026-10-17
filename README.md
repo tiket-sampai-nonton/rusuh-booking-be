@@ -59,7 +59,35 @@ Aturan struktur: `.kiro/steering/structure.md` dan Handbook §0. Lapisan ditegak
 
 ## CI/CD
 
-GitHub Actions per service (`.github/workflows/ci-<svc>.yml`), jalan hanya bila path service atau `pkg/` berubah: generate mock, lint, vet, test (race), isolation build, docker build.
+Satu pipeline `.github/workflows/ci.yml` dengan stage berurutan (matrix per modul/service; yang dijalankan hanya modul yang berubah, perubahan `pkg/` atau konfigurasi bersama menjalankan semua):
+
+| Stage | Isi |
+|---|---|
+| `code-quality` | golangci-lint (+ depguard), go vet, gosec, govulncheck, hadolint, gitleaks |
+| `verify-code-quality` | gerbang: gagal bila gosec HIGH, kerentanan govulncheck, hadolint error, atau rahasia bocor |
+| `case-coverage` | unit test `-race` + ambang coverage logika **80%** (`COVERAGE_MIN`) |
+| `code-rank` | SonarCloud (quality gate) |
+| `build` | compile + isolation build `GOWORK=off` |
+| `package` | docker build per service |
+| `scan-package` | Trivy scan image, lalu `scan-package-verify` (gagal bila severity `IMAGE_FAIL_SEVERITY`, default CRITICAL) |
+| `publish` | push image ke GHCR, hanya dari `main` |
+| `deployment-dev`, `deployment-prod` | **manual** (Run workflow, pilih `deploy_env`); sementara placeholder |
+
+`ci-ok` adalah satu-satunya check yang perlu diwajibkan di ruleset `main`; ia lulus bila semua stage lulus atau dilewati.
+
+Coverage dihitung atas kode logika. `cmd/`, `internal/delivery/`, `internal/config/`, dan `_mock/` dikecualikan karena hanya bootstrap dan wiring (dibuktikan lewat run dan health check). Lokal: `make cover`.
+
+### Yang perlu diisi (placeholder)
+
+| Nilai | Jenis | Dipakai oleh |
+|---|---|---|
+| `SONAR_ENABLED=true`, `SONAR_ORGANIZATION`, `SONAR_PROJECT_KEY` | repo variables | `code-rank` (dilewati bila `SONAR_ENABLED` bukan `true`) |
+| `SONAR_TOKEN` | repo secret | `code-rank` |
+| `AWS_REGION`, `AWS_ROLE_ARN_DEV`, `AWS_ROLE_ARN_PROD` | repo variables (OIDC) | `deployment-*` |
+| Environment `dev` dan `prod` (prod: Required reviewers) | Settings > Environments | `deployment-*` |
+| Perintah migrasi dan deploy | langkah bertanda `GANTI` di `ci.yml` | `deployment-*` |
+
+Deployment belum melakukan deploy nyata: langkahnya hanya mencetak peringatan `PLACEHOLDER` sampai Terraform dan role AWS siap.
 
 ## Repo terkait
 

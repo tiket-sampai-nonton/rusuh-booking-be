@@ -5,6 +5,9 @@
 *.test
 *.out
 coverage.*
+/coverage/
+/reports/
+/scan-reports/
 
 # Env (keep the examples)
 .env

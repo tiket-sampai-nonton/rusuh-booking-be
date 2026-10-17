@@ -1,0 +1,414 @@
+name: ci
+
+# Pipeline bertahap (satu file, matrix per modul/service):
+#   code-quality -> verify-code-quality -> case-coverage -> code-rank -> build -> package
+#   -> scan-package -> publish -> deployment-dev -> deployment-prod
+# Deployment hanya jalan manual (Actions > ci > Run workflow > deploy_env).
+# Cara mengatur nilai yang ditandai GANTI: lihat README bagian "CI/CD".
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      deploy_env:
+        description: "Environment tujuan deploy (none = hanya build, scan, dan publish)"
+        type: choice
+        options: [none, dev, prod]
+        default: none
+      run_migration:
+        description: "Jalankan migrasi DB sebelum deploy"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  COVERAGE_MIN: "80"
+  IMAGE_FAIL_SEVERITY: "CRITICAL"
+  REGISTRY: ghcr.io
+  # GANTI bila pindah ke ECR: REGISTRY menjadi <akun>.dkr.ecr.<region>.amazonaws.com
+
+jobs:
+  # ------------------------------------------------------------------ penentu modul
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      modules: ${{ steps.detect.outputs.modules }}
+      services: ${{ steps.detect.outputs.services }}
+      any: ${{ steps.detect.outputs.any }}
+      any_services: ${{ steps.detect.outputs.any_services }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: detect
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: bash tools/detect-changes.sh
+
+  # ------------------------------------------------------------------ stage: code-quality
+  code-quality:
+    name: code-quality (${{ matrix.module.name }})
+    needs: changes
+    if: needs.changes.outputs.any == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        module: ${{ fromJSON(needs.changes.outputs.modules) }}
+    defaults:
+      run:
+        working-directory: ${{ matrix.module.path }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: ${{ matrix.module.path }}/go.mod
+          cache-dependency-path: ${{ matrix.module.path }}/go.mod
+      - name: Generate mock
+        if: matrix.module.name != 'pkg'
+        run: go generate ./internal/... && go mod tidy
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.5.0
+          working-directory: ${{ matrix.module.path }}
+          args: --config=${{ github.workspace }}/.golangci.yml
+      - name: go vet
+        run: go vet ./...
+      - name: gosec
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/reports"
+          go install github.com/securego/gosec/v2/cmd/gosec@v2.22.0
+          "$(go env GOPATH)/bin/gosec" -no-fail -fmt json -out "$GITHUB_WORKSPACE/reports/gosec.json" ./...
+      - name: govulncheck (pengganti gemnasium)
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/reports"
+          go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
+          "$(go env GOPATH)/bin/govulncheck" -format sarif ./... > "$GITHUB_WORKSPACE/reports/govulncheck.sarif"
+      - name: hadolint
+        if: matrix.module.name != 'pkg'
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/reports"
+          docker run --rm -i hadolint/hadolint:v2.12.0 hadolint --format json - \
+            < deployments/Dockerfile > "$GITHUB_WORKSPACE/reports/hadolint.json" || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: quality-${{ matrix.module.name }}
+          path: reports
+          if-no-files-found: warn
+          retention-days: 7
+
+  secret-detection:
+    needs: changes
+    if: needs.changes.outputs.any == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: gitleaks
+        run: |
+          mkdir -p reports
+          docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:v8.18.4 detect \
+            --source /repo --redact --no-banner --exit-code 0 \
+            --report-format json --report-path /repo/reports/gitleaks.json
+          [ -f reports/gitleaks.json ] || echo '[]' > reports/gitleaks.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: quality-secrets
+          path: reports
+          retention-days: 7
+
+  # ------------------------------------------------------------------ stage: verify-code-quality
+  verify-code-quality:
+    needs: [changes, code-quality, secret-detection]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: quality-*
+          path: scan-reports
+      - name: Periksa laporan (gosec HIGH, govulncheck, hadolint error, gitleaks)
+        run: bash tools/verify-reports.sh quality scan-reports
+
+  # ------------------------------------------------------------------ stage: case-coverage (unit test)
+  case-coverage:
+    name: case-coverage (${{ matrix.module.name }})
+    needs: [changes, verify-code-quality]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        module: ${{ fromJSON(needs.changes.outputs.modules) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: ${{ matrix.module.path }}/go.mod
+          cache-dependency-path: ${{ matrix.module.path }}/go.mod
+      - name: Generate mock
+        if: matrix.module.name != 'pkg'
+        working-directory: ${{ matrix.module.path }}
+        run: go generate ./internal/... && go mod tidy
+      - name: Unit test dan ambang coverage
+        run: bash tools/check-coverage.sh "${{ matrix.module.path }}" "$COVERAGE_MIN"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ matrix.module.name }}
+          path: coverage/${{ matrix.module.name }}.out
+          retention-days: 7
+
+  # ------------------------------------------------------------------ stage: code-rank (SonarCloud)
+  code-rank:
+    needs: [changes, case-coverage]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: coverage-*
+          path: coverage
+          merge-multiple: true
+      - name: SonarCloud dinonaktifkan
+        if: vars.SONAR_ENABLED != 'true'
+        run: |
+          echo "::notice::code-rank dilewati. Aktifkan dengan repo variable SONAR_ENABLED=true, SONAR_ORGANIZATION, SONAR_PROJECT_KEY dan secret SONAR_TOKEN."
+          echo "- code-rank: DILEWATI (SONAR_ENABLED belum true)" >> "$GITHUB_STEP_SUMMARY"
+      - name: SonarCloud scan
+        if: vars.SONAR_ENABLED == 'true'
+        uses: SonarSource/sonarqube-scan-action@v5
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        with:
+          args: >
+            -Dsonar.organization=${{ vars.SONAR_ORGANIZATION }}
+            -Dsonar.projectKey=${{ vars.SONAR_PROJECT_KEY }}
+            -Dsonar.host.url=https://sonarcloud.io
+            -Dsonar.qualitygate.wait=true
+
+  # ------------------------------------------------------------------ stage: build
+  build:
+    name: build (${{ matrix.module.name }})
+    needs: [changes, code-rank]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        module: ${{ fromJSON(needs.changes.outputs.modules) }}
+    defaults:
+      run:
+        working-directory: ${{ matrix.module.path }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: ${{ matrix.module.path }}/go.mod
+          cache-dependency-path: ${{ matrix.module.path }}/go.mod
+      - name: Generate mock
+        if: matrix.module.name != 'pkg'
+        run: go generate ./internal/... && go mod tidy
+      - name: Compile
+        run: go build ./...
+      - name: Isolation build (tanpa go.work)
+        run: GOWORK=off go build ./...
+
+  # ------------------------------------------------------------------ stage: package (dockerize)
+  package:
+    name: package (${{ matrix.service.name }})
+    needs: [changes, build]
+    if: needs.changes.outputs.any_services == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service: ${{ fromJSON(needs.changes.outputs.services) }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Docker build
+        run: |
+          docker build -f ${{ matrix.service.path }}/deployments/Dockerfile \
+            -t rusuh-booking-${{ matrix.service.name }}:${{ github.sha }} .
+          docker save -o image-${{ matrix.service.name }}.tar \
+            rusuh-booking-${{ matrix.service.name }}:${{ github.sha }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: image-${{ matrix.service.name }}
+          path: image-${{ matrix.service.name }}.tar
+          retention-days: 1
+
+  # ------------------------------------------------------------------ stage: scan-package
+  scan-package:
+    name: scan-image (${{ matrix.service.name }})
+    needs: [changes, package]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service: ${{ fromJSON(needs.changes.outputs.services) }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: image-${{ matrix.service.name }}
+      - name: Trivy scan image
+        run: |
+          mkdir -p reports
+          docker run --rm -v "$PWD:/work" aquasec/trivy:0.58.1 image \
+            --input /work/image-${{ matrix.service.name }}.tar \
+            --severity HIGH,CRITICAL --ignore-unfixed --no-progress \
+            --format json --output /work/reports/trivy-${{ matrix.service.name }}.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: scan-${{ matrix.service.name }}
+          path: reports
+          retention-days: 7
+
+  scan-package-verify:
+    needs: [changes, scan-package]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: scan-*
+          path: scan-reports
+      - name: Periksa hasil scan image (gagal bila ada severity di IMAGE_FAIL_SEVERITY)
+        run: bash tools/verify-reports.sh image scan-reports
+
+  # ------------------------------------------------------------------ stage: publish
+  publish:
+    name: publish (${{ matrix.service.name }})
+    needs: [changes, scan-package-verify]
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        service: ${{ fromJSON(needs.changes.outputs.services) }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: image-${{ matrix.service.name }}
+      - name: Login registry (GHCR)
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "$TOKEN" | docker login "$REGISTRY" -u "${{ github.actor }}" --password-stdin
+      # GANTI bila memakai ECR: ganti langkah login di atas dengan aws-actions/configure-aws-credentials
+      # (OIDC, role dari repo variable AWS_ROLE_ARN_PUBLISH) lalu aws-actions/amazon-ecr-login.
+      - name: Tag dan push
+        run: |
+          docker load -i image-${{ matrix.service.name }}.tar
+          repo="$REGISTRY/${GITHUB_REPOSITORY,,}/${{ matrix.service.name }}"
+          local_ref="rusuh-booking-${{ matrix.service.name }}:${{ github.sha }}"
+          docker tag "$local_ref" "$repo:${{ github.sha }}"
+          docker tag "$local_ref" "$repo:main"
+          docker push "$repo:${{ github.sha }}"
+          docker push "$repo:main"
+          echo "- publish: $repo:${{ github.sha }}" >> "$GITHUB_STEP_SUMMARY"
+
+  # ------------------------------------------------------------------ stage: deployment-dev (manual)
+  deployment-dev:
+    needs: [changes, publish]
+    if: github.event_name == 'workflow_dispatch' && inputs.deploy_env == 'dev'
+    runs-on: ubuntu-latest
+    environment: dev
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      # GANTI: isi repo variables AWS_ROLE_ARN_DEV dan AWS_REGION (OIDC, tanpa access key).
+      - name: Kredensial AWS (OIDC)
+        if: vars.AWS_ROLE_ARN_DEV != ''
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN_DEV }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - name: Migrasi DB (opsional)
+        if: inputs.run_migration
+        run: |
+          # GANTI: jalankan migrasi tiap service, mis.
+          #   migrate -path services/<svc>/deployments/migrations -database "$DATABASE_URL" up
+          echo "::warning::PLACEHOLDER migrasi DB dev belum dikonfigurasi, tidak ada yang dijalankan."
+          echo "- migrasi dev: PLACEHOLDER (tidak dijalankan)" >> "$GITHUB_STEP_SUMMARY"
+      - name: Deploy ke dev
+        run: |
+          # GANTI: deploy image ${{ github.sha }} ke environment dev, mis. instance refresh ASG atau SSM send-command.
+          echo "::warning::PLACEHOLDER deploy dev belum dikonfigurasi, tidak ada yang dideploy."
+          echo "- deployment-dev: PLACEHOLDER (tidak ada deploy nyata), image ${{ github.sha }}" >> "$GITHUB_STEP_SUMMARY"
+
+  # ------------------------------------------------------------------ stage: deployment-prod (manual)
+  deployment-prod:
+    needs: [changes, publish]
+    if: github.event_name == 'workflow_dispatch' && inputs.deploy_env == 'prod'
+    runs-on: ubuntu-latest
+    # Aktifkan Required reviewers pada environment "prod" (Settings > Environments) agar butuh persetujuan.
+    environment: prod
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      # GANTI: isi repo variables AWS_ROLE_ARN_PROD dan AWS_REGION.
+      - name: Kredensial AWS (OIDC)
+        if: vars.AWS_ROLE_ARN_PROD != ''
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN_PROD }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - name: Migrasi DB (opsional)
+        if: inputs.run_migration
+        run: |
+          # GANTI: sama seperti dev, dengan DATABASE_URL prod.
+          echo "::warning::PLACEHOLDER migrasi DB prod belum dikonfigurasi, tidak ada yang dijalankan."
+          echo "- migrasi prod: PLACEHOLDER (tidak dijalankan)" >> "$GITHUB_STEP_SUMMARY"
+      - name: Deploy ke prod
+        run: |
+          # GANTI: deploy image ${{ github.sha }} ke environment prod.
+          echo "::warning::PLACEHOLDER deploy prod belum dikonfigurasi, tidak ada yang dideploy."
+          echo "- deployment-prod: PLACEHOLDER (tidak ada deploy nyata), image ${{ github.sha }}" >> "$GITHUB_STEP_SUMMARY"
+
+  # ------------------------------------------------------------------ gerbang tunggal untuk ruleset
+  ci-ok:
+    if: always()
+    needs:
+      - changes
+      - code-quality
+      - secret-detection
+      - verify-code-quality
+      - case-coverage
+      - code-rank
+      - build
+      - package
+      - scan-package
+      - scan-package-verify
+      - publish
+    runs-on: ubuntu-latest
+    steps:
+      - name: Semua stage lulus atau dilewati
+        env:
+          RESULTS: ${{ toJSON(needs.*.result) }}
+        run: |
+          echo "$RESULTS"
+          if echo "$RESULTS" | grep -Eq 'failure|cancelled'; then
+            echo "::error::ada stage yang gagal atau dibatalkan"
+            exit 1
+          fi
