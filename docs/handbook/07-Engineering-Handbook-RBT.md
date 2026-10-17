@@ -61,6 +61,8 @@ Checklist ini juga ditulis di `.kiro/steering/structure.md` dan diperiksa saat c
 ## 2. Pipelines (GitHub Actions)
 
 > **Deviasi dari standar:** standar proyek memakai `.gitlab-ci.yml`. Repository RBT wajib GitHub public (aturan assessment), sehingga pipeline memakai GitHub Actions dengan tahapan yang sama. Bila repository dipindah ke GitLab, setiap job di bawah dipetakan satu-satu ke stage `.gitlab-ci.yml` (ADR-016).
+>
+> **Implementasi di `rusuh-booking-be`:** satu pipeline `.github/workflows/ci.yml` (matrix per modul/service, hanya modul yang berubah) dengan stage berurutan code-quality → verify-code-quality → case-coverage → code-rank → build → package → scan-package → publish → deployment-dev → deployment-prod. Ambang coverage logika 80%; `code-rank` memakai SonarCloud; `deployment-*` dijalankan manual dan masih berupa placeholder sampai Terraform dan role AWS siap. Satu check `ci-ok` dipakai sebagai required check di ruleset `main`. Daftar rinci di README repo BE bagian "CI/CD".
 
 *Sumber: PRD v4.6 §18.4*
 

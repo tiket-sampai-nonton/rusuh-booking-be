@@ -399,7 +399,7 @@ Prinsip pemilihan: **(1)** sesuai tech radar klien, **(2)** setiap komponen puny
 | `pkg/` | Di root sebagai module bersama, bukan per service | Dipakai 4 service; menghindari 4 salinan |
 | Worker | `cmd/main.go` dengan flag `--mode=api` atau `--mode=worker` + `internal/delivery/worker.go` | Mempertahankan satu entry point sesuai standar |
 | Migration, Dockerfile | `services/<svc>/deployments/{Dockerfile,migrations}` | Standar tidak punya folder migration; `deployments/` adalah tempat konfigurasi deployment |
-| `.gitlab-ci.yml` | Diganti GitHub Actions (`.github/workflows/`) | Assessment mewajibkan repository GitHub public; tahapan pipeline setara |
+| `.gitlab-ci.yml` | Diganti GitHub Actions (`.github/workflows/`) | Assessment mewajibkan repository GitHub public; stage pipeline sama dengan standar, satu `ci.yml` bertahap |
 | Root monorepo | Tambahan `services/`, `web/`, `mobile/`, `tests/`, `tools/`, `.kiro/`, `specs/`, `docker-compose.yaml`, `Makefile`, `go.work` | Standar mendefinisikan satu service; RBT memuat beberapa proyek dan artefak assessment |
 | Kontrak | `docs/contracts/{openapi,events}` | Dokumentasi berada di `docs/` |
 

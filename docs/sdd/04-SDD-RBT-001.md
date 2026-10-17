@@ -234,7 +234,7 @@ services/booking/
 | `pkg/` utilitas bersama | Sesuai (dipindah ke root) | Dipakai bersama 4 service sebagai module sendiri lewat `go.work`, agar tidak disalin 4 kali |
 | `_mock/` hasil generate | Sesuai | `mockgen` dari interface di `port/` dan `pkg/` (`make mock`) |
 | `assets/`, `deployments/`, `docs/`, `go.mod` | Sesuai | Migration SQL dan Dockerfile di `deployments/` per service |
-| `.gitlab-ci.yml` | **Deviasi** | Assessment mewajibkan repository GitHub public; CI memakai GitHub Actions (`.github/workflows/`). Tahapan pipeline setara dan dapat diterjemahkan ke `.gitlab-ci.yml` bila repo dipindah ke GitLab |
+| `.gitlab-ci.yml` | **Deviasi** | Assessment mewajibkan repository GitHub public; CI memakai GitHub Actions (`.github/workflows/`). Stage pipeline sama dengan standar (code-quality → verify-code-quality → case-coverage → code-rank → build → package → scan-package → publish → deployment-dev → deployment-prod) dan dapat diterjemahkan ke `.gitlab-ci.yml` bila repo dipindah ke GitLab |
 | Root monorepo (`services/`, `web/`, `mobile/`, `tests/`, `tools/`, `.kiro/`, `specs/`, `docker-compose.yaml`, `Makefile`, `go.work`) | Tambahan | Standar mendefinisikan satu proyek service; RBT memuat 4 service, 2 klien, dan artefak wajib assessment |
 
 #### 4.1.5 Jalur Evolusi
