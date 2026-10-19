@@ -2,15 +2,15 @@
 
 | Field | Value |
 |-------|-------|
-| **System / Software** | Rusuh Booking Tiket (Queue, Booking, Payment, Notification Service; Web; Mobile) |
+| **System / Software** | Rusuh Booking Tiket (Queue, Booking, Payment, Notification, User Service; Web; Mobile) |
 | **Document ID** | SRS-RBT-001 |
-| **Version** | 1.0 |
-| **Date** | 2026-10-17 |
+| **Version** | 1.1 |
+| **Date** | 2026-10-19 |
 | **Status** | Draft. Baseline requirement = PRD v4.6 Final Canonical; seluruh requirement `NOT_VERIFIED` |
 | **Author(s)** | Tim PT. Tiket Sampai Nonton Sentosa |
 | **Approvers** | Pak Dinda (CEO), Pak Jabon (CTO), Pak Rahman (CFO), PT. Tiga Sekawan Angin Ribut |
 | **Classification** | Internal |
-| **Source documents** | PRD-RBT-001 v5.1; PRD v4.6 (sumber pemecahan) |
+| **Source documents** | PRD-RBT-001 v5.2; PRD v4.6 (sumber pemecahan); keputusan tim bersama BE-2 19 Okt 2026 (`Perbedaan-Desain-BE-Kita-vs-BE2.xlsx`) |
 
 > **Reference basis.** Disusun dengan mengacu pada isi *Software Requirements Specification* pada **ISO/IEC/IEEE 29148:2018**, dengan quality requirement diklasifikasikan menurut **ISO/IEC 25010:2023**. Tailoring dicatat di Appendix C.
 >
@@ -23,6 +23,7 @@
 | Version | Date | Author | Summary of change | Baseline |
 |---------|------|--------|-------------------|----------|
 | 1.0 | 2026-10-17 | Tim PT. Tiket Sampai Nonton Sentosa | Dipecah dari PRD v4.6 §3–§5, §12, §14, §16; capability §5.x ditulis ulang sebagai requirement "shall" | PRD v4.6 |
+| 1.1 | 2026-10-19 | Tim PT. Tiket Sampai Nonton Sentosa | Keputusan bersama BE-2: akun opsional dengan login OTP (§3.2.27, SRS-F-01-08 direvisi), event sourcing Booking dan Payment (SRS-C-09, SRS-D-10..12), circuit breaker menjadi MUST (§3.2.19), keamanan akun (SRS-Q-SEC-10..12), alert email (SRS-F-90-06), kontrak OpenAPI satu file per service | PRD v4.6 + D-03, D-04, D-19, D-21, D-40, D-41 |
 
 ---
 
@@ -34,7 +35,7 @@ SRS ini menetapkan requirement perangkat lunak Rusuh Booking Tiket secara teruku
 
 ### 1.2 Scope
 
-Perangkat lunak terdiri dari empat service backend sesuai aktor requirement (Queue, Booking, Payment, Notification), aplikasi web (termasuk payment page reusable), dan aplikasi mobile. Perangkat lunak menyediakan daftar event, guest session, waiting room FIFO, reservasi tiket saat giliran, pemilihan dan hold tiket dengan NIK pemegang, pembayaran lewat Midtrans Sandbox, e-tiket, dan notifikasi. Tujuan bisnis ada di PRD-RBT-001 §2 (G-01–G-07); di luar scope ada di PRD §2.2.
+Perangkat lunak terdiri dari lima service backend: empat sesuai aktor requirement (Queue, Booking, Payment, Notification) dan User Service untuk akun opsional (ADR-020), aplikasi web (termasuk payment page reusable), dan aplikasi mobile. Perangkat lunak menyediakan daftar event, guest session, waiting room FIFO, reservasi tiket saat giliran, pemilihan dan hold tiket dengan NIK pemegang, pembayaran lewat Midtrans Sandbox, e-tiket, dan notifikasi. Tujuan bisnis ada di PRD-RBT-001 §2 (G-01–G-07); di luar scope ada di PRD §2.2.
 
 ### 1.3 Product Overview
 
@@ -47,6 +48,8 @@ flowchart LR
     EDGE --> B[Booking Service]
     EDGE --> P[Payment Service]
     EDGE --> N[Notification Service]
+    EDGE --> U[User Service: akun opsional]
+    U --> SMTP
     EDGE --> W[Web app + payment page]
     Q <--> B
     B <--> P
@@ -60,13 +63,14 @@ Antarmuka yang dirinci di §3.1: user interface (web, mobile, payment page WebVi
 
 #### 1.3.2 Product Functions
 
-Guest session dan data pembeli (§3.2.1); daftar dan detail event (§3.2.2–3.2.3); antrean, status, indikator peluang, admission, sold-out, near-real-time, notifikasi giliran (§3.2.4–3.2.6, §3.2.10, §3.2.25); sesi pemilihan, TTL, timeout, jaminan reservasi (§3.2.7–3.2.9); NIK, kuota, hold, cancel, ubah pesanan, pemulihan sesi (§3.2.11–3.2.13, §3.2.23–3.2.24); pembayaran (§3.2.14–3.2.19); tiket dan notifikasi (§3.2.20–3.2.21); API bersama (§3.2.22); konfigurasi (§3.2.26).
+Guest session dan data pembeli (§3.2.1); daftar dan detail event (§3.2.2–3.2.3); antrean, status, indikator peluang, admission, sold-out, near-real-time, notifikasi giliran (§3.2.4–3.2.6, §3.2.10, §3.2.25); sesi pemilihan, TTL, timeout, jaminan reservasi (§3.2.7–3.2.9); NIK, kuota, hold, cancel, ubah pesanan, pemulihan sesi (§3.2.11–3.2.13, §3.2.23–3.2.24); pembayaran (§3.2.14–3.2.19); tiket dan notifikasi (§3.2.20–3.2.21); API bersama (§3.2.22); konfigurasi (§3.2.26); akun opsional dengan login OTP (§3.2.27).
 
 #### 1.3.3 User Characteristics
 
 | User class | Description | Expertise | Frequency | Special needs |
 |------------|-------------|-----------|-----------|---------------|
 | Customer (pembeli guest) | Mengantre dan memesan dengan NIK pembeli + email | Rendah–menengah | Sesekali | Sering di HP dengan sinyal tidak stabil; butuh pesan yang jelas dan aksesibilitas |
+| Customer terdaftar (opsional) | Login dengan OTP email; NIK, email, dan nama tersimpan untuk mengisi form; melihat riwayat pesanan | Rendah–menengah | Berulang | Login tidak boleh menjadi syarat membeli |
 | Customer mobile | Sama, lewat aplikasi Android/iOS | Rendah–menengah | Sesekali | Aplikasi dapat berada di background saat giliran tiba |
 | Ops | Menangani REVIEW, refund manual, konfigurasi per event, DLQ | Menengah–tinggi | Setiap penjualan | Akses internal saja |
 | Assessor | Menjalankan alur lokal dan memeriksa evidence | Tinggi | Sekali | Tanpa akun AWS / private registry |
@@ -128,7 +132,7 @@ Guest session dan data pembeli (§3.2.1); daftar dan detail event (§3.2.2–3.2
 | REF-01 | PRD-RBT-001 | 5.1 |
 | REF-02 | AD-RBT-001 (HLD) | 1.2 |
 | REF-03 | SDD-RBT-001 | 1.2 |
-| REF-04 | ADR-RBT (ADR-001 … ADR-018) | 1.1 |
+| REF-04 | ADR-RBT (ADR-001 … ADR-022) | 1.2 |
 | REF-05 | TP-RBT-001 (Test Plan) | 1.1 |
 | REF-06 | ISO/IEC/IEEE 29148:2018 | — |
 | REF-07 | ISO/IEC 25010:2023 | — |
@@ -151,7 +155,8 @@ Assumption register lengkap (AS-01–AS-26) dan dependency (DEP-01–DEP-06) ada
 
 | Requirement | Prioritas / rilis |
 |-------------|-------------------|
-| §3.2.13 Cancel, §3.2.19 Perlindungan degradasi gateway, SRS-F-01-09 pemindahan antrean via email | SHOULD — Sprint 2 bila waktu cukup |
+| §3.2.13 Cancel, SRS-F-01-09 pemindahan antrean via email | SHOULD — Sprint 2 bila waktu cukup |
+| §3.2.19 Perlindungan degradasi dan circuit breaker | MUST sejak v1.1 (D-40); `pkg/resilience` tersedia di boilerplate |
 | SRS-F-05-10 ETA | COULD |
 | iOS (push dan WebView) | Bila platform dan akun Apple Developer tersedia (PRD OI-03, OI-06) |
 | SSE di halaman bayar | Di luar scope PoC |
@@ -198,7 +203,7 @@ Tidak ada antarmuka hardware khusus. Scan tiket di gerbang berada di luar scope.
 
 | ID | Requirement | Source | Pri | Ver | Test |
 |----|-------------|--------|-----|-----|------|
-| SRS-IF-30 | All public endpoints shall be REST/JSON under `/api/v1`, described by one OpenAPI 3.1 contract used by web and mobile. | FR-24, NFR-08 | M | T | TC-API-01, TC-API-02 |
+| SRS-IF-30 | All public endpoints shall be REST/JSON under `/api/v1`, described by OpenAPI 3.1 contracts (one file per service in `docs/contracts/openapi/`) used by web and mobile. | FR-24, NFR-08, D-19 | M | T | TC-API-01, TC-API-02 |
 | SRS-IF-31 | Requests and responses shall use JSON UTF-8, ISO 8601 UTC timestamps, and integer minor-unit amounts (IDR). | NFR-08 | M | I | TC-API-02 |
 | SRS-IF-32 | All traffic over public networks shall use TLS. | NFR-07 | M | I | [TP] |
 | SRS-IF-33 | Errors shall use the stable envelope and error codes below and shall not expose SQL, stack traces, secrets, or provider payloads. | NFR-07 | M | T | TC-API-02 |
@@ -237,7 +242,7 @@ Tidak ada antarmuka hardware khusus. Scan tiket di gerbang berada di luar scope.
 
 *Sumber: PRD v4.6 §12.1*
 
-Semua di bawah `/api/v1`. Kontrak normatif: `docs/contracts/openapi/public.yaml`.
+Semua di bawah `/api/v1`. Kontrak normatif: satu file OpenAPI per service di `docs/contracts/openapi/` (`queue.yaml`, `booking.yaml`, `payment.yaml`, `notification.yaml`, `user.yaml`; D-19).
 
 | Service | Method | Path | Fungsi | Guard |
 |---|---|---|---|---|
@@ -353,7 +358,21 @@ Status: 400, 401/403, 404, 409, 410, 422, 429, 503. Tidak membocorkan SQL, stack
 | 503 | `DEPENDENCY_UNAVAILABLE` | Semua | Dependency sementara tidak tersedia | Retry dengan key sama |
 
 
-Kontrak per endpoint (contoh request/response) ada di SDD-RBT-001 Interface view.
+##### Endpoint Tambahan v1.5
+
+| Service | Method | Path | Fungsi | Guard |
+|---|---|---|---|---|
+| User | POST | `/auth/otp/request` | Kirim kode OTP 6 digit ke email | Rate limit per email dan IP, cooldown |
+| User | POST | `/auth/otp/verify` | Tukar kode dengan access + refresh token; akun dibuat saat login pertama | Maks 5 percobaan per kode |
+| User | POST | `/auth/refresh` | Rotasi refresh token | Refresh token; reuse mencabut semua sesi |
+| User | POST | `/auth/logout` | Cabut sesi | Refresh token (idempoten) |
+| User | GET, PATCH | `/me` | Profil: nama, NIK tersimpan (terenkripsi, ditampilkan tersamar) | Access token |
+| Booking | GET | `/me/bookings` | Riwayat pesanan pembeli yang login | Access token |
+| Semua | GET | `/health` | Health check ALB dan container (200 UP / 503 DOWN) | Tanpa auth; tidak lewat CDN |
+
+Envelope respons sukses: `{"meta": {"code", "requestId"}, "data": …}`; envelope error seperti di atas dengan `meta.errorCode` dan `meta.details`.
+
+Kontrak per endpoint (contoh request/response) ada di SDD-RBT-001 Interface view; kontrak normatif di `docs/contracts/openapi/{queue,booking,payment,notification,user}.yaml` dan `internal-{booking,payment}.yaml`.
 
 ### 3.2 Functions
 
@@ -363,14 +382,14 @@ Kontrak per endpoint (contoh request/response) ada di SDD-RBT-001 Interface view
 
 | ID | Requirement | Source | Pri | Ver | Test |
 |----|-------------|--------|-----|-----|------|
-| SRS-F-01-01 | When a customer starts a purchase, the system shall require a buyer NIK and an email typed twice, and shall not require registration or login. | GR-05, FR-13 | M | T | TC-GST-01, TC-GST-02 |
+| SRS-F-01-01 | When a customer starts a purchase, the system shall require a buyer NIK and an email typed twice, and shall not require registration or login; a logged-in customer may have both fields pre-filled from the account (§3.2.27). | GR-05, FR-13, D-03 | M | T | TC-GST-01, TC-GST-02 |
 | SRS-F-01-02 | If the two email entries differ, then the system shall reject the join with `422 EMAIL_MISMATCH`. | GR-05 | M | T | TC-GST-01 |
 | SRS-F-01-03 | Before the customer joins the queue, the client shall display the purchase rules (1 NIK pemegang = 1 tiket per event; NIK pembeli maks 3 tiket per event; siapkan NIK dan nama setiap pemegang; 1 perangkat dan 1 email = 1 antrean aktif) and shall require consent to NIK usage. | GR-03, keputusan tim 15 Okt | M | D | [TP] |
 | SRS-F-01-04 | The system shall not introduce any purchase rule after the customer enters the buying page. | Keputusan tim 15 Okt | M | I | [TP] |
 | SRS-F-01-05 | When the join succeeds, the Queue Service shall issue a signed visitor token, valid until the sale ends, that identifies the visitor, the hashed buyer NIK, and the email. | GR-05 | M | T | TC-GST-01 |
 | SRS-F-01-06 | The web client shall keep the visitor token in an HttpOnly, Secure, SameSite=Lax cookie; the mobile app shall keep it in secure storage. | NFR-07 | M | I | [TP] |
 | SRS-F-01-07 | The Queue Service shall not store the plain NIK; it shall store only a keyed hash (HMAC-SHA256) whose key is shared with the Booking Service. | GR-15 | M | I | TC-GST-01, TC-SEC-03 |
-| SRS-F-01-08 | The system shall not verify the email by OTP. | AS-04 | M | I | — |
+| SRS-F-01-08 | Guest checkout shall not verify the email by OTP; OTP is used only for the optional account login (§3.2.27). | AS-04, D-03 | M | I | TC-GST-01 |
 | SRS-F-01-09 | If a buyer NIK already has an active entry on another device, then the join shall be rejected with `409 NIK_ALREADY_IN_QUEUE` and a clear message. | GR-04 | M | T | TC-GST-03 |
 | SRS-F-01-10 | The system should allow a customer to move a queue entry to another device through an email link. | v4.6 §5.1 (SHOULD) | S | T | [TP] |
 
@@ -593,14 +612,15 @@ Kontrak per endpoint (contoh request/response) ada di SDD-RBT-001 Interface view
 | SRS-F-18-03 | The page shall emit bridge events `PAYMENT_PENDING`, `PAYMENT_SUCCESS`, `PAYMENT_EXPIRED`, `PAYMENT_VERIFYING`, `EDIT_ORDER`, `CLOSE`; on `EDIT_ORDER` the app shall close the WebView and open the native detail page in edit mode; the app shall always call `GET /bookings/{id}` as the source of truth. | SCP-01 | M | T | TC-MOB-03, TC-NAV-02 |
 | SRS-F-18-04 | E-wallet deeplinks shall be handled by the WebView with a scheme allowlist. | SCP-01 | M | T | TC-MOB-02 |
 
-#### 3.2.19 Gateway Degradation Protection (PAY-06, SHOULD)
+#### 3.2.19 Degradation Protection and Circuit Breaker (PAY-06)
 
 **Alloc:** CMP-PAYMENT, CMP-BOOKING
 
 | ID | Requirement | Source | Pri | Ver | Test |
 |----|-------------|--------|-----|-----|------|
-| SRS-F-19-01 | If creating payment instructions fails because the gateway is down (breaker open) and the booking never received instructions, the Booking Service should extend `paymentExpiresAt` once (PROPOSED max +5 minutes). | GR-09, AS-08 | S | T | TC-PAY-08 |
-| SRS-F-19-02 | If only one method is disrupted, the payment page should show "Metode X sedang gangguan, silakan pilih metode lain". | GR-09 | S | T | TC-PAY-08 |
+| SRS-F-19-01 | If creating payment instructions fails because the gateway is down (breaker open) and the booking never received instructions, the Booking Service shall extend `paymentExpiresAt` once (PROPOSED max +5 minutes). | GR-09, AS-08, D-40 | M | T | TC-PAY-08 |
+| SRS-F-19-02 | If only one method is disrupted, the payment page shall show "Metode X sedang gangguan, silakan pilih metode lain". | GR-09, D-40 | M | T | TC-PAY-08 |
+| SRS-F-19-03 | Every synchronous call to another service or external provider (Queue→Booking, Booking→Payment, Payment→Midtrans, Notification→SMTP, User→SMTP) shall pass through a circuit breaker with a timeout and a bulkhead using the initial values in SDD-RBT-001 §4.6.2; while the breaker is open the caller shall fail fast with a defined fallback. | NFR-10, D-40 | M | T | TC-RES-01, TC-RES-02 |
 
 #### 3.2.20 Ticket (TKT-01)
 
@@ -705,6 +725,25 @@ Kontrak per endpoint (contoh request/response) ada di SDD-RBT-001 Interface view
 | SRS-F-26-07 | Every change shall be recorded (who, when, old → new), and an internal endpoint shall show the effective configuration per event. | GR-12 | M | T | TC-CFG-04 |
 | SRS-F-26-08 | Per-event changes shall be made through migration/seed or an internal admin endpoint (back-office is out of scope). | PDF §11 | M | I | — |
 
+#### 3.2.27 Optional Account and OTP Login (USR-01)
+
+**Alloc:** CMP-USER, CMP-QUEUE, CMP-BOOKING, CMP-WEB, CMP-MOBILE
+
+| ID | Requirement | Source | Pri | Ver | Test |
+|----|-------------|--------|-----|-----|------|
+| SRS-F-27-01 | The system shall allow a customer to buy as a guest or, optionally, to log in; logging in shall never be required to join the queue or to buy. | D-03 | M | T | TC-USR-01 |
+| SRS-F-27-02 | When a customer requests a login code, the User Service shall send a 6-digit one-time code to the email and shall respond identically whether or not the email has an account. | D-03, D-21 | M | T | TC-USR-02 |
+| SRS-F-27-03 | A login code shall expire after `OTP_TTL` (PROPOSED 5 minutes), shall be usable once, and shall be locked after `OTP_MAX_ATTEMPTS` (PROPOSED 5) wrong attempts. | D-21 | M | T | TC-USR-03 |
+| SRS-F-27-04 | Code requests shall be limited by a resend cooldown (PROPOSED 60 seconds) and per-hour limits per email (PROPOSED 5) and per client IP (PROPOSED 20); violations shall be answered with `429`. | D-21, NFR-07 | M | T | TC-USR-04 |
+| SRS-F-27-05 | When a valid code is verified, the User Service shall create the account on first login and shall issue an access token (PROPOSED 15 minutes) and a refresh token (PROPOSED 30 days). | D-03 | M | T | TC-USR-05 |
+| SRS-F-27-06 | Every refresh shall rotate the refresh token; if a revoked refresh token is presented, every session of that account shall be revoked. | NFR-07 | M | T | TC-USR-06 |
+| SRS-F-27-07 | Logout shall revoke the session and shall be idempotent. | D-03 | M | T | TC-USR-07 |
+| SRS-F-27-08 | A logged-in customer shall be able to store and update a full name and one buyer NIK; one NIK shall be linked to at most one account (`409 NIK_ALREADY_LINKED`). | D-03, BR-02 | M | T | TC-USR-08 |
+| SRS-F-27-09 | The profile shall return the NIK and email only in masked form. | GR-15 | M | T | TC-USR-08 |
+| SRS-F-27-10 | When a logged-in customer joins the queue, the Queue Service shall verify the access token and the buyer NIK shall match the NIK stored in the account; the account identifier shall be carried to the admission and the booking. | D-03, BR-02 | M | T | TC-USR-09 |
+| SRS-F-27-11 | A logged-in customer shall be able to list the bookings made while logged in. | D-03 | S | T | TC-USR-10 |
+| SRS-F-27-12 | Login codes shall not pass through the message broker and shall not appear in logs. | GR-15 | M | I | TC-USR-11 |
+
 ### 3.3 Quality Requirements (ISO/IEC 25010:2023)
 
 #### 3.3.1 Functional Suitability (correctness)
@@ -741,6 +780,7 @@ Kontrak per endpoint (contoh request/response) ada di SDD-RBT-001 Interface view
 | SRS-Q-REL-06 | Scale-out/in shall not lose sessions and shall not need sticky sessions. | 0 lost sessions | T | TC-ASG-01 |
 | SRS-Q-REL-07 | Backup and restore shall be demonstrated before release. | Successful restore | D | [TP] |
 | SRS-Q-REL-08 | Monthly availability | Target to be agreed (SRS-OI-01) | A | — |
+| SRS-Q-REL-09 | Concurrent writers on the same booking or payment attempt shall never both succeed; the loser shall receive a version conflict and no event shall be lost or duplicated. | 0 forked streams | T | TC-ES-02 |
 
 #### 3.3.4 Security
 
@@ -755,6 +795,9 @@ Kontrak per endpoint (contoh request/response) ada di SDD-RBT-001 Interface view
 | SRS-Q-SEC-07 | Input handling shall use strict JSON, body limits, parameterized SQL, and allowlist validation. | NFR-07 | I | [TP] |
 | SRS-Q-SEC-08 | No critical/high security finding shall remain without risk acceptance at release. | Handbook G.3 (OWASP) | I | [TP] |
 | SRS-Q-SEC-09 | Anti-scalping controls shall be applied at every layer listed in HLD Security view (edge, queue, quota, attendee, NIK validation, live check, tokens, no resale). | GR-03, GR-04 | I | [TP] |
+| SRS-Q-SEC-10 | Account email and NIK shall be stored encrypted (AES-256-GCM) with a keyed hash for lookup; refresh tokens and login codes shall be stored only as hashes. | GR-15, D-03 | I | TC-USR-12 |
+| SRS-Q-SEC-11 | Every login event (code sent, invalid, expired, locked, login, refresh, reuse, logout) shall be recorded without plaintext email or code. | NFR-07 | T | TC-USR-12 |
+| SRS-Q-SEC-12 | The source code audit checklist (Test Plan Annex F) shall be applied before every release candidate and its findings tracked to closure. | D-33, OWASP | I | [TP] |
 
 #### 3.3.5 Interaction Capability (formerly usability)
 
@@ -802,6 +845,9 @@ Kontrak per endpoint (contoh request/response) ada di SDD-RBT-001 Interface view
 | SRS-D-07 | Delivery, push subscription | Notification | Unique (source message, type); push token encrypted | Push token dihapus saat penjualan berakhir | Personal |
 | SRS-D-08 | Configuration audit | Booking | Every change recorded | Permanent | Internal |
 | SRS-D-09 | All timestamps shall be `timestamptz` UTC; all amounts integer minor unit (IDR). | All | — | — | — |
+| SRS-D-10 | Booking events (event store) | Booking | Append-only; key (booking, version); payload without plaintext NIK/email/token | Event + 30 hari (payload tanpa data pribadi plaintext) | Personal (hash) |
+| SRS-D-11 | Payment attempt events (event store) | Payment | Append-only; key (attempt, version) | [Retensi transaksi: ditetapkan Ops] | Financial |
+| SRS-D-12 | Account, session, login audit | User | One account per email hash; one account per NIK hash; refresh token stored as hash | Akun: sampai dihapus pemilik; sesi: 30 hari setelah kedaluwarsa; audit: 90 hari | Personal (encrypted) |
 
 #### Data Pribadi (GR-15)
 
@@ -825,14 +871,15 @@ Kontrak per endpoint (contoh request/response) ada di SDD-RBT-001 Interface view
 
 | ID | Constraint | Source | Ver |
 |----|-----------|--------|-----|
-| SRS-C-01 | The backend shall be split into Queue, Booking, Payment, and Notification Service, matching the requirement actors. | PDF (aktor), ADR-001 | I |
+| SRS-C-01 | The backend shall be split into Queue, Booking, Payment, and Notification Service, matching the requirement actors, plus the User Service for optional accounts. | PDF (aktor), ADR-001, ADR-020 | I |
 | SRS-C-02 | Components shall follow the client's tech radar; components not yet confirmed ADOPT shall be confirmed at kickoff and replaced through an ADR if HOLD. | Tech radar, PRD CON-03 | I |
 | SRS-C-03 | Payment shall use Midtrans Sandbox, proven on the demo environment; the simulator is only for CI and offline assessment. | GR-13 | D |
 | SRS-C-04 | Cloud demo shall run on AWS within the US$200 credit, region `ap-southeast-3`. | PRD CON-04 | I |
 | SRS-C-05 | A local clean-room setup shall run with Docker Compose, without AWS and without a private registry. | Aturan assessment | D |
 | SRS-C-06 | The repository shall be public on GitHub; requirement PDFs, grooming notes, `.env`, and infrastructure state shall not be committed; `.kiro/steering`, `specs/`, `docs/ai-log/` shall be committed. | Aturan assessment | I |
 | SRS-C-07 | The public contract shall be OpenAPI 3.1; event payloads shall be validated with JSON Schema. | NFR-08 | I |
-| SRS-C-08 | Every service shall follow the organization's project structure standard (hexagon per domain with `port/inbound`, `port/outbound`, `domain/{entity,valueobject,dto,mapper}`, `application/usecase`, `infrastructure`, `delivery`, `config`, `_mock`, `assets`, `deployments`; interfaces prefixed `I`); deviations shall be recorded in ADR-016. | Standar organisasi | I |
+| SRS-C-08 | Every service shall follow the organization's project structure standard (hexagon per domain with `port/inbound`, `port/outbound`, `domain/{entity,valueobject,dto,mapper}`, `application/usecase`, `infrastructure`, `delivery`, `config`, `_mock`, `assets`, `deployments`; interfaces prefixed `I`); deviations shall be recorded in ADR-016 and ADR-022. | Standar organisasi | I |
+| SRS-C-09 | The Booking and Payment Attempt aggregates shall be event-sourced (append-only event store as source of truth, read model projected in the same transaction); stock shall remain relational and change in the same transaction. | Rubrik kompetensi L3, D-04, ADR-019 | I |
 
 ### 3.6 Standards Compliance
 
@@ -851,6 +898,7 @@ Kontrak per endpoint (contoh request/response) ada di SDD-RBT-001 Interface view
 | SRS-F-90-03 | Ops shall be able to see REVIEW cases and process refunds manually through the Midtrans dashboard. | AS-09 | D | TC-PAY-07 |
 | SRS-F-90-04 | Operating environments shall be local-assessor, development, CI, and staging/demo as in HLD Deployment view. | Aturan assessment | I | — |
 | SRS-F-90-05 | Dependency failures shall follow the dependency policy in HLD Quality view so that no customer is "PHP"-ed. | NFR-02 | T | TC-CAP-01..03 |
+| SRS-F-90-06 | Alerts (SDD §7) shall be delivered to the team's email channel; other channels (e.g. Telegram) are an improvement after the PoC. | NFR-09, D-41 | D | TC-OBS-02 |
 
 ---
 
@@ -870,18 +918,18 @@ Kontrak per endpoint (contoh request/response) ada di SDD-RBT-001 Interface view
 | Kelompok | Jumlah | Test | Inspection | Analysis | Demonstration |
 |---|---:|---:|---:|---:|---:|
 | SRS-IF | 17 | 7 | 8 | 0 | 2 |
-| SRS-F | 171 | 150 | 17 | 1 | 3 |
+| SRS-F | 185 | 162 | 18 | 1 | 4 |
 | SRS-Q-FUN | 6 | 6 | 0 | 0 | 0 |
 | SRS-Q-PERF | 6 | 5 | 0 | 1 | 0 |
-| SRS-Q-REL | 8 | 6 | 0 | 1 | 1 |
-| SRS-Q-SEC | 9 | 4 | 5 | 0 | 0 |
+| SRS-Q-REL | 9 | 7 | 0 | 1 | 1 |
+| SRS-Q-SEC | 12 | 5 | 7 | 0 | 0 |
 | SRS-Q-INT | 3 | 1 | 2 | 0 | 0 |
 | SRS-Q-COM | 2 | 2 | 0 | 0 | 0 |
 | SRS-Q-MNT | 5 | 1 | 4 | 0 | 0 |
 | SRS-Q-FLX | 3 | 1 | 1 | 0 | 1 |
-| SRS-D | 9 | 0 | 0 | 0 | 0 |
-| SRS-C | 11 | 1 | 8 | 0 | 2 |
-| **Total** | **250** | | | | |
+| SRS-D | 12 | 0 | 0 | 0 | 0 |
+| SRS-C | 12 | 1 | 9 | 0 | 2 |
+| **Total** | **272** | | | | |
 
 ID test yang ditulis `[TP]` belum memiliki test case di katalog v4.6 dan ditetapkan di TP-RBT-001.
 
@@ -925,12 +973,12 @@ Source requirement → SRS requirement. Alokasi ke komponen ada di HLD §6; test
 | NFR-04 | SRS-IF-06, SRS-F-09-06, SRS-F-12-01, SRS-F-12-07, SRS-F-25-05 |
 | NFR-05 | SRS-F-04-04, SRS-F-06-01, SRS-F-25-02 |
 | NFR-06 | SRS-F-02-04 |
-| NFR-07 | SRS-IF-06, SRS-IF-32, SRS-IF-33, SRS-IF-34, SRS-F-01-06, SRS-F-14-03, SRS-F-18-02, SRS-Q-SEC-01, SRS-Q-SEC-02, SRS-Q-SEC-04, SRS-Q-SEC-05, SRS-Q-SEC-06, SRS-Q-SEC-07 |
+| NFR-07 | SRS-IF-06, SRS-IF-32, SRS-IF-33, SRS-IF-34, SRS-F-01-06, SRS-F-14-03, SRS-F-18-02, SRS-F-27-04, SRS-F-27-06, SRS-Q-SEC-01, SRS-Q-SEC-02, SRS-Q-SEC-04, SRS-Q-SEC-05, SRS-Q-SEC-06, SRS-Q-SEC-07, SRS-Q-SEC-11 |
 | NFR-08 | SRS-IF-30, SRS-IF-31, SRS-F-22-01, SRS-F-22-03, SRS-C-07 |
-| NFR-09 | SRS-Q-MNT-02, SRS-F-90-01 |
-| NFR-10 | SRS-F-21-02, SRS-F-21-03, SRS-Q-REL-01, SRS-F-90-02 |
+| NFR-09 | SRS-Q-MNT-02, SRS-F-90-01, SRS-F-90-06 |
+| NFR-10 | SRS-F-19-03, SRS-F-21-02, SRS-F-21-03, SRS-Q-REL-01, SRS-F-90-02 |
 | BR-01 | SRS-F-11-02, SRS-F-11-04 |
-| BR-02 | SRS-F-04-05, SRS-F-11-02 |
+| BR-02 | SRS-F-04-05, SRS-F-11-02, SRS-F-27-08, SRS-F-27-10 |
 | BR-03 | SRS-F-07-01 |
 | BR-04 | SRS-F-08-01, SRS-F-08-02, SRS-F-08-03 |
 | BR-05 | SRS-F-07-04, SRS-F-14-07, SRS-F-23-05 |
@@ -951,7 +999,7 @@ Source requirement → SRS requirement. Alokasi ke komponen ada di HLD §6; test
 | GR-12 | SRS-F-07-06, SRS-F-25-09, SRS-F-26-01, SRS-F-26-02, SRS-F-26-04, SRS-F-26-05, SRS-F-26-06, SRS-F-26-07 |
 | GR-13 | SRS-F-14-02, SRS-C-03 |
 | GR-14 | SRS-F-11-01 |
-| GR-15 | SRS-IF-05, SRS-F-01-07, SRS-F-11-09, SRS-F-11-10, SRS-F-24-02, SRS-Q-SEC-03 |
+| GR-15 | SRS-IF-05, SRS-F-01-07, SRS-F-11-09, SRS-F-11-10, SRS-F-24-02, SRS-F-27-09, SRS-F-27-12, SRS-Q-SEC-03, SRS-Q-SEC-10 |
 | GR-16 | SRS-F-13-01, SRS-F-13-02, SRS-F-13-03 |
 | AS-04 | SRS-F-01-08 |
 | AS-06 | SRS-F-06-03 |

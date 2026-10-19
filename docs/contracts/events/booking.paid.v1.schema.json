@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "booking.paid.v1.schema.json",
+  "title": "Payload booking.paid.v1",
+  "description": "Payload di dalam envelope. Tidak memuat NIK plaintext, secret, atau token selain ticketLinkToken untuk email.",
+  "type": "object",
+  "properties": {
+    "bookingId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "publicRef": {
+      "type": "string"
+    },
+    "buyerEmail": {
+      "type": "string",
+      "format": "email"
+    },
+    "event": {
+      "type": "object",
+      "properties": {
+        "eventId": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "name": {
+          "type": "string"
+        },
+        "startsAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "venue": {
+          "type": "string"
+        }
+      }
+    },
+    "tickets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "ticketCode": {
+            "type": "string"
+          },
+          "attendeeName": {
+            "type": "string"
+          },
+          "attendeeNikMasked": {
+            "type": "string",
+            "example": "3174********0001",
+            "description": "NIK tersamar"
+          },
+          "categoryCode": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "ticketCode",
+          "attendeeName",
+          "attendeeNikMasked",
+          "categoryCode"
+        ]
+      }
+    },
+    "ticketLinkToken": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "bookingId",
+    "publicRef",
+    "buyerEmail",
+    "tickets",
+    "ticketLinkToken"
+  ],
+  "additionalProperties": false
+}

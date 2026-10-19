@@ -1,0 +1,564 @@
+# Dihasilkan dari SDD v1.5 §4.6 (tools: scratchpad gen2/contracts.py). Ubah kontrak lewat PR yang direview BE dan FE.
+openapi: 3.1.0
+info:
+  title: RBT Payment Service API
+  version: 1.0.0
+  description: Halaman bayar, attempt Midtrans, webhook. Agregat Payment Attempt memakai event sourcing (ADR-019).
+  contact:
+    name: Tim PT. Tiket Sampai Nonton Sentosa
+servers:
+- url: https://api.rusuh.example
+  description: Edge (CloudFront → ALB); ganti saat RFS
+- url: http://localhost:{port}
+  description: Docker Compose lokal
+  variables:
+    port:
+      default: '8083'
+security:
+- visitorCookie: []
+- visitorHeader: []
+paths:
+  /api/v1/payments/{bookingId}/page:
+    get:
+      tags:
+      - payment
+      summary: View model halaman bayar (web dan WebView)
+      operationId: getPaymentPage
+      security:
+      - visitorCookie: []
+      - visitorHeader: []
+      - paymentPageCookie: []
+      parameters:
+      - name: bookingId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  meta:
+                    $ref: '#/components/schemas/Meta'
+                  data:
+                    $ref: '#/components/schemas/PaymentPage'
+                required:
+                - meta
+                - data
+        '409':
+          description: 'Booking tidak menunggu pembayaran — errorCode: `BOOKING_NOT_PAYABLE`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /api/v1/payments/{bookingId}/page-tokens:
+    post:
+      tags:
+      - payment
+      summary: Token sekali pakai untuk WebView mobile
+      operationId: createPageToken
+      security:
+      - visitorCookie: []
+      - visitorHeader: []
+      parameters:
+      - name: bookingId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '201':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  meta:
+                    $ref: '#/components/schemas/Meta'
+                  data:
+                    $ref: '#/components/schemas/PageToken'
+                required:
+                - meta
+                - data
+        '409':
+          description: 'Booking tidak menunggu pembayaran — errorCode: `BOOKING_NOT_PAYABLE`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /api/v1/payment-page-sessions:
+    post:
+      tags:
+      - payment
+      summary: Tukar token WebView menjadi cookie payment page
+      operationId: exchangePageToken
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PageSessionRequest'
+      responses:
+        '204':
+          description: Cookie rb_pay diset
+        '403':
+          description: 'Token salah/kedaluwarsa — errorCode: `PAYMENT_PAGE_TOKEN_INVALID`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /api/v1/payments/{bookingId}/attempts:
+    post:
+      tags:
+      - payment
+      summary: Buat atau rekonsiliasi attempt (memanggil payment-lock dulu)
+      operationId: createAttempt
+      security:
+      - visitorCookie: []
+      - visitorHeader: []
+      - paymentPageCookie: []
+      parameters:
+      - name: bookingId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: Idempotency-Key
+        in: header
+        required: true
+        schema:
+          type: string
+          minLength: 16
+          maxLength: 64
+        description: Unik per tombol; retry memakai key yang sama (SRS §3.2.24)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateAttemptRequest'
+      responses:
+        '201':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  meta:
+                    $ref: '#/components/schemas/Meta'
+                  data:
+                    $ref: '#/components/schemas/Attempt'
+                required:
+                - meta
+                - data
+        '409':
+          description: 'Konflik — errorCode: `BOOKING_NOT_PAYABLE`, `IDEMPOTENCY_KEY_REUSED`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: 'Metode tidak aktif — errorCode: `PAYMENT_METHOD_UNAVAILABLE`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '503':
+          description: 'Gateway gangguan — errorCode: `PAYMENT_PROVIDER_UNAVAILABLE`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /api/v1/payments/{bookingId}/status:
+    get:
+      tags:
+      - payment
+      summary: Status attempt dan instruksi
+      operationId: getPaymentStatus
+      security:
+      - visitorCookie: []
+      - visitorHeader: []
+      - paymentPageCookie: []
+      parameters:
+      - name: bookingId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  meta:
+                    $ref: '#/components/schemas/Meta'
+                  data:
+                    $ref: '#/components/schemas/PaymentStatus'
+                required:
+                - meta
+                - data
+  /api/v1/webhooks/midtrans:
+    post:
+      tags:
+      - webhook
+      summary: HTTP notification Midtrans (idempoten, out-of-order aman)
+      operationId: midtransWebhook
+      security:
+      - midtransSignature: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MidtransNotification'
+      responses:
+        '200':
+          description: Tersimpan durable (payment_callbacks) sebelum 2xx
+        '401':
+          description: 'Signature salah — errorCode: `WEBHOOK_SIGNATURE_INVALID`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /api/v1/local-simulator/payments/{attemptId}/scenario:
+    post:
+      tags:
+      - simulator
+      summary: Simulasi gateway (hanya APP_ENV=local atau ci)
+      operationId: simulatePayment
+      security: []
+      parameters:
+      - name: attemptId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SimulatorScenario'
+      responses:
+        '202':
+          description: Skenario dijalankan
+        '404':
+          description: 'Simulator mati di lingkungan ini — errorCode: `NOT_FOUND`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /health:
+    get:
+      tags:
+      - ops
+      summary: Health (ALB dan HEALTHCHECK container, D-23)
+      operationId: health
+      security: []
+      responses:
+        '200':
+          description: Semua dependency UP
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+        '503':
+          description: Ada dependency DOWN
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+components:
+  schemas:
+    Meta:
+      type: object
+      properties:
+        code:
+          type: integer
+        message:
+          type: string
+        requestId:
+          type: string
+        errorCode:
+          type: string
+          description: Ada hanya pada error; daftar di SRS §3.1.4 Error Codes
+        details:
+          type: object
+          additionalProperties:
+            type: string
+      required:
+      - code
+    ErrorEnvelope:
+      type: object
+      properties:
+        meta:
+          $ref: '#/components/schemas/Meta'
+        data:
+          type: 'null'
+      required:
+      - meta
+      - data
+      description: Error envelope SRS §3.1.4. Tidak pernah memuat SQL, stack trace, secret, atau payload provider.
+    Health:
+      type: object
+      properties:
+        status:
+          type: string
+          enum:
+          - UP
+          - DOWN
+        service:
+          type: string
+        checkedAt:
+          type: string
+          format: date-time
+        dependencies:
+          type: array
+          items:
+            type: object
+            properties:
+              name:
+                type: string
+              status:
+                type: string
+                enum:
+                - UP
+                - DOWN
+              latencyMs:
+                type: integer
+              reason:
+                type: string
+            required:
+            - name
+            - status
+      required:
+      - status
+      - service
+      - checkedAt
+      - dependencies
+    PaymentPage:
+      type: object
+      properties:
+        bookingId:
+          type: string
+          format: uuid
+        methods:
+          type: array
+          items:
+            type: string
+            enum:
+            - VA_BCA
+            - VA_BNI
+            - VA_BRI
+            - VA_PERMATA
+            - QRIS
+            - GOPAY
+        amountMinor:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Minor unit IDR
+        paymentExpiresAt:
+          type: string
+          format: date-time
+        serverTime:
+          type: string
+          format: date-time
+        currentAttempt:
+          oneOf:
+          - type: 'null'
+          - $ref: '#/components/schemas/Attempt'
+        canEdit:
+          type: boolean
+        editableUntil:
+          type: string
+          format: date-time
+      required:
+      - bookingId
+      - methods
+      - amountMinor
+      - paymentExpiresAt
+      - serverTime
+      - canEdit
+    PageToken:
+      type: object
+      properties:
+        pageToken:
+          type: string
+          description: Sekali pakai, TTL PAYMENT_PAGE_TOKEN_TTL_SECONDS
+        pageUrl:
+          type: string
+        expiresAt:
+          type: string
+          format: date-time
+      required:
+      - pageToken
+      - pageUrl
+      - expiresAt
+    PageSessionRequest:
+      type: object
+      properties:
+        pageToken:
+          type: string
+      required:
+      - pageToken
+    CreateAttemptRequest:
+      type: object
+      properties:
+        method:
+          type: string
+          enum:
+          - VA_BCA
+          - VA_BNI
+          - VA_BRI
+          - VA_PERMATA
+          - QRIS
+          - GOPAY
+      required:
+      - method
+    Attempt:
+      type: object
+      properties:
+        attemptNo:
+          type: integer
+        method:
+          type: string
+        status:
+          type: string
+          enum:
+          - CREATED
+          - PENDING
+          - UNKNOWN
+          - SUCCEEDED
+          - FAILED
+          - CANCELLED
+          - EXPIRED
+          - REFUND_REQUIRED
+          - REFUNDED
+        bookingVersion:
+          type: integer
+        expiresAt:
+          type: string
+          format: date-time
+        instruction:
+          type: object
+          properties:
+            type:
+              type: string
+              enum:
+              - VA
+              - QR
+              - DEEPLINK
+            bank:
+              type: string
+            vaNumber:
+              type: string
+            qrString:
+              type: string
+            deeplinkUrl:
+              type: string
+          required:
+          - type
+      required:
+      - attemptNo
+      - method
+      - status
+      - bookingVersion
+    PaymentStatus:
+      type: object
+      properties:
+        bookingId:
+          type: string
+          format: uuid
+        bookingStatus:
+          type: string
+        attempt:
+          oneOf:
+          - type: 'null'
+          - $ref: '#/components/schemas/Attempt'
+        serverTime:
+          type: string
+          format: date-time
+      required:
+      - bookingId
+      - bookingStatus
+      - serverTime
+    MidtransNotification:
+      type: object
+      properties:
+        order_id:
+          type: string
+        transaction_status:
+          type: string
+        status_code:
+          type: string
+        gross_amount:
+          type: string
+        signature_key:
+          type: string
+        transaction_id:
+          type: string
+        settlement_time:
+          type: string
+        fraud_status:
+          type: string
+        payment_type:
+          type: string
+      required:
+      - order_id
+      - transaction_status
+      - status_code
+      - gross_amount
+      - signature_key
+      additionalProperties: true
+    SimulatorScenario:
+      type: object
+      properties:
+        scenario:
+          type: string
+          enum:
+          - SETTLE
+          - SETTLE_LATE
+          - EXPIRE
+          - DENY
+          - TIMEOUT
+          - DUPLICATE_WEBHOOK
+          - OUT_OF_ORDER
+      required:
+      - scenario
+  securitySchemes:
+    visitorCookie:
+      type: apiKey
+      in: cookie
+      name: rb_visitor
+      description: Visitor token web (HttpOnly, Secure, SameSite=Lax)
+    visitorHeader:
+      type: apiKey
+      in: header
+      name: X-Visitor-Token
+      description: Visitor token mobile (secure storage)
+    paymentPageCookie:
+      type: apiKey
+      in: cookie
+      name: rb_pay
+      description: Cookie payment page hasil tukar token WebView
+    midtransSignature:
+      type: apiKey
+      in: header
+      name: X-Signature-Key-Body
+      description: Signature diverifikasi dari field signature_key body (SHA-512)

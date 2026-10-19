@@ -4,9 +4,9 @@
 |-------|-------|
 | **Product / Feature** | Rusuh Booking Tiket — platform penjualan tiket konser untuk *war tiket* |
 | **Document ID** | PRD-RBT-001 |
-| **Version** | 5.1 |
-| **Date** | 2026-10-18 |
-| **Status** | Draft (restrukturisasi format). Baseline requirement tetap PRD v4.6 Final Canonical; seluruh requirement `NOT_VERIFIED` sampai ada evidence |
+| **Version** | 5.2 |
+| **Date** | 2026-10-19 |
+| **Status** | Draft. Baseline requirement PRD v4.6 Final Canonical + perubahan v5.2 (keputusan tim 19 Okt, menunggu persetujuan approver, OI-11); seluruh requirement `NOT_VERIFIED` sampai ada evidence |
 | **Product Owner** | Pak Dinda (CEO), PT. Tiga Sekawan Angin Ribut (pemilik bisnis) |
 | **Contributors** | Tim PT. Tiket Sampai Nonton Sentosa (BE-1, BE-2, WEB-1, WEB-2, MOB-1) |
 | **Approvers** | Pak Dinda (CEO), Pak Jabon (CTO), Pak Rahman (CFO), PT. Tiga Sekawan Angin Ribut |
@@ -23,6 +23,7 @@
 
 | Version | Date | Author | Summary of change |
 |---------|------|--------|-------------------|
+| 5.2 | 2026-10-19 | Tim PT. Tiket Sampai Nonton Sentosa | Keputusan tim bersama BE-2: **akun opsional dengan login OTP email** (FEAT-10, US-090..US-093; non-goal "login" dicabut), guest checkout tetap utama; riwayat booking dan pembayaran dicatat dengan event sourcing (tidak mengubah alur customer); perlindungan degradasi gateway menjadi Must. Jaminan "Jangan PHP" dan aturan NIK tidak berubah |
 | 5.1 | 2026-10-18 | Tim PT. Tiket Sampai Nonton Sentosa | Approval 14 Oktober 2026 dicatat (§14); repository di organisasi GitHub `tiket-sampai-nonton` (CON-06). Tidak ada perubahan requirement |
 | 5.0 | 2026-10-17 | Tim PT. Tiket Sampai Nonton Sentosa | Restrukturisasi ke template PRD (ISO-aligned) sebagai bagian set dokumen RBT (PRD, SRS, HLD, SDD, ADR, Test Plan, Handbook). Isi teknis PRD v4.6 dipindahkan ke dokumen tersebut (Appendix C). **Tidak ada perubahan requirement, alur customer, maupun jaminan** |
 | 4.6 | 2026-10-16 | Tim | Sikap CAP/PACELC per komponen; outbox hanya Booking dan Payment; idempotensi consumer tanpa tabel inbox |
@@ -39,6 +40,7 @@
 2. Wording dan prioritas requirement PDF *Evaluasi Expertise Solution Development 2026 H2*.
 3. Keputusan tim 15–16 Oktober 2026 yang tercatat di PRD ini, termasuk asumsi (§10).
 4. ADR yang disetujui setelah PRD.
+5. Keputusan tim bersama BE-2 tanggal 19 Oktober 2026 (`Perbedaan-Desain-BE-Kita-vs-BE2.xlsx`), sampai disetujui approver (OI-11).
 
 **Status requirement:** `CONFIRMED` (requirement/grooming), `DERIVED` (wajib secara teknis), `ASSUMED` (asumsi tender, §10), `PROPOSED` (nilai awal yang dapat dituning), `NOT_VERIFIED`, `IMPLEMENTED`, `HUMAN_REVIEWED`, `VERIFIED`.
 
@@ -102,7 +104,7 @@ Notulen grooming dibuat otomatis dan memuat beberapa kalimat yang saling bertent
 
 - Pembayaran uang nyata di production.
 - Back-office pembuatan event (data event disediakan lewat seed/migration).
-- Login/akun customer (guest checkout sesuai grooming; dapat ditambahkan di masa depan).
+- ~~Login/akun customer~~ — dicabut di v5.2: akun **opsional** dengan login OTP email masuk scope (FEAT-10). Login tetap tidak pernah wajib; guest checkout sesuai grooming tetap jalur utama. Register dengan password, reset password, dan login media sosial tetap di luar scope.
 - Verifikasi NIK ke Dukcapil atau verifikasi wajah.
 - Sistem gating/scan tiket di gerbang venue.
 - Refund otomatis (refund kasus terlambat dilakukan manual lewat dashboard Midtrans).
@@ -160,6 +162,7 @@ Baseline belum ada karena produk baru; target diukur pada PoC dan load test. Buk
 | Persona | Description | Goals | Pain points | Frequency of use | Proficiency |
 |---------|-------------|-------|-------------|------------------|-------------|
 | Pembeli (guest) | Orang yang mengantre dan memesan, tanpa akun, dengan NIK pembeli dan email | Mendapat tiket untuk dirinya dan hingga 2 orang lain dengan cepat dan pasti | Antrean tidak jelas, ditolak setelah menunggu, takut uang hilang | Sesekali (per konser) | Rendah–menengah; sering di HP dengan sinyal tidak stabil |
+| Pembeli terdaftar (opsional) | Pembeli berulang yang memilih login dengan kode OTP di email | Tidak mengetik ulang NIK, email, dan nama; melihat riwayat pesanan | Lupa password (karena itu tanpa password); takut data NIK bocor | Berulang (beberapa konser) | Rendah–menengah |
 | Pemegang tiket | Orang yang datang ke konser; NIK-nya dicantumkan per tiket | Mendapat tiket atas namanya sendiri | NIK sudah dipakai orang lain | Sesekali | Tidak berinteraksi langsung kecuali menerima tiket |
 | Pembeli mobile | Pembeli yang memakai aplikasi Android/iOS | Tidak ketinggalan giliran saat aplikasi di background | Notifikasi tidak sampai, tombol back membingungkan | Sesekali | Rendah–menengah |
 | Ops / Penyelenggara | Staf yang memantau penjualan dan menangani pengecualian | Melihat antrean, konversi, expired secara langsung; mengatur parameter penjualan per event | Konfigurasi salah di tengah penjualan | Setiap penjualan | Menengah–tinggi |
@@ -182,6 +185,7 @@ Baseline belum ada karena produk baru; target diukur pada PoC dan load test. Buk
 |------------|---------|
 | Daftar dan detail event | PoC (Sprint 1) |
 | Guest session: NIK pembeli + email, aturan pembelian ditampilkan sebelum antre | PoC (Sprint 1) |
+| Akun opsional: login OTP email, profil (nama, NIK tersimpan), pengisian form otomatis, riwayat pesanan | PoC (Sprint 1–2) |
 | Waiting room FIFO dengan posisi, ETA, indikator peluang jujur, dan sold-out closure | PoC (Sprint 1) |
 | Reservasi tiket saat giliran tiba ("Jangan PHP") | PoC (Sprint 1) |
 | Halaman beli: hingga N tiket, ketersediaan kategori live, NIK dan nama pemegang per tiket dengan cek langsung | PoC (Sprint 1) |
@@ -198,7 +202,7 @@ Baseline belum ada karena produk baru; target diukur pada PoC dan load test. Buk
 
 ### 5.2 Out of Scope
 
-Lihat §2.2 Non-Goals. Ringkasnya: uang nyata, back-office event, login, verifikasi Dukcapil, scan tiket di gerbang, refund otomatis, loyalti/voucher/resale/seat map, multi-region, kartu kredit.
+Lihat §2.2 Non-Goals. Ringkasnya: uang nyata, back-office event, login wajib atau dengan password, verifikasi Dukcapil, scan tiket di gerbang, refund otomatis, loyalti/voucher/resale/seat map, multi-region, kartu kredit.
 
 ### 5.3 Kapasitas yang Ditawarkan (GR-11)
 
@@ -428,6 +432,18 @@ Priority: **MoSCoW** (Must / Should / Could / Won't-this-release). Kolom **Sourc
 
 ---
 
+### 7.10 Feature: Akun Opsional dan Login OTP (FEAT-10, v5.2)
+
+**Description:** Pembeli dapat tetap membeli sebagai guest, atau login dengan kode OTP yang dikirim ke email agar NIK, email, dan nama tersimpan dan riwayat pesanan tersedia. Tanpa password.
+**Goals served:** G-01, G-02
+
+| ID | User story | Priority | Source | Cap. | Acceptance criteria (Given / When / Then) |
+|----|-----------|----------|--------|------|-------------------------------------------|
+| US-090 | Sebagai pembeli, saya ingin tetap bisa membeli tanpa login agar tidak ada langkah tambahan saat war ticket. | Must | GR-05, D-03 | USR-01 | **Given** saya tidak login **When** saya menekan "Beli Tiket" **Then** alur guest berjalan seperti US-001 tanpa ajakan login yang menghalangi |
+| US-091 | Sebagai pembeli berulang, saya ingin login dengan kode yang dikirim ke email agar tidak perlu mengingat password. | Must | D-03, D-21 | USR-01 | **Given** saya memasukkan email **When** saya meminta kode **Then** kode 6 digit dikirim ke email, berlaku 5 menit, dan setelah 5 kali salah kode tidak bisa dipakai. **And** pesan yang tampil sama untuk email yang sudah atau belum terdaftar |
+| US-092 | Sebagai pembeli yang login, saya ingin NIK, email, dan nama saya terisi otomatis di form beli agar lebih cepat masuk antrean. | Must | D-03 | USR-01 | **Given** saya sudah menyimpan NIK di profil **When** saya menekan "Beli Tiket" **Then** NIK pembeli dan email terisi, NIK ditampilkan tersamar, dan aturan pembelian tetap ditampilkan. **And** satu NIK hanya bisa tersimpan di satu akun |
+| US-093 | Sebagai pembeli yang login, saya ingin melihat daftar pesanan saya agar mudah membuka tiket lagi. | Should | D-03 | USR-01 | **Given** saya pernah membeli saat login **When** saya membuka "Pesanan saya" **Then** tampil pesanan beserta status dan tautan tiket |
+
 ## 8. Business Rules
 
 ### 8.1 Aturan
@@ -609,7 +625,7 @@ Likelihood dan impact belum dinilai di PRD v4.6; kolom diisi saat review risiko.
 
 | ID | Risk | Likelihood | Impact | Mitigation | Owner |
 |----|------|-----------|--------|-----------|-------|
-| RISK-01 | Koordinasi 4 service oleh 2 BE dalam 20 hari | [L/M/H] | [L/M/H] | Kontrak dibekukan D2, contract test, platform bersama, cross-review | Tech lead |
+| RISK-01 | Koordinasi 5 service oleh 2 BE dalam 20 hari | [L/M/H] | [L/M/H] | Kontrak dibekukan D2, contract test, platform bersama, cross-review | Tech lead |
 | RISK-02 | Klaim kapasitas tidak terbukti | | | Ekstrapolasi hanya dari hasil load test PoC | BE-1 |
 | RISK-03 | Calo memakai NIK sintetis | | | Validasi struktur + nama pemegang + satu antrean per perangkat/email + challenge; Dukcapil sebagai opsi | BE-1, BE-2 |
 | RISK-04 | Push notification tidak sampai (izin ditolak, OS menunda) | | | Best effort; peringatan di aplikasi; claim window 3 menit; missed turn rate dipantau | MOB-1 |
@@ -621,6 +637,8 @@ Likelihood dan impact belum dinilai di PRD v4.6; kolom diisi saat review risiko.
 | RISK-10 | Secret bocor di repository public | | | Push protection, OIDC, review | Semua |
 | RISK-11 | Defect dari kode yang dibantu AI | | | Task kecil, test, human review, evidence | Semua |
 | RISK-12 | Interpretasi "real time" ditolak panitia | | | Konfirmasi OI-07; desain mendukung interval lebih pendek dengan biaya lebih tinggi | Tech lead |
+| RISK-13 | Penyalahgunaan login OTP (tebak kode, banjir email) | | | Batas percobaan, cooldown, rate limit per email dan IP; login tidak wajib sehingga gangguan email tidak menghentikan penjualan | BE-1 |
+| RISK-14 | Scope bertambah (service kelima, event sourcing) dalam 20 hari | | | Boilerplate User Service dan event store kit sudah jalan per 19 Okt; fitur login dapat dimatikan di klien bila waktu habis | Tech lead |
 
 Risiko teknis (bottleneck panggilan sinkron, kehilangan data antrean in-memory, hot row stok, keterlambatan event slot bebas) dicatat di AD-RBT-001 (HLD) §7.
 
@@ -640,6 +658,7 @@ Risiko teknis (bottleneck panggilan sinkron, kehilangan data antrean in-memory, 
 | OI-08 | Regulasi data pribadi yang menjadi acuan perlakuan NIK (CON-07) | Tech lead | [Tanggal] | Perlakuan PII sesuai GR-15 | |
 | OI-09 | Perlu uji usability ringan dengan pengguna nyata di Sprint 2? | Product Owner | [Tanggal] | Tidak; diganti review heuristik | |
 | OI-10 | Rate card, model harga (build fixed price + operasi per event + maintenance), margin dan kontingensi untuk proposal | Tim/manajemen | [Tanggal] | — | |
+| OI-11 | Persetujuan approver atas perubahan v5.2 (akun opsional, event sourcing, circuit breaker Must) | Tech lead → Pak Jabon (CTO) | 2026-10-20 | Dikerjakan sebagai Sprint 1; login dapat dimatikan bila ditolak | |
 
 ---
 
@@ -651,6 +670,7 @@ Risiko teknis (bottleneck panggilan sinkron, kehilangan data antrean in-memory, 
 | CTO | Pak Jabon, PT. Tiga Sekawan Angin Ribut | Approved | 2026-10-14 |
 | CFO | Pak Rahman, PT. Tiga Sekawan Angin Ribut | Approved | 2026-10-14 |
 | Penyusun | Tim PT. Tiket Sampai Nonton Sentosa | | |
+| Perubahan v5.2 (FEAT-10, event sourcing, PAY-06 Must) | Pak Jabon (CTO) | Menunggu persetujuan (OI-11) | |
 
 ---
 
@@ -661,6 +681,7 @@ Semua baris berstatus `NOT_VERIFIED`. Pemetaan source requirement → requiremen
 | Source requirement | User story / item | Cap. (v4.6) | Test case(s) |
 |--------------------|-------------------|-------------|--------------|
 | FR-01, FR-02, FR-03 | US-010 | EVT-01 | TC-EVT-01, TC-EVT-02, TC-EVT-03 |
+| D-03 (v5.2) | US-090, US-091, US-092, US-093 | USR-01 | TC-USR-01 … TC-USR-12 |
 | FR-04, FR-05 | US-020 | QUE-01 | TC-QUE-01, TC-QUE-02 |
 | FR-06 | US-021 | QUE-02 | TC-QUE-03 |
 | FR-07 | US-021 | QUE-02, QUE-05 | TC-QUE-04, TC-QUE-15 |

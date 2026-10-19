@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "booking.quota.exhausted.v1.schema.json",
+  "title": "Payload booking.quota.exhausted.v1",
+  "description": "Payload di dalam envelope. Tidak memuat NIK plaintext, secret, atau token selain ticketLinkToken untuk email.",
+  "type": "object",
+  "properties": {
+    "eventId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "buyerNikHash": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "eventId",
+    "buyerNikHash"
+  ],
+  "additionalProperties": false
+}

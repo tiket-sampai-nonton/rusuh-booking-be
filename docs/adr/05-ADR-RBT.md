@@ -3,10 +3,10 @@
 | Field | Value |
 |-------|-------|
 | **Document ID** | ADR-RBT |
-| **Version** | 1.1 |
-| **Date** | 2026-10-18 |
+| **Version** | 1.2 |
+| **Date** | 2026-10-19 |
 | **Deciders** | Tim PT. Tiket Sampai Nonton Sentosa (BE-1, BE-2, WEB-1, WEB-2, MOB-1) |
-| **Source** | PRD v4.6 §1.4, §5.25, §7, §9.7, §9.8, §13.4, Lampiran L; keputusan tim 14–16 Oktober 2026 |
+| **Source** | PRD v4.6 §1.4, §5.25, §7, §9.7, §9.8, §13.4, Lampiran L; keputusan tim 14–16 Oktober 2026; keputusan bersama BE-2 19 Oktober 2026 |
 
 > **Reference basis.** Format mengikuti Nygard ADR / MADR dan mencatat elemen *architecture decision* dan *rationale* pada ISO/IEC/IEEE 42010:2022. Satu keputusan per ADR. ADR yang sudah Accepted tidak diubah; perubahan dibuat dengan ADR baru yang menggantikannya.
 >
@@ -34,6 +34,10 @@
 | ADR-016 | Struktur proyek mengikuti standar proyek organisasi | 2026-10-17 | CN-02, CN-09 | SRS-C-08 |
 | ADR-017 | Tiga repository terpisah (backend, web, mobile) dalam satu organisasi GitHub | 2026-10-17 | CN-02, CN-05 | CON-06, SRS-C-08 |
 | ADR-018 | Konsistensi lintas service dengan saga koreografi dan kompensasi | 2026-10-18 | CN-03, CN-04 | NFR-10, SRS-Q-REL-04, BR-06 |
+| ADR-019 | Event sourcing untuk agregat Booking dan Payment; stok tetap relasional | 2026-10-19 | CN-03, CN-04, CN-09 | SRS-C-09, SRS-D-10, SRS-D-11, SRS-Q-REL-09 |
+| ADR-020 | User Service untuk akun opsional dengan login OTP email; guest checkout tetap utama | 2026-10-19 | CN-02, CN-06 | SRS §3.2.27, SRS-F-01-08, SRS-Q-SEC-10..11 |
+| ADR-021 | Usulan BE-2 yang dicatat sebagai alternatif (gRPC internal, EKS + Helm, API Gateway/Kong) | 2026-10-19 | CN-02, CN-05, CN-09 | NFR-01, NFR-03 |
+| ADR-022 | Runtime dan tooling boilerplate: Go 1.26, verb Cobra, client standar, migrasi tertanam, `/health` | 2026-10-19 | CN-09 | SRS-C-02, SRS-C-08, SRS-F-19-03 |
 
 ---
 
@@ -41,7 +45,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | Accepted (menggantikan modular monolith v4.1) |
+| **Status** | Accepted (menggantikan modular monolith v4.1); **jumlah service diperbarui ADR-020** (User Service ditambahkan) |
 | **Date** | 2026-10-15 |
 | **Concerns** | CN-02, CN-03 |
 | **Affected components** | CMP-QUEUE, CMP-BOOKING, CMP-PAYMENT, CMP-NOTIF |
@@ -112,7 +116,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | Accepted (menggantikan modul Identity & Auth v4.1) |
+| **Status** | Accepted (menggantikan modul Identity & Auth v4.1); **diubah sebagian oleh ADR-020**: guest tetap tanpa OTP, login OTP tersedia sebagai pilihan |
 | **Date** | 2026-10-15 |
 | **Concerns** | CN-06 |
 | **Affected components** | CMP-QUEUE, CMP-WEB, CMP-MOBILE |
@@ -196,7 +200,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | Accepted |
+| **Status** | Accepted; **diperluas ADR-020**: Valkey juga menyimpan challenge OTP sementara (hash kode + hitungan percobaan, ber-TTL). Sesi login tetap di PostgreSQL |
 | **Date** | 2026-10-16 (v4.5) |
 | **Concerns** | CN-03 |
 | **Affected components** | CMP-BOOKING, CMP-PAYMENT, CMP-QUEUE, DS-PG, DS-VK |
@@ -264,7 +268,7 @@
 
 **Context.** Hanya dua titik komunikasi sinkron. Autoscaling tanpa sticky session. Swagger/OpenAPI ADOPT di radar; gRPC belum.
 
-**Considered options.** gRPC vs **REST/JSON + OpenAPI 3.1**. Session store terpusat vs **JWT EdDSA**.
+**Considered options.** gRPC vs **REST/JSON + OpenAPI 3.1**. Session store terpusat vs **JWT EdDSA**. Perbandingan lengkap dengan usulan gRPC BE-2: ADR-021.
 
 **Decision.** API internal REST/JSON dengan service token JWT berumur pendek di jaringan privat. Token visitor, queue, admission, payment page, ticket link, dan service memakai JWT EdDSA (Ed25519); private key hanya di service penerbit; `jti` untuk token sekali pakai; kunci di SSM dengan rotasi `kid`.
 
@@ -285,7 +289,7 @@
 
 **Context.** Polling status hingga 1 juta klien, bot saat jam buka, kredit AWS US$200, assessor harus bisa menjalankan lokal.
 
-**Considered options.** Kong / API Gateway vs **CloudFront + WAF + ALB**; container orchestrator vs **EC2 ASG (Graviton)**.
+**Considered options.** Kong / API Gateway vs **CloudFront + WAF + ALB**; container orchestrator vs **EC2 ASG (Graviton)**. Perbandingan lengkap dengan usulan EKS + Helm + Kong BE-2: ADR-021.
 
 **Decision.** CloudFront menyerap polling Status Document dan event list; WAF managed rules, rate-based rule, dan challenge saat jam buka; ALB path routing per service, origin hanya dari CloudFront. Compute EC2 ASG terpisah untuk Queue dan Core, scheduled scale-out sebelum jam buka. Lokal: nginx edge di Docker Compose meniru routing dan cache.
 
@@ -341,7 +345,7 @@
 
 | Field | Value |
 |-------|-------|
-| **Status** | Accepted (PostgreSQL, Valkey, RabbitMQ dikonfirmasi ADOPT 16 Okt; komponen "perlu cek radar" dikonfirmasi saat kickoff) |
+| **Status** | Accepted (PostgreSQL, Valkey, RabbitMQ dikonfirmasi ADOPT 16 Okt; komponen "perlu cek radar" dikonfirmasi saat kickoff); **versi Go dan library boilerplate diperbarui ADR-022** |
 | **Date** | 2026-10-16 (v4.5) |
 | **Concerns** | CN-09 |
 
@@ -367,7 +371,7 @@ Prinsip pemilihan: **(1)** sesuai tech radar klien, **(2)** setiap komponen puny
 | Edge | **CloudFront + AWS WAF + ALB** | CDN menyerap polling status; WAF challenge dan rate-based rule menahan bot di tepi; ALB path routing per service; origin hanya menerima dari CloudFront | Perlindungan bot dan DDoS managed tanpa operasi tambahan |
 | Compute | **EC2 Auto Scaling Group** (Graviton t4g/c7g) | ASG Queue terpisah karena beban join berbeda dari beban transaksi; scheduled scale-out sebelum jam buka; Graviton memberi harga per vCPU lebih rendah | Biaya PoC dalam kredit; skala production terukur per tier (§17 [v4.6 → HLD §4.7]) |
 | IaC & CI/CD | **Terraform** + **GitHub Actions dengan OIDC** | Infrastruktur dapat direview dan diulang; OIDC menghapus access key jangka panjang; image dibangun sekali dan di-deploy per digest | Assessor dapat mengaudit seluruh infra dari repo |
-| Lokal | **Docker Compose** + nginx edge | Seluruh sistem (4 service, PostgreSQL, Valkey, RabbitMQ, Mailpit, observability) jalan dengan satu perintah; nginx meniru routing ALB dan cache CloudFront | Clean-room assessor tanpa AWS dan tanpa private registry |
+| Lokal | **Docker Compose** + nginx edge | Seluruh sistem (5 service, PostgreSQL, Valkey, RabbitMQ, Mailpit, observability) jalan dengan satu perintah; nginx meniru routing ALB dan cache CloudFront | Clean-room assessor tanpa AWS dan tanpa private registry |
 | Payment | **Midtrans Sandbox (Core API)** | Webhook bersignature, status API untuk rekonsiliasi, custom expiry diselaraskan dengan TTL; data kartu tidak pernah menyentuh sistem | Integrasi aktual, bukan mock; sesuai grooming (GR-13) |
 | Observability | **OpenTelemetry → Prometheus + Grafana**, Jaeger lokal | Standar vendor-neutral; trace lintas service dan event; dashboard disimpan di repo | Metrik antrean, konversi, dan expiry real-time (NFR-09) dengan biaya rendah |
 | Testing | Go `testing` (race), **godog**, **Apidog**, **Katalon**, **Appium**, **k6**, **Zephyr Scale** | Piramida test lengkap; acceptance criteria ditulis Gherkin; k6 membuktikan klaim kapasitas | Setiap klaim proposal ditautkan ke test ID dan evidence |
@@ -382,7 +386,7 @@ Prinsip pemilihan: **(1)** sesuai tech radar klien, **(2)** setiap komponen puny
 
 | Field | Value |
 |-------|-------|
-| **Status** | Accepted (menggantikan struktur monorepo Lampiran F PRD v4.6) |
+| **Status** | Accepted (menggantikan struktur monorepo Lampiran F PRD v4.6); **tabel deviasi diperbarui ADR-022** (entry point Cobra, 5 service) |
 | **Date** | 2026-10-17 |
 | **Concerns** | CN-02, CN-09 |
 | **Related requirements** | SRS-C-08 |
@@ -398,8 +402,8 @@ Prinsip pemilihan: **(1)** sesuai tech radar klien, **(2)** setiap komponen puny
 
 | Elemen | Penyesuaian | Alasan |
 |---|---|---|
-| `pkg/` | Di root sebagai module bersama, bukan per service | Dipakai 4 service; menghindari 4 salinan |
-| Worker | `cmd/main.go` dengan flag `--mode=api` atau `--mode=worker` + `internal/delivery/worker.go` | Mempertahankan satu entry point sesuai standar |
+| `pkg/` | Di root sebagai module bersama, bukan per service | Dipakai 5 service; menghindari 5 salinan |
+| Worker | `cmd/main.go` dengan flag `--mode=api` atau `--mode=worker` + `internal/delivery/worker.go` (sejak ADR-022: verb Cobra `api`/`worker`) | Mempertahankan satu entry point sesuai standar |
 | Migration, Dockerfile | `services/<svc>/deployments/{Dockerfile,migrations}` | Standar tidak punya folder migration; `deployments/` adalah tempat konfigurasi deployment |
 | `.gitlab-ci.yml` | Diganti GitHub Actions (`.github/workflows/`) | Assessment mewajibkan repository GitHub public; stage pipeline sama dengan standar, satu `ci.yml` bertahap |
 | Root monorepo backend | Tambahan `services/`, `tests/`, `tools/`, `.kiro/`, `specs/`, `docker-compose.yaml`, `Makefile`, `go.work` | Standar mendefinisikan satu service; RBT memuat beberapa proyek dan artefak assessment |
@@ -474,6 +478,139 @@ Prinsip pemilihan: **(1)** sesuai tech radar klien, **(2)** setiap komponen puny
 - Negatif: alur tersebar di beberapa consumer sehingga butuh correlation ID dan tracing; konsistensi antar service eventual; rekonsiliasi terjadwal wajib berjalan.
 
 **Confirmation.** TC-PAY-03, TC-PAY-04, TC-PAY-09, TC-CAP-03; outbox lag kembali 0 setelah broker pulih; rekonsiliasi tidak menemukan selisih.
+
+---
+
+## ADR-019: Event sourcing untuk agregat Booking dan Payment; stok tetap relasional
+
+| Field | Value |
+|-------|-------|
+| **Status** | Accepted (keputusan tim bersama BE-2, D-04) |
+| **Date** | 2026-10-19 |
+| **Concerns** | CN-03, CN-04, CN-09 |
+| **Related requirements** | SRS-C-09, SRS-D-10, SRS-D-11, SRS-Q-REL-09; rubrik kompetensi Level 3 "aplikasi event sourcing" |
+| **Affected components** | CMP-BOOKING, CMP-PAYMENT, CMP-PLATFORM (`pkg/eventstore`) |
+
+**Context.** PRD v4.6 menyimpan booking dan attempt pembayaran sebagai state di tabel (`bookings.status`, `payment_attempts.status`); event RabbitMQ hanya pesan integrasi. Rubrik kompetensi Level 3 (wajib) meminta aplikasi dengan arsitektur event sourcing, dan BE-2 mengusulkan event sourcing untuk Booking (V2 ADR-0003). Invariant "tidak oversell" tidak boleh bergantung pada replay, dan waktu pengembangan hanya 20 Oktober sampai 8 November.
+
+**Decision drivers.** Riwayat yang bernilai bisnis dan audit (siklus tiket dan uang); invariant stok tetap ACID; biaya implementasi terbatas; pertanyaan "kenapa hanya itu?" harus punya jawaban berprinsip.
+
+**Considered options.** (A) Tanpa event sourcing; (B) Booking saja; (C) **Booking dan Payment**; (D) semua service, termasuk stok, Queue, dan Notification.
+
+**Decision.** Pilih **C** dengan kriteria tertulis: *event sourcing dipakai pada agregat yang riwayatnya bernilai bisnis dan audit. Tidak dipakai pada stok (butuh konsistensi kuat), Queue (data sementara di Valkey), dan Notification (tidak ada invarian bisnis).*
+
+| Aspek | Keputusan |
+|---|---|
+| Sumber kebenaran | `booking.booking_events` (stream = `bookings.id`) dan `payment.payment_events` (stream = `payment_attempts.id`), append-only, kunci `(stream_id, version)` |
+| Read model | `bookings` dan `payment_attempts` diproyeksikan **sinkron** di transaksi yang sama dengan append; `bookings.version` dan `payment_attempts.stream_version` = versi event terakhir |
+| Stok | `category_inventories` dan `event_supply` tetap relasional, diubah di transaksi yang sama dengan append event dan outbox |
+| Concurrency | Optimistic: append dengan `expectedVersion` yang sudah terlewati ditolak primary key (23505) → `ErrConcurrency` → baca ulang lalu ulangi atau kembalikan `BOOKING_VERSION_CONFLICT` |
+| Log append-only | Trigger menolak `UPDATE`, `DELETE`, `TRUNCATE` pada tabel `*_events` |
+| PII | Payload event tidak memuat NIK, email, atau token plaintext; `pkg/eventstore` menolak field terlarang. Yang boleh: hash dan nilai tersamar |
+| Integrasi | Outbox tetap ada; event integrasi (`booking.paid.v1` dan lainnya) ditulis bersama event domain |
+| Replay | Dipakai untuk audit, test, dan membangun ulang read model; jalur produksi membaca read model |
+| Versi event | `schema_version` per event; perubahan bentuk payload = versi baru, handler lama tetap ada sampai migrasi data |
+
+**Consequences.**
+- Positif: riwayat lengkap setiap booking dan attempt tanpa tabel audit terpisah; konflik ubah pesanan terdeteksi di database; memenuhi butir rubrik dengan cakupan yang bisa dibela; stok tetap dijaga satu transaksi ACID.
+- Negatif: dua tabel event dan proyeksi yang harus diuji; skema event perlu versioning; ukuran tabel event bertambah (diarsipkan setelah event selesai, sejalan dengan `PII_RETENTION_DAYS_AFTER_EVENT`).
+
+**Confirmation.** `pkg/eventstore` integration test (20 penulis paralel, tepat satu berhasil); trigger append-only diuji di DDL; TC-ES-01..TC-ES-05 (Test Plan Annex A); replay booking menghasilkan state yang sama dengan read model.
+
+---
+
+## ADR-020: User Service untuk akun opsional dengan login OTP email; guest checkout tetap utama
+
+| Field | Value |
+|-------|-------|
+| **Status** | Accepted (keputusan tim bersama BE-2, D-03 dan D-21; mengubah sebagian ADR-001, ADR-004, ADR-008) |
+| **Date** | 2026-10-19 |
+| **Concerns** | CN-02, CN-06 |
+| **Related requirements** | SRS-F-27-01 … SRS-F-27-12, SRS-F-01-08 (direvisi), NFR-07 |
+| **Affected components** | CMP-USER (baru), CMP-QUEUE, CMP-BOOKING, CMP-WEB, CMP-MOBILE |
+
+**Context.** ADR-004 menetapkan guest checkout tanpa OTP. BE-2 mengusulkan User Service (register, login, NIK tersimpan). Tim sepakat mendukung dua jalur: pembeli bisa tetap guest, atau login agar NIK, email, dan nama tidak perlu diketik ulang dan riwayat pesanan tersedia. Login tidak boleh menjadi syarat membeli, dan waktu war ticket tidak boleh bertambah karena login.
+
+**Considered options.** (A) Tetap guest saja; (B) akun wajib dengan password; (C) **akun opsional, login OTP email tanpa password**; (D) akun opsional dengan password + OTP.
+
+**Decision.** Pilih **C** sebagai service kelima (`services/user`, schema `users`, role `svc_user`).
+
+| Aspek | Keputusan |
+|---|---|
+| Login | `POST /auth/otp/request` mengirim kode 6 digit; `POST /auth/otp/verify` menukar kode dengan token. Akun dibuat otomatis saat login pertama. Tanpa password, tanpa reset password |
+| Batas OTP | TTL 5 menit, maks 5 percobaan per kode, cooldown kirim ulang 60 detik, maks 5 permintaan per email dan 20 per IP per jam; respons sama untuk email terdaftar atau belum (anti enumerasi) |
+| Penyimpanan OTP | Valkey dengan TTL: hash kode (HMAC terikat email) dan hitungan percobaan. Hilang saat Valkey restart hanya berarti minta kode baru (ADR-008 diperbarui) |
+| Token | Access token JWT EdDSA 15 menit (`aud=rbt`, `scope=buyer`); refresh token acak 32 byte, disimpan sebagai hash di `users.sessions`, berlaku 30 hari, **dirotasi** setiap refresh; token lama yang dipakai ulang mencabut semua sesi akun |
+| PII | Email dan NIK disimpan AES-256-GCM + hash HMAC; satu NIK hanya boleh tertaut ke satu akun (`uq_accounts_nik`) agar kuota NIK pembeli tidak diakali lewat banyak akun |
+| Pengiriman OTP | Langsung lewat SMTP dari User Service, tidak lewat RabbitMQ: kode OTP adalah secret dan envelope event tidak boleh memuat secret |
+| Integrasi | Klien mengisi form join dari `GET /me`; join tetap mengirim NIK dan email seperti guest. Bila `Authorization` dikirim, Queue memverifikasi token dengan public key User Service, mencocokkan `nik_hash`, dan meneruskan `accountId` ke alokasi → `admissions.account_id` → `bookings.account_id`; `GET /api/v1/me/bookings` di Booking menampilkan riwayat |
+| Guest | Tidak berubah: NIK + email diketik dua kali, tanpa OTP (SRS-F-01-08 direvisi menjadi "guest checkout tidak memerlukan OTP") |
+
+**Consequences.**
+- Positif: kompetensi autentikasi dan pengelolaan sesi terlihat; pembeli berulang lebih cepat; tidak ada password yang harus dilindungi.
+- Negatif: service, schema, dan kontrak tambahan (`docs/contracts/openapi/user.yaml`); SMTP menjadi dependency jalur login; permukaan serangan bertambah (OTP brute force, credential stuffing) yang dimitigasi rate limit, lock percobaan, dan audit `users.login_audit`.
+
+**Confirmation.** Unit dan integration test `services/user` (coverage logika 94%); uji end-to-end OTP → token → profil → rotasi → reuse detection (`docs/evidence/2026-10-19-boilerplate-v1.5.md`); TC-USR-01..TC-USR-12.
+
+---
+
+## ADR-021: Usulan BE-2 yang dicatat sebagai alternatif (gRPC internal, EKS + Helm, API Gateway/Kong)
+
+| Field | Value |
+|-------|-------|
+| **Status** | Accepted (keputusan tim bersama BE-2, D-05, D-07, D-08: usulan dicatat sebagai trade-off, tidak diadopsi untuk PoC) |
+| **Date** | 2026-10-19 |
+| **Concerns** | CN-02, CN-05, CN-09 |
+| **Related requirements** | NFR-01, NFR-03, rubrik Level 4 "mempresentasikan berbagai alternatif desain" |
+| **Affected components** | CMP-EDGE, semua service |
+
+**Context.** BE-2 (dokumen V2) mengusulkan gRPC untuk komunikasi internal, EKS + Helm + ingress Kong untuk deployment, dan API Gateway sebagai service sendiri. ADR-011 dan ADR-012 sudah memilih REST internal, CloudFront + WAF + ALB, dan EC2 ASG. Tim sepakat menyimpan usulan ini sebagai alternatif dengan alasan dan kondisi kapan layak dipakai.
+
+**Decision.** Tetap ADR-011 dan ADR-012 untuk PoC. Perbandingannya:
+
+| Topik | Pilihan PoC | Usulan BE-2 | Kenapa PoC tidak memakainya sekarang | Kapan layak diadopsi |
+|---|---|---|---|---|
+| Komunikasi internal | REST/JSON + OpenAPI + JWT EdDSA | gRPC + `.proto` + service token; event HMAC | Hanya 3 jalur sinkron; tooling sama dengan API publik; status gRPC di tech radar belum ADOPT | Jalur sinkron bertambah, butuh streaming internal, atau latensi internal menjadi bottleneck terukur |
+| Deployment | EC2 ASG Graviton + Terraform | EKS + Helm, k3d/Tilt lokal | Biaya control plane EKS dari kredit US$200; satu AZ PoC; tim kecil | Lebih dari ±10 deployment, butuh autoscaling per pod, atau tim ops tersedia |
+| Ingress / gateway | CloudFront + WAF + ALB rule per path; validasi token di middleware `pkg/httpx` | API Gateway service sendiri / ingress Kong | Komponen tambahan di jalur kritis; fungsi utama (TLS, rate limit, bot) sudah oleh komponen managed | Butuh plugin gateway (quota per klien API, monetisasi) atau banyak klien pihak ketiga |
+
+Pola yang diadopsi dari usulan BE-2: **satu image banyak verb** (`api`, `worker`, `migrate`) dengan satu verb per deployment, dipakai di ASG dan Compose (ADR-022).
+
+**Consequences.** Positif: keputusan dapat dipertahankan saat technical defense dengan alternatif yang jelas. Negatif: bila kebutuhan berubah, migrasi ke gRPC/EKS butuh ADR baru dan perubahan pipeline.
+
+**Confirmation.** Review ulang saat kickoff produksi; biaya EKS dihitung terhadap model biaya HLD §4.7.
+
+---
+
+## ADR-022: Runtime dan tooling boilerplate: Go 1.26, verb Cobra, client standar, migrasi tertanam, `/health`
+
+| Field | Value |
+|-------|-------|
+| **Status** | Accepted (keputusan tim bersama BE-2, D-13 … D-16, D-22 … D-25, D-27; memperbarui ADR-015 dan tabel deviasi ADR-016) |
+| **Date** | 2026-10-19 |
+| **Concerns** | CN-09 |
+| **Related requirements** | SRS-C-02, SRS-C-08, SRS-Q-MNT-01 |
+| **Affected components** | Semua service, CMP-PLATFORM |
+
+**Context.** Boilerplate kita (skeleton 17 Okt) dan boilerplate BE-2 berbeda di entry point, client infrastruktur, migrasi, nama env, health endpoint, versi Go, dan gaya test. Perbedaan ini paling cepat menimbulkan bentrok karena development dimulai 20 Oktober.
+
+**Decision.**
+
+| Topik | Keputusan | Asal |
+|---|---|---|
+| Versi Go | **1.26** (`go 1.26` di semua `go.mod`, image `golang:1.26-alpine`) | BE-2 mengusulkan 1.25; dinaikkan ke 1.26 karena sudah tersedia (D-25) |
+| Entry point | `cmd/main.go` tetap (standar) + Cobra: `api`, `worker`, `migrate up|down|status`, `healthcheck` | BE-2 (D-14), lokasi file mengikuti standar |
+| Client | `pkg/postgres` (pgx pool terbatas, `search_path` per service), `pkg/valkey` (valkey-go, standalone/cluster), `pkg/rabbitmq` (amqp091, publisher confirm, consumer manual ack, retry berjenjang, DLQ); setiap verb hanya membuka client yang dipakai; ping saat start | BE-2 (D-15) + DLQ (D-12) |
+| Migrasi | Tertanam di binary (`deployments/migrations/*.up.sql` + `.down.sql`, `go:embed`), satu transaksi per langkah, `pg_advisory_lock` per schema, tabel `<schema>.schema_migrations` dengan checksum (migrasi lama yang diubah ditolak) | BE-2 + tambahan kita (D-16) |
+| Env | `APP_*`, `LOG_*`, `POSTGRES_HOST/PORT/USER/PASSWORD/DATABASE/SSLMODE/SCHEMA/MAX_CONNS`, `VALKEY_SERVER` (JSON), `RABBITMQ_*`; semua divalidasi saat start dan dilaporkan sekaligus | BE-2 (D-24) + `POSTGRES_SCHEMA` |
+| Health | Satu endpoint `GET /health`: 200 `UP` bila semua dependency ping, 503 `DOWN` bila tidak | Kompromi (D-23) |
+| Test | testify (`assert`/`require`), table-driven, mock `go.uber.org/mock` lewat `go tool mockgen`; integration test dengan build tag `integration` | BE-2 (D-27) |
+| Struktur | Standar organisasi + aturan STEERING BE-2 yang tidak bertentangan: route registrar per domain, error kontrak di `port/inbound`, `ReadHeaderTimeout`, `cmd.Context()` | Kompromi (D-13) |
+| Resilience | `pkg/resilience`: circuit breaker + bulkhead untuk setiap panggilan sinkron (PAY-06 menjadi MUST, D-40) | Rubrik Level 3 |
+
+**Consequences.** Positif: satu konvensi untuk kedua BE; boilerplate sudah terbukti jalan (migrasi lima schema, `/health`, alur OTP end-to-end). Negatif: tiga dependency pihak ketiga baru (Cobra, testify, mock) yang perlu dicatat di tech radar; `go.sum` wajib di-commit (`make tidy`).
+
+**Confirmation.** CI stage `code-quality` memeriksa `go.mod`/`go.sum` rapi dan `_mock/` sesuai port; `case-coverage` menjalankan integration test; evidence `docs/evidence/2026-10-19-boilerplate-v1.5.md`.
 
 ---
 

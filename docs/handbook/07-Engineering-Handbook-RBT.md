@@ -3,8 +3,8 @@
 | Field | Value |
 |-------|-------|
 | **Document ID** | EHB-RBT |
-| **Version** | 1.2 |
-| **Date** | 2026-10-18 |
+| **Version** | 1.3 |
+| **Date** | 2026-10-19 |
 | **Owner** | BE-1 (+ semua owner) |
 | **Source** | PRD v4.6 §18.4, §18.5, §21.3, Lampiran G, H, K; standar proyek organisasi (ADR-016) |
 
@@ -17,6 +17,7 @@
 | 1.0 | 2026-10-17 | Tim PT. Tiket Sampai Nonton Sentosa | Dipecah dari PRD v4.6 |
 | 1.1 | 2026-10-17 | Tim PT. Tiket Sampai Nonton Sentosa | Ditambah standar struktur proyek (§0); path disesuaikan; deviasi CI dicatat |
 | 1.2 | 2026-10-18 | Tim PT. Tiket Sampai Nonton Sentosa | Tiga repository di organisasi; ruleset yang berlaku; pipeline bertahap dengan image arm64 dan SBOM; SonarCloud menggantikan SonarCloud |
+| 1.3 | 2026-10-19 | Tim PT. Tiket Sampai Nonton Sentosa | Keputusan bersama BE-2: verb Cobra, Go 1.26, `go tool mockgen`, testify, migrasi tertanam (§0, §3.0); nama env D-24 menggantikan kutipan v4.6 (§3.0); alert email dan runbook (§6); penjelasan arsitektur untuk junior (§7) |
 
 ---
 
@@ -32,12 +33,17 @@ Semua service **wajib** mengikuti standar proyek organisasi. Struktur lengkap, p
 | Domain | `domain/entity` (objek bisnis, konstanta, error code), `domain/valueobject` (immutable), `domain/dto` (request/response terkonsolidasi), `domain/mapper` (transformasi murni) |
 | Usecase | `application/usecase/`, satu usecase per file |
 | Adapter | `infrastructure/<teknologi>/` (`http`, `postgres`, `valkey`, `rabbitmq`, `midtrans`, `smtp`, `fcm`, client internal) |
-| Wiring | `internal/delivery/server.go` (dan `worker.go` untuk mode worker); konfigurasi di `internal/config/{config.go,load.go}` |
+| Entry point | `cmd/` (package main, Cobra): `cmd/main.go` + satu file per verb — `api`, `worker`, `migrate up\|down\|status`, `healthcheck`. Satu image per service, satu verb per container |
+| Wiring | `internal/delivery/server.go` (HTTP), `worker.go` (job berkala/consumer), `clients.go` (membuka PostgreSQL/Valkey/RabbitMQ sesuai kebutuhan verb); konfigurasi di `internal/config/config.go` (struct + `Validate`) dan `load.go` (membaca env) |
 | Shared | `internal/shared/entity` (ValidationError) per service; `pkg/` di root untuk utilitas lintas service |
-| Mock | `_mock/<domain>/port/{inbound,outbound}` dan `_mock/pkg/`, dihasilkan `make mock` (mockgen); tidak diedit manual |
+| Mock | `_mock/<domain>/port/{inbound,outbound}` dan `_mock/pkg/`, dihasilkan `make mock` (`go tool mockgen`, versi dikunci di `go.mod` lewat directive `tool`); tidak diedit manual; CI menolak bila hasil generate berbeda |
+| Test | `testify` (`assert`/`require`) + `gomock`. Setiap fungsi publik punya test yang bisa diulang (regression). Integration test memakai build tag `integration` dan env `TEST_*` |
+| Migrasi | `deployments/migrations/NNNN_nama.up.sql` dan `.down.sql`, di-embed ke binary (`go:embed`) dan dijalankan `<svc> migrate up`. Advisory lock per schema; checksum dicatat di `<schema>.schema_migrations`, file yang sudah dijalankan tidak boleh diubah |
 | Lainnya | `assets/` (config JSON statis, template email), `deployments/` (Dockerfile, migrations), `docs/` |
 
 Checklist ini juga ditulis di `.kiro/steering/structure.md` dan diperiksa saat code review.
+
+Repository di **GitHub** (organisasi `tiket-sampai-nonton`, D-26); tidak ada binary hasil build yang di-commit (D-18).
 
 ## 1. Repository Management
 
@@ -76,6 +82,38 @@ Checklist ini juga ditulis di `.kiro/steering/structure.md` dan diperiksa saat c
 
 
 ## 3. Local Setup
+
+### 3.0 Boilerplate v1.5 (berlaku)
+
+Bagian ini **menggantikan** nama env, port, dan perintah pada kutipan v4.6 di §3 dan §3.1 bila berbeda. Kutipan tetap dipertahankan untuk jejak.
+
+| Kebutuhan | Perintah |
+|---|---|
+| Prasyarat | Go 1.26, Docker + Compose v2, `make`, `openssl` |
+| Kunci token lokal (sekali) | `make keys` → `deployments/compose/keys/` (di-gitignore) |
+| Semua jalan di Docker | `make up` (infra → `*-migrate` → api + worker); `make ps`, `make logs`, `make down` |
+| Infra saja, service dari IDE | `make infra`, lalu `cp services/<svc>/.env.example services/<svc>/.env`, `make migrate-<svc>`, `make run-<svc>` |
+| Test | `make test` (unit), `make test-integration` (butuh `make infra`), `make cover` (sama dengan stage CI) |
+| Setelah menambah dependency | `make tidy`, `make mock`, commit `go.mod`, `go.sum`, `_mock/` |
+| Verb per service | `go run ./cmd api`, `go run ./cmd worker`, `go run ./cmd migrate up\|down [--steps N]\|status`, `go run ./cmd healthcheck` |
+
+| Service | Port | Schema / role DB | Job worker (didaftarkan di `jobs()` saat fitur dibangun) |
+|---|---|---|---|
+| queue | 8081 | `queue` / `svc_queue` | promotor admission, sweeper slot |
+| booking | 8082 | `booking` / `svc_booking` | sweeper hold kedaluwarsa, outbox relay |
+| payment | 8083 | `payment` / `svc_payment` | sweeper attempt, outbox relay, rekonsiliasi |
+| notification | 8084 | `notification` / `svc_notification` | consumer email/push |
+| user | 8085 | `users` / `svc_user` | — |
+
+| Grup env (D-24) | Variabel |
+|---|---|
+| Aplikasi | `APP_ENV`, `APP_NAME`, `APP_PORT`, `LOG_LEVEL`, `LOG_FORMAT`, `HTTP_SHUTDOWN_TIMEOUT`, `HEALTH_TIMEOUT`, `WORKER_INTERVAL` |
+| PostgreSQL | `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DATABASE`, `POSTGRES_SSLMODE`, `POSTGRES_SCHEMA`, `POSTGRES_MAX_CONNS` |
+| Valkey | `VALKEY_SERVER` (JSON `[{"host","port"}]`), `VALKEY_USERNAME`, `VALKEY_PASSWORD`, `VALKEY_TLS`, `VALKEY_DB`, `VALKEY_PREFIX_ENV` |
+| RabbitMQ | `RABBITMQ_URL`, `RABBITMQ_EXCHANGE`, `RABBITMQ_EXCHANGE_TYPE`, `RABBITMQ_WORKERS`, `RABBITMQ_PREFETCH`, `RABBITMQ_MAX_RETRIES`, `RABBITMQ_RETRY_DELAYS`, `RABBITMQ_CONFIRM_TIMEOUT` |
+| User Service | `TOKEN_*`, `OTP_*`, `PII_ENC_KEY`, `PII_HASH_KEY`, `OTP_HASH_KEY`, `SMTP_*` (nilai default di SDD §6.1) |
+
+Health: satu endpoint `GET /health` (200 `UP` / 503 `DOWN`, D-23); endpoint *live* dan *ready* terpisah pada kutipan v4.6 tidak dipakai. Mail lokal terlihat di Mailpit `http://localhost:8025`; RabbitMQ management di `http://localhost:15672`.
 
 *Sumber: PRD v4.6 §18.5*
 
@@ -190,7 +228,7 @@ services:
       VALKEY_ADDR: valkey:6379
       BOOKING_INTERNAL_URL: http://booking:8082
       TOKEN_SIGNING_KEY_FILE: /src/deployments/compose/keys/queue.ed25519
-    command: ["go", "run", "./services/queue/cmd"]
+    command: ["go", "run", "./services/queue/cmd", "api"]
     depends_on:
       migrate: { condition: service_completed_successfully }
       valkey: { condition: service_healthy }
@@ -205,7 +243,7 @@ services:
       PAYMENT_INTERNAL_URL: http://payment:8083
       NIK_ENCRYPTION_KEY: ${NIK_ENCRYPTION_KEY:-local-only-aes-key-32-bytes-long!}
       TOKEN_SIGNING_KEY_FILE: /src/deployments/compose/keys/booking.ed25519
-    command: ["go", "run", "./services/booking/cmd", "--mode=api"]
+    command: ["go", "run", "./services/booking/cmd", "api"]
     depends_on:
       migrate: { condition: service_completed_successfully }
       rabbitmq: { condition: service_healthy }
@@ -213,7 +251,7 @@ services:
   booking-worker:
     <<: *go
     environment: *booking-env
-    command: ["go", "run", "./services/booking/cmd", "--mode=worker"]
+    command: ["go", "run", "./services/booking/cmd", "worker"]
     depends_on: { booking: { condition: service_started } }
 
   payment:
@@ -229,7 +267,7 @@ services:
       MIDTRANS_CLIENT_KEY: ${MIDTRANS_CLIENT_KEY:-}
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8080}
       TOKEN_SIGNING_KEY_FILE: /src/deployments/compose/keys/payment.ed25519
-    command: ["go", "run", "./services/payment/cmd", "--mode=api"]
+    command: ["go", "run", "./services/payment/cmd", "api"]
     depends_on:
       migrate: { condition: service_completed_successfully }
       rabbitmq: { condition: service_healthy }
@@ -237,7 +275,7 @@ services:
   payment-worker:
     <<: *go
     environment: *payment-env
-    command: ["go", "run", "./services/payment/cmd", "--mode=worker"]
+    command: ["go", "run", "./services/payment/cmd", "worker"]
     depends_on: { payment: { condition: service_started } }
 
   notification:
@@ -249,7 +287,7 @@ services:
       SMTP_HOST: mailpit
       SMTP_PORT: "1025"
       MAIL_FROM: "Rusuh Tiket <no-reply@rusuh.local>"
-    command: ["go", "run", "./services/notification/cmd"]
+    command: ["go", "run", "./services/notification/cmd", "api"]
     depends_on:
       migrate: { condition: service_completed_successfully }
       rabbitmq: { condition: service_healthy }
@@ -415,3 +453,33 @@ AI adalah alat bantu implementasi, bukan otoritas yang menyatakan pekerjaan bena
 - Bila deadline berisiko, eskalasi scope; jangan menghapus fungsi wajib atau menurunkan gate diam-diam.
 
 ---
+
+
+## 6. Alert dan Runbook (D-41)
+
+Alert Grafana dikirim ke contact point **email** tim `rbt-team-email` (alamat diisi saat setup). Telegram dan kanal lain dicatat sebagai pengembangan sesudah PoC. Setiap rule memuat tautan ke baris tabel ini.
+
+| Alert | Pemicu | Langkah pertama | Eskalasi |
+|---|---|---|---|
+| `ServiceDown` | `GET /health` 503 > 2 menit | Lihat log service (`make logs` / CloudWatch); cek dependency yang `DOWN` di body respons | Owner service |
+| `OutboxBacklog` | Baris outbox `pending` > 5 menit | Pastikan worker jalan dan RabbitMQ terhubung; relay idempoten, aman di-restart | BE-1 |
+| `DLQNotEmpty` | `<queue>.dlq` > 0 | Baca header `x-rbt-last-error`; perbaiki penyebab; redrive dengan tool yang diaudit | Owner consumer |
+| `BreakerOpen` | Circuit breaker OPEN > 1 menit (gateway, SMTP, Booking) | Cek service tujuan; breaker pulih sendiri lewat HALF_OPEN | Owner pemanggil |
+| `ReconMismatch` | Job rekonsiliasi menemukan selisih stok/uang | **Jangan** ubah data manual; jalankan tool koreksi mode dry-run, minta review | Tech lead |
+| `OTPAbuse` | 429 OTP per IP melonjak | Cek WAF rate rule; login opsional, penjualan guest tetap jalan | BE-1 |
+
+## 7. Penjelasan Arsitektur untuk Junior (D-35)
+
+Format: pertanyaan yang biasanya muncul → jawaban pendek → di mana kodenya. Isi mengikuti desain v4.6 + perubahan v1.5.
+
+| Pertanyaan | Jawaban singkat | Lihat |
+|---|---|---|
+| Kenapa ada 5 service? | Tiap service punya data dan beban sendiri: Queue menahan lonjakan, Booking menjaga stok, Payment mengurus uang, Notification mengirim email/push, User mengurus login opsional. Satu service mati tidak menjatuhkan yang lain | HLD §4.2, ADR-001, ADR-020 |
+| Bagaimana stok tidak oversell? | Stok hanya diubah di Booking, dalam satu transaksi PostgreSQL dengan kunci baris. Valkey tidak pernah menjadi sumber stok | SDD §4.5, ADR-008 |
+| Apa itu event sourcing di sini? | Untuk booking dan payment, setiap perubahan disimpan sebagai event yang tidak boleh diubah (`booking_events`). Tabel `bookings` adalah ringkasan (read model) yang diperbarui di transaksi yang sama. Kalau ada sengketa, riwayat lengkap bisa diputar ulang | ADR-019, `pkg/eventstore` |
+| Kenapa ada outbox? | Agar "simpan data" dan "kirim pesan ke RabbitMQ" tidak bisa setengah jadi. Pesan ditulis dulu ke tabel outbox di transaksi yang sama, lalu worker mengirimnya | SDD §4.5.4 |
+| Pesan gagal diproses, lalu? | Dicoba ulang 5 detik, 30 detik, 2 menit (antrean retry). Setelah 3 kali masuk DLQ dan memicu alert. Consumer wajib idempoten | `pkg/rabbitmq/retry.go` |
+| Apa itu circuit breaker? | "Sekring": kalau tujuan terus gagal, panggilan berhenti sebentar (OPEN) supaya tidak menumpuk, lalu dicoba sedikit (HALF_OPEN) | `pkg/resilience` |
+| Login wajib? | Tidak. Guest tetap jalur utama. Login hanya memakai kode OTP di email dan mengisi data otomatis | SRS §3.2.27 |
+| Di mana menaruh kode baru? | Aturan bisnis di `domain/`, alur di `application/usecase/`, akses DB/HTTP di `infrastructure/`. Domain tidak boleh import library luar (dicek depguard) | §0, SDD §4.3 |
+| Bagaimana menjalankan satu service? | `make infra`, salin `.env.example`, `make migrate-<svc>`, `make run-<svc>` | §3.0 |

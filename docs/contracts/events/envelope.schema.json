@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "envelope.schema.json",
+  "title": "Event envelope (SDD §4.6.2)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "messageId",
+    "eventType",
+    "schemaVersion",
+    "occurredAt",
+    "producer",
+    "aggregateId",
+    "payload"
+  ],
+  "properties": {
+    "messageId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "eventType": {
+      "type": "string"
+    },
+    "schemaVersion": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "occurredAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "producer": {
+      "type": "string",
+      "enum": [
+        "queue-service",
+        "booking-service",
+        "payment-service"
+      ]
+    },
+    "aggregateId": {
+      "type": "string"
+    },
+    "correlationId": {
+      "type": "string"
+    },
+    "payload": {
+      "type": "object"
+    }
+  }
+}

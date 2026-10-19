@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "payment.succeeded.v1.schema.json",
+  "title": "Payload payment.succeeded.v1",
+  "description": "Payload di dalam envelope. Tidak memuat NIK plaintext, secret, atau token selain ticketLinkToken untuk email.",
+  "type": "object",
+  "properties": {
+    "bookingId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "attemptId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "settlementTime": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "amountMinor": {
+      "type": "integer",
+      "format": "int64",
+      "minimum": 0,
+      "description": "Minor unit IDR"
+    },
+    "method": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "bookingId",
+    "attemptId",
+    "settlementTime",
+    "amountMinor",
+    "method"
+  ],
+  "additionalProperties": false
+}

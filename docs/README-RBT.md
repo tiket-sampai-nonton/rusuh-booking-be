@@ -3,8 +3,8 @@
 | Field | Value |
 |-------|-------|
 | **Document ID** | README-RBT |
-| **Version** | 1.1 |
-| **Date** | 2026-10-18 |
+| **Version** | 1.5 |
+| **Date** | 2026-10-19 |
 | **Source** | PRD v4.6 Final Canonical (16 Oktober 2026), dipecah tanpa mengubah requirement, alur customer, kontrak API publik, maupun jaminan |
 
 **Struktur proyek kode wajib mengikuti standar proyek organisasi** (hexagon per domain dengan `port/inbound`/`port/outbound`, `domain/{entity,valueobject,dto,mapper}`, `application/usecase`, `infrastructure`, `delivery`, `_mock`). Detail di SDD §4.1, Engineering Handbook §0, dan ADR-016; struktur monorepo Lampiran F v4.6 tidak dipakai lagi.
@@ -20,13 +20,13 @@ PRD v4.6 menggabungkan PRD, SRS, HLD, LLD, keputusan arsitektur, rencana penguji
 | # | File | Document ID | Acuan | Isi |
 |---|------|-------------|-------|-----|
 | 00 | `00-README-RBT.md` | README-RBT | ISO/IEC/IEEE 15289 (set dokumen) | Peta dokumen, konvensi ID, tabel konversi v4.6, riwayat |
-| 01 | `01-PRD-RBT-001-v5.0.md` | PRD-RBT-001 v5.1 | Praktik industri; konsep BRS/StRS ISO/IEC/IEEE 29148, ISO 9241-210, ISO/IEC 25010 | Masalah, goals, metrik, persona, user story + acceptance criteria, business rules, asumsi, rilis, risiko, wireframe |
-| 02 | `02-SRS-RBT-001.md` | SRS-RBT-001 | ISO/IEC/IEEE 29148:2018, ISO/IEC 25010:2023 | Requirement "shall" per capability, interface, quality, data, constraint, RTM |
-| 03 | `03-HLD-AD-RBT-001.md` | AD-RBT-001 | ISO/IEC/IEEE 42010:2022 | Stakeholder, concern, viewpoint, 8 view, correspondence, risiko teknis |
-| 04 | `04-SDD-RBT-001.md` | SDD-RBT-001 | IEEE 1016-2009; notasi UML (ISO/IEC 19505) | Struktur modul, kontrak, DDL, locking, state machine, algoritme, konfigurasi |
-| 05 | `05-ADR-RBT.md` | ADR-RBT | Konsep decision & rationale ISO/IEC/IEEE 42010; format Nygard/MADR | ADR-001 … ADR-018 + matriks trade-off |
-| 06 | `06-TP-RBT-001.md` | TP-RBT-001 | ISO/IEC/IEEE 29119-3:2021, 29119-4 | Strategi, release gate, katalog test, harness, evidence, technical defense |
-| 07 | `07-Engineering-Handbook-RBT.md` | EHB-RBT | Praktik engineering | Repository, pipeline, Docker Compose, Git/CI/security/logging, aturan AI/Kiro |
+| 01 | `01-PRD-RBT-001-v5.0.md` | PRD-RBT-001 v5.2 | Praktik industri; konsep BRS/StRS ISO/IEC/IEEE 29148, ISO 9241-210, ISO/IEC 25010 | Masalah, goals, metrik, persona, user story + acceptance criteria, business rules, asumsi, rilis, risiko, wireframe |
+| 02 | `02-SRS-RBT-001.md` | SRS-RBT-001 v1.1 | ISO/IEC/IEEE 29148:2018, ISO/IEC 25010:2023 | Requirement "shall" per capability, interface, quality, data, constraint, RTM |
+| 03 | `03-HLD-AD-RBT-001.md` | AD-RBT-001 v1.3 | ISO/IEC/IEEE 42010:2022 | Stakeholder, concern, viewpoint, 8 view, correspondence, risiko teknis |
+| 04 | `04-SDD-RBT-001.md` | SDD-RBT-001 v1.3 | IEEE 1016-2009; notasi UML (ISO/IEC 19505) | Struktur modul, kontrak, DDL, locking, state machine, algoritme, konfigurasi |
+| 05 | `05-ADR-RBT.md` | ADR-RBT v1.2 | Konsep decision & rationale ISO/IEC/IEEE 42010; format Nygard/MADR | ADR-001 … ADR-022 + matriks trade-off |
+| 06 | `06-TP-RBT-001.md` | TP-RBT-001 v1.2 | ISO/IEC/IEEE 29119-3:2021, 29119-4 | Strategi, release gate, katalog test, harness, evidence, technical defense |
+| 07 | `07-Engineering-Handbook-RBT.md` | EHB-RBT v1.3 | Praktik engineering | Repository, pipeline, Docker Compose, Git/CI/security/logging, aturan AI/Kiro |
 
 ---
 
@@ -216,7 +216,7 @@ Rantai ID: `FR/NFR/BR/GR/SCP (sumber) → US (PRD) → SRS-F/Q/IF/C/D (SRS) → 
 | §18.2 | AWS PoC | HLD §4.5 |
 | §18.3 | Terraform Scope | HLD §4.5 |
 | §18.4 | Pipelines (GitHub Actions) | Handbook §2 |
-| §18.5 | Local Commands | Handbook §3 |
+| §18.5 | Local Commands | Handbook §3.0 |
 | §19 | Testing and Validation Strategy | TestPlan §3 |
 | §19.1 | Test Pyramid dan Tools | TestPlan §3.1 |
 | §19.2 | Test Catalogue (ringkas) | TestPlan Annex A |
@@ -557,7 +557,7 @@ Semua dokumen "disusun dengan mengacu pada" standar di atas, bukan klaim "confor
 
 ## 7. Perubahan Setelah Restrukturisasi
 
-Perubahan berikut adalah keputusan tim sesudah PRD v4.6. Tidak ada yang mengubah requirement, alur customer, kontrak API publik, maupun jaminan.
+Perubahan berikut adalah keputusan tim sesudah PRD v4.6. Sampai 18 Oktober tidak ada yang mengubah requirement, alur customer, kontrak API publik, maupun jaminan. Perubahan 19 Oktober (§8) **menambah** requirement (akun opsional) tanpa mengubah alur guest dan jaminan "Jangan PHP".
 
 | Tanggal | Perubahan | Dokumen |
 |---|---|---|
@@ -566,3 +566,44 @@ Perubahan berikut adalah keputusan tim sesudah PRD v4.6. Tidak ada yang mengubah
 | 2026-10-17 | Pipeline satu `ci.yml` bertahap; image arm64 dan SBOM; SonarCloud menggantikan SonarCloud; integration dan BDD masuk pipeline saat fitur pertama siap | Handbook §2, TP, HLD, ADR-015 |
 | 2026-10-14 | Approval PRD oleh CEO, CTO, CFO | PRD §14 |
 | 2026-10-18 | Alur pemesanan dinyatakan sebagai saga koreografi dengan kompensasi (tanpa 2PC, tanpa orchestrator) | ADR-018, ADR-009, HLD §4.3, TP |
+| 2026-10-19 | Keputusan bersama BE-2 (§8) | Semua dokumen; boilerplate `rusuh-booking-be` |
+
+---
+
+## 8. Perubahan v1.5 — Keputusan Bersama BE-2 (19 Oktober 2026)
+
+Sumber: `Perbedaan-Desain-BE-Kita-vs-BE2.xlsx`. Perubahan requirement (akun opsional, PAY-06 Must) menunggu persetujuan approver (PRD OI-11).
+
+| ID | Keputusan | Dokumen | Kode `rusuh-booking-be` |
+|---|---|---|---|
+| D-01 | Penilaian per orang; presentasi per tim | PRD §1, ADR-017 | — |
+| D-02, D-03 | **5 service**: User Service untuk akun opsional (NIK, email, nama); guest tetap utama | PRD FEAT-10, SRS §3.2.27, HLD CMP-USER, SDD §4.1.2, ADR-020 | `services/user` |
+| D-04 | Event sourcing untuk Booking dan Payment; stok tetap relasional | SRS-C-09, SRS-D-10..11, HLD §4.3.5, SDD §4.4.3, ADR-019 | `pkg/eventstore`, migrasi `booking_0002`, `payment_0002` |
+| D-05, D-07, D-08 | REST tetap; gRPC, EKS + Helm, Kong dicatat sebagai alternatif | ADR-021 | — |
+| D-10 | Outbox di Booking dan Payment | SDD §4.5.4 | tabel outbox (migrasi) |
+| D-11, D-12 | Guard urutan consumer; retry bertingkat + DLQ dengan batas retry | SDD §4.5.4 | `pkg/rabbitmq` (`retry.go`, `consumer.go`) |
+| D-13 | Disesuaikan dengan desain v4.6 | SDD | — |
+| D-14 | Entry point Cobra (`api`, `worker`, `migrate`, `healthcheck`) | SDD §4.1, Handbook §0, ADR-022 | `services/*/cmd` |
+| D-15, D-22 | pgx, valkey-go, amqp091-go | ADR-022 | `pkg/postgres`, `pkg/valkey`, `pkg/rabbitmq` |
+| D-16 | Migrasi tertanam + advisory lock + checksum | SDD §4.4, Handbook §0 | `pkg/migrate`, `deployments/migrations` |
+| D-17 | Struktur kode mengikuti standar organisasi (sama dengan BE-2) | ADR-016 | semua service |
+| D-18 | Binary hasil build tidak di-commit | Handbook §0 | `.gitignore` |
+| D-19 | Satu file OpenAPI per service, isi dari v4.6 | SDD §5, SRS §3.1 | `docs/contracts/openapi/*.yaml` |
+| D-20 | Tinjauan skema: hanya tabel yang dibutuhkan | SDD §4.4.5 | migrasi per service |
+| D-21 | OTP email untuk login (tanpa password) | SRS-F-27-xx, SRS-Q-SEC-10..12 | `services/user/internal/user` |
+| D-23 | Satu endpoint `GET /health` | SRS, SDD, Handbook §3.0 | `infrastructure/http/health_handler.go` |
+| D-24 | Nama env standar | SDD §6.1, Handbook §3.0 | `internal/config`, `.env.example` |
+| D-25 | Go 1.26 | ADR-022 | `go.mod`, Dockerfile, CI |
+| D-26 | GitHub | Handbook §1 | `.github/` |
+| D-27 | testify; setiap fungsi punya test regresi | TP, Handbook §0 | `*_test.go` |
+| D-30 | Format test case gabungan | TP Annex A | — |
+| D-33 | Checklist keamanan BE-2 | TP, Handbook §4 | — |
+| D-34 | Dua pendekatan konkurensi (row lock stok + optimistic concurrency event store) | SDD §4.5, TP | `pkg/eventstore` (`ErrConcurrency`) |
+| D-35 | Penjelasan arsitektur untuk junior | Handbook §7 | `services/*/docs/README.md` |
+| D-40 | Circuit breaker menjadi MUST | SRS-F-19-03, HLD QS-15 | `pkg/resilience` |
+| D-41 | Alert lewat email; Telegram sesudah PoC | SRS-F-90-06, SDD §7, Handbook §6 | — |
+| D-45 | Catalog tetap modul read-only di Booking (read path dipisah pool/cache bila perlu) | SDD §4.1.2 | `services/booking` |
+| D-46 | "Consumer auth" tidak dibuat; digantikan User Service | ADR-020 | `services/user` |
+| D-47 | Sweeper adalah job worker Booking/Payment/Queue, bukan service | SDD §4.1.2, Handbook §3.0 | `delivery/worker.go` |
+| D-48 | Slot aktif dilepas saat booking `PAID` (sudah sesuai v4.6) | SRS-F-06-08, SDD §4.1.2 | — |
+| D-09, D-28, D-29, D-39, D-42..D-44 | Ditunda; dibahas ulang setelah Sprint 1 | — | — |

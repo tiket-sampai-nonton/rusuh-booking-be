@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "booking.sold_out.v1.schema.json",
+  "title": "Payload booking.sold_out.v1",
+  "description": "Payload di dalam envelope. Tidak memuat NIK plaintext, secret, atau token selain ticketLinkToken untuk email.",
+  "type": "object",
+  "properties": {
+    "eventId": {
+      "type": "string",
+      "format": "uuid"
+    }
+  },
+  "required": [
+    "eventId"
+  ],
+  "additionalProperties": false
+}

@@ -4,13 +4,13 @@
 |-------|-------|
 | **System of interest** | Rusuh Booking Tiket |
 | **Document ID** | AD-RBT-001 |
-| **Version** | 1.2 |
-| **Date** | 2026-10-18 |
+| **Version** | 1.3 |
+| **Date** | 2026-10-19 |
 | **Status** | Draft. Desain baseline = PRD v4.6 Final Canonical; implementasi `NOT_VERIFIED` |
 | **Architect(s)** | Tim PT. Tiket Sampai Nonton Sentosa (BE-1, BE-2) |
 | **Reviewers / Approvers** | Pak Dinda (CEO), Pak Jabon (CTO), Pak Rahman (CFO), PT. Tiga Sekawan Angin Ribut |
 | **Classification** | Internal |
-| **Source documents** | PRD-RBT-001 v5.1, SRS-RBT-001 v1.0, ADR-RBT |
+| **Source documents** | PRD-RBT-001 v5.2, SRS-RBT-001 v1.1, ADR-RBT v1.2 |
 
 > **Reference basis.** Disusun dengan mengacu pada **ISO/IEC/IEEE 42010:2022**. AD ini mengidentifikasi stakeholder dan concern, mendefinisikan viewpoint yang membingkai concern tersebut, menyajikan satu view per viewpoint, mencatat correspondence antar-elemen, serta merujuk keputusan dan rationale ke ADR. Diagram memakai Mermaid: flowchart bergaya C4 untuk struktur, UML sequence untuk perilaku.
 >
@@ -25,6 +25,7 @@
 | 1.0 | 2026-10-17 | Tim PT. Tiket Sampai Nonton Sentosa | Dipecah dari PRD v4.6 §7–§10, §12.3, §13–§18, Lampiran O; ditambah stakeholder/concern, viewpoint, correspondence |
 | 1.1 | 2026-10-17 | Tim PT. Tiket Sampai Nonton Sentosa | Path dan struktur repository disesuaikan dengan standar proyek organisasi (ADR-016) |
 | 1.2 | 2026-10-18 | Tim PT. Tiket Sampai Nonton Sentosa | Tiga repository (ADR-017); saga koreografi (ADR-018); SonarCloud menggantikan SonarCloud |
+| 1.3 | 2026-10-19 | Tim PT. Tiket Sampai Nonton Sentosa | Keputusan bersama BE-2: User Service (ADR-020), event sourcing Booking dan Payment (ADR-019), alternatif gRPC/EKS/Kong (ADR-021), runtime boilerplate (ADR-022); `/health` tunggal; alert email |
 
 ---
 
@@ -32,11 +33,11 @@
 
 ### 1.1 Purpose and Scope of this AD
 
-AD ini menjelaskan arsitektur Rusuh Booking Tiket untuk PoC (2 sprint) dan arsitektur referensi production per tier kapasitas yang ditawarkan di proposal. Cakupan: empat service backend, web, mobile, edge, data store, broker, dan infrastruktur AWS PoC serta lokal.
+AD ini menjelaskan arsitektur Rusuh Booking Tiket untuk PoC (2 sprint) dan arsitektur referensi production per tier kapasitas yang ditawarkan di proposal. Cakupan: lima service backend (Queue, Booking, Payment, Notification, User), web, mobile, edge, data store, broker, dan infrastruktur AWS PoC serta lokal.
 
 ### 1.2 System of Interest Overview
 
-Platform penjualan tiket untuk *war tiket* yang memisahkan beban: **lonjakan pengantre ditangani CDN**, **lonjakan join ditangani Queue Service yang di-autoscale terpisah**, dan **transaksi stok hanya disentuh pembeli yang sudah diizinkan masuk**, sehingga database terlindungi. Seluruh perubahan stok terjadi dalam satu transaksi di Booking Service.
+Platform penjualan tiket untuk *war tiket* yang memisahkan beban: **lonjakan pengantre ditangani CDN**, **lonjakan join ditangani Queue Service yang di-autoscale terpisah**, dan **transaksi stok hanya disentuh pembeli yang sudah diizinkan masuk**, sehingga database terlindungi. Seluruh perubahan stok terjadi dalam satu transaksi di Booking Service. Siklus booking dan attempt pembayaran dicatat sebagai **event sourcing** (event store append-only + read model di transaksi yang sama, ADR-019). Pembeli bisa **guest** atau **login opsional dengan OTP email** lewat User Service (ADR-020); login tidak pernah menjadi syarat membeli.
 
 ### 1.3 Architecture Description Framework / Conventions
 
@@ -53,10 +54,10 @@ Platform penjualan tiket untuk *war tiket* yang memisahkan beban: **lonjakan pen
 
 | Document | Relationship |
 |----------|--------------|
-| PRD-RBT-001 v5.1 | Konteks bisnis, goals, user story |
-| SRS-RBT-001 v1.0 | Requirement yang dialokasikan ke arsitektur ini |
-| SDD-RBT-001 v1.2 | Desain rinci per service |
-| ADR-RBT (ADR-001 … ADR-018) | Keputusan dan rationale |
+| PRD-RBT-001 v5.2 | Konteks bisnis, goals, user story |
+| SRS-RBT-001 v1.1 | Requirement yang dialokasikan ke arsitektur ini |
+| SDD-RBT-001 v1.3 | Desain rinci per service |
+| ADR-RBT (ADR-001 … ADR-022) | Keputusan dan rationale |
 | TP-RBT-001 | Pembuktian quality scenario |
 | Engineering Handbook | CI/CD, Compose lokal, praktik repo |
 
@@ -139,6 +140,7 @@ flowchart LR
     SYS <-->|charge, status, cancel / webhook| MT[Midtrans Sandbox]
     SYS -->|email| SMTP[SMTP: Mailpit / SES]
     SYS -->|push| FCM[FCM / APNs]
+    SYS -->|OTP login| SMTP
 ```
 
 #### Actors
@@ -171,11 +173,12 @@ flowchart LR
 | CMP-BOOKING | Booking Service | Event, stok, alokasi, sesi, hold, ubah pesanan, kuota, NIK pemegang, settlement, expiry, tiket, konfigurasi | BE-2 |
 | CMP-PAYMENT | Payment Service | Payment page view model, attempt, webhook, resolve, page token, refund case | BE-2 |
 | CMP-NOTIF | Notification Service | Email dan push; retry, DLQ, redrive | BE-1 |
+| CMP-USER | User Service | Akun opsional: login OTP email, rotasi refresh token, profil (nama, NIK tersimpan terenkripsi) | BE-1 |
 | CMP-WEB | Next.js web (termasuk payment page `/pay/{bookingId}`) | UI customer web dan payment page reusable | WEB-1, WEB-2 |
 | CMP-MOBILE | Aplikasi React Native | UI customer mobile; payment page via WebView | MOB-1 |
-| CMP-PLATFORM | Shared utilities `pkg/` (module bersama) | Middleware, error, token, kripto, NIK validator, outbox, consumer, resilience, telemetry | BE-1 (+ review BE-2) |
+| CMP-PLATFORM | Shared utilities `pkg/` (module bersama) | Middleware, error envelope, logger, client PostgreSQL/Valkey/RabbitMQ (retry, DLQ), migrasi tertanam, event store kit, token EdDSA, kripto PII, circuit breaker | BE-1 + BE-2 |
 | DS-PG | PostgreSQL 16 (schema per service) | Otoritas stok dan uang | BE-2 |
-| DS-VK | Valkey 8.1 | Antrean, rate limit, cache | BE-1 |
+| DS-VK | Valkey 8.1 | Antrean, rate limit, cache, challenge OTP sementara | BE-1 |
 | DS-MQ | RabbitMQ | Event domain, retry, DLQ | BE-1 |
 
 #### Component HLD
@@ -215,7 +218,7 @@ flowchart LR
 
 *Sumber: PRD v4.6 §7.1*
 
-**Dipilih: 4 service sesuai requirement dalam satu monorepo, dengan batas data per service.**
+**Dipilih: 4 service sesuai requirement dalam satu monorepo, dengan batas data per service.** *(v1.5: ditambah User Service untuk akun opsional, ADR-020.)*
 
 | Pertimbangan | Keputusan |
 |---|---|
@@ -428,6 +431,17 @@ Rusuh Booking Tiket tidak memakai satu sikap untuk seluruh sistem. Sikap setiap 
 
 Bukti: C.7 (stok, uji paralel), M.1 (Lua, 10.000 join paralel tanpa celah seq), TC-CAP-01..03 dan TC-MSG-01..03 (diuji pada implementasi).
 
+
+#### 4.3.5 Event Store dan Akun (v1.5)
+
+| Data | Schema | Peran | Konsistensi |
+|---|---|---|---|
+| `booking_events` | `booking` | Sumber kebenaran siklus booking (BookingHeld, BookingItemsReplaced, BookingLocked, PaymentVerifying, BookingPaid, BookingExpired, BookingCancelled, BookingReview) | Append di transaksi yang sama dengan proyeksi `bookings`, perubahan stok, dan outbox |
+| `payment_events` | `payment` | Sumber kebenaran siklus attempt (AttemptCreated, InstructionIssued, SettlementReceived, AttemptFailed, AttemptExpired, RefundRequired) | Append di transaksi yang sama dengan proyeksi `payment_attempts` dan outbox |
+| `accounts`, `sessions`, `login_audit` | `users` | Akun opsional, refresh token (hash), jejak login | Transaksi lokal User Service |
+| `otp:{emailHash}` | Valkey | Challenge OTP (hash kode, hitungan percobaan) ber-TTL | Boleh hilang: pengguna meminta kode baru |
+
+Stok (`category_inventories`, `event_supply`) tetap relasional sehingga invariant tidak oversell tidak bergantung pada replay (ADR-019).
 
 ### 4.4 Runtime View (VP-4)
 
@@ -975,6 +989,8 @@ Throughput per instance Queue Service (PROPOSED 3.000 join/s per c7g.large) **di
 **Indikasi awal (16 Oktober 2026, Valkey 8.1.4, belum menjadi evidence `VERIFIED`):** script Lua join (Lampiran M [v4.6 → SDD §4.9]), dipanggil lewat `valkey-go` (`EVALSHA`) dengan 64 goroutine, mencapai **±23.900–27.000 join/detik** pada satu node Valkey (AOF `everysec`) di container pengembangan 2 vCPU, dengan klien benchmark di mesin yang sama (p50 2,2–2,3 ms, p99 6,5–7,5 ms; 3 kali run × 200.000 join). Pemakaian memori ±620–670 byte per entry, sehingga 1 juta pengantre membutuhkan ±0,65 GB. Sebagai pembanding, script yang sama di Redis 7 (15 Oktober) mencapai ±22.900 join/detik. Untuk Tier L, puncak 20.000 join/detik masih dekat dengan angka ini; karena itu Tier L memakai node Valkey yang lebih besar dan WAF challenge yang meratakan lonjakan join, dan headroom-nya wajib diverifikasi pada load test.
 
 
+User Service berjalan di ASG Core bersama Booking dan Payment. Setiap service adalah satu image dengan beberapa verb (`api`, `worker`, `migrate up`); satu verb per container/proses. Migrasi dijalankan sebelum rollout (`<svc> migrate up`, dikunci advisory lock sehingga aman bila beberapa instance start bersamaan). Target group ALB memakai `GET /health`; health check ASG memakai tipe EC2 agar dependency yang mati tidak memicu penggantian instance beruntun.
+
 Konfigurasi edge dan security group rinci ada di Appendix B. Pipeline CI/CD, perintah lokal, dan Docker Compose ada di Engineering Handbook.
 
 ### 4.6 Security View (VP-6)
@@ -1112,6 +1128,9 @@ Retensi data pribadi ada di SRS-RBT-001 §3.4; kontrol OWASP ada di Engineering 
 | QS-10 | Flexibility (scalability) | Lonjakan join | Jam buka | Queue ASG scale-out | Sesi tidak hilang, tanpa sticky session | SRS-Q-REL-06, SRS-Q-FLX-01 | ASG Queue terpisah, scheduled scaling, token tanpa session store |
 | QS-11 | Security | Request langsung ke ALB | Penyerang tahu DNS ALB | Ditolak | 403 | SRS-Q-SEC-04 | Prefix list CloudFront + header rahasia |
 | QS-12 | Security | Replay admission/payment page token | Token bocor | Ditolak | 100% ditolak | SRS-Q-SEC-05 | `jti`, sekali pakai, binding visitor |
+| QS-13 | Functional correctness | Dua tab mengubah pesanan yang sama bersamaan | Normal | Satu berhasil, satu `BOOKING_VERSION_CONFLICT` | 0 stream bercabang | SRS-Q-REL-09 | Optimistic concurrency `(stream_id, version)` di event store |
+| QS-14 | Security | Penebakan kode OTP / banjir permintaan OTP | Penyerang punya daftar email | Ditolak | ≤ 5 percobaan per kode; 429 setelah batas | SRS-F-27-03, SRS-F-27-04 | Lock percobaan, cooldown, rate limit per email dan IP, respons seragam |
+| QS-15 | Reliability | Booking Service lambat saat promotor memanggil alokasi | Puncak admission | Breaker OPEN, promotor menunda tick | Tidak ada antrean thread menumpuk; pulih otomatis | SRS-F-19-03 | Circuit breaker + bulkhead (`pkg/resilience`) |
 
 #### Waiting Room at Scale (CDN-served)
 
@@ -1312,6 +1331,12 @@ Alasan best practice per komponen ada di ADR-015; matriks trade-off ada di ADR-R
 | ADR-014 | Notifikasi giliran: peringatan + push + jendela klaim 3 menit, tanpa prioritas | Accepted | CN-04 |
 | ADR-015 | Tech stack sesuai tech radar dan alasan best practice | Accepted | CN-09 |
 | ADR-016 | Struktur proyek mengikuti standar proyek organisasi | Accepted | CN-02, CN-09 |
+| ADR-017 | Tiga repository terpisah (backend, web, mobile) dalam satu organisasi GitHub | Accepted | CN-02, CN-05 |
+| ADR-018 | Konsistensi lintas service dengan saga koreografi dan kompensasi | Accepted | CN-03, CN-04 |
+| ADR-019 | Event sourcing untuk agregat Booking dan Payment; stok tetap relasional | Accepted | CN-03, CN-04, CN-09 |
+| ADR-020 | User Service untuk akun opsional dengan login OTP email | Accepted | CN-02, CN-06 |
+| ADR-021 | Usulan BE-2 sebagai alternatif (gRPC, EKS + Helm, Kong) | Accepted | CN-02, CN-05, CN-09 |
+| ADR-022 | Runtime dan tooling boilerplate | Accepted | CN-09 |
 
 ---
 
@@ -1350,7 +1375,7 @@ Alasan best practice per komponen ada di ADR-015; matriks trade-off ada di ADR-R
 | 3.2.16 | Timely Success (PAY-03) | SRS-F-16-01 … SRS-F-16-03 (3) | CMP-PAYMENT, CMP-BOOKING |
 | 3.2.17 | Expiry with Reconciliation (PAY-04) | SRS-F-17-01 … SRS-F-17-05 (5) | CMP-BOOKING, CMP-PAYMENT, CMP-NOTIF, CMP-QUEUE |
 | 3.2.18 | Reusable Payment Page — Web and Mobile WebView (PAY-05) | SRS-F-18-01 … SRS-F-18-04 (4) | CMP-WEB, CMP-PAYMENT, CMP-MOBILE |
-| 3.2.19 | Gateway Degradation Protection (PAY-06, SHOULD) | SRS-F-19-01 … SRS-F-19-02 (2) | CMP-PAYMENT, CMP-BOOKING |
+| 3.2.19 | Degradation Protection and Circuit Breaker (PAY-06) | SRS-F-19-01 … SRS-F-19-03 (3) | CMP-PAYMENT, CMP-BOOKING |
 | 3.2.20 | Ticket (TKT-01) | SRS-F-20-01 … SRS-F-20-03 (3) | CMP-BOOKING, CMP-NOTIF, CMP-WEB, CMP-MOBILE |
 | 3.2.21 | Notification (MSG-01) | SRS-F-21-01 … SRS-F-21-03 (3) | CMP-NOTIF |
 | 3.2.22 | Shared API — Web and Mobile (API-01) | SRS-F-22-01 … SRS-F-22-03 (3) | CMP-QUEUE, CMP-BOOKING, CMP-PAYMENT, CMP-NOTIF, CMP-PLATFORM |
@@ -1358,6 +1383,7 @@ Alasan best practice per komponen ada di ADR-015; matriks trade-off ada di ADR-R
 | 3.2.24 | Refresh, Connection Loss, and Back Button (SES-03) | SRS-F-24-01 … SRS-F-24-13 (13) | CMP-BOOKING, CMP-WEB, CMP-MOBILE |
 | 3.2.25 | Near-Real-Time and Turn Notification (QUE-05) | SRS-F-25-01 … SRS-F-25-13 (13) | CMP-QUEUE, CMP-BOOKING, CMP-NOTIF, CMP-WEB, CMP-MOBILE, CMP-EDGE |
 | 3.2.26 | Configuration (CFG-01) | SRS-F-26-01 … SRS-F-26-08 (8) | CMP-BOOKING, CMP-QUEUE, CMP-PLATFORM |
+| 3.2.27 | Optional Account and OTP Login (USR-01) | SRS-F-27-01 … SRS-F-27-12 (12) | CMP-USER, CMP-QUEUE, CMP-BOOKING, CMP-WEB, CMP-MOBILE |
 | 3.1, 3.3–3.7 | Interface, quality, data, constraint, operasional | SRS-IF, SRS-Q, SRS-D, SRS-C, SRS-F-90 | Lintas komponen; lihat kolom komponen di quality scenario §4.7.1 |
 
 ### 6.3 Component ↔ Node (CR-02)
@@ -1366,7 +1392,7 @@ Alasan best practice per komponen ada di ADR-015; matriks trade-off ada di ADR-R
 |-----|-----------|-----------------|---------------------|
 | CMP-EDGE | CloudFront + WAF + ALB | nginx edge | CloudFront + WAF + ALB |
 | CMP-QUEUE | ASG Queue (t4g.small, min 1 max 3) | container | ASG Queue c7g.large (§4.5) |
-| CMP-BOOKING, CMP-PAYMENT, CMP-WEB | ASG Core (t4g.small, min 1 max 2) | container | ASG c7g.large |
+| CMP-BOOKING, CMP-PAYMENT, CMP-USER, CMP-WEB | ASG Core (t4g.small, min 1 max 2) | container | ASG c7g.large |
 | CMP-NOTIF + worker | Host stateful t4g.medium | container | c7g.medium |
 | DS-PG | Host stateful | container | RDS Multi-AZ |
 | DS-VK | Host stateful (AOF everysec) | container | ElastiCache for Valkey + replica |
@@ -1381,6 +1407,7 @@ Alasan best practice per komponen ada di ADR-015; matriks trade-off ada di ADR-R
 | Schema `booking`, cache `b:{e}:availability` | CMP-BOOKING |
 | Schema `payment` | CMP-PAYMENT |
 | Schema `notification` | CMP-NOTIF |
+| Schema `users`, key Valkey `otp:{*}`, `rl:{*}` | CMP-USER |
 
 ### 6.5 Known Inconsistencies
 
@@ -1401,6 +1428,8 @@ Alasan best practice per komponen ada di ADR-015; matriks trade-off ada di ADR-R
 | Risk (teknis) | TR-05 | WebView: deeplink e-wallet, cookie | Pembayaran mobile gagal | Allowlist; uji Android dulu |
 | Risk (teknis) | TR-06 | Webhook butuh URL publik | Notifikasi tidak sampai di dev | Tunnel untuk dev; domain + ACM untuk staging |
 | Risk (teknis) | TR-07 | Kompleksitas state `EDITABLE` | Bug ubah pesanan | Harness oracle (Test Plan Annex B); property test acak; fitur dapat dimatikan per event |
+| Risk (teknis) | TR-08 | Proyeksi read model tidak sama dengan event store | Status booking salah | Proyeksi di transaksi yang sama; TC-ES-03 membandingkan replay dengan read model |
+| Risk (teknis) | TR-09 | SMTP gangguan saat pembeli ingin login | Pembeli tidak bisa login | Login opsional: pembeli tetap bisa membeli sebagai guest; breaker SMTP; pesan 503 jelas |
 | Known issue | KI-01 | Lihat §6.5 | — | — |
 
 Risiko proyek dan produk ada di PRD-RBT-001 §12.
@@ -1418,6 +1447,8 @@ Risiko proyek dan produk ada di PRD-RBT-001 §12.
 | Correspondence | Relasi antar-elemen AD |
 | Status Document | Dokumen JSON kecil per event yang di-cache CDN berisi keadaan antrean |
 | Outbox | Tabel event yang ditulis dalam transaksi yang sama dengan perubahan state |
+| Event store | Tabel append-only `*_events` yang menjadi sumber kebenaran agregat Booking dan Payment |
+| OTP | One-time password 6 digit untuk login opsional, dikirim ke email |
 
 ---
 
@@ -1474,9 +1505,9 @@ Urutan behavior di tabel adalah urutan prioritas: pola join (`/api/v1/events/*/q
 
 | Prioritas | Kondisi path | Target group | Health |
 |---|---|---|---|
-| 10 | `/api/v1/queue-status/*`, `/api/v1/queue-entries*`, `/api/v1/events/*/queue-entries` | `tg-queue` (8081) | `/health/ready` |
-| 20 | `/api/v1/payments*`, `/api/v1/payment-page-sessions`, `/api/v1/webhooks/*` | `tg-payment` (8083) | `/health/ready` |
-| 30 | `/api/v1/events*`, `/api/v1/booking-sessions*`, `/api/v1/bookings*` | `tg-booking` (8082) | `/health/ready` |
+| 10 | `/api/v1/queue-status/*`, `/api/v1/queue-entries*`, `/api/v1/events/*/queue-entries` | `tg-queue` (8081) | `/health` |
+| 20 | `/api/v1/payments*`, `/api/v1/payment-page-sessions`, `/api/v1/webhooks/*` | `tg-payment` (8083) | `/health` |
+| 30 | `/api/v1/events*`, `/api/v1/booking-sessions*`, `/api/v1/bookings*` | `tg-booking` (8082) | `/health` |
 | 40 | `/*` | `tg-web` (3000) | `/` |
 | 100 | (header tidak cocok) | fixed response 403 | — |
 

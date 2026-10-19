@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "queue.turn.soon.v1.schema.json",
+  "title": "Payload queue.turn.soon.v1",
+  "description": "Payload di dalam envelope. Tidak memuat NIK plaintext, secret, atau token selain ticketLinkToken untuk email.",
+  "type": "object",
+  "properties": {
+    "eventId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "queueEntryId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "visitorId": {
+      "type": "string",
+      "format": "uuid"
+    }
+  },
+  "required": [
+    "eventId",
+    "queueEntryId",
+    "visitorId"
+  ],
+  "additionalProperties": false
+}

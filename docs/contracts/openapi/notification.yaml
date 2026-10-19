@@ -1,0 +1,166 @@
+# Dihasilkan dari SDD v1.5 §4.6 (tools: scratchpad gen2/contracts.py). Ubah kontrak lewat PR yang direview BE dan FE.
+openapi: 3.1.0
+info:
+  title: RBT Notification Service API
+  version: 1.0.0
+  description: Push subscription mobile. Email dikirim dari event (docs/contracts/events).
+  contact:
+    name: Tim PT. Tiket Sampai Nonton Sentosa
+servers:
+- url: https://api.rusuh.example
+  description: Edge (CloudFront → ALB); ganti saat RFS
+- url: http://localhost:{port}
+  description: Docker Compose lokal
+  variables:
+    port:
+      default: '8084'
+security:
+- visitorHeader: []
+paths:
+  /api/v1/push-subscriptions:
+    post:
+      tags:
+      - notification
+      summary: Daftarkan token push untuk event (mobile, opsional)
+      operationId: registerPush
+      security:
+      - visitorHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PushSubscription'
+      responses:
+        '204':
+          description: Tersimpan terenkripsi; dihapus saat penjualan berakhir
+  /api/v1/push-subscriptions/{eventId}:
+    delete:
+      tags:
+      - notification
+      summary: Hapus token push
+      operationId: deletePush
+      security:
+      - visitorHeader: []
+      parameters:
+      - name: eventId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '204':
+          description: Dihapus
+  /health:
+    get:
+      tags:
+      - ops
+      summary: Health (ALB dan HEALTHCHECK container, D-23)
+      operationId: health
+      security: []
+      responses:
+        '200':
+          description: Semua dependency UP
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+        '503':
+          description: Ada dependency DOWN
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+components:
+  schemas:
+    Meta:
+      type: object
+      properties:
+        code:
+          type: integer
+        message:
+          type: string
+        requestId:
+          type: string
+        errorCode:
+          type: string
+          description: Ada hanya pada error; daftar di SRS §3.1.4 Error Codes
+        details:
+          type: object
+          additionalProperties:
+            type: string
+      required:
+      - code
+    ErrorEnvelope:
+      type: object
+      properties:
+        meta:
+          $ref: '#/components/schemas/Meta'
+        data:
+          type: 'null'
+      required:
+      - meta
+      - data
+      description: Error envelope SRS §3.1.4. Tidak pernah memuat SQL, stack trace, secret, atau payload provider.
+    Health:
+      type: object
+      properties:
+        status:
+          type: string
+          enum:
+          - UP
+          - DOWN
+        service:
+          type: string
+        checkedAt:
+          type: string
+          format: date-time
+        dependencies:
+          type: array
+          items:
+            type: object
+            properties:
+              name:
+                type: string
+              status:
+                type: string
+                enum:
+                - UP
+                - DOWN
+              latencyMs:
+                type: integer
+              reason:
+                type: string
+            required:
+            - name
+            - status
+      required:
+      - status
+      - service
+      - checkedAt
+      - dependencies
+    PushSubscription:
+      type: object
+      properties:
+        eventId:
+          type: string
+          format: uuid
+        platform:
+          type: string
+          enum:
+          - ANDROID
+          - IOS
+        pushToken:
+          type: string
+          maxLength: 4096
+      required:
+      - eventId
+      - platform
+      - pushToken
+  securitySchemes:
+    visitorHeader:
+      type: apiKey
+      in: header
+      name: X-Visitor-Token
+      description: Visitor token mobile (secure storage)

@@ -3,10 +3,10 @@
 | Field | Value |
 |-------|-------|
 | **System** | Rusuh Booking Tiket |
-| **Design subjects** | CMP-QUEUE, CMP-BOOKING, CMP-PAYMENT, CMP-NOTIF, CMP-PLATFORM (web dan mobile dirinci di kontrak dan wireframe) |
+| **Design subjects** | CMP-QUEUE, CMP-BOOKING, CMP-PAYMENT, CMP-NOTIF, CMP-USER, CMP-PLATFORM (web dan mobile dirinci di kontrak dan wireframe) |
 | **Document ID** | SDD-RBT-001 |
-| **Version** | 1.2 |
-| **Date** | 2026-10-18 |
+| **Version** | 1.3 |
+| **Date** | 2026-10-19 |
 | **Status** | Draft. Desain baseline = PRD v4.6 Final Canonical; implementasi `NOT_VERIFIED` |
 | **Issuing organization** | Tim Rusuh Booking Tiket |
 | **Author(s)** | Tim PT. Tiket Sampai Nonton Sentosa (BE-1, BE-2) |
@@ -27,6 +27,7 @@
 | 1.0 | 2026-10-17 | Tim PT. Tiket Sampai Nonton Sentosa | Dipecah dari PRD v4.6 §7.4, §9.5, §9.8, §11, §16.2, Lampiran A–F, J, M, N |
 | 1.1 | 2026-10-17 | Tim PT. Tiket Sampai Nonton Sentosa | Struktur proyek, aturan dependency, dan prinsip desain kode disesuaikan dengan standar proyek organisasi (ADR-016); menggantikan Lampiran F v4.6 |
 | 1.2 | 2026-10-18 | Tim PT. Tiket Sampai Nonton Sentosa | §4.1.3 hanya repository backend; web dan mobile di repository terpisah (ADR-017); deskripsi pipeline |
+| 1.3 | 2026-10-19 | Tim PT. Tiket Sampai Nonton Sentosa | Keputusan bersama BE-2: verb Cobra dan struktur cmd (§4.1), User Service (§4.1.2, §4.4.4, §4.6.1), event sourcing Booking/Payment (§4.4.3, §4.5.3), retry/DLQ dan guard urutan consumer (§4.5.4), tinjauan skema (§4.4.5), env D-24 (§6.1), `/health`, circuit breaker MUST, alert email (§7), testify (§9) |
 
 ---
 
@@ -109,12 +110,17 @@ Struktur proyek **wajib mengikuti standar proyek organisasi** (ADR-016): setiap 
 
 #### 4.1.1 Struktur per Service
 
-Contoh lengkap untuk Booking Service. Queue, Payment, dan Notification memakai pola yang sama (§4.1.2).
+Contoh lengkap untuk Booking Service. Queue, Payment, Notification, dan User memakai pola yang sama (§4.1.2). Boilerplate setiap service sudah tersedia di repository (`services/<svc>/`), termasuk verb Cobra, konfigurasi tervalidasi, client, migrasi, dan `GET /health`.
 
 ```text
 services/booking/
-├── cmd/                                   # Entry point
-│   └── main.go                            # --mode=api (HTTP + consumer) | --mode=worker (expiry, outbox, rekonsiliasi)
+├── cmd/                                   # Entry point (package main, Cobra; ADR-022)
+│   ├── main.go                            # Execute()
+│   ├── root.go                            # Muat .env + config.Load + logger; context SIGINT/SIGTERM
+│   ├── api.go                             # booking api     (HTTP + consumer)
+│   ├── worker.go                          # booking worker  (sweeper TTL, outbox relay, rekonsiliasi)
+│   ├── migrate.go                         # booking migrate up|down|status (advisory lock)
+│   └── healthcheck.go                     # booking healthcheck (HEALTHCHECK container)
 ├── internal/
 │   ├── booking/                           # Booking domain (self-contained hexagon)
 │   │   ├── port/
@@ -147,7 +153,8 @@ services/booking/
 │   │   └── load.go
 │   └── delivery/                          # Composition root (DI wiring)
 │       ├── server.go                      # Mode api
-│       └── worker.go                      # Mode worker
+│       ├── worker.go                      # Mode worker
+│       └── clients.go                     # Need{Postgres,Valkey,RabbitMQ}: setiap verb hanya membuka client yang dipakai
 ├── _mock/                                 # Generated mocks for testing (mockgen)
 │   ├── booking/port/
 │   │   ├── inbound/                       # Usecase mocks (package mock_inbound)
@@ -156,7 +163,7 @@ services/booking/
 ├── assets/                                # Static config files (JSON): default konfigurasi event, pesan error
 ├── deployments/                           # Deployment configurations
 │   ├── Dockerfile
-│   └── migrations/                        # Schema booking (DDL §4.4)
+│   └── migrations/                        # embed.go + NNNN_nama.up.sql/.down.sql (DDL §4.4), tertanam di binary
 ├── docs/                                  # Dokumentasi service (README, catatan desain lokal)
 └── go.mod
 ```
@@ -165,7 +172,7 @@ services/booking/
 
 | Lokasi standar | Queue | Booking | Payment | Notification |
 |---|---|---|---|---|
-| `cmd/main.go` | API + promotor + status publisher + consumer | `--mode=api` / `--mode=worker` | `--mode=api` (HTTP, webhook, consumer) / `--mode=worker` (rekonsiliasi UNKNOWN, outbox relay) | Consumer + HTTP push-subscriptions |
+| `cmd/` (Cobra, D-14) | `api` (HTTP) / `worker` (promotor, status publisher, consumer, sweeper slot) | `api` / `worker` (sweeper hold kedaluwarsa, outbox relay) | `api` (HTTP, webhook) / `worker` (consumer, rekonsiliasi UNKNOWN, sweeper attempt, outbox relay) | `api` (push-subscriptions) / `worker` (consumer email/push) |
 | `internal/<domain>/` | `queue/` | `booking/` | `payment/` | `notification/` |
 | `port/inbound/` | `IJoinUsecase`, `IClaimUsecase`, `IPositionUsecase`, `ILeaveUsecase`, `IPromoteUsecase`, `IStatusPublisherUsecase`, `IBookingEventHandler` | lihat §4.1.1 | `IPaymentPageUsecase`, `IPageTokenUsecase`, `IAttemptUsecase`, `IWebhookUsecase`, `IResolveUsecase`, `IReconcileUsecase`, `IBookingEventHandler` | `INotificationEventHandler`, `IPushSubscriptionUsecase` |
 | `port/outbound/` | `IQueueStore`, `IRateLimiter`, `IStatusCache`, `IAllocationReserver`, `ISupplyReader`, `IEntryAuditWriter`, `IEventSettingsRepository`, `ITurnEventPublisher` | lihat §4.1.1 | `IUnitOfWork`, `IPaymentRepository`, `IPaymentGateway`, `IBookingClient` | `IDeliveryRepository`, `IPushSubscriptionRepository`, `IMailer`, `IPushSender` |
@@ -176,6 +183,24 @@ services/booking/
 | `assets/` | Default `event_settings` | Default konfigurasi event | Pemetaan metode/status Midtrans | `templates/{eticket,expired,review}.txt.tmpl` |
 | `deployments/` | Dockerfile, migrations schema `queue` | Dockerfile, migrations schema `booking` | Dockerfile, migrations schema `payment` | Dockerfile, migrations schema `notification` |
 
+Semua service juga punya verb `migrate up|down|status` dan `healthcheck`.
+
+**Catalog dan sweeper (D-45, D-47).** Daftar dan detail event (*catalog*) tetap modul read-only di dalam Booking Service, bukan service terpisah; bila beban baca tinggi, jalur baca dipisah dengan pool koneksi sendiri dan cache CDN/Valkey (HLD §4.4) tanpa menambah service. *Sweeper* (pembersih hold, attempt, dan slot yang kedaluwarsa) adalah job di verb `worker` service pemilik datanya, bukan service. Slot aktif dilepas ketika perjalanan pembeli selesai, termasuk saat booking `PAID` (SRS-F-06-08, D-48); pengiriman email tiket tidak menahan slot.
+
+**User Service (ADR-020)** memakai pola yang sama:
+
+| Lokasi standar | User |
+|---|---|
+| `cmd/` | `user api`, `user migrate`, `user healthcheck` (tanpa worker) |
+| `internal/<domain>/` | `user/` |
+| `port/inbound/` | `IAuthUsecase` (RequestOTP, VerifyOTP, Refresh, Logout), `IProfileUsecase`, `IAccessTokenVerifier`, `IHealthUsecase`; error kontrak (`errors.go`) |
+| `port/outbound/` | `IAccountRepository`, `ISessionRepository`, `ILoginAudit`, `IOTPStore`, `IRateLimiter`, `IMailer`, `ITokenIssuer`, `ISecretGenerator`, `IPIIProtector`, `IDependencyChecker` |
+| `domain/entity/` | Account, Session, OTPChallenge, LoginEvent, sentinel error repository |
+| `domain/valueobject/` | Email, NIK (validasi struktur), OTPCode, DependencyName |
+| `application/usecase/` | `auth.go` (OTP, verifikasi, rotasi, logout), `profile.go`, `check_health.go` |
+| `infrastructure/` | `http/` (handler + middleware Bearer), `postgres/` (akun, sesi, audit), `valkey/` (OTP store, rate limiter), `smtp/` (mailer OTP), `security/` (PII, token EdDSA, generator), `healthcheck/` |
+| `deployments/` | Dockerfile, migrations schema `users` |
+
 #### 4.1.3 Struktur Repository `rusuh-booking-be` (monorepo backend)
 
 ```text
@@ -184,21 +209,23 @@ services/booking/
 │   ├── queue/
 │   ├── booking/
 │   ├── payment/
-│   └── notification/
+│   ├── notification/
+│   └── user/                              # Akun opsional, login OTP (ADR-020)
 ├── pkg/                                   # Shared utilities (module sendiri), tanpa logika bisnis
 │   ├── apperror/                          # Application error types + error envelope
 │   ├── httpx/                             # Server, middleware, request ID, rate limit, CORS, client IP
-│   ├── dotenv/                            # Environment configuration
-│   ├── token/                             # JWT EdDSA, key loading
-│   ├── crypto/                            # HMAC-SHA256, AES-256-GCM
-│   ├── nik/                               # Validasi struktur NIK
-│   ├── outbox/                            # Outbox store + relay
-│   ├── consumer/                          # Manual ack, retry berjenjang, DLQ
-│   ├── broker/                            # RabbitMQ connection + topology
-│   ├── db/                                # PostgreSQL pool + transaction helper
-│   ├── resilience/                        # Breaker, bulkhead, timeout
-│   ├── telemetry/                         # Logging, metrics, tracing
+│   ├── dotenv/                            # .env loader + Reader (kumpulkan semua error parsing)
+│   ├── logger/                            # slog JSON/text, LOG_LEVEL, LOG_FORMAT
+│   ├── token/                             # JWT EdDSA, PEM key loading, rotasi kid
+│   ├── crypto/                            # HMAC-SHA256 (hash lookup), AES-256-GCM, masking NIK/email
+│   ├── postgres/                          # pgx pool terbatas, search_path per service, WithTx, SQLSTATE helper
+│   ├── valkey/                            # valkey-go standalone/cluster, VALKEY_SERVER JSON, key prefix
+│   ├── rabbitmq/                          # Publisher confirm, consumer manual ack, retry berjenjang, DLQ, envelope
+│   ├── migrate/                           # Runner migrasi tertanam: advisory lock, checksum, up/down/status
+│   ├── eventstore/                        # Append (optimistic concurrency), Load, Replay, penolak field PII (ADR-019)
+│   ├── resilience/                        # Circuit breaker + bulkhead
 │   ├── clock/                             # Clock abstraction
+│   ├── nik/, outbox/, telemetry/          # Direncanakan Sprint 1 (validator NIK bersama, outbox relay, metrics/tracing)
 │   └── go.mod
 ├── deployments/                           # Deployment configurations (lintas service)
 │   ├── compose/                           # postgres-init.sql, keys/ (lokal)
@@ -206,7 +233,7 @@ services/booking/
 │   ├── observability/{prometheus.yml,grafana/,otel-collector.yaml}
 │   └── terraform/{modules/{network,edge,alb,asg,stateful,iam-oidc,budget},environments/staging}
 ├── docs/                                  # Documentation
-│   ├── contracts/{openapi/{public.yaml,internal-booking.yaml,internal-payment.yaml},events/*.schema.json}
+│   ├── contracts/{openapi/{queue,booking,payment,notification,user,internal-booking,internal-payment}.yaml,events/*.schema.json}
 │   └── {prd,adr,evidence,ai-log}/
 ├── tests/{features/*.feature,k6/*.js,apidog/,contract/}   # Test lintas service
 ├── tools/{migrate,seed}/                  # Utilitas dev: migrasi semua service (deployments/migrations), seed data
@@ -226,17 +253,17 @@ Web (Next.js, termasuk `/pay/{bookingId}`) dan mobile (React Native) berada di r
 
 | Elemen standar | Status | Catatan |
 |---|---|---|
-| `cmd/main.go` sebagai entry point | Sesuai | Service dengan worker memakai satu entry point dengan `--mode` (api/worker), bukan direktori `cmd` tambahan |
+| `cmd/main.go` sebagai entry point | Sesuai | Satu entry point; verb Cobra (`api`, `worker`, `migrate`, `healthcheck`) sebagai file lain di package `main` yang sama (D-14, ADR-022) |
 | `internal/<domain>/port/{inbound,outbound}` | Sesuai | Nama interface berawalan `I` |
 | `internal/<domain>/domain/{entity,valueobject,dto,mapper}` | Sesuai | DTO terkonsolidasi; mapper fungsi murni |
 | `internal/<domain>/application/usecase` | Sesuai | Satu usecase per file |
 | `internal/<domain>/infrastructure/*` | Sesuai | Satu subfolder per teknologi adapter |
 | `internal/shared/entity`, `internal/config`, `internal/delivery/server.go` | Sesuai | `delivery/worker.go` ditambahkan untuk mode worker |
-| `pkg/` utilitas bersama | Sesuai (dipindah ke root) | Dipakai bersama 4 service sebagai module sendiri lewat `go.work`, agar tidak disalin 4 kali |
-| `_mock/` hasil generate | Sesuai | `mockgen` dari interface di `port/` dan `pkg/` (`make mock`) |
+| `pkg/` utilitas bersama | Sesuai (dipindah ke root) | Dipakai bersama 5 service sebagai module sendiri lewat `go.work`, agar tidak disalin 5 kali |
+| `_mock/` hasil generate | Sesuai | `go tool mockgen` dari interface di `port/` (`make mock`); versi dikunci `tool` di `go.mod`; CI menolak `_mock/` yang tidak sesuai |
 | `assets/`, `deployments/`, `docs/`, `go.mod` | Sesuai | Migration SQL dan Dockerfile di `deployments/` per service |
 | `.gitlab-ci.yml` | **Deviasi** | Assessment mewajibkan repository GitHub public; CI memakai GitHub Actions (`.github/workflows/`). Stage pipeline sama dengan standar (code-quality → verify-code-quality → case-coverage → code-rank → build → package → scan-package → publish → deployment-dev → deployment-prod) dan dapat diterjemahkan ke `.gitlab-ci.yml` bila repo dipindah ke GitLab |
-| Root monorepo (`services/`, `tests/`, `tools/`, `.kiro/`, `specs/`, `docker-compose.yaml`, `Makefile`, `go.work`) | Tambahan | Standar mendefinisikan satu proyek service; RBT memuat 4 service, 2 klien, dan artefak wajib assessment |
+| Root monorepo (`services/`, `tests/`, `tools/`, `.kiro/`, `specs/`, `docker-compose.yaml`, `Makefile`, `go.work`) | Tambahan | Standar mendefinisikan satu proyek service; RBT memuat 5 service dan artefak wajib assessment; web dan mobile di repository terpisah |
 
 #### 4.1.5 Jalur Evolusi
 
@@ -244,7 +271,7 @@ Web (Next.js, termasuk `/pay/{bookingId}`) dan mobile (React Native) berada di r
 
 | Tahap | Perubahan | Kode yang berubah |
 |---|---|---|
-| PoC | 4 service, satu cluster PostgreSQL (schema per service), satu Valkey, satu RabbitMQ | — |
+| PoC | 5 service, satu cluster PostgreSQL (schema per service), satu Valkey, satu RabbitMQ | — |
 | Production Tier M | Schema dipindah ke instance RDS terpisah bila beban perlu | Connection string saja |
 | Production Tier L | Queue Service per event shard (event besar di node Valkey khusus) | Konfigurasi routing event ke Valkey |
 | Opsional | Catalog Service terpisah (read model event), Identity Service bila login dibutuhkan | Service baru + kontrak baru; Booking tidak berubah |
@@ -851,6 +878,190 @@ COMMIT;
 ---
 
 
+#### 4.4.3 Event Store Booking dan Payment (migrasi `0002_event_store`, ADR-019)
+
+Diuji di PostgreSQL 16 lokal sebagai role service masing-masing (19 Okt 2026): append ganda versi sama ditolak `booking_events_pkey`; `UPDATE`/`DELETE` ditolak trigger append-only; role `svc_booking` tidak dapat membaca schema `payment`.
+
+```sql
+-- services/booking/deployments/migrations/0002_event_store.up.sql
+-- Event sourcing untuk agregat Booking (ADR-019).
+-- booking_events adalah sumber kebenaran siklus booking; tabel bookings adalah read model
+-- yang diproyeksikan secara sinkron di transaksi yang sama dengan append event.
+-- Stok (category_inventories, event_supply) tetap relasional dan diubah di transaksi yang sama,
+-- sehingga invariant "tidak oversell" tidak bergantung pada replay.
+
+CREATE TABLE booking_events (
+    stream_id uuid NOT NULL,                       -- = bookings.id
+    version integer NOT NULL CHECK (version > 0),  -- urutan per stream; konflik = 23505
+    event_type text NOT NULL CHECK (event_type ~ '^[A-Z][A-Za-z]+$'),
+    schema_version smallint NOT NULL DEFAULT 1 CHECK (schema_version > 0),
+    payload jsonb NOT NULL,                        -- tanpa NIK plaintext, email, atau token
+    metadata jsonb NOT NULL DEFAULT '{}'::jsonb,   -- correlationId, causationId, actor
+    occurred_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    global_seq bigint GENERATED ALWAYS AS IDENTITY,
+    PRIMARY KEY (stream_id, version)
+);
+CREATE UNIQUE INDEX uq_booking_events_global_seq ON booking_events(global_seq);
+CREATE INDEX idx_booking_events_type_time ON booking_events(event_type, occurred_at);
+
+-- Log append-only: UPDATE dan DELETE ditolak di level database.
+CREATE FUNCTION forbid_event_mutation() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+    RAISE EXCEPTION 'append-only: % on % is not allowed', TG_OP, TG_TABLE_NAME
+        USING ERRCODE = 'restrict_violation';
+END $$;
+CREATE TRIGGER trg_booking_events_append_only
+    BEFORE UPDATE OR DELETE ON booking_events
+    FOR EACH ROW EXECUTE FUNCTION forbid_event_mutation();
+CREATE TRIGGER trg_booking_events_no_truncate
+    BEFORE TRUNCATE ON booking_events
+    FOR EACH STATEMENT EXECUTE FUNCTION forbid_event_mutation();
+
+-- Read model: bookings.version kini sama dengan versi event terakhir yang diproyeksikan.
+COMMENT ON COLUMN bookings.version IS 'Versi stream booking_events terakhir yang diproyeksikan (ADR-019)';
+
+-- Pembeli yang login (opsional, ADR-020). Guest tetap NULL.
+ALTER TABLE admissions ADD COLUMN account_id uuid;
+ALTER TABLE bookings ADD COLUMN account_id uuid;
+CREATE INDEX idx_bookings_account ON bookings(account_id, created_at DESC) WHERE account_id IS NOT NULL;
+```
+
+```sql
+-- services/payment/deployments/migrations/0002_event_store.up.sql
+-- Event sourcing untuk agregat Payment Attempt (ADR-019).
+-- payment_events adalah sumber kebenaran siklus attempt; payment_attempts adalah read model
+-- yang diproyeksikan secara sinkron di transaksi yang sama dengan append event.
+
+CREATE TABLE payment_events (
+    stream_id uuid NOT NULL,                       -- = payment_attempts.id
+    version integer NOT NULL CHECK (version > 0),
+    event_type text NOT NULL CHECK (event_type ~ '^[A-Z][A-Za-z]+$'),
+    schema_version smallint NOT NULL DEFAULT 1 CHECK (schema_version > 0),
+    payload jsonb NOT NULL,                        -- tanpa data kartu, server key, atau token
+    metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
+    occurred_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    global_seq bigint GENERATED ALWAYS AS IDENTITY,
+    PRIMARY KEY (stream_id, version)
+);
+CREATE UNIQUE INDEX uq_payment_events_global_seq ON payment_events(global_seq);
+CREATE INDEX idx_payment_events_type_time ON payment_events(event_type, occurred_at);
+
+CREATE FUNCTION forbid_event_mutation() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+    RAISE EXCEPTION 'append-only: % on % is not allowed', TG_OP, TG_TABLE_NAME
+        USING ERRCODE = 'restrict_violation';
+END $$;
+CREATE TRIGGER trg_payment_events_append_only
+    BEFORE UPDATE OR DELETE ON payment_events
+    FOR EACH ROW EXECUTE FUNCTION forbid_event_mutation();
+CREATE TRIGGER trg_payment_events_no_truncate
+    BEFORE TRUNCATE ON payment_events
+    FOR EACH STATEMENT EXECUTE FUNCTION forbid_event_mutation();
+
+ALTER TABLE payment_attempts ADD COLUMN stream_version integer NOT NULL DEFAULT 0;
+COMMENT ON COLUMN payment_attempts.stream_version IS 'Versi stream payment_events terakhir yang diproyeksikan (ADR-019)';
+```
+
+#### 4.4.4 Schema `users` (User Service, ADR-020)
+
+```sql
+-- services/user/deployments/migrations/0001_init.up.sql
+-- User Service (ADR-020): akun opsional dengan login OTP email tanpa password.
+-- Guest checkout tetap jalan tanpa akun. Email dan NIK disimpan terenkripsi (AES-256-GCM)
+-- dengan hash HMAC-SHA256 untuk pencarian; tampilan memakai versi tersamar.
+-- Kode OTP tidak disimpan di sini: hash OTP dan hitungan percobaan ada di Valkey dengan TTL.
+
+CREATE TABLE accounts (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    email_hash bytea NOT NULL UNIQUE,              -- HMAC-SHA256(lower(trim(email)))
+    email_enc bytea NOT NULL,                      -- AES-256-GCM (nonce || ciphertext)
+    email_masked text NOT NULL,                    -- mis. ar***@gmail.com
+    full_name text CHECK (full_name IS NULL OR char_length(full_name) BETWEEN 1 AND 100),
+    nik_hash bytea,                                -- sama dengan buyer_nik_hash di Booking/Queue
+    nik_enc bytea,
+    nik_masked text,                               -- mis. 3174********0001
+    status text NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE','DISABLED')),
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    last_login_at timestamptz,
+    CHECK ((nik_hash IS NULL) = (nik_enc IS NULL) AND (nik_hash IS NULL) = (nik_masked IS NULL))
+);
+-- Satu NIK hanya boleh tersimpan di satu akun, agar kuota NIK pembeli tidak diakali lewat banyak akun.
+CREATE UNIQUE INDEX uq_accounts_nik ON accounts(nik_hash) WHERE nik_hash IS NOT NULL;
+
+-- Refresh token disimpan sebagai hash; logout dan rotasi mengisi revoked_at.
+CREATE TABLE sessions (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    refresh_token_hash bytea NOT NULL UNIQUE,      -- SHA-256 dari token acak 32 byte
+    user_agent text,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    expires_at timestamptz NOT NULL,
+    revoked_at timestamptz,
+    replaced_by uuid REFERENCES sessions(id),
+    CHECK (expires_at > created_at)
+);
+CREATE INDEX idx_sessions_account_active ON sessions(account_id) WHERE revoked_at IS NULL;
+
+-- Jejak login untuk audit dan deteksi brute force (tanpa email plaintext, tanpa kode OTP).
+CREATE TABLE login_audit (
+    id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    account_id uuid REFERENCES accounts(id) ON DELETE SET NULL,
+    email_hash bytea NOT NULL,
+    outcome text NOT NULL CHECK (outcome IN ('OTP_SENT','OTP_RATE_LIMITED','LOGIN_OK','OTP_INVALID','OTP_EXPIRED','OTP_LOCKED','REFRESH_OK','REFRESH_REUSED','LOGOUT')),
+    client_ip inet,
+    created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_login_audit_email_time ON login_audit(email_hash, created_at DESC);
+```
+
+Role dan schema dibuat sekali oleh admin DB (`deployments/compose/postgres-init.sql`): `svc_user` hanya memiliki `USAGE, CREATE` pada schema `users`, dan `search_path` setiap role dikunci ke schema miliknya. Migrasi `0002_account_ref` di Queue menambah `entry_audit.account_id`; Booking menambah `admissions.account_id` dan `bookings.account_id` (bagian migrasi `0002_event_store`).
+
+#### 4.4.5 Tinjauan Skema: Tabel yang Benar-benar Dibutuhkan (D-20)
+
+Total 28 tabel (23 dari v4.6 + 5 baru). Semua tabel v4.6 tetap dibutuhkan; satu ditunda pembuatannya sampai fiturnya dikerjakan.
+
+| Schema | Tabel | Fungsi | Dasar | Keputusan | Sprint |
+|---|---|---|---|---|---|
+| `booking` | `events` | Event, jendela penjualan (sales_starts_at/ends_at), aturan per event | FR-01..03, Lampiran J.1 | Wajib | S1 |
+| `booking` | `config_audit` | Jejak perubahan konfigurasi event (siapa, kapan, lama → baru) | Konfigurasi dengan audit | Wajib (diisi trigger) | S2 |
+| `booking` | `ticket_categories` | Kategori dan harga | FR-08..10 | Wajib | S1 |
+| `booking` | `category_inventories` | Stok per kategori (available/held/sold) | BR-08, jaminan tidak oversell | Wajib | S1 |
+| `booking` | `event_supply` | Stok tingkat event untuk reservasi alokasi saat admission | GR-01 masuk pasti bisa beli | Wajib | S1 |
+| `booking` | `admissions` | Alokasi + selection session per giliran | QUE-03, BR-03/04 | Wajib (+ account_id) | S1 |
+| `booking` | `attendee_checks` | Batas 10 NIK pemegang berbeda per sesi | AS-18 | Wajib | S1 |
+| `booking` | `buyer_quotas` | Kuota NIK pembeli maks 3 per event | BR-01/02 | Wajib | S1 |
+| `booking` | `bookings` | Read model booking (proyeksi booking_events) | FR-16..23 | Wajib (+ account_id) | S1 |
+| `booking` | `booking_items` | Satu baris per tiket, NIK pemegang unik per event | KP-13 | Wajib | S1 |
+| `booking` | `tickets` | E-tiket terbit setelah PAID | FR-22 | Wajib | S1 |
+| `booking` | `idempotency_records` | Idempotency-Key per tombol | §3.2.24 | Wajib | S1 |
+| `booking` | `outbox_events` | Transactional outbox | ADR-010, D-10 | Wajib | S1 |
+| `booking` | `booking_events` | Event store agregat Booking (append-only) | ADR-019, rubrik L3 event sourcing | Baru | S1 |
+| `payment` | `payment_attempts` | Read model attempt (proyeksi payment_events) | FR-20..25 | Wajib (+ stream_version) | S1 |
+| `payment` | `payment_callbacks` | Webhook Midtrans tersimpan durable sebelum 2xx | FR-25 | Wajib | S1 |
+| `payment` | `payment_page_tokens` | Token sekali pakai untuk WebView mobile | Alur mobile | Wajib | S1 |
+| `payment` | `refund_cases` | Kasus REVIEW/refund manual | Settlement terlambat | Wajib | S1 |
+| `payment` | `idempotency_records` | Idempotency-Key per tombol | §3.2.24 | Wajib | S1 |
+| `payment` | `outbox_events` | Transactional outbox | ADR-010, D-10 | Wajib | S1 |
+| `payment` | `payment_events` | Event store agregat Payment Attempt (append-only) | ADR-019 | Baru | S1 |
+| `queue` | `event_settings` | Konfigurasi antrean per event | Lampiran J.2 | Wajib | S1 |
+| `queue` | `entry_audit` | Audit FIFO (seq, timestamp join) untuk pembuktian keadilan | GR-07 | Wajib (+ account_id) | S1 |
+| `notification` | `deliveries` | Status kirim + dedup per (pesan, jenis notifikasi) | SRS-F-21-02 | Wajib | S1 |
+| `notification` | `push_subscriptions` | Token push mobile | AS-25 (opsional) | Ditunda: buat saat fitur push dikerjakan | S2 |
+| `users` | `accounts` | Akun opsional: email, nama, NIK tersimpan (terenkripsi) | ADR-020, D-03 | Baru | S1 |
+| `users` | `sessions` | Refresh token (hash), logout, rotasi | ADR-020 | Baru | S1 |
+| `users` | `login_audit` | Jejak OTP dan login untuk audit brute force | ADR-020, OWASP A07 | Baru | S1 |
+
+| Tabel (usulan lain) | Alasan tidak dipakai |
+|---|---|
+| consumer_inbox (x4) | Dihapus di v4.6; dedup lewat guard state dan unique key (D-11) |
+| booking.audit_log | Digantikan booking_events (riwayat lengkap per booking) |
+| users.password_reset_tokens (BE-2 V1) | Tidak perlu: login OTP tanpa password |
+| users.user_sessions di Valkey (BE-2 V2) | Sesi di PostgreSQL; Valkey hanya OTP sementara (D-21) |
+| stock / nik_quota (BE-2 V1) | Sudah tercakup category_inventories, event_supply, buyer_quotas |
+
 Peran dan model key Valkey ada di HLD §4.3.
 
 ### 4.5 Patterns Use View
@@ -907,8 +1118,9 @@ type IBookingUsecase interface {
 5. **Batas antar-service ditegakkan mesin**: kode di `internal/` tidak dapat diimpor service lain; `depguard` menegakkan aturan lapisan (§4.3); komunikasi hanya lewat kontrak di `docs/contracts/`.
 6. **Consumer wajib idempoten tanpa tabel inbox.** Setiap handler event menulis efeknya dengan guard state (`UPDATE … WHERE status = …`), operasi Lua yang idempoten, atau `INSERT … ON CONFLICT DO NOTHING` pada unique key bisnis (§4.5.2). Setiap consumer punya test kirim ganda.
 7. **Outbox hanya untuk perubahan stok atau uang.** `AppendOutbox` dipanggil di dalam unit of work yang sama dengan perubahan state; event yang tidak punya consumer tidak dibuat.
-8. **Error bertipe** di `domain/entity` (`ErrCategoryUnavailable`, `ErrBookingLocked`, …) dipetakan ke `errorCode` di `infrastructure/http` memakai `pkg/apperror`, sehingga envelope error stabil.
-9. **Unit test usecase memakai mock dari `_mock/`**; integration test adapter memakai PostgreSQL, Valkey, dan RabbitMQ nyata.
+8. **Error bertipe.** `domain/entity` hanya berisi sentinel error standard library (mis. `ErrNotFound`, `ErrRevoked`). Error kontrak (kode + status HTTP, memakai `pkg/apperror`) didefinisikan di `port/inbound/errors.go`, dikembalikan usecase, dan ditulis adapter HTTP ke envelope `meta.errorCode` (contoh: `services/user`).
+9. **Unit test usecase memakai mock dari `_mock/`** dan testify (table-driven, setiap fungsi punya test regresi); integration test adapter memakai PostgreSQL, Valkey, dan RabbitMQ nyata dengan build tag `integration`.
+10. **Route registrar per domain.** Setiap handler punya `Register(mux *http.ServeMux)`; `delivery` hanya memasang registrar, tidak menulis rute.
 
 Aturan ini ditulis di `.kiro/steering/code-principles.md` dan `.kiro/steering/structure.md`, dan diperiksa saat code review.
 
@@ -959,15 +1171,50 @@ Konsekuensi yang diterima dan dinyatakan jujur: email dan push bersifat at-least
 ---
 
 
+#### 4.5.3 Event Sourcing (Booking, Payment)
+
+*Keputusan: ADR-019. Kit: `pkg/eventstore`.*
+
+| Agregat | Event (payload tanpa PII plaintext) | Read model |
+|---|---|---|
+| Booking | `BookingHeld` (items: categoryId, attendeeNikHash, attendeeNikMasked, priceMinor), `BookingItemsReplaced`, `BookingLocked` (lockReason), `PaymentVerifying`, `BookingPaid` (settlementTime, attemptId), `BookingExpired` (reason), `BookingCancelled`, `BookingReview` | `bookings`, `booking_items`, `tickets` |
+| Payment Attempt | `AttemptCreated` (method, amountMinor, bookingVersion), `InstructionIssued` (type, bank, vaMasked), `SettlementReceived` (settlementTime, providerTxId), `AttemptFailed`, `AttemptExpired`, `RefundRequired` | `payment_attempts`, `refund_cases` |
+
+Alur tulis satu perintah (contoh hold):
+
+```text
+BEGIN
+  lock order tetap (§4.7)            -- admission, supply, buyer quota, kategori (urut id)
+  ubah stok relasional               -- category_inventories, event_supply (constraint tetap menjaga invariant)
+  eventstore.Append(tx, bookingId, expectedVersion, BookingHeld{…})   -- 23505 → ErrConcurrency
+  proyeksi read model                -- INSERT/UPDATE bookings (version = versi baru), booking_items
+  outbox                             -- booking.journey/booking.paid … bila ada consumer
+COMMIT
+```
+
+Aturan:
+
+1. **Satu transaksi.** Append event, proyeksi, perubahan stok, dan outbox selalu di transaksi yang sama; tidak ada proyeksi asinkron di jalur kritis.
+2. **Versi = concurrency token.** `PUT /bookings/{id}/items` mengirim `version`; bila `ErrConcurrency`, usecase mengembalikan `409 BOOKING_VERSION_CONFLICT` tanpa mengubah apa pun.
+3. **Replay** (`eventstore.Replay`) dipakai test dan audit untuk membangun ulang state dan dibandingkan dengan read model (TC-ES-03). Versi yang melompat dianggap rusak.
+4. **Skema event berversi** (`schema_version`); handler `Apply` mendukung semua versi yang pernah ditulis.
+5. **PII**: `pkg/eventstore` menolak payload yang memuat field `nik`, `email`, `token`, `password`, `otp`, dan sejenisnya (plaintext). Hash dan nilai tersamar diperbolehkan.
+
+#### 4.5.4 Retry, DLQ, dan Guard Urutan Consumer (D-11, D-12)
+
+Implementasi: `pkg/rabbitmq`. Consumer memakai manual ack dan `prefetch`; kegagalan transient dipindah ke `<queue>.retry.<delay>` (TTL lalu dead-letter kembali ke queue utama) dengan header `x-rbt-attempt`; setelah `RABBITMQ_MAX_RETRIES` (default 3, total 4 percobaan) atau error `rabbitmq.Permanent(err)` (payload rusak, versi tidak dikenal, panic handler) pesan masuk `<queue>.dlq` beserta `x-rbt-last-error`. Bila pemindahan gagal, pesan di-*nack* dengan requeue sehingga tidak hilang. Queue utama bertipe quorum.
+
+Guard urutan (kompromi D-11): handler membandingkan versi agregat di event dengan versi read model; event yang lebih lama dari state yang sudah tersimpan di-ack tanpa efek (idempoten), event yang melompat dikembalikan sebagai error transient agar dicoba lagi setelah event sebelumnya diproses. Dedup tetap di PostgreSQL (guard state, unique key), bukan di Valkey.
+
 ### 4.6 Interface View
 
 #### 4.6.1 Kontrak API
 
-Pembagian tanggung jawab backend vs klien, invarian backend, endpoint publik, Status Document, error envelope, dan error code ada di SRS-RBT-001 §3.1.4. Bagian ini memuat contoh kontrak per service.
+Pembagian tanggung jawab backend vs klien, invarian backend, endpoint publik, Status Document, error envelope, dan error code ada di SRS-RBT-001 §3.1.4. Bagian ini memuat contoh kontrak per service. Kontrak normatif (D-19, satu file per service) ada di `docs/contracts/openapi/` dan divalidasi dengan validator OpenAPI 3.1; respons `user.yaml` sudah dicek terhadap implementasi (contract test, evidence 19 Okt).
 
 *Sumber: PRD v4.6 Lampiran A*
 
-Semua request/response JSON UTF-8, `Content-Type: application/json`, waktu ISO 8601 UTC, uang integer minor unit (IDR). Kontrak normatif ada di `docs/contracts/openapi/public.yaml` dan `docs/contracts/openapi/internal-*.yaml`; bagian ini adalah ringkasan untuk review.
+Semua request/response JSON UTF-8, `Content-Type: application/json`, waktu ISO 8601 UTC, uang integer minor unit (IDR). Kontrak normatif ada di satu file OpenAPI per service di `docs/contracts/openapi/` (`queue.yaml`, `booking.yaml`, `payment.yaml`, `notification.yaml`, `user.yaml`) dan `internal-*.yaml` (D-19); bagian ini adalah ringkasan untuk review.
 
 ##### Queue Service
 
@@ -1181,6 +1428,18 @@ Payload push tidak memuat data pribadi: `{ "type": "TURN_SOON" | "TURN_ARRIVED",
 ---
 
 
+##### User Service (ADR-020)
+
+`POST /api/v1/auth/otp/request` dengan `{ "email": "pembeli@example.test" }` → `202 { "meta": { "code": 202 }, "data": { "expiresInSeconds": 300, "resendAfterSeconds": 60 } }`. Respons sama untuk email terdaftar atau belum. Error: `429 OTP_RESEND_TOO_SOON` (`details.retryAfterSeconds`), `429 RATE_LIMITED`, `503 DEPENDENCY_UNAVAILABLE` (SMTP).
+
+`POST /api/v1/auth/otp/verify` dengan `{ "email", "code": "123456" }` → `200` berisi `tokenType`, `accessToken` (EdDSA, 15 menit), `accessTokenExpiresAt`, `refreshToken` (30 hari), `refreshTokenExpiresAt`, dan `account { accountId, emailMasked, fullName, nikMasked, hasNik }`. Error: `401 OTP_INVALID` (`details.attemptsLeft`), `401 OTP_EXPIRED`, `429 OTP_LOCKED`, `403 ACCOUNT_DISABLED`.
+
+`POST /api/v1/auth/refresh` `{ "refreshToken" }` → token baru (rotasi). Token yang sudah dirotasi dipakai lagi → `401 SESSION_INVALID` dan semua sesi akun dicabut. `POST /api/v1/auth/logout` → `204` (idempoten).
+
+`GET /api/v1/me` dan `PATCH /api/v1/me` `{ "fullName"?, "nik"? }` (Bearer) → profil tersamar. Error: `409 NIK_ALREADY_LINKED`, `400 VALIDATION_ERROR`.
+
+Join antrean oleh pembeli yang login: klien mengisi form dari `GET /me`, lalu memanggil join seperti guest dengan header `Authorization: Bearer <accessToken>`. Queue memverifikasi token (public key User Service, `aud=rbt`), memastikan `HMAC(buyerNik)` sama dengan `nik_hash` akun bila akun menyimpan NIK, dan meneruskan `accountId` di `allocations:batch`.
+
 #### 4.6.2 Messaging
 
 *Sumber: PRD v4.6 Lampiran E*
@@ -1258,6 +1517,10 @@ Breaker bersifat lokal per instance; metrik agregat tersedia di Grafana.
 
 ---
 
+
+##### Circuit Breaker (MUST sejak v1.3, D-40)
+
+Nilai awal di tabel E.5 di atas diterapkan lewat `pkg/resilience` (`Breaker` + `Bulkhead`) pada setiap panggilan sinkron: Queue→Booking, Booking→Payment, Payment→Midtrans (charge dan status), Notification→SMTP, User→SMTP. Penolakan bisnis (4xx) tidak dihitung sebagai kegagalan; pembatalan oleh pemanggil (`context.Canceled`) tidak membuka breaker. Perubahan state breaker dicatat sebagai metrik `breaker_state{name}`.
 
 #### 4.6.3 Payment Page dan Integrasi Midtrans
 
@@ -2291,6 +2554,32 @@ Service menolak start bila konfigurasi env tidak valid; perubahan per event yang
 ---
 
 
+### 6.1 Variabel Lingkungan Runtime (D-24)
+
+Nama variabel mengikuti konvensi BE-2 dan berlaku untuk semua service. Semua divalidasi saat start; kesalahan parsing dan validasi dilaporkan sekaligus dan proses berhenti.
+
+| Variabel | Default | Service | Keterangan |
+|---|---|---|---|
+| `APP_ENV` | `local` | Semua | `local`, `dev`, `staging`, `prod`; di luar `local` IP klien diambil dari `X-Forwarded-For` (ALB) |
+| `APP_NAME`, `APP_PORT` | nama service, 8081–8085 | Semua | Queue 8081, Booking 8082, Payment 8083, Notification 8084, User 8085 |
+| `LOG_LEVEL`, `LOG_FORMAT` | `info`, `json` | Semua | `debug`/`info`/`warn`/`error`; `json`/`text` |
+| `HTTP_SHUTDOWN_TIMEOUT`, `HEALTH_TIMEOUT`, `WORKER_INTERVAL` | 15s, 2s, 5s | Semua | Graceful shutdown, batas ping `/health`, tick job worker |
+| `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_DATABASE`, `POSTGRES_SSLMODE` | `localhost`, 5432, `rbt`, `disable` | Semua | Satu cluster PoC; `require` atau lebih kuat di cloud |
+| `POSTGRES_USER`, `POSTGRES_PASSWORD` | `svc_<service>` | Semua | Role per service; password dari Secrets Manager/SSM di cloud |
+| `POSTGRES_SCHEMA` | schema service | Semua | `search_path`; validasi pola nama |
+| `POSTGRES_MAX_CONNS` | 10 | Semua | Batas pool per instance (1–200) |
+| `VALKEY_SERVER` | `[{"host":"localhost","port":6379}]` | Queue, Booking, User | JSON array node; satu endpoint konfigurasi untuk cluster |
+| `VALKEY_USERNAME`, `VALKEY_PASSWORD`, `VALKEY_TLS`, `VALKEY_DB`, `VALKEY_PREFIX_ENV` | kosong, `false`, 0, kosong | Queue, Booking, User | Prefix memisahkan lingkungan yang berbagi cluster |
+| `RABBITMQ_URL` | `amqp://guest:guest@localhost:5672/` | Queue, Booking, Payment, Notification | `amqps://` di cloud |
+| `RABBITMQ_EXCHANGE`, `RABBITMQ_EXCHANGE_TYPE` | `rusuh.events`, `topic` | idem | Exchange bersama (§4.6.2) |
+| `RABBITMQ_WORKERS`, `RABBITMQ_PREFETCH` | 4, 20 | idem | Goroutine dan prefetch per consumer queue |
+| `RABBITMQ_MAX_RETRIES`, `RABBITMQ_RETRY_DELAYS`, `RABBITMQ_CONFIRM_TIMEOUT` | 3, `5s,30s,2m`, 5s | idem | Retry berjenjang lalu DLQ (§4.5.4) |
+| `TOKEN_ISSUER`, `TOKEN_AUDIENCE`, `TOKEN_KEY_ID`, `TOKEN_PRIVATE_KEY_FILE` | `rbt-user`, `rbt`, `user-1`, — | User | Kunci Ed25519 PEM; public key dibagikan ke Queue dan Booking |
+| `TOKEN_ACCESS_TTL`, `TOKEN_REFRESH_TTL` | 15m, 720h | User | Batas aman 1m–1h dan 1h–90d |
+| `OTP_TTL`, `OTP_RESEND_COOLDOWN`, `OTP_MAX_ATTEMPTS`, `OTP_MAX_PER_EMAIL_HOUR`, `OTP_MAX_PER_IP_HOUR` | 5m, 60s, 5, 5, 20 | User | SRS §3.2.27 |
+| `PII_ENC_KEY`, `PII_HASH_KEY`, `OTP_HASH_KEY` | — | User (`PII_HASH_KEY` juga Queue, Booking) | 32 byte hex, harus berbeda satu sama lain; `PII_HASH_KEY` sama di semua service agar `nik_hash` cocok |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM`, `SMTP_TIMEOUT` | `localhost`, 1025, —, —, `no-reply@rusuh.test`, 5s | User, Notification | Mailpit lokal; SES di demo |
+
 ---
 
 ## 7. Observability
@@ -2310,6 +2599,8 @@ Identifier berkardinalitas tinggi (NIK, booking ID, entry ID) tidak menjadi labe
 
 Stack observability dan rekonsiliasi ada di HLD §4.7. Logging, metrics, dan tracing ada di Engineering Handbook G.4.
 
+**Kanal alert (D-41).** Alert Grafana dikirim ke kanal **email** tim (contact point `rbt-team-email`, alamat diisi saat setup). Kanal lain seperti Telegram dicatat sebagai pengembangan sesudah PoC. Setiap rule alert mencantumkan runbook singkat (Engineering Handbook §6).
+
 ---
 
 ## 8. Security Design
@@ -2323,6 +2614,10 @@ Token, kontrol keamanan, threat model, dan anti-calo ada di HLD §4.6. Retensi d
 | Token | JWT EdDSA, `jti` untuk token sekali pakai, binding visitor | SRS-Q-SEC-05 |
 | Webhook | Verifikasi signature, order, amount, transisi legal | SRS-F-15-01 |
 | Middleware | `pkg/httpx` (HLD Appendix B, O.5) | SRS-F-22-02 |
+| Login OTP | Kode 6 digit dari `crypto/rand`; disimpan sebagai HMAC terikat email di Valkey ber-TTL; lock setelah 5 percobaan; cooldown dan rate limit per email/IP; respons seragam | SRS-F-27-02..04 |
+| Sesi | Access token EdDSA 15 menit; refresh token 32 byte acak, disimpan SHA-256; rotasi satu pemenang (transaksi + `revoked_at IS NULL`); reuse mencabut semua sesi | SRS-F-27-05..07 |
+| PII akun | Email dan NIK AES-256-GCM dengan AAD per kolom + HMAC untuk lookup; respons hanya versi tersamar | SRS-Q-SEC-10 |
+| Event store | Payload event ditolak bila memuat field PII/secret plaintext | SRS-D-10 |
 
 ---
 
@@ -2330,11 +2625,13 @@ Token, kontrol keamanan, threat model, dan anti-calo ada di HLD §4.6. Retensi d
 
 Strategi, katalog test, release blocker, dan harness acuan jaminan ada di TP-RBT-001. Desain ini mewajibkan: unit test untuk setiap baris transisi state (§4.8), integration test dengan PostgreSQL/Valkey/RabbitMQ nyata, contract test untuk setiap port dan event, uji kirim ganda per consumer (TC-MSG-03), serta uji partisi (TC-CAP-01..03).
 
+Konvensi (ADR-022): testify (`assert`/`require`) dan table-driven test; mock `go.uber.org/mock` hasil `go tool mockgen`; integration test memakai build tag `integration` dan variabel `TEST_POSTGRES_*`, `TEST_VALKEY_SERVER`, `TEST_RABBITMQ_URL`; di CI stage `case-coverage` menjalankan keduanya dengan PostgreSQL, Valkey, dan RabbitMQ sebagai service container dan ambang coverage logika 80%.
+
 ---
 
 ## 10. Design Rationale
 
-Lihat ADR-RBT. Pemetaan utama: struktur service → ADR-001; reservasi → ADR-002; outbox dan idempotensi → ADR-010; CAP/PACELC → ADR-009; Valkey vs PostgreSQL → ADR-008; ubah pesanan → ADR-006; konfigurasi → ADR-013.
+Lihat ADR-RBT. Pemetaan utama: struktur service → ADR-001; reservasi → ADR-002; outbox dan idempotensi → ADR-010; CAP/PACELC → ADR-009; Valkey vs PostgreSQL → ADR-008; ubah pesanan → ADR-006; konfigurasi → ADR-013; event sourcing → ADR-019; User Service → ADR-020; alternatif gRPC/EKS/Kong → ADR-021; runtime boilerplate → ADR-022.
 
 ---
 
@@ -2355,6 +2652,9 @@ Lihat ADR-RBT. Pemetaan utama: struktur service → ADR-001; reservasi → ADR-0
 | 3.2.25 Near-real-time | §4.9 (M.3, M.4) |
 | 3.2.26 Konfigurasi | §6 |
 | SRS-Q-REL-02..04 | §4.5 (§9.8), §4.7.2 (D.3, D.4) |
+| 3.2.19 Degradasi dan circuit breaker | §4.6.2 (E.5, Circuit Breaker) |
+| 3.2.27 Akun opsional dan login OTP | §4.1.2 (User Service), §4.4.4, §4.6.1 (User Service), §8 |
+| SRS-C-09, SRS-D-10..11, SRS-Q-REL-09 | §4.4.3, §4.5.3 |
 
 ## Appendix A — SDD Review Checklist
 
@@ -2362,7 +2662,7 @@ Lihat ADR-RBT. Pemetaan utama: struktur service → ADR-001; reservasi → ADR-0
 |-------|---|
 | Every allocated SRS requirement maps to ≥1 design view (§11) | ☐ |
 | Every selected viewpoint has a view; omissions justified (§3) | ☐ |
-| Every provided interface has a machine-readable contract (`docs/contracts/`) | ☐ |
+| Every provided interface has a machine-readable contract (`docs/contracts/`) | ☑ (7 file OpenAPI + 10 schema event, 19 Okt) |
 | State transition rules cover every state × event (§4.8) | ☐ |
 | Error cases defined for every operation (SRS §3.1.4) | ☐ |
 | Design decisions have rationale or ADR (§10) | ☐ |

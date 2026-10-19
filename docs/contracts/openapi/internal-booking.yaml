@@ -1,0 +1,535 @@
+# Dihasilkan dari SDD v1.5 §4.6 (tools: scratchpad gen2/contracts.py). Ubah kontrak lewat PR yang direview BE dan FE.
+openapi: 3.1.0
+info:
+  title: RBT Booking Internal API
+  version: 1.0.0
+  description: 'Dipanggil Queue dan Payment. Selalu `Authorization: Bearer <service token>` dan `X-Request-ID`. Tidak diekspos lewat ALB publik.'
+  contact:
+    name: Tim PT. Tiket Sampai Nonton Sentosa
+servers:
+- url: https://api.rusuh.example
+  description: Edge (CloudFront → ALB); ganti saat RFS
+- url: http://localhost:{port}
+  description: Docker Compose lokal
+  variables:
+    port:
+      default: '8082'
+security:
+- serviceBearer: []
+paths:
+  /internal/v1/allocations:batch:
+    post:
+      tags:
+      - internal
+      summary: Reservasi alokasi untuk batch admission (dipanggil promotor Queue)
+      operationId: reserveAllocations
+      parameters:
+      - name: X-Request-ID
+        in: header
+        required: false
+        schema:
+          type: string
+        description: Diteruskan antar service; dibuat bila kosong
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AllocationBatchRequest'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  meta:
+                    $ref: '#/components/schemas/Meta'
+                  data:
+                    $ref: '#/components/schemas/AllocationBatchResponse'
+                required:
+                - meta
+                - data
+  /internal/v1/allocations/{allocationId}:release:
+    post:
+      tags:
+      - internal
+      summary: Lepas alokasi yatim (kompensasi saga, ADR-018)
+      operationId: releaseAllocation
+      parameters:
+      - name: allocationId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: X-Request-ID
+        in: header
+        required: false
+        schema:
+          type: string
+        description: Diteruskan antar service; dibuat bila kosong
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReleaseRequest'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  meta:
+                    $ref: '#/components/schemas/Meta'
+                  data:
+                    $ref: '#/components/schemas/ReleaseResponse'
+                required:
+                - meta
+                - data
+  /internal/v1/events/{eventId}/supply:
+    get:
+      tags:
+      - internal
+      summary: Ringkasan stok event (Status Document)
+      operationId: getSupply
+      parameters:
+      - name: eventId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  meta:
+                    $ref: '#/components/schemas/Meta'
+                  data:
+                    $ref: '#/components/schemas/Supply'
+                required:
+                - meta
+                - data
+  /internal/v1/bookings/{bookingId}/payable:
+    get:
+      tags:
+      - internal
+      summary: Data tagihan untuk Payment
+      operationId: getPayable
+      parameters:
+      - name: bookingId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  meta:
+                    $ref: '#/components/schemas/Meta'
+                  data:
+                    $ref: '#/components/schemas/Payable'
+                required:
+                - meta
+                - data
+  /internal/v1/bookings/{bookingId}/payment-lock:
+    post:
+      tags:
+      - internal
+      summary: Kunci pesanan sebelum attempt (idempoten per attemptKey)
+      operationId: paymentLock
+      parameters:
+      - name: bookingId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PaymentLockRequest'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  meta:
+                    $ref: '#/components/schemas/Meta'
+                  data:
+                    $ref: '#/components/schemas/PaymentLockResponse'
+                required:
+                - meta
+                - data
+  /internal/v1/bookings/{bookingId}/deadline-extension:
+    post:
+      tags:
+      - internal
+      summary: Perpanjangan sekali saat gateway gangguan
+      operationId: extendDeadline
+      parameters:
+      - name: bookingId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeadlineExtensionRequest'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  meta:
+                    $ref: '#/components/schemas/Meta'
+                  data:
+                    $ref: '#/components/schemas/DeadlineExtensionResponse'
+                required:
+                - meta
+                - data
+  /health:
+    get:
+      tags:
+      - ops
+      summary: Health (ALB dan HEALTHCHECK container, D-23)
+      operationId: health
+      security: []
+      responses:
+        '200':
+          description: Semua dependency UP
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+        '503':
+          description: Ada dependency DOWN
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+components:
+  schemas:
+    Meta:
+      type: object
+      properties:
+        code:
+          type: integer
+        message:
+          type: string
+        requestId:
+          type: string
+        errorCode:
+          type: string
+          description: Ada hanya pada error; daftar di SRS §3.1.4 Error Codes
+        details:
+          type: object
+          additionalProperties:
+            type: string
+      required:
+      - code
+    ErrorEnvelope:
+      type: object
+      properties:
+        meta:
+          $ref: '#/components/schemas/Meta'
+        data:
+          type: 'null'
+      required:
+      - meta
+      - data
+      description: Error envelope SRS §3.1.4. Tidak pernah memuat SQL, stack trace, secret, atau payload provider.
+    Health:
+      type: object
+      properties:
+        status:
+          type: string
+          enum:
+          - UP
+          - DOWN
+        service:
+          type: string
+        checkedAt:
+          type: string
+          format: date-time
+        dependencies:
+          type: array
+          items:
+            type: object
+            properties:
+              name:
+                type: string
+              status:
+                type: string
+                enum:
+                - UP
+                - DOWN
+              latencyMs:
+                type: integer
+              reason:
+                type: string
+            required:
+            - name
+            - status
+      required:
+      - status
+      - service
+      - checkedAt
+      - dependencies
+    AllocationBatchRequest:
+      type: object
+      properties:
+        eventId:
+          type: string
+          format: uuid
+        entries:
+          type: array
+          items:
+            type: object
+            properties:
+              queueEntryId:
+                type: string
+                format: uuid
+              seq:
+                type: integer
+              visitorId:
+                type: string
+                format: uuid
+              buyerNikHash:
+                type: string
+                description: hex HMAC
+              buyerNikMasked:
+                type: string
+                example: 3174********0001
+                description: NIK tersamar
+              buyerEmail:
+                type: string
+                format: email
+              accountId:
+                type:
+                - string
+                - 'null'
+                format: uuid
+                description: Akun pembeli bila login (ADR-020)
+            required:
+            - queueEntryId
+            - seq
+            - visitorId
+            - buyerNikHash
+            - buyerNikMasked
+            - buyerEmail
+      required:
+      - eventId
+      - entries
+    AllocationBatchResponse:
+      type: object
+      properties:
+        results:
+          type: array
+          items:
+            type: object
+            properties:
+              queueEntryId:
+                type: string
+                format: uuid
+              outcome:
+                type: string
+                enum:
+                - GRANTED
+                - NO_SUPPLY_NOW
+                - SOLD_OUT
+                - BUYER_QUOTA_EXHAUSTED
+                - ALREADY_ACTIVE
+              allocationId:
+                type: string
+                format: uuid
+              units:
+                type: integer
+              claimDeadline:
+                type: string
+                format: date-time
+            required:
+            - queueEntryId
+            - outcome
+      required:
+      - results
+    ReleaseRequest:
+      type: object
+      properties:
+        reason:
+          type: string
+          enum:
+          - QUEUE_ENTRY_GONE
+      required:
+      - reason
+    ReleaseResponse:
+      type: object
+      properties:
+        released:
+          type: boolean
+      required:
+      - released
+    Supply:
+      type: object
+      properties:
+        free:
+          type: integer
+        allocated:
+          type: integer
+        held:
+          type: integer
+        sold:
+          type: integer
+        total:
+          type: integer
+        maxPerOrder:
+          type: integer
+        saleState:
+          type: string
+          enum:
+          - NOT_STARTED
+          - OPEN
+          - CLOSED
+        soldOut:
+          type: boolean
+        version:
+          type: integer
+        categories:
+          type: array
+          items:
+            type: object
+            properties:
+              code:
+                type: string
+              name:
+                type: string
+              capacity:
+                type: integer
+              available:
+                type: integer
+      required:
+      - free
+      - allocated
+      - held
+      - sold
+      - total
+      - saleState
+      - soldOut
+      - version
+    Payable:
+      type: object
+      properties:
+        bookingId:
+          type: string
+          format: uuid
+        status:
+          type: string
+        amountMinor:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Minor unit IDR
+        paymentExpiresAt:
+          type: string
+          format: date-time
+        visitorId:
+          type: string
+          format: uuid
+        buyerEmail:
+          type: string
+        version:
+          type: integer
+        canEdit:
+          type: boolean
+      required:
+      - bookingId
+      - status
+      - amountMinor
+      - paymentExpiresAt
+      - version
+    PaymentLockRequest:
+      type: object
+      properties:
+        attemptKey:
+          type: string
+      required:
+      - attemptKey
+    PaymentLockResponse:
+      type: object
+      properties:
+        outcome:
+          type: string
+          enum:
+          - OK
+          - BOOKING_NOT_PAYABLE
+          - PAYMENT_EXPIRED
+        version:
+          type: integer
+        amountMinor:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Minor unit IDR
+        paymentExpiresAt:
+          type: string
+          format: date-time
+      required:
+      - outcome
+    DeadlineExtensionRequest:
+      type: object
+      properties:
+        reason:
+          type: string
+          enum:
+          - PROVIDER_UNAVAILABLE
+        seconds:
+          type: integer
+          minimum: 1
+          maximum: 600
+      required:
+      - reason
+      - seconds
+    DeadlineExtensionResponse:
+      type: object
+      properties:
+        paymentExpiresAt:
+          type: string
+          format: date-time
+        extended:
+          type: boolean
+      required:
+      - paymentExpiresAt
+      - extended
+  securitySchemes:
+    serviceBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT (EdDSA)
+      description: Service token antar service (ADR-011)

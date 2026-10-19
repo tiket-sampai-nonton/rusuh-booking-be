@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "booking.review.v1.schema.json",
+  "title": "Payload booking.review.v1",
+  "description": "Payload di dalam envelope. Tidak memuat NIK plaintext, secret, atau token selain ticketLinkToken untuk email.",
+  "type": "object",
+  "properties": {
+    "bookingId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "attemptHint": {
+      "type": "string"
+    },
+    "buyerEmail": {
+      "type": "string",
+      "format": "email"
+    },
+    "amountMinor": {
+      "type": "integer",
+      "format": "int64",
+      "minimum": 0,
+      "description": "Minor unit IDR"
+    }
+  },
+  "required": [
+    "bookingId",
+    "buyerEmail",
+    "amountMinor"
+  ],
+  "additionalProperties": false
+}

@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "queue.turn.arrived.v1.schema.json",
+  "title": "Payload queue.turn.arrived.v1",
+  "description": "Payload di dalam envelope. Tidak memuat NIK plaintext, secret, atau token selain ticketLinkToken untuk email.",
+  "type": "object",
+  "properties": {
+    "eventId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "queueEntryId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "visitorId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "claimDeadline": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "required": [
+    "eventId",
+    "queueEntryId",
+    "visitorId",
+    "claimDeadline"
+  ],
+  "additionalProperties": false
+}

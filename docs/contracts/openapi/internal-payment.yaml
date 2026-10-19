@@ -1,0 +1,175 @@
+# Dihasilkan dari SDD v1.5 §4.6 (tools: scratchpad gen2/contracts.py). Ubah kontrak lewat PR yang direview BE dan FE.
+openapi: 3.1.0
+info:
+  title: RBT Payment Internal API
+  version: 1.0.0
+  description: 'Dipanggil worker Booking. Selalu `Authorization: Bearer <service token>`.'
+  contact:
+    name: Tim PT. Tiket Sampai Nonton Sentosa
+servers:
+- url: https://api.rusuh.example
+  description: Edge (CloudFront → ALB); ganti saat RFS
+- url: http://localhost:{port}
+  description: Docker Compose lokal
+  variables:
+    port:
+      default: '8083'
+security:
+- serviceBearer: []
+paths:
+  /internal/v1/payments/{bookingId}/resolve:
+    post:
+      tags:
+      - internal
+      summary: Cek ulang ke gateway sebelum expire (dipanggil sweeper Booking)
+      operationId: resolvePayment
+      parameters:
+      - name: bookingId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResolveRequest'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  meta:
+                    $ref: '#/components/schemas/Meta'
+                  data:
+                    $ref: '#/components/schemas/ResolveResponse'
+                required:
+                - meta
+                - data
+  /health:
+    get:
+      tags:
+      - ops
+      summary: Health (ALB dan HEALTHCHECK container, D-23)
+      operationId: health
+      security: []
+      responses:
+        '200':
+          description: Semua dependency UP
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+        '503':
+          description: Ada dependency DOWN
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+components:
+  schemas:
+    Meta:
+      type: object
+      properties:
+        code:
+          type: integer
+        message:
+          type: string
+        requestId:
+          type: string
+        errorCode:
+          type: string
+          description: Ada hanya pada error; daftar di SRS §3.1.4 Error Codes
+        details:
+          type: object
+          additionalProperties:
+            type: string
+      required:
+      - code
+    ErrorEnvelope:
+      type: object
+      properties:
+        meta:
+          $ref: '#/components/schemas/Meta'
+        data:
+          type: 'null'
+      required:
+      - meta
+      - data
+      description: Error envelope SRS §3.1.4. Tidak pernah memuat SQL, stack trace, secret, atau payload provider.
+    Health:
+      type: object
+      properties:
+        status:
+          type: string
+          enum:
+          - UP
+          - DOWN
+        service:
+          type: string
+        checkedAt:
+          type: string
+          format: date-time
+        dependencies:
+          type: array
+          items:
+            type: object
+            properties:
+              name:
+                type: string
+              status:
+                type: string
+                enum:
+                - UP
+                - DOWN
+              latencyMs:
+                type: integer
+              reason:
+                type: string
+            required:
+            - name
+            - status
+      required:
+      - status
+      - service
+      - checkedAt
+      - dependencies
+    ResolveRequest:
+      type: object
+      properties:
+        mode:
+          type: string
+          enum:
+          - CHECK
+          - CHECK_AND_CANCEL
+      required:
+      - mode
+    ResolveResponse:
+      type: object
+      properties:
+        outcome:
+          type: string
+          enum:
+          - SUCCEEDED
+          - NOT_PAID
+          - NO_ATTEMPT
+          - UNKNOWN
+        settlementTime:
+          type: string
+          format: date-time
+        attemptId:
+          type: string
+          format: uuid
+      required:
+      - outcome
+  securitySchemes:
+    serviceBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT (EdDSA)
+      description: Service token antar service (ADR-011)
