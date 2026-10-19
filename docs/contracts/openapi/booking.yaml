@@ -22,9 +22,40 @@ paths:
     get:
       tags:
       - catalog
-      summary: Daftar event (cache 2 detik)
+      summary: Daftar event dengan filter (cache 2 detik, SRS-F-28)
       operationId: listEvents
       security: []
+      parameters:
+      - name: timeframe
+        in: query
+        required: false
+        description: Filter waktu (SRS-F-28-01)
+        schema:
+          type: string
+          enum: [ALL, THIS_WEEK, THIS_MONTH, UPCOMING]
+          default: ALL
+      - name: city
+        in: query
+        required: false
+        description: Filter lokasi/kota (SRS-F-28-02)
+        schema:
+          type: string
+      - name: status
+        in: query
+        required: false
+        description: Filter status ketersediaan (SRS-F-28-03)
+        schema:
+          type: string
+          enum: [ALL, NOT_STARTED, AVAILABLE, SOLD_OUT, CLOSED]
+          default: ALL
+      - name: sort
+        in: query
+        required: false
+        description: Urutan hasil (SRS-F-28-06)
+        schema:
+          type: string
+          enum: [DATE_ASC, PRICE_ASC, PRICE_DESC]
+          default: DATE_ASC
       responses:
         '200':
           description: OK

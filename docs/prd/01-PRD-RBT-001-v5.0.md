@@ -4,9 +4,9 @@
 |-------|-------|
 | **Product / Feature** | Rusuh Booking Tiket — platform penjualan tiket konser untuk *war tiket* |
 | **Document ID** | PRD-RBT-001 |
-| **Version** | 5.2 |
+| **Version** | 5.4 |
 | **Date** | 2026-10-19 |
-| **Status** | Draft. Baseline requirement PRD v4.6 Final Canonical + perubahan v5.2 (keputusan tim 19 Okt, menunggu persetujuan approver, OI-11); seluruh requirement `NOT_VERIFIED` sampai ada evidence |
+| **Status** | Draft. Baseline requirement PRD v5.2 + perubahan v5.3 (katalog event dengan filter); seluruh requirement `NOT_VERIFIED` sampai ada evidence |
 | **Product Owner** | Pak Dinda (CEO), PT. Tiga Sekawan Angin Ribut (pemilik bisnis) |
 | **Contributors** | Tim PT. Tiket Sampai Nonton Sentosa (BE-1, BE-2, WEB-1, WEB-2, MOB-1) |
 | **Approvers** | Pak Dinda (CEO), Pak Jabon (CTO), Pak Rahman (CFO), PT. Tiga Sekawan Angin Ribut |
@@ -23,6 +23,8 @@
 
 | Version | Date | Author | Summary of change |
 |---------|------|--------|-------------------|
+| 5.4 | 2026-10-19 | Tim PT. Tiket Sampai Nonton Sentosa | Memperjelas US-092: **logged-in user dengan NIK tersimpan** — NIK ditampilkan tersamar di form, `buyerNik` TIDAK dikirim di body, server menggunakan `nikHash` dari token. Menambah US-094 untuk logged-in tanpa NIK. Anti-scalper tetap berlaku. Desain ini menghindari PII (NIK plain) di API response maupun request body untuk logged-in user |
+| 5.3 | 2026-10-19 | Tim PT. Tiket Sampai Nonton Sentosa | Menambahkan **halaman katalog event dengan filter** waktu, lokasi, dan status (FEAT-11, US-012..US-017); filter tetap di Booking Service dengan CDN cache (AS-27); memperjelas rate limit OTP di acceptance criteria US-091; menambah BR-21 untuk aturan rate limit OTP. Tidak ada perubahan jaminan "Jangan PHP" atau aturan NIK |
 | 5.2 | 2026-10-19 | Tim PT. Tiket Sampai Nonton Sentosa | Keputusan tim bersama BE-2: **akun opsional dengan login OTP email** (FEAT-10, US-090..US-093; non-goal "login" dicabut), guest checkout tetap utama; riwayat booking dan pembayaran dicatat dengan event sourcing (tidak mengubah alur customer); perlindungan degradasi gateway menjadi Must. Jaminan "Jangan PHP" dan aturan NIK tidak berubah |
 | 5.1 | 2026-10-18 | Tim PT. Tiket Sampai Nonton Sentosa | Approval 14 Oktober 2026 dicatat (§14); repository di organisasi GitHub `tiket-sampai-nonton` (CON-06). Tidak ada perubahan requirement |
 | 5.0 | 2026-10-17 | Tim PT. Tiket Sampai Nonton Sentosa | Restrukturisasi ke template PRD (ISO-aligned) sebagai bagian set dokumen RBT (PRD, SRS, HLD, SDD, ADR, Test Plan, Handbook). Isi teknis PRD v4.6 dipindahkan ke dokumen tersebut (Appendix C). **Tidak ada perubahan requirement, alur customer, maupun jaminan** |
@@ -183,6 +185,7 @@ Baseline belum ada karena produk baru; target diukur pada PoC dan load test. Buk
 
 | Capability | Release |
 |------------|---------|
+| Katalog event dengan filter (waktu, lokasi, status) | Sprint 1 |
 | Daftar dan detail event | PoC (Sprint 1) |
 | Guest session: NIK pembeli + email, aturan pembelian ditampilkan sebelum antre | PoC (Sprint 1) |
 | Akun opsional: login OTP email, profil (nama, NIK tersimpan), pengisian form otomatis, riwayat pesanan | PoC (Sprint 1–2) |
@@ -342,7 +345,21 @@ Priority: **MoSCoW** (Must / Should / Could / Won't-this-release). Kolom **Sourc
 | US-010 | Sebagai pembeli, saya ingin melihat semua event yang dijual online beserta statusnya agar tahu mana yang bisa dibeli. | Must | FR-01, FR-02, FR-03 | EVT-01 | **Given** home dibuka **Then** semua event tampil. Event dalam jendela penjualan yang masih memiliki stok dapat diklik; event belum dibuka tampil disabled dengan hitung mundur jam buka; event habis atau ditutup tampil disabled dengan label status. **And** mencoba masuk antrean event yang tidak tersedia ditolak server |
 | US-011 | Sebagai pembeli, saya ingin melihat detail event, kategori tempat, harga, dan sisa tiket per kategori agar dapat memilih. | Must | FR-11, FR-12 | EVT-02 | **Given** detail event **Then** info event, venue, jadwal, kategori, dan harga tampil publik. **And** di halaman beli, sisa tiket per kategori diperbarui otomatis (≤ 2 detik) sebagai perkiraan ("sisa sekitar N"), kategori habis berlabel "Habis", dan keputusan akhir selalu di server |
 
-### 7.3 Feature: Waiting Room yang Adil dan Jujur (FEAT-03)
+### 7.3 Feature: Katalog Event dengan Filter (FEAT-11, v5.3)
+
+**Description:** Pembeli dapat menjelajahi event melalui halaman katalog dengan filter waktu, lokasi, dan status untuk menemukan event yang sesuai.
+**Goals served:** G-03
+
+| ID | User story | Priority | Source | Cap. | Acceptance criteria |
+|----|-----------|----------|--------|------|---------------------|
+| US-012 | Sebagai pembeli, saya ingin memfilter event berdasarkan waktu agar mudah menemukan event yang sesuai jadwal saya. | Must | Keputusan tim | CAT-01 | **Given** katalog dibuka **Then** tampil filter waktu: "Semua", "Minggu Ini", "Bulan Ini", "Akan Datang"; default "Semua". **And** filter dapat dikombinasikan dengan filter lain. **And** respons tetap di-cache CDN 2 detik dengan filter sebagai bagian cache key |
+| US-013 | Sebagai pembeli, saya ingin memfilter event berdasarkan lokasi/kota agar hanya melihat event di kota yang dapat saya hadiri. | Must | Keputusan tim | CAT-01 | **Given** katalog dibuka **Then** tampil filter lokasi dengan daftar kota dari event yang ada; default "Semua Lokasi". **And** data `city` ditambahkan ke skema event |
+| US-014 | Sebagai pembeli, saya ingin memfilter event berdasarkan status ketersediaan. | Must | Keputusan tim | CAT-01 | **Given** katalog dibuka **Then** tampil filter status: "Semua", "Tersedia", "Segera Dibuka", "Habis"; default "Semua". **And** status sesuai dengan nilai `NOT_STARTED`, `AVAILABLE`, `SOLD_OUT`, `CLOSED` yang sudah ada |
+| US-015 | Sebagai pembeli, saya ingin memfilter event berdasarkan genre/kategori musik. | Could | Keputusan tim | CAT-01 | **Given** katalog dibuka **And** data genre tersedia **Then** tampil filter genre (Pop, Rock, K-Pop, Jazz, dll) |
+| US-016 | Sebagai pembeli, saya ingin memfilter event berdasarkan rentang harga. | Could | Keputusan tim | CAT-01 | **Given** katalog dibuka **Then** tampil filter harga minimum dan maksimum berdasarkan `minPriceMinor` event |
+| US-017 | Sebagai pembeli, saya ingin mengurutkan hasil katalog. | Could | Keputusan tim | CAT-01 | **Given** katalog dibuka **Then** tampil opsi sort: "Tanggal Terdekat", "Harga Terendah", "Harga Tertinggi"; default "Tanggal Terdekat" |
+
+### 7.4 Feature: Waiting Room yang Adil dan Jujur (FEAT-03)
 
 **Description:** Antrean virtual FIFO yang menampilkan posisi, peluang, dan sold out secara jujur, dan memberi tahu saat giliran tiba.
 **Goals served:** G-02, G-03, G-04
@@ -440,8 +457,9 @@ Priority: **MoSCoW** (Must / Should / Could / Won't-this-release). Kolom **Sourc
 | ID | User story | Priority | Source | Cap. | Acceptance criteria (Given / When / Then) |
 |----|-----------|----------|--------|------|-------------------------------------------|
 | US-090 | Sebagai pembeli, saya ingin tetap bisa membeli tanpa login agar tidak ada langkah tambahan saat war ticket. | Must | GR-05, D-03 | USR-01 | **Given** saya tidak login **When** saya menekan "Beli Tiket" **Then** alur guest berjalan seperti US-001 tanpa ajakan login yang menghalangi |
-| US-091 | Sebagai pembeli berulang, saya ingin login dengan kode yang dikirim ke email agar tidak perlu mengingat password. | Must | D-03, D-21 | USR-01 | **Given** saya memasukkan email **When** saya meminta kode **Then** kode 6 digit dikirim ke email, berlaku 5 menit, dan setelah 5 kali salah kode tidak bisa dipakai. **And** pesan yang tampil sama untuk email yang sudah atau belum terdaftar |
-| US-092 | Sebagai pembeli yang login, saya ingin NIK, email, dan nama saya terisi otomatis di form beli agar lebih cepat masuk antrean. | Must | D-03 | USR-01 | **Given** saya sudah menyimpan NIK di profil **When** saya menekan "Beli Tiket" **Then** NIK pembeli dan email terisi, NIK ditampilkan tersamar, dan aturan pembelian tetap ditampilkan. **And** satu NIK hanya bisa tersimpan di satu akun |
+| US-091 | Sebagai pembeli berulang, saya ingin login dengan kode yang dikirim ke email agar tidak perlu mengingat password. | Must | D-03, D-21 | USR-01 | **Given** saya memasukkan email **When** saya meminta kode **Then** kode 6 digit dikirim ke email, berlaku 5 menit, dan setelah 5 kali salah kode tidak bisa dipakai. **And** pesan yang tampil sama untuk email yang sudah atau belum terdaftar. **And** permintaan kode baru hanya dapat dilakukan setelah 60 detik (cooldown). **And** maksimal 5 permintaan kode per email per jam (BR-21) |
+| US-092 | Sebagai pembeli yang login, saya ingin NIK dan email saya terisi otomatis di form beli agar lebih cepat masuk antrean. | Must | D-03 | USR-01 | **Given** saya sudah menyimpan NIK di profil **When** saya menekan "Beli Tiket" **Then** NIK ditampilkan tersamar (misal `3174********0001`) dan email ditampilkan lengkap, keduanya read-only. **And** saat submit, `buyerNik` tidak dikirim di body — server menggunakan `nikHash` dari token. **And** satu NIK hanya bisa tersimpan di satu akun |
+| US-094 | Sebagai pembeli yang login tetapi belum menyimpan NIK, saya ingin tetap bisa antre dengan mengisi NIK secara manual. | Must | D-03 | USR-01 | **Given** saya login tetapi belum menyimpan NIK **When** saya menekan "Beli Tiket" **Then** form NIK editable dan email terisi (read-only). **And** `buyerNik` dikirim di body seperti guest. **And** setelah join, saya ditawari menyimpan NIK ke profil |
 | US-093 | Sebagai pembeli yang login, saya ingin melihat daftar pesanan saya agar mudah membuka tiket lagi. | Should | D-03 | USR-01 | **Given** saya pernah membeli saat login **When** saya membuka "Pesanan saya" **Then** tampil pesanan beserta status dan tautan tiket |
 
 ## 8. Business Rules
@@ -470,6 +488,7 @@ Priority: **MoSCoW** (Must / Should / Could / Won't-this-release). Kolom **Sourc
 | BR-18 | Permintaan yang tiba ≤ 5 detik setelah TTL Booking habis tetap diproses (masa tenggang submit) | AS-23 | ASSUMED | US-034 |
 | BR-19 | Masa verifikasi pembayaran maks 3 menit setelah TTL Pembayaran; perpanjangan satu kali maks +5 menit bila gateway gangguan sebelum instruksi pembayaran terbit | AS-08 | ASSUMED | US-053, US-056 |
 | BR-20 | Kategori favorit tidak dijamin; jaminan berlaku atas jumlah hingga N tiket dari kategori yang tersedia, campuran diperbolehkan | AS-10 | ASSUMED | US-030 |
+| BR-21 | Permintaan kode OTP login dibatasi: cooldown 60 detik antara permintaan, maksimal 5 permintaan per email per jam, maksimal 20 permintaan per IP per jam; pelanggaran dijawab dengan `429` | D-21 | CONFIRMED | US-091 |
 
 ### 8.2 Justifikasi Nilai TTL (GR-12)
 
@@ -567,6 +586,7 @@ Asumsi tender beserta dasar, dampak, dan parameter konfigurasinya (disalin utuh 
 | AS-24 | Tidak ada kesempatan kedua/prioritas setelah giliran hangus | Keadilan bagi pengantre lain (keputusan tim 15 Okt) | Customer yang lalai harus antre ulang dari belakang | — |
 | AS-25 | Push notification best effort; izin opsional | Platform mobile dapat menunda/menolak push | Sebagian customer hanya mendapat peringatan di aplikasi | `pre_turn_notify_enabled`; adapter log untuk lokal |
 | AS-26 | Aturan pembentuk jaminan dikunci saat penjualan dibuka; TTL dapat diubah dan berlaku untuk sesi baru | Keadilan + jaminan | Kesalahan konfigurasi aturan harus diputuskan sebelum jam buka | Trigger `guard_event_rules`, audit |
+| AS-27 | Katalog event dengan filter tetap di Booking Service; pemisahan ke service tersendiri dilakukan bila traffic browsing signifikan dan mengganggu performa booking | Beban katalog umumnya terjadi di luar jam penjualan; data event dimiliki Booking; CDN cache 2 detik sudah cukup | Bila browsing tinggi saat war ticket, perlu read replica atau CDN cache lebih agresif | Read replica / CDN caching; filter params masuk cache key |
 
 
 ### 10.3 Dependencies
@@ -681,6 +701,7 @@ Semua baris berstatus `NOT_VERIFIED`. Pemetaan source requirement → requiremen
 | Source requirement | User story / item | Cap. (v4.6) | Test case(s) |
 |--------------------|-------------------|-------------|--------------|
 | FR-01, FR-02, FR-03 | US-010 | EVT-01 | TC-EVT-01, TC-EVT-02, TC-EVT-03 |
+| Keputusan tim (v5.3) | US-012, US-013, US-014, US-015, US-016, US-017 | CAT-01 | TC-CAT-01 … TC-CAT-06 |
 | D-03 (v5.2) | US-090, US-091, US-092, US-093 | USR-01 | TC-USR-01 … TC-USR-12 |
 | FR-04, FR-05 | US-020 | QUE-01 | TC-QUE-01, TC-QUE-02 |
 | FR-06 | US-021 | QUE-02 | TC-QUE-03 |

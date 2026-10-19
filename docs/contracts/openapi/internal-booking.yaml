@@ -215,6 +215,107 @@ paths:
                 required:
                 - meta
                 - data
+  # Admin endpoints (SDD-BOOKING Appendix C - untuk seed/testing, bukan back-office)
+  /internal/v1/admin/events:
+    post:
+      tags:
+      - admin
+      summary: Create event (seed/testing only)
+      operationId: adminCreateEvent
+      security:
+      - adminBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminEventCreateRequest'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  meta:
+                    $ref: '#/components/schemas/Meta'
+                  data:
+                    type: object
+                    properties:
+                      eventId:
+                        type: string
+                        format: uuid
+  /internal/v1/admin/events/{eventId}:
+    patch:
+      tags:
+      - admin
+      summary: Update event (config changes only before rulesLockedAt)
+      operationId: adminUpdateEvent
+      security:
+      - adminBearer: []
+      parameters:
+      - name: eventId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminEventCreateRequest'
+      responses:
+        '200':
+          description: Updated
+        '409':
+          description: Rules locked after sale started
+  /internal/v1/admin/events/{eventId}/images:
+    post:
+      tags:
+      - admin
+      summary: Upload event image (poster/banner/thumbnail)
+      operationId: adminUploadEventImage
+      security:
+      - adminBearer: []
+      parameters:
+      - name: eventId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                image:
+                  type: string
+                  format: binary
+                  description: Max 5MB, JPEG/PNG/WebP
+                type:
+                  type: string
+                  enum: [poster, banner, thumbnail]
+              required:
+              - image
+              - type
+      responses:
+        '201':
+          description: Uploaded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  meta:
+                    $ref: '#/components/schemas/Meta'
+                  data:
+                    $ref: '#/components/schemas/ImageUploadResponse'
   /health:
     get:
       tags:
@@ -527,9 +628,101 @@ components:
       required:
       - paymentExpiresAt
       - extended
+    # Admin schemas (SDD-BOOKING Appendix C)
+    AdminEventCreateRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        venue:
+          type: string
+        city:
+          type: string
+        eventDate:
+          type: string
+          format: date-time
+        saleStart:
+          type: string
+          format: date-time
+        saleEnd:
+          type: string
+          format: date-time
+        imageUrl:
+          type: string
+          format: uri
+        bannerUrl:
+          type: string
+          format: uri
+        categories:
+          type: array
+          items:
+            type: object
+            properties:
+              code:
+                type: string
+              name:
+                type: string
+              price:
+                type: integer
+                description: Minor unit (IDR)
+              capacity:
+                type: integer
+            required:
+            - code
+            - name
+            - price
+            - capacity
+        config:
+          $ref: '#/components/schemas/EventConfig'
+      required:
+      - name
+      - venue
+      - city
+      - eventDate
+      - saleStart
+      - saleEnd
+      - categories
+    EventConfig:
+      type: object
+      properties:
+        maxTicketsPerOrder:
+          type: integer
+          default: 3
+        maxTicketsPerBuyerNik:
+          type: integer
+          default: 3
+        selectionTtlSeconds:
+          type: integer
+          default: 300
+        paymentTtlSeconds:
+          type: integer
+          default: 600
+        claimWindowSeconds:
+          type: integer
+          default: 180
+        allowMixedCategories:
+          type: boolean
+          default: true
+    ImageUploadResponse:
+      type: object
+      properties:
+        imageUrl:
+          type: string
+          format: uri
+        type:
+          type: string
+          enum: [poster, banner, thumbnail]
+      required:
+      - imageUrl
+      - type
   securitySchemes:
     serviceBearer:
       type: http
       scheme: bearer
       bearerFormat: JWT (EdDSA)
       description: Service token antar service (ADR-011)
+    adminBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT (EdDSA)
+      description: Admin token untuk operasi internal (role=admin)

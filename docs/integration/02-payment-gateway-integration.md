@@ -1,0 +1,424 @@
+# Payment Gateway Integration Guide — Rusuh Booking Tiket
+
+| Field | Value |
+|-------|-------|
+| **Document ID** | INT-RBT-002 |
+| **Version** | 1.0 |
+| **Date** | 2026-10-19 |
+| **Status** | Draft |
+| **Author(s)** | Tim PT. Tiket Sampai Nonton Sentosa |
+| **Audience** | WEB-2, BE-2, MOB-1 |
+| **Source** | HLD v1.4, SRS v1.2, OpenAPI Payment |
+
+> Dokumen ini menjelaskan integrasi dengan Midtrans sebagai payment gateway. Payment Service bertindak sebagai abstraksi — frontend tidak langsung berinteraksi dengan Midtrans.
+
+---
+
+## 1. Architecture Overview
+
+```
+┌─────────────┐     ┌─────────────────┐     ┌─────────────┐     ┌──────────────┐
+│  Frontend   │────▶│  Payment Service │────▶│   Midtrans  │────▶│   Webhook    │
+│  (Web/App)  │◀────│     :8083        │◀────│   Gateway   │     │   Callback   │
+└─────────────┘     └─────────────────┘     └─────────────┘     └──────────────┘
+                            │                                           │
+                            │         ┌────────────────────────────────┘
+                            ▼         ▼
+                    ┌─────────────────────────┐
+                    │    Booking Service      │
+                    │    (settlement/expiry)  │
+                    └─────────────────────────┘
+```
+
+**Region:** `ap-southeast-3` (Jakarta)
+
+**Environments:**
+| Environment | Midtrans Mode | Webhook URL |
+|-------------|---------------|-------------|
+| Local (simulator) | `PAYMENT_PROVIDER=simulator` | N/A |
+| Local (Midtrans) | `PAYMENT_PROVIDER=midtrans` | via cloudflared tunnel |
+| Staging/Demo | Midtrans Sandbox | `https://api.staging.rusuh.example/api/v1/webhooks/midtrans` |
+| Production | Midtrans Production | `https://api.rusuh.example/api/v1/webhooks/midtrans` |
+
+---
+
+## 2. Payment Flow
+
+### 2.1 Flow Overview
+
+```
+┌──────────┐    ┌──────────┐    ┌──────────┐    ┌──────────┐    ┌──────────┐
+│  Booking │───▶│  Payment │───▶│  Select  │───▶│  Charge  │───▶│  Webhook │
+│  HELD    │    │   Page   │    │  Method  │    │ Midtrans │    │ Callback │
+└──────────┘    └──────────┘    └──────────┘    └──────────┘    └──────────┘
+                                                      │                │
+                                                      ▼                ▼
+                                              ┌──────────────┐  ┌──────────────┐
+                                              │   Pending    │  │  Settlement  │
+                                              │   Payment    │  │   Applied    │
+                                              └──────────────┘  └──────────────┘
+```
+
+### 2.2 Supported Payment Methods
+
+| Method | Code | Flow Type | TTL |
+|--------|------|-----------|-----|
+| GoPay | `gopay` | Redirect/QR | 15 menit |
+| ShopeePay | `shopeepay` | Redirect/QR | 15 menit |
+| QRIS | `qris` | QR Code | 15 menit |
+| Bank Transfer BCA | `bank_transfer_bca` | VA Number | TTL Booking |
+| Bank Transfer BNI | `bank_transfer_bni` | VA Number | TTL Booking |
+| Bank Transfer Mandiri | `bank_transfer_mandiri` | VA Number | TTL Booking |
+| Bank Transfer Permata | `bank_transfer_permata` | VA Number | TTL Booking |
+
+---
+
+## 3. Frontend Integration
+
+### 3.1 Step 1: Get Payment Page
+
+Setelah booking `HELD`, redirect ke payment page:
+
+**Endpoint:** `GET /api/v1/payments/{bookingId}/page`
+
+**Headers:**
+- `X-Visitor-Token: <visitorToken>` atau cookie `rb_visitor`
+
+**Response (200):**
+```json
+{
+  "meta": { ... },
+  "data": {
+    "bookingId": "booking-uuid",
+    "amount": 3000000,
+    "currency": "IDR",
+    "expiresAt": "2026-10-19T10:15:00Z",
+    "serverTime": "2026-10-19T10:05:00Z",
+    "status": "AWAITING_PAYMENT",
+    "items": [
+      {
+        "categoryName": "VIP",
+        "attendeeNikMasked": "320101****0001",
+        "price": 1500000
+      }
+    ],
+    "availableMethods": [
+      { "code": "gopay", "name": "GoPay", "type": "ewallet" },
+      { "code": "qris", "name": "QRIS", "type": "qr" },
+      { "code": "bank_transfer_bca", "name": "BCA Virtual Account", "type": "va" }
+    ],
+    "currentAttempt": null
+  }
+}
+```
+
+### 3.2 Step 2: Lock Booking (Tekan "Bayar")
+
+Saat user memilih metode dan tekan "Bayar":
+
+**Endpoint:** `POST /api/v1/payments/{bookingId}/attempts`
+
+**Headers:**
+- `X-Visitor-Token: <visitorToken>`
+- `Idempotency-Key: <uuid>`
+
+**Request:**
+```json
+{
+  "method": "gopay"
+}
+```
+
+**Response (201):**
+```json
+{
+  "meta": { ... },
+  "data": {
+    "attemptId": "attempt-uuid",
+    "status": "PENDING",
+    "method": "gopay",
+    "expiresAt": "2026-10-19T10:20:00Z",
+    "instructions": {
+      "type": "redirect",
+      "redirectUrl": "https://simulator.sandbox.midtrans.com/gopay/...",
+      "qrCodeUrl": null,
+      "vaNumber": null
+    }
+  }
+}
+```
+
+**Instruction Types:**
+
+| Type | Fields | Frontend Action |
+|------|--------|-----------------|
+| `redirect` | `redirectUrl` | Redirect/open in WebView |
+| `qr` | `qrCodeUrl` | Display QR code image |
+| `va` | `vaNumber`, `bankCode` | Display VA number for manual transfer |
+
+### 3.3 Step 3: Handle Payment Result
+
+**Untuk redirect methods (GoPay, ShopeePay):**
+- User diarahkan ke app/web Midtrans
+- Setelah selesai, redirect kembali ke `finish_url`
+- Frontend poll status
+
+**Untuk QR methods (QRIS):**
+- Tampilkan QR code
+- Poll status setiap 3 detik
+
+**Untuk VA methods:**
+- Tampilkan nomor VA
+- User transfer manual
+- Poll status atau tunggu email
+
+### 3.4 Step 4: Poll Payment Status
+
+**Endpoint:** `GET /api/v1/payments/{bookingId}/status`
+
+**Response:**
+```json
+{
+  "meta": { ... },
+  "data": {
+    "bookingId": "booking-uuid",
+    "status": "PAID",
+    "paidAt": "2026-10-19T10:08:00Z",
+    "method": "gopay",
+    "ticketUrl": "/tickets/booking-uuid"
+  }
+}
+```
+
+**Status values:**
+| Status | Kondisi | Aksi Frontend |
+|--------|---------|---------------|
+| `AWAITING_PAYMENT` | Belum ada attempt | Tampilkan pilihan metode |
+| `PENDING` | Menunggu pembayaran | Tampilkan instruksi, poll |
+| `PAID` | Berhasil | Redirect ke halaman tiket |
+| `EXPIRED` | TTL habis | Redirect home dengan `PAYMENT_EXPIRED` |
+| `FAILED` | Gagal di gateway | Tampilkan error, allow retry method |
+| `CANCELLED` | Dibatalkan | Redirect home |
+
+---
+
+## 4. Mobile WebView Integration
+
+### 4.1 Get Page Token
+
+Mobile app tidak bisa share cookie dengan WebView, gunakan token:
+
+**Endpoint:** `POST /api/v1/payments/{bookingId}/page-tokens`
+
+**Headers:**
+- `X-Visitor-Token: <visitorToken>`
+
+**Response:**
+```json
+{
+  "meta": { ... },
+  "data": {
+    "token": "one-time-token",
+    "expiresAt": "2026-10-19T10:06:00Z",
+    "pageUrl": "https://api.rusuh.example/pay/{bookingId}?token=..."
+  }
+}
+```
+
+### 4.2 Open WebView
+
+```javascript
+// React Native example
+const response = await api.post(`/payments/${bookingId}/page-tokens`);
+const { pageUrl } = response.data.data;
+
+navigation.navigate('PaymentWebView', { uri: pageUrl });
+```
+
+### 4.3 WebView Event Handling
+
+Listen untuk redirect dari payment page:
+
+```javascript
+// Intercept redirects
+onNavigationStateChange={(navState) => {
+  const url = new URL(navState.url);
+  
+  if (url.pathname.includes('/payment/success')) {
+    navigation.replace('TicketScreen', { bookingId });
+  } else if (url.pathname.includes('/payment/failed')) {
+    navigation.replace('PaymentFailed', { bookingId });
+  } else if (url.pathname.includes('/payment/expired')) {
+    navigation.replace('Home', { reason: 'PAYMENT_EXPIRED' });
+  }
+}}
+```
+
+---
+
+## 5. Webhook (Backend Only)
+
+### 5.1 Midtrans Callback
+
+**Endpoint:** `POST /api/v1/webhooks/midtrans`
+
+**Headers:**
+- Signature dari Midtrans
+
+**Request body:** Midtrans notification format
+
+**Processing:**
+1. Verify signature dengan server key
+2. Check idempotency (fingerprint callback)
+3. Update payment attempt status
+4. Jika `settlement` → publish `payment.succeeded` event
+5. Booking Service apply settlement, issue tickets
+
+### 5.2 Signature Verification
+
+```
+SHA512(order_id + status_code + gross_amount + server_key)
+```
+
+---
+
+## 6. Error Handling
+
+### 6.1 Payment Errors
+
+| Error Code | Kondisi | Aksi |
+|------------|---------|------|
+| `BOOKING_NOT_PAYABLE` | Booking bukan status HELD | Redirect ke status yang sesuai |
+| `BOOKING_EXPIRED` | TTL booking habis | Redirect home |
+| `PAYMENT_METHOD_UNAVAILABLE` | Metode tidak tersedia | Tampilkan metode lain |
+| `GATEWAY_ERROR` | Midtrans error | Tampilkan retry, log untuk ops |
+| `ATTEMPT_IN_PROGRESS` | Sudah ada attempt pending | Tampilkan instruksi attempt yang ada |
+
+### 6.2 Retry Strategy
+
+- User bisa ganti metode pembayaran selama TTL belum habis
+- Attempt lama otomatis expired
+- Maksimal 1 attempt aktif per waktu
+
+---
+
+## 7. Edit Order Before Payment
+
+### 7.1 Kembali ke Edit
+
+Selama belum tekan "Bayar", user bisa kembali edit:
+
+**Endpoint:** `PUT /api/v1/bookings/{bookingId}`
+
+**Request:**
+```json
+{
+  "items": [
+    { "categoryId": "cat-uuid", "attendeeNik": "3201010101010003" }
+  ]
+}
+```
+
+**Constraint:**
+- Total quantity tidak boleh berubah
+- Hanya bisa edit sebelum `payment_started_at` terisi
+- Maksimal `cfg_max_edits` (default: 3)
+
+### 7.2 Setelah "Bayar"
+
+Setelah tekan "Bayar":
+- Booking terkunci (`payment_started_at` terisi)
+- Tidak bisa edit
+- Harus selesaikan atau tunggu expired
+
+---
+
+## 8. Timer Synchronization
+
+### 8.1 Server Time
+
+Selalu gunakan `serverTime` dari response untuk sinkronisasi:
+
+```javascript
+const serverNow = new Date(response.meta.serverTime);
+const expiresAt = new Date(response.data.expiresAt);
+const remainingMs = expiresAt - serverNow;
+
+// Countdown timer
+setInterval(() => {
+  remainingMs -= 1000;
+  if (remainingMs <= 0) {
+    handleExpired();
+  }
+  updateDisplay(remainingMs);
+}, 1000);
+```
+
+### 8.2 TTL Values
+
+| TTL | Default | Configurable |
+|-----|---------|--------------|
+| Booking TTL | 10 menit | Per event |
+| Payment TTL | 15 menit | Per method |
+| Claim window | 3 menit | Global |
+
+---
+
+## 9. Local Development
+
+### 9.1 Simulator Mode
+
+Untuk testing tanpa Midtrans:
+
+```bash
+# .env
+PAYMENT_PROVIDER=simulator
+```
+
+Simulator auto-settles setelah 5 detik.
+
+### 9.2 Midtrans Sandbox
+
+Untuk testing dengan Midtrans Sandbox:
+
+```bash
+# .env
+PAYMENT_PROVIDER=midtrans
+MIDTRANS_SERVER_KEY=SB-Mid-server-xxx
+MIDTRANS_CLIENT_KEY=SB-Mid-client-xxx
+MIDTRANS_ENVIRONMENT=sandbox
+
+# Tunnel untuk webhook
+cloudflared tunnel --url http://localhost:8083
+```
+
+Update Midtrans dashboard dengan tunnel URL untuk webhook.
+
+### 9.3 Test Cards/Accounts
+
+Lihat [Midtrans Sandbox Testing](https://docs.midtrans.com/docs/testing-payment-on-sandbox)
+
+---
+
+## 10. Checklist Implementasi
+
+- [ ] Payment page dengan countdown timer
+- [ ] Display available methods dari API
+- [ ] Handle semua instruction types (redirect, QR, VA)
+- [ ] Poll status dengan interval 3 detik
+- [ ] Handle semua status transitions
+- [ ] Mobile WebView dengan page token
+- [ ] Intercept WebView redirects
+- [ ] Error handling dengan retry option
+- [ ] Timer sync dengan serverTime
+- [ ] Edit order sebelum "Bayar"
+
+---
+
+## References
+
+- OpenAPI Payment: `docs/contracts/openapi/payment.yaml`
+- HLD §4.4.4: Payment and Settlement sequence
+- SRS §3.2.14–§3.2.19: Payment capabilities
+- ADR-019: Event sourcing for Payment
+- Midtrans Docs: https://docs.midtrans.com/

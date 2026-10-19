@@ -440,4 +440,11 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT (EdDSA)
-      description: Access token User Service (login OTP, opsional)
+      description: |
+        Access token User Service (login OTP, opsional).
+        Token claims (SRS-F-27-10, PRD v5.4):
+        - sub: account UUID
+        - email: email akun
+        - nik_hash: HMAC-SHA256 dari NIK (null jika belum tersimpan)
+        - has_nik: boolean (true jika NIK tersimpan)
+        Queue Service gunakan nik_hash langsung saat has_nik=true.

@@ -22,9 +22,14 @@ paths:
       - queue
       summary: Masuk antrean (guest, atau login opsional)
       operationId: joinQueue
-      description: 'Guest: cukup NIK pembeli + email. Bila header Authorization (access token User Service) dikirim, akun dicatat di entry dan
-        NIK harus sama dengan NIK tersimpan di akun (ADR-020). Bila tidak ada pengantre lebih awal dan slot tersedia, respons langsung ADMITTED
-        (FR-05).'
+      description: |
+        Guest: buyerNik + email required di body.
+        Logged-in dengan NIK tersimpan (SRS-F-27-10, PRD v5.4): 
+        - buyerNik di body optional/diabaikan
+        - Server gunakan nikHash dari access token
+        - Form menampilkan NIK tersamar (read-only)
+        Logged-in tanpa NIK: buyerNik required di body seperti guest.
+        Bila tidak ada pengantre lebih awal dan slot tersedia, respons langsung ADMITTED (FR-05).
       security:
       - {}
       - userBearer: []
@@ -82,7 +87,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
         '422':
-          description: 'Input tidak valid — errorCode: `NIK_INVALID`, `EMAIL_MISMATCH`'
+          description: 'Input tidak valid — errorCode: `NIK_INVALID`, `EMAIL_MISMATCH`, `NIK_REQUIRED` (guest/logged-in tanpa NIK, tapi buyerNik kosong)'
           content:
             application/json:
               schema:
@@ -331,7 +336,12 @@ components:
         buyerNik:
           type: string
           pattern: ^[0-9]{16}$
-          description: NIK 16 digit (dicek strukturnya; tidak pernah disimpan plaintext)
+          description: |
+            NIK 16 digit (dicek strukturnya; tidak pernah disimpan plaintext).
+            Conditional (SRS-F-27-10, PRD v5.4):
+            - Guest: required
+            - Logged-in dengan NIK tersimpan: optional (diabaikan — server gunakan token.nikHash)
+            - Logged-in tanpa NIK: required
         email:
           type: string
           format: email
@@ -342,10 +352,14 @@ components:
           type: boolean
           const: true
       required:
-      - buyerNik
       - email
       - emailConfirmation
       - consentNik
+      description: |
+        Request body untuk join queue.
+        - Guest: semua field required termasuk buyerNik
+        - Logged-in (hasNik=true): buyerNik optional/diabaikan; server gunakan nikHash dari token
+        - Logged-in (hasNik=false): buyerNik required seperti guest
     QueueEntry:
       type: object
       properties:
@@ -520,4 +534,8 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT (EdDSA)
-      description: Access token User Service (login OTP, opsional)
+      description: |
+        Access token User Service (login OTP, opsional).
+        Saat join queue dengan token (SRS-F-27-10, PRD v5.4):
+        - has_nik=true: gunakan nik_hash dari token, buyerNik di body diabaikan
+        - has_nik=false: buyerNik required di body seperti guest

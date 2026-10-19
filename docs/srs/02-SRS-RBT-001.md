@@ -4,13 +4,13 @@
 |-------|-------|
 | **System / Software** | Rusuh Booking Tiket (Queue, Booking, Payment, Notification, User Service; Web; Mobile) |
 | **Document ID** | SRS-RBT-001 |
-| **Version** | 1.1 |
+| **Version** | 1.3 |
 | **Date** | 2026-10-19 |
-| **Status** | Draft. Baseline requirement = PRD v4.6 Final Canonical; seluruh requirement `NOT_VERIFIED` |
+| **Status** | Draft. Baseline requirement = PRD v5.4; seluruh requirement `NOT_VERIFIED` |
 | **Author(s)** | Tim PT. Tiket Sampai Nonton Sentosa |
 | **Approvers** | Pak Dinda (CEO), Pak Jabon (CTO), Pak Rahman (CFO), PT. Tiga Sekawan Angin Ribut |
 | **Classification** | Internal |
-| **Source documents** | PRD-RBT-001 v5.2; PRD v4.6 (sumber pemecahan); keputusan tim bersama BE-2 19 Okt 2026 (`Perbedaan-Desain-BE-Kita-vs-BE2.xlsx`) |
+| **Source documents** | PRD-RBT-001 v5.4; PRD v4.6 (sumber pemecahan); keputusan tim bersama BE-2 19 Okt 2026 |
 
 > **Reference basis.** Disusun dengan mengacu pada isi *Software Requirements Specification* pada **ISO/IEC/IEEE 29148:2018**, dengan quality requirement diklasifikasikan menurut **ISO/IEC 25010:2023**. Tailoring dicatat di Appendix C.
 >
@@ -22,8 +22,10 @@
 
 | Version | Date | Author | Summary of change | Baseline |
 |---------|------|--------|-------------------|----------|
-| 1.0 | 2026-10-17 | Tim PT. Tiket Sampai Nonton Sentosa | Dipecah dari PRD v4.6 §3–§5, §12, §14, §16; capability §5.x ditulis ulang sebagai requirement "shall" | PRD v4.6 |
+| 1.3 | 2026-10-19 | Tim PT. Tiket Sampai Nonton Sentosa | Memperjelas **logged-in user NIK handling**: SRS-F-27-10 direvisi (NIK dari token.nikHash, body optional/ignored), SRS-F-27-10a ditambahkan (logged-in tanpa NIK → body required), SRS-F-01-01 direvisi (guest vs logged-in). Desain menghindari PII di API untuk logged-in user | PRD v5.4, US-092, US-094 |
+| 1.2 | 2026-10-19 | Tim PT. Tiket Sampai Nonton Sentosa | Katalog event dengan filter: §3.2.28 Event Catalog Filter (CAT-01, SRS-F-28-01..06) untuk filter waktu, lokasi, status; field `city` ditambahkan ke skema event; cache key CDN mencakup filter params | PRD v5.3 |
 | 1.1 | 2026-10-19 | Tim PT. Tiket Sampai Nonton Sentosa | Keputusan bersama BE-2: akun opsional dengan login OTP (§3.2.27, SRS-F-01-08 direvisi), event sourcing Booking dan Payment (SRS-C-09, SRS-D-10..12), circuit breaker menjadi MUST (§3.2.19), keamanan akun (SRS-Q-SEC-10..12), alert email (SRS-F-90-06), kontrak OpenAPI satu file per service | PRD v4.6 + D-03, D-04, D-19, D-21, D-40, D-41 |
+| 1.0 | 2026-10-17 | Tim PT. Tiket Sampai Nonton Sentosa | Dipecah dari PRD v4.6 §3–§5, §12, §14, §16; capability §5.x ditulis ulang sebagai requirement "shall" | PRD v4.6 |
 
 ---
 
@@ -382,7 +384,7 @@ Kontrak per endpoint (contoh request/response) ada di SDD-RBT-001 Interface view
 
 | ID | Requirement | Source | Pri | Ver | Test |
 |----|-------------|--------|-----|-----|------|
-| SRS-F-01-01 | When a customer starts a purchase, the system shall require a buyer NIK and an email typed twice, and shall not require registration or login; a logged-in customer may have both fields pre-filled from the account (§3.2.27). | GR-05, FR-13, D-03 | M | T | TC-GST-01, TC-GST-02 |
+| SRS-F-01-01 | When a guest customer starts a purchase, the system shall require a buyer NIK and an email typed twice, and shall not require registration or login; a logged-in customer with stored NIK shall see both fields pre-filled (NIK masked, read-only) and shall not type or submit NIK—the server uses `token.nikHash` directly (§3.2.27 SRS-F-27-10). | GR-05, FR-13, D-03 | M | T | TC-GST-01, TC-GST-02 |
 | SRS-F-01-02 | If the two email entries differ, then the system shall reject the join with `422 EMAIL_MISMATCH`. | GR-05 | M | T | TC-GST-01 |
 | SRS-F-01-03 | Before the customer joins the queue, the client shall display the purchase rules (1 NIK pemegang = 1 tiket per event; NIK pembeli maks 3 tiket per event; siapkan NIK dan nama setiap pemegang; 1 perangkat dan 1 email = 1 antrean aktif) and shall require consent to NIK usage. | GR-03, keputusan tim 15 Okt | M | D | [TP] |
 | SRS-F-01-04 | The system shall not introduce any purchase rule after the customer enters the buying page. | Keputusan tim 15 Okt | M | I | [TP] |
@@ -740,9 +742,23 @@ Kontrak per endpoint (contoh request/response) ada di SDD-RBT-001 Interface view
 | SRS-F-27-07 | Logout shall revoke the session and shall be idempotent. | D-03 | M | T | TC-USR-07 |
 | SRS-F-27-08 | A logged-in customer shall be able to store and update a full name and one buyer NIK; one NIK shall be linked to at most one account (`409 NIK_ALREADY_LINKED`). | D-03, BR-02 | M | T | TC-USR-08 |
 | SRS-F-27-09 | The profile shall return the NIK and email only in masked form. | GR-15 | M | T | TC-USR-08 |
-| SRS-F-27-10 | When a logged-in customer joins the queue, the Queue Service shall verify the access token and the buyer NIK shall match the NIK stored in the account; the account identifier shall be carried to the admission and the booking. | D-03, BR-02 | M | T | TC-USR-09 |
+| SRS-F-27-10 | When a logged-in customer with a stored NIK joins the queue, the Queue Service shall use the `nikHash` from the access token claims; the `buyerNik` field in the request body shall be optional and ignored if present; the account identifier shall be carried to the admission and the booking. | D-03, BR-02, US-092 | M | T | TC-USR-09 |
+| SRS-F-27-10a | When a logged-in customer without a stored NIK joins the queue, the Queue Service shall require the buyer NIK in the request body (same as guest); the system should offer to save the NIK to the account after successful join. | D-03, US-094 | M | T | TC-USR-09a |
 | SRS-F-27-11 | A logged-in customer shall be able to list the bookings made while logged in. | D-03 | S | T | TC-USR-10 |
 | SRS-F-27-12 | Login codes shall not pass through the message broker and shall not appear in logs. | GR-15 | M | I | TC-USR-11 |
+
+#### 3.2.28 Event Catalog Filter (CAT-01, v5.3)
+
+**Alloc:** CMP-BOOKING, CMP-WEB, CMP-MOBILE, CMP-EDGE
+
+| ID | Requirement | Source | Pri | Ver | Test |
+|----|-------------|--------|-----|-----|------|
+| SRS-F-28-01 | The event list endpoint shall accept optional query parameters for filtering: `timeframe` (values: `THIS_WEEK`, `THIS_MONTH`, `UPCOMING`), `city`, and `status` (values: `NOT_STARTED`, `AVAILABLE`, `SOLD_OUT`, `CLOSED`); when no filter is provided, all events shall be returned. | US-012, US-013, US-014 | M | T | TC-CAT-01 |
+| SRS-F-28-02 | The event schema shall include a `city` field; the filter shall match events where `city` equals the provided value (case-insensitive). | US-013 | M | T | TC-CAT-02 |
+| SRS-F-28-03 | The `timeframe` filter shall compute date ranges relative to the server's current date: `THIS_WEEK` = current week (Monday–Sunday), `THIS_MONTH` = current calendar month, `UPCOMING` = today onwards; the filter shall apply to `startsAt`. | US-012 | M | T | TC-CAT-03 |
+| SRS-F-28-04 | Filters shall be combinable; when multiple filters are provided, the result shall be the intersection (AND logic). | US-012, US-013, US-014 | M | T | TC-CAT-04 |
+| SRS-F-28-05 | The filtered event list response shall be cacheable at the CDN for at most 2 seconds; the cache key shall include the filter query parameters (`timeframe`, `city`, `status`) in addition to `page` and `size`. | AS-27, NFR-06 | M | I | TC-CAT-05 |
+| SRS-F-28-06 | The event list endpoint should accept optional query parameters for sorting: `sort` (values: `DATE_ASC`, `PRICE_ASC`, `PRICE_DESC`); default shall be `DATE_ASC`. | US-017 | S | T | TC-CAT-06 |
 
 ### 3.3 Quality Requirements (ISO/IEC 25010:2023)
 

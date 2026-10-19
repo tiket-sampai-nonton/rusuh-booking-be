@@ -4,13 +4,13 @@
 |-------|-------|
 | **System of interest** | Rusuh Booking Tiket |
 | **Document ID** | AD-RBT-001 |
-| **Version** | 1.3 |
+| **Version** | 1.6 |
 | **Date** | 2026-10-19 |
-| **Status** | Draft. Desain baseline = PRD v4.6 Final Canonical; implementasi `NOT_VERIFIED` |
+| **Status** | Draft. Desain baseline = PRD v5.4; implementasi `NOT_VERIFIED` |
 | **Architect(s)** | Tim PT. Tiket Sampai Nonton Sentosa (BE-1, BE-2) |
 | **Reviewers / Approvers** | Pak Dinda (CEO), Pak Jabon (CTO), Pak Rahman (CFO), PT. Tiga Sekawan Angin Ribut |
 | **Classification** | Internal |
-| **Source documents** | PRD-RBT-001 v5.2, SRS-RBT-001 v1.1, ADR-RBT v1.2 |
+| **Source documents** | PRD-RBT-001 v5.4, SRS-RBT-001 v1.3, ADR-RBT v1.2 |
 
 > **Reference basis.** Disusun dengan mengacu pada **ISO/IEC/IEEE 42010:2022**. AD ini mengidentifikasi stakeholder dan concern, mendefinisikan viewpoint yang membingkai concern tersebut, menyajikan satu view per viewpoint, mencatat correspondence antar-elemen, serta merujuk keputusan dan rationale ke ADR. Diagram memakai Mermaid: flowchart bergaya C4 untuk struktur, UML sequence untuk perilaku.
 >
@@ -26,6 +26,9 @@
 | 1.1 | 2026-10-17 | Tim PT. Tiket Sampai Nonton Sentosa | Path dan struktur repository disesuaikan dengan standar proyek organisasi (ADR-016) |
 | 1.2 | 2026-10-18 | Tim PT. Tiket Sampai Nonton Sentosa | Tiga repository (ADR-017); saga koreografi (ADR-018); SonarCloud menggantikan SonarCloud |
 | 1.3 | 2026-10-19 | Tim PT. Tiket Sampai Nonton Sentosa | Keputusan bersama BE-2: User Service (ADR-020), event sourcing Booking dan Payment (ADR-019), alternatif gRPC/EKS/Kong (ADR-021), runtime boilerplate (ADR-022); `/health` tunggal; alert email |
+| 1.4 | 2026-10-19 | Tim PT. Tiket Sampai Nonton Sentosa | Katalog event dengan filter: CloudFront cache key diperluas (`timeframe`, `city`, `status`); alokasi komponen CAT-01 (CMP-BOOKING, CMP-WEB, CMP-MOBILE, CMP-EDGE) |
+| 1.6 | 2026-10-19 | Tim PT. Tiket Sampai Nonton Sentosa | Menambahkan sequence diagram **Join with Logged-in User** (§4.4): NIK dari token.nikHash, body tidak kirim buyerNik; tabel perbandingan Guest vs Logged-in; desain menghindari PII di request/response |
+| 1.5 | 2026-10-19 | Tim PT. Tiket Sampai Nonton Sentosa | Rigor mortis fix: User Service ditambahkan ke Service Catalogue dengan endpoint publik; schema `users` ditambahkan ke tabel Schema per Service |
 
 ---
 
@@ -244,6 +247,7 @@ Trade-off lengkap di Lampiran L [v4.6 → ADR Appendix A].
 | **Booking Service** | Event & kategori, supply, alokasi, sesi pemilihan, pemulihan sesi, validasi NIK, kuota, NIK pemegang, hold, ubah pesanan, kunci pesanan, booking, settlement, expiry + resolve, cancel, tiket, tautan tiket, konfigurasi event + audit | `GET /events`, `GET /events/{id}`, `POST /booking-sessions`, `GET /booking-sessions/current`, `GET /booking-sessions/{id}`, `POST /booking-sessions/{id}/attendee-checks`, `POST /booking-sessions/{id}/cancel`, `POST /bookings`, `PUT /bookings/{id}/items`, `GET /bookings/{id}`, `POST /bookings/{id}/cancel`, `GET /bookings/{id}/tickets` | `booking.*` | Payment (internal), RabbitMQ | BE-2 |
 | **Payment Service** | Payment page view model, metode, payment page token, attempt/charge, webhook, signature, rekonsiliasi, cancel di gateway, resolve, kasus refund | `GET /payments/{bookingId}/page`, `POST /payments/{bookingId}/page-tokens`, `POST /payment-page-sessions`, `POST /payments/{bookingId}/attempts`, `GET /payments/{bookingId}/status`, `POST /webhooks/midtrans` | `payment.*` | Booking (internal read), Midtrans, RabbitMQ | BE-2 |
 | **Notification Service** | Consumer event, template email, SMTP, push notification giliran (FCM), retry, DLQ, redrive | `POST /push-subscriptions`, `DELETE /push-subscriptions/{eventId}` | `notification.*` | RabbitMQ, SMTP, FCM | BE-1 |
+| **User Service** | Akun opsional, login OTP email, rotasi refresh token, profil (nama, NIK tersimpan terenkripsi), riwayat pesanan (proxy ke Booking) | `POST /auth/otp/request`, `POST /auth/otp/verify`, `POST /auth/refresh`, `POST /auth/logout`, `GET /me`, `PATCH /me` | `users.*` | Valkey (OTP), RabbitMQ | BE-1 |
 | **Platform (shared libs)** | HTTP middleware, error envelope, token (JWT EdDSA), crypto (HMAC, AES-GCM), NIK validator, outbox library, consumer (ack/retry/DLQ), resilience, telemetry, config, clock | — | — | — | BE-1 (+ review BE-2) |
 
 #### Internal APIs (sinkron)
@@ -317,6 +321,7 @@ sequenceDiagram
 | `booking` | `events`, `config_audit`, `ticket_categories`, `category_inventories`, `event_supply`, `admissions`, `attendee_checks`, `buyer_quotas`, `bookings`, `booking_items`, `tickets`, `idempotency_records`, `outbox_events` | `svc_booking` |
 | `payment` | `payment_attempts`, `payment_callbacks`, `payment_page_tokens`, `refund_cases`, `idempotency_records`, `outbox_events` | `svc_payment` |
 | `notification` | `deliveries`, `push_subscriptions` | `svc_notification` |
+| `users` | `accounts`, `sessions`, `login_audit` | `svc_user` |
 
 Setiap user DB hanya punya hak pada schema miliknya. Referensi lintas service hanya berupa UUID biasa tanpa foreign key. DDL lengkap di Lampiran B [v4.6 → SDD §4.4]. Alasan setiap tabel pendukung dan idempotensi consumer di §9.8 [v4.6 → SDD §4.5.2].
 
@@ -482,6 +487,58 @@ sequenceDiagram
     end
   end
 ```
+
+#### Join with Logged-in User (v5.4)
+
+*Sumber: PRD v5.4 US-092, SRS-F-27-10*
+
+Alur join untuk user yang sudah login dan menyimpan NIK di profil. Form menampilkan NIK tersamar (dari `GET /me`), `buyerNik` TIDAK dikirim di body — server menggunakan `nikHash` dari token. Desain ini menghindari PII (NIK plain) di request maupun response.
+
+```mermaid
+sequenceDiagram
+  actor C as Customer
+  participant FE as Web or Mobile
+  participant QS as Queue Service
+  participant US as User Service
+  participant R as Valkey
+  participant BS as Booking Service
+  
+  Note over C,FE: User sudah login, NIK tersimpan di akun
+  C->>FE: Klik Beli Tiket
+  FE->>US: GET /me
+  US-->>FE: { email, nikMasked: "3174********0001", hasNik: true }
+  FE->>FE: Display form: NIK masked (read-only), email full (read-only)
+  
+  C->>FE: Klik "Masuk Antrean" (tanpa mengetik)
+  FE->>QS: POST /events/eventId/queue-entries<br/>Authorization: Bearer accessToken<br/>{ email } ← NO buyerNik!
+  
+  QS->>QS: Verify token signature
+  QS->>QS: token.hasNik == true → use token.nikHash
+  
+  Note over QS: nikHash dari token<br/>Tidak ada NIK plain di request
+  
+  QS->>R: Lua join: cek kuota, nikHash, perangkat, email
+  R-->>QS: seq dan status
+  QS->>BS: POST /internal/v1/allocations:batch<br/>{ accountId, buyerNikHash: token.nikHash, ... }
+  BS-->>QS: allocationId
+  QS-->>FE: 201 ADMITTED + queueToken
+```
+
+**Perbedaan dengan Guest Join:**
+
+| Aspek | Guest | Logged-in (NIK tersimpan) | Logged-in (tanpa NIK) |
+|-------|-------|---------------------------|------------------------|
+| Form NIK | Editable, user types | Masked "3174****0001", read-only | Editable |
+| Form email | Editable, user types | Full, read-only | Full, read-only |
+| Request body | `{ buyerNik, email }` | `{ email }` — no buyerNik | `{ buyerNik, email }` |
+| NIK source | `HMAC(body.buyerNik)` | `token.nikHash` | `HMAC(body.buyerNik)` |
+| accountId | null | Dari token | Dari token |
+
+**Keuntungan desain ini:**
+- ✅ NIK plain TIDAK pernah di API response (`GET /me` hanya `nikMasked`)
+- ✅ NIK plain TIDAK di request body untuk logged-in user
+- ✅ Anti-scalper tetap berlaku (nikHash di-cek di join)
+- ✅ Guest flow tidak berubah
 
 #### Waiting, Promotion, and Claim
 
@@ -1384,6 +1441,7 @@ Alasan best practice per komponen ada di ADR-015; matriks trade-off ada di ADR-R
 | 3.2.25 | Near-Real-Time and Turn Notification (QUE-05) | SRS-F-25-01 … SRS-F-25-13 (13) | CMP-QUEUE, CMP-BOOKING, CMP-NOTIF, CMP-WEB, CMP-MOBILE, CMP-EDGE |
 | 3.2.26 | Configuration (CFG-01) | SRS-F-26-01 … SRS-F-26-08 (8) | CMP-BOOKING, CMP-QUEUE, CMP-PLATFORM |
 | 3.2.27 | Optional Account and OTP Login (USR-01) | SRS-F-27-01 … SRS-F-27-12 (12) | CMP-USER, CMP-QUEUE, CMP-BOOKING, CMP-WEB, CMP-MOBILE |
+| 3.2.28 | Event Catalog Filter (CAT-01) | SRS-F-28-01 … SRS-F-28-06 (6) | CMP-BOOKING, CMP-WEB, CMP-MOBILE, CMP-EDGE |
 | 3.1, 3.3–3.7 | Interface, quality, data, constraint, operasional | SRS-IF, SRS-Q, SRS-D, SRS-C, SRS-F-90 | Lintas komponen; lihat kolom komponen di quality scenario §4.7.1 |
 
 ### 6.3 Component ↔ Node (CR-02)
@@ -1476,7 +1534,7 @@ Risiko proyek dan produk ada di PRD-RBT-001 §12.
 |---|---|---|---|---|
 | `/api/v1/queue-status/*` | ALB | Custom: min 0, default 1 s, max 2 s; cache key hanya path; tanpa cookie/header/query | none | GET, HEAD |
 | `/api/v1/events/*/queue-entries` | ALB | CachingDisabled | AllViewerExceptHostHeader | ALL |
-| `/api/v1/events*` | ALB | Custom: default 2 s; cache key path + query `page`,`size` | none | GET, HEAD |
+| `/api/v1/events*` | ALB | Custom: default 2 s; cache key path + query `page`,`size`,`timeframe`,`city`,`status` | none | GET, HEAD |
 | `/api/v1/webhooks/*` | ALB | CachingDisabled | AllViewerExceptHostHeader | ALL |
 | `/api/*` | ALB | CachingDisabled | AllViewerExceptHostHeader | ALL |
 | `/_next/static/*` | ALB | CachingOptimized | none | GET, HEAD |
