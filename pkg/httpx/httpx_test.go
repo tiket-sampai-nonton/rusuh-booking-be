@@ -51,7 +51,7 @@ func TestRecoverWritesEnvelope(t *testing.T) {
 	if err := json.NewDecoder(rec.Body).Decode(&env); err != nil {
 		t.Fatal(err)
 	}
-	if env.Error.Code != apperror.CodeInternal || env.Error.RequestID == "" {
+	if env.Meta.ErrorCode != apperror.CodeInternal || env.Meta.RequestID == "" || env.Meta.Code != 500 {
 		t.Fatalf("envelope = %+v", env)
 	}
 }

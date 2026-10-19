@@ -74,14 +74,20 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: ${{ matrix.module.path }}/go.mod
-          cache-dependency-path: ${{ matrix.module.path }}/go.mod
-      - name: Generate mock
+          cache-dependency-path: ${{ matrix.module.path }}/go.sum
+      - name: go.mod dan go.sum rapi
+        run: |
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum || { echo "::error::go.mod/go.sum belum rapi atau go.sum belum di-commit. Jalankan 'make tidy' lalu commit."; exit 1; }
+      - name: Mock (_mock/) sesuai port
         if: matrix.module.name != 'pkg'
-        run: go generate ./internal/... && go mod tidy
+        run: |
+          go generate ./internal/...
+          git diff --exit-code -- _mock || { echo "::error::_mock/ tidak sesuai interface port. Jalankan 'make mock' lalu commit."; exit 1; }
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v8
         with:
-          version: v2.5.0
+          version: v2.14.0  # dibangun dengan Go ≥ 1.26 (syarat lint modul go 1.26)
           working-directory: ${{ matrix.module.path }}
           args: --config=${{ github.workspace }}/.golangci.yml
       - name: go vet
@@ -146,6 +152,7 @@ jobs:
         run: bash tools/verify-reports.sh quality scan-reports
 
   # ------------------------------------------------------------------ stage: case-coverage (unit test)
+  # Unit test + integration test adapter (PostgreSQL, Valkey, RabbitMQ sebagai service container).
   case-coverage:
     name: case-coverage (${{ matrix.module.name }})
     needs: [changes, verify-code-quality]
@@ -154,17 +161,43 @@ jobs:
       fail-fast: false
       matrix:
         module: ${{ fromJSON(needs.changes.outputs.modules) }}
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: rbt
+          POSTGRES_PASSWORD: rbt-ci-only
+          POSTGRES_DB: rbt
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U rbt -d rbt" --health-interval 5s --health-timeout 3s --health-retries 20
+      valkey:
+        image: valkey/valkey:8.1-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "valkey-cli ping" --health-interval 5s --health-timeout 3s --health-retries 20
+      rabbitmq:
+        image: rabbitmq:3.13-management-alpine
+        ports: ["5672:5672"]
+        options: >-
+          --health-cmd "rabbitmq-diagnostics -q ping" --health-interval 10s --health-timeout 5s --health-retries 20
+    env:
+      GO_TEST_TAGS: integration
+      TEST_POSTGRES_DSN: postgres://rbt:rbt-ci-only@localhost:5432/rbt?sslmode=disable
+      TEST_POSTGRES_HOST: localhost
+      TEST_POSTGRES_PORT: "5432"
+      TEST_POSTGRES_USER: rbt
+      TEST_POSTGRES_PASSWORD: rbt-ci-only
+      TEST_POSTGRES_DATABASE: rbt
+      TEST_VALKEY_SERVER: '[{"host":"localhost","port":6379}]'
+      TEST_RABBITMQ_URL: amqp://guest:guest@localhost:5672/
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version-file: ${{ matrix.module.path }}/go.mod
-          cache-dependency-path: ${{ matrix.module.path }}/go.mod
-      - name: Generate mock
-        if: matrix.module.name != 'pkg'
-        working-directory: ${{ matrix.module.path }}
-        run: go generate ./internal/... && go mod tidy
-      - name: Unit test dan ambang coverage
+          cache-dependency-path: ${{ matrix.module.path }}/go.sum
+      - name: Unit + integration test dan ambang coverage
         run: bash tools/check-coverage.sh "${{ matrix.module.path }}" "$COVERAGE_MIN"
       - uses: actions/upload-artifact@v4
         with:
@@ -219,10 +252,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: ${{ matrix.module.path }}/go.mod
-          cache-dependency-path: ${{ matrix.module.path }}/go.mod
-      - name: Generate mock
-        if: matrix.module.name != 'pkg'
-        run: go generate ./internal/... && go mod tidy
+          cache-dependency-path: ${{ matrix.module.path }}/go.sum
       - name: Compile
         run: go build ./...
       - name: Isolation build (tanpa go.work)

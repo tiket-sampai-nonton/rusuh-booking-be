@@ -4,7 +4,7 @@
 # Output (ke $GITHUB_OUTPUT, atau stdout bila dijalankan lokal): modules, services, any, any_services.
 set -euo pipefail
 
-SERVICES=(queue booking payment notification)
+SERVICES=(queue booking payment notification user)
 ZERO=0000000000000000000000000000000000000000
 OUT="${GITHUB_OUTPUT:-/dev/stdout}"
 

@@ -151,6 +151,41 @@ linters:
             - pkg: "github.com/tiket-sampai-nonton/rusuh-booking-be/services/notification/internal/notification/application"
               desc: "adapter memanggil port, bukan usecase langsung"
 
+        user-domain:
+          files: ["**/services/user/internal/user/domain/**"]
+          deny:
+            - pkg: "github.com/tiket-sampai-nonton/rusuh-booking-be/pkg"
+              desc: "domain hanya boleh standard library (Handbook §0)"
+            - pkg: "github.com/tiket-sampai-nonton/rusuh-booking-be/services/user/internal/user/port"
+              desc: "domain tidak bergantung pada port"
+            - pkg: "github.com/tiket-sampai-nonton/rusuh-booking-be/services/user/internal/user/application"
+              desc: "domain tidak bergantung pada application"
+            - pkg: "github.com/tiket-sampai-nonton/rusuh-booking-be/services/user/internal/user/infrastructure"
+              desc: "domain tidak bergantung pada infrastructure"
+            - pkg: "net/http"
+              desc: "domain bebas framework/transport"
+            - pkg: "database/sql"
+              desc: "domain bebas driver"
+        user-port:
+          files: ["**/services/user/internal/user/port/**"]
+          deny:
+            - pkg: "github.com/tiket-sampai-nonton/rusuh-booking-be/services/user/internal/user/application"
+              desc: "port tidak bergantung pada application"
+            - pkg: "github.com/tiket-sampai-nonton/rusuh-booking-be/services/user/internal/user/infrastructure"
+              desc: "port tidak bergantung pada infrastructure"
+        user-application:
+          files: ["**/services/user/internal/user/application/**"]
+          deny:
+            - pkg: "github.com/tiket-sampai-nonton/rusuh-booking-be/services/user/internal/user/infrastructure"
+              desc: "usecase hanya bergantung pada port (SDD §4.3)"
+            - pkg: "net/http"
+              desc: "usecase bebas transport"
+        user-infrastructure:
+          files: ["**/services/user/internal/user/infrastructure/**"]
+          deny:
+            - pkg: "github.com/tiket-sampai-nonton/rusuh-booking-be/services/user/internal/user/application"
+              desc: "adapter memanggil port, bukan usecase langsung"
+
   exclusions:
     generated: lax
     paths:

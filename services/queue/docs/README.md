@@ -1,15 +1,19 @@
 # Queue Service
 
-- Owner: BE-1
-- Port default: 8081
-- Mode: api
-- Dependency: valkey, postgres, rabbitmq
-- Desain: `docs/sdd/04-SDD-RBT-001.md` §4.1 (struktur) dan bagian Queue Service.
-- Spec Kiro: `specs/queue-service/`.
+Waiting room: join, posisi, klaim giliran, promotor admission, Status Document (CDN).
+
+- Port: `8081` (`APP_PORT`)
+- Schema PostgreSQL: `queue` (role `svc_queue`)
+- Verb: api, worker (promotor + publisher Status Document + consumer booking.*), `migrate up|down|status`, `healthcheck`
+
+## Menjalankan lokal
 
 ```bash
-cp .env.example .env
-go run ./cmd
-curl localhost:8081/healthz
-curl localhost:8081/readyz
+make infra keys                     # dari root repo: PostgreSQL, Valkey, RabbitMQ, Mailpit + kunci token lokal
+cd services/queue && cp .env.example .env
+go run ./cmd migrate up
+go run ./cmd api
+curl localhost:8081/health
 ```
+
+Desain lengkap: `docs/sdd/04-SDD-RBT-001.md`. Struktur folder mengikuti standar organisasi (ADR-016).

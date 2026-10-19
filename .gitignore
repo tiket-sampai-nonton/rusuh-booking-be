@@ -17,3 +17,6 @@ coverage.*
 .idea/
 .vscode/
 .DS_Store
+
+# Kunci token lokal (make keys)
+/deployments/compose/keys/

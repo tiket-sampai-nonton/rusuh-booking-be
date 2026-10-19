@@ -14,7 +14,7 @@ type Code string
 // and mapped in infrastructure/http.
 const (
 	CodeInternal              Code = "INTERNAL_ERROR"
-	CodeValidationFailed      Code = "VALIDATION_FAILED"
+	CodeValidationFailed      Code = "VALIDATION_ERROR"
 	CodeNotFound              Code = "NOT_FOUND"
 	CodeDependencyUnavailable Code = "DEPENDENCY_UNAVAILABLE"
 	CodeRateLimited           Code = "RATE_LIMITED"
@@ -70,20 +70,24 @@ func From(err error) *Error {
 	return Internal(err)
 }
 
-// Envelope is the JSON error body returned by every service.
+// Envelope is the JSON error body returned by every service (SRS §3.1.4 Error Envelope):
+//
+//	{"meta":{"code":409,"message":"…","requestId":"…","errorCode":"…","details":{…}},"data":null}
 type Envelope struct {
-	Error Body `json:"error"`
+	Meta Meta `json:"meta"`
+	Data any  `json:"data"`
 }
 
-// Body is the content of the error envelope.
-type Body struct {
-	Code      Code              `json:"code"`
-	Message   string            `json:"message"`
+// Meta is the meta part of every response envelope.
+type Meta struct {
+	Code      int               `json:"code"`
+	Message   string            `json:"message,omitempty"`
 	RequestID string            `json:"requestId,omitempty"`
+	ErrorCode Code              `json:"errorCode,omitempty"`
 	Details   map[string]string `json:"details,omitempty"`
 }
 
 // ToEnvelope builds the JSON envelope for the error.
 func (e *Error) ToEnvelope(requestID string) Envelope {
-	return Envelope{Error: Body{Code: e.Code, Message: e.Message, RequestID: requestID, Details: e.Details}}
+	return Envelope{Meta: Meta{Code: e.HTTPStatus, Message: e.Message, RequestID: requestID, ErrorCode: e.Code, Details: e.Details}}
 }

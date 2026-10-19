@@ -2,7 +2,8 @@
 # Mengukur coverage logika satu modul Go dan gagal bila di bawah ambang.
 # Dikecualikan dari hitungan: cmd/, delivery/, config/, _mock/ (bootstrap dan wiring; dibuktikan
 # lewat run dan health check, bukan unit test).
-# Pakai: tools/check-coverage.sh <path-modul> [ambang=80]
+# Pakai: [GO_TEST_TAGS=integration] tools/check-coverage.sh <path-modul> [ambang=80]
+# GO_TEST_TAGS=integration menjalankan juga integration test (PostgreSQL, Valkey, RabbitMQ; env TEST_*).
 set -euo pipefail
 
 dir="${1:?path modul, mis. services/booking}"
@@ -14,7 +15,9 @@ mkdir -p "$root/coverage"
 raw="$(mktemp)"
 trap 'rm -f "$raw"' EXIT
 
-(cd "$root/$dir" && go test -race -count=1 -covermode=atomic -coverprofile="$raw" ./...)
+tags=()
+if [ -n "${GO_TEST_TAGS:-}" ]; then tags=(-tags "$GO_TEST_TAGS"); fi
+(cd "$root/$dir" && go test ${tags[@]+"${tags[@]}"} -race -count=1 -covermode=atomic -coverprofile="$raw" ./...)
 
 out="$root/coverage/${name}.out"
 grep -v -E '/(cmd|_mock|delivery|config)/' "$raw" > "$out"

@@ -1,17 +1,32 @@
 package valueobject
 
 import (
-	"errors"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestNewDependencyName(t *testing.T) {
-	if n, err := NewDependencyName("postgres"); err != nil || n.String() != "postgres" {
-		t.Fatalf("valid name rejected: %v", err)
+	tests := []struct {
+		in      string
+		wantErr bool
+	}{
+		{"postgres", false},
+		{"rabbit-mq2", false},
+		{"", true},
+		{"Postgres", true},
+		{"9lives", true},
+		{"this-name-is-way-too-long-for-a-dependency", true},
 	}
-	for _, bad := range []string{"", "Postgres", "pg sql", "1abc"} {
-		if _, err := NewDependencyName(bad); !errors.Is(err, ErrInvalidDependencyName) {
-			t.Errorf("NewDependencyName(%q) error = %v, want ErrInvalidDependencyName", bad, err)
-		}
+	for _, tt := range tests {
+		t.Run(tt.in, func(t *testing.T) {
+			n, err := NewDependencyName(tt.in)
+			if tt.wantErr {
+				assert.ErrorIs(t, err, ErrInvalidDependencyName)
+				return
+			}
+			assert.NoError(t, err)
+			assert.Equal(t, tt.in, n.String())
+		})
 	}
 }

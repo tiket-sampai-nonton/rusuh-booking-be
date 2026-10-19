@@ -1,0 +1,3 @@
+DROP TABLE IF EXISTS entry_audit CASCADE;
+DROP TABLE IF EXISTS event_settings CASCADE;
+

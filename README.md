@@ -1,61 +1,70 @@
 # rusuh-booking-be
 
-Backend **Rusuh Booking Tiket**: 4 service Go (Queue, Booking, Payment, Notification) dengan struktur standar proyek organisasi.
+Backend **Rusuh Booking Tiket**: 5 microservice Go (Queue, Booking, Payment, Notification, User) dalam satu monorepo, dengan struktur standar proyek organisasi.
 Disusun oleh Tim PT. Tiket Sampai Nonton Sentosa untuk PT. Tiga Sekawan Angin Ribut.
 
-> Status: **skeleton**. Setiap service sudah punya wiring lengkap (config, delivery, port, usecase, adapter) dengan contoh `/healthz` dan `/readyz`. Logika bisnis dibangun mulai sprint dev sesuai `docs/`.
+> Status: **boilerplate siap Sprint 1**. Semua service punya verb Cobra (`api`, `worker`, `migrate`, `healthcheck`), konfigurasi tervalidasi, client PostgreSQL/Valkey/RabbitMQ, migrasi DDL lengkap, dan `GET /health`. User Service (login OTP opsional) sudah berfungsi penuh. Logika bisnis Queue, Booking, Payment, Notification dibangun mulai 20 Okt sesuai `docs/` dan kontrak `docs/contracts/`.
 
 ## Service
 
-| Service | Path | Port | Mode | Dependency | Owner |
-|---|---|---|---|---|---|
-| Queue | `services/queue` | 8081 | api | valkey, postgres, rabbitmq | BE-1 |
-| Booking | `services/booking` | 8082 | api, worker | postgres, rabbitmq, valkey | BE-2 |
-| Payment | `services/payment` | 8083 | api, worker | postgres, rabbitmq | BE-2 |
-| Notification | `services/notification` | 8084 | api | postgres, rabbitmq | BE-1 |
+| Service | Path | Port | Verb | Dependency | Schema | Owner |
+|---|---|---|---|---|---|---|
+| Queue | `services/queue` | 8081 | api, worker | postgres, valkey, rabbitmq | `queue` | BE-1 |
+| Booking | `services/booking` | 8082 | api, worker | postgres, valkey, rabbitmq | `booking` (event sourcing) | BE-2 |
+| Payment | `services/payment` | 8083 | api, worker | postgres, rabbitmq | `payment` (event sourcing) | BE-2 |
+| Notification | `services/notification` | 8084 | api, worker | postgres, rabbitmq | `notification` | BE-1 |
+| User | `services/user` | 8085 | api | postgres, valkey, SMTP | `users` | BE-1 |
 
-Booking dan Payment berjalan sebagai dua container (`api` dan `worker`); port worker di host = port api + 10.
+Satu image per service, satu verb per container (`booking api`, `booking worker`, `booking migrate up`). Setiap service punya role database sendiri (`svc_<service>`) yang hanya melihat schema miliknya.
 
 ## Mulai cepat
 
-Prasyarat: Go 1.24+, Docker dengan Compose, `golangci-lint` v2.
+Prasyarat: Go 1.26, Docker dengan Compose, `golangci-lint` v2, `openssl`.
 
 ```bash
-make up          # PostgreSQL, Valkey, RabbitMQ, dan semua service
+make tidy        # sekali setelah clone/patch: isi go.sum, lalu commit go.mod dan go.sum
+make up          # kunci token lokal + PostgreSQL, Valkey, RabbitMQ, Mailpit, migrasi, semua service
 make ps
-curl localhost:8082/readyz
+curl localhost:8085/health
 make down
 ```
 
 Tanpa Docker untuk service (infra tetap via compose):
 
 ```bash
-docker compose up -d postgres valkey rabbitmq
-cd services/booking && cp .env.example .env && go run ./cmd --mode=api
+make infra keys
+cd services/user && cp .env.example .env && go run ./cmd migrate up && go run ./cmd api
 ```
+
+Coba login OTP: `POST localhost:8085/api/v1/auth/otp/request {"email":"kamu@contoh.id"}`, buka Mailpit http://localhost:8025 untuk kodenya, lalu `POST /api/v1/auth/otp/verify`.
 
 ## Perintah
 
 | Target | Fungsi |
 |---|---|
-| `make build` / `make test` / `make lint` | build, test (race), lint semua modul |
-| `make mock` | generate mock dari interface `port/` ke `_mock/` (mockgen, versi dikunci di `//go:generate`) |
+| `make build` / `make test` / `make lint` | build, unit test (race), lint semua modul |
+| `make test-integration` | unit + integration test (PostgreSQL, Valkey, RabbitMQ dari `make infra`) |
+| `make cover` | sama dengan stage `case-coverage` CI (ambang 80%) |
+| `make mock` | generate mock (`go tool mockgen`, versi dikunci `go.mod`) ke `_mock/` |
+| `make tidy` | `go mod tidy` semua modul |
 | `make isolation` | build tiap service tanpa `go.work` |
-| `make ci` | semua pemeriksaan CI |
-| `make run-<svc>` | jalankan satu service |
+| `make migrate-<svc>` / `make run-<svc>` | migrasi atau jalankan API satu service lokal |
+| `make ci` | semua pemeriksaan CI lokal |
 
 ## Struktur
 
 ```text
-services/<svc>/        satu proyek Go per service (cmd, internal/<domain>/{port,domain,application,infrastructure}, delivery, config, _mock, deployments)
-pkg/                   utilitas lintas service (apperror, httpx, dotenv, clock)
-deployments/           compose, terraform, observability
-docs/                  PRD, SRS, HLD, SDD, ADR, Test Plan, Handbook, kontrak API/event, evidence, ai-log
+services/<svc>/        satu proyek Go per service: cmd (Cobra), internal/<domain>/{port,domain,application,infrastructure},
+                       internal/{config,delivery,shared}, _mock, deployments/{Dockerfile,migrations}, assets, docs
+pkg/                   utilitas lintas service tanpa logika bisnis: apperror, httpx, dotenv, clock, logger, postgres,
+                       valkey, rabbitmq (confirm, retry berjenjang, DLQ), migrate (advisory lock), eventstore, token (EdDSA), crypto
+deployments/           compose (init schema/role), terraform, observability
+docs/                  PRD, SRS, HLD, SDD, ADR, Test Plan, Handbook, kontrak OpenAPI dan event, evidence, ai-log
 .kiro/steering, specs/ steering dan spec Kiro
 tests/                 test lintas service (BDD, k6, contract)
 ```
 
-Aturan struktur: `.kiro/steering/structure.md` dan Handbook §0. Lapisan ditegakkan `depguard` di `.golangci.yml`.
+Aturan struktur: `.kiro/steering/structure.md` dan Handbook §0. Lapisan ditegakkan `depguard` di `.golangci.yml`; import lintas service dicegah Go `internal/`.
 
 ## CI/CD
 
@@ -63,9 +72,9 @@ Satu pipeline `.github/workflows/ci.yml` dengan stage berurutan (matrix per modu
 
 | Stage | Isi |
 |---|---|
-| `code-quality` | golangci-lint (+ depguard), go vet, gosec, govulncheck, hadolint, gitleaks |
+| `code-quality` | `go.mod`/`go.sum` rapi, `_mock/` sesuai port, golangci-lint (+ depguard), go vet, gosec, govulncheck, hadolint, gitleaks |
 | `verify-code-quality` | gerbang: gagal bila gosec HIGH, kerentanan govulncheck, hadolint error, atau rahasia bocor |
-| `case-coverage` | unit test `-race` + ambang coverage logika **80%** (`COVERAGE_MIN`) |
+| `case-coverage` | unit + integration test `-race` (PostgreSQL, Valkey, RabbitMQ sebagai service container) + ambang coverage logika **80%** (`COVERAGE_MIN`) |
 | `code-rank` | SonarCloud (quality gate) |
 | `build` | compile + isolation build `GOWORK=off` |
 | `package` | docker build per service, **linux/arm64** (runner ARM GitHub; ganti lewat variable `ARM_RUNNER`) |
@@ -75,7 +84,7 @@ Satu pipeline `.github/workflows/ci.yml` dengan stage berurutan (matrix per modu
 
 `ci-ok` adalah satu-satunya check yang perlu diwajibkan di ruleset `main`; ia lulus bila semua stage lulus atau dilewati.
 
-Integration test (Compose) dan BDD (godog) belum masuk pipeline; keduanya dijalankan lokal dan ditambahkan sebagai stage sesudah `case-coverage` saat fitur pertama dengan PostgreSQL, Valkey, dan RabbitMQ siap (Handbook §2).
+Integration test adapter (build tag `integration`) berjalan di `case-coverage`. Test end-to-end lintas service dan BDD (godog) ditambahkan saat alur pertama Queue → Booking → Payment siap (Handbook §2).
 
 Coverage dihitung atas kode logika. `cmd/`, `internal/delivery/`, `internal/config/`, dan `_mock/` dikecualikan karena hanya bootstrap dan wiring (dibuktikan lewat run dan health check). Lokal: `make cover`.
 

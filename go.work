@@ -1,4 +1,4 @@
-go 1.24
+go 1.26
 
 use (
 	./pkg
@@ -6,4 +6,5 @@ use (
 	./services/notification
 	./services/payment
 	./services/queue
+	./services/user
 )

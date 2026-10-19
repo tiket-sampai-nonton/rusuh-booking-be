@@ -2,41 +2,58 @@ package delivery
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"time"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/config"
 )
 
-// RunWorker runs background jobs (expiry, outbox relay, reconciliation) and serves /healthz and /readyz.
-// Job nyata didaftarkan di jobs() saat fitur dibangun.
-func RunWorker(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
-	errCh := make(chan error, 1)
-	go func() { errCh <- RunServer(ctx, cfg, logger) }()
+// Job is one periodic background job (mis. sweeper TTL, outbox relay, rekonsiliasi).
+type Job struct {
+	Name string
+	Run  func(context.Context) error
+}
 
-	ticker := time.NewTicker(cfg.WorkerInterval)
+// RunWorker connects the needed clients, serves GET /health on APP_PORT, and runs jobs every
+// WORKER_INTERVAL until ctx is cancelled. Job nyata didaftarkan di jobs() saat fitur dibangun.
+func RunWorker(ctx context.Context, cfg config.Config, logger *slog.Logger, need Need) error {
+	clients, err := NewClients(ctx, cfg, need)
+	if err != nil {
+		return err
+	}
+	defer clients.Close()
+
+	handler, err := NewHandler(cfg, clients, logger)
+	if err != nil {
+		return err
+	}
+	errCh := make(chan error, 1)
+	go func() { errCh <- serve(ctx, cfg, handler, logger) }()
+
+	err = loop(ctx, cfg.Worker.Interval, jobs(clients), logger)
+	if serr := <-errCh; serr != nil && !errors.Is(serr, context.Canceled) {
+		return serr
+	}
+	return err
+}
+
+func loop(ctx context.Context, every time.Duration, js []Job, logger *slog.Logger) error {
+	ticker := time.NewTicker(every)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
-			return <-errCh
-		case err := <-errCh:
-			return err
+			return nil
 		case <-ticker.C:
-			for _, job := range jobs() {
-				if err := job.run(ctx); err != nil {
-					logger.Error("worker job failed", "job", job.name, "error", err)
+			for _, j := range js {
+				if err := j.Run(ctx); err != nil {
+					logger.Error("worker job gagal", "job", j.Name, "error", err)
 				}
 			}
-			logger.Debug("worker tick", "jobs", len(jobs()))
 		}
 	}
 }
 
-type job struct {
-	name string
-	run  func(context.Context) error
-}
-
-// jobs returns the background jobs of this worker. Kosong di skeleton.
-func jobs() []job { return nil }
+// jobs returns the background jobs of this worker. Kosong di boilerplate.
+func jobs(*Clients) []Job { return nil }

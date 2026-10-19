@@ -18,6 +18,11 @@ func WriteJSON(w http.ResponseWriter, status int, v any) {
 	}
 }
 
+// WriteData writes v inside the success envelope {"meta":{"code":status,"requestId":…},"data":v} (SRS §3.1.4).
+func WriteData(w http.ResponseWriter, r *http.Request, status int, v any) {
+	WriteJSON(w, status, apperror.Envelope{Meta: apperror.Meta{Code: status, RequestID: RequestIDFrom(r.Context())}, Data: v})
+}
+
 // WriteError writes err using the standard error envelope.
 func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 	ae := apperror.From(err)

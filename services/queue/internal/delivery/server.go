@@ -12,33 +12,32 @@ import (
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/config"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/application/usecase"
-	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/domain/valueobject"
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/infrastructure/healthcheck"
 	queuehttp "github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/infrastructure/http"
-	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/infrastructure/tcpcheck"
 )
 
-// RunServer wires dependencies and serves HTTP until ctx is cancelled.
-func RunServer(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
-	handler, err := newHTTPHandler(cfg, logger)
+// RunServer connects the needed clients, wires the HTTP routes, and serves until ctx is cancelled.
+func RunServer(ctx context.Context, cfg config.Config, logger *slog.Logger, need Need) error {
+	clients, err := NewClients(ctx, cfg, need)
 	if err != nil {
 		return err
 	}
-	srv := httpx.NewServer(fmt.Sprintf(":%d", cfg.Port), handler)
-	return httpx.Run(ctx, srv, cfg.ShutdownTimeout, logger)
+	defer clients.Close()
+
+	handler, err := NewHandler(cfg, clients, logger)
+	if err != nil {
+		return err
+	}
+	srv := httpx.NewServer(fmt.Sprintf(":%d", cfg.App.Port), handler)
+	return httpx.Run(ctx, srv, cfg.HTTP.ShutdownTimeout, logger)
 }
 
-func newHTTPHandler(cfg config.Config, logger *slog.Logger) (http.Handler, error) {
-	targets := make([]tcpcheck.Target, 0, len(cfg.Dependencies))
-	for _, d := range cfg.Dependencies {
-		name, err := valueobject.NewDependencyName(d.Name)
-		if err != nil {
-			return nil, fmt.Errorf("delivery: dependency %q: %w", d.Name, err)
-		}
-		targets = append(targets, tcpcheck.Target{Name: name, Addr: d.Addr})
-	}
+// NewHandler builds the HTTP handler. Setiap domain mendaftarkan rute miliknya (route registrar).
+func NewHandler(cfg config.Config, clients *Clients, logger *slog.Logger) (http.Handler, error) {
+	health := usecase.NewCheckHealth(config.ServiceName, healthcheck.New(clients.Pingers(), cfg.HTTP.HealthTimeout), clock.System{})
 
-	readiness := usecase.NewCheckReadiness(cfg.ServiceName, tcpcheck.New(targets, cfg.DialTimeout), clock.System{})
-	h := queuehttp.NewHandler(cfg.ServiceName, readiness)
+	mux := http.NewServeMux()
+	queuehttp.NewHealthHandler(health).Register(mux)
 
-	return httpx.Chain(h.Routes(), httpx.RequestID(), httpx.Recover(logger)), nil
+	return httpx.Chain(mux, httpx.RequestID(), httpx.Recover(logger)), nil
 }

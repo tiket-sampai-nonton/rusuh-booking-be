@@ -1,0 +1,7 @@
+DROP TABLE IF EXISTS outbox_events CASCADE;
+DROP TABLE IF EXISTS idempotency_records CASCADE;
+DROP TABLE IF EXISTS refund_cases CASCADE;
+DROP TABLE IF EXISTS payment_page_tokens CASCADE;
+DROP TABLE IF EXISTS payment_callbacks CASCADE;
+DROP TABLE IF EXISTS payment_attempts CASCADE;
+

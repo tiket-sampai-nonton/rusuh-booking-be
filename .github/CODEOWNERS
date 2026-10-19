@@ -1,10 +1,13 @@
 # Owner per komponen mengikuti HLD (AD-RBT-001) tabel komponen.
-# GANTI placeholder @GANTI-HANDLE-BE1 / @GANTI-HANDLE-BE2 dengan username GitHub anggota tim.
+# GANTI placeholder @GANTI-HANDLE-BE1 / @GANTI-HANDLE-BE2 / @GANTI-HANDLE-FE dengan username GitHub anggota tim.
 *                         @GANTI-HANDLE-BE1 @GANTI-HANDLE-BE2
 /services/queue/          @GANTI-HANDLE-BE1
 /services/notification/   @GANTI-HANDLE-BE1
+/services/user/           @GANTI-HANDLE-BE1
 /pkg/                     @GANTI-HANDLE-BE1 @GANTI-HANDLE-BE2
+/pkg/eventstore/          @GANTI-HANDLE-BE2
 /services/booking/        @GANTI-HANDLE-BE2
 /services/payment/        @GANTI-HANDLE-BE2
 /deployments/             @GANTI-HANDLE-BE1
 /docs/                    @GANTI-HANDLE-BE1 @GANTI-HANDLE-BE2
+/docs/contracts/          @GANTI-HANDLE-BE1 @GANTI-HANDLE-BE2 @GANTI-HANDLE-FE

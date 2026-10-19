@@ -82,3 +82,57 @@ func Duration(key string, def time.Duration) (time.Duration, error) {
 	}
 	return d, nil
 }
+
+// Bool returns the variable parsed with strconv.ParseBool, or def when unset.
+func Bool(key string, def bool) (bool, error) {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return def, nil
+	}
+	b, err := strconv.ParseBool(v)
+	if err != nil {
+		return false, fmt.Errorf("dotenv: %s=%q is not a bool: %w", key, v, err)
+	}
+	return b, nil
+}
+
+// Reader collects parse errors so a config loader can report every bad variable at once.
+type Reader struct {
+	errs []error
+}
+
+// String returns the variable or def.
+func (r *Reader) String(key, def string) string { return String(key, def) }
+
+// Int returns the variable as int; a parse error is recorded and def is returned.
+func (r *Reader) Int(key string, def int) int {
+	v, err := Int(key, def)
+	if err != nil {
+		r.errs = append(r.errs, err)
+		return def
+	}
+	return v
+}
+
+// Duration returns the variable as time.Duration; a parse error is recorded and def is returned.
+func (r *Reader) Duration(key string, def time.Duration) time.Duration {
+	v, err := Duration(key, def)
+	if err != nil {
+		r.errs = append(r.errs, err)
+		return def
+	}
+	return v
+}
+
+// Bool returns the variable as bool; a parse error is recorded and def is returned.
+func (r *Reader) Bool(key string, def bool) bool {
+	v, err := Bool(key, def)
+	if err != nil {
+		r.errs = append(r.errs, err)
+		return def
+	}
+	return v
+}
+
+// Err returns all recorded parse errors joined, or nil.
+func (r *Reader) Err() error { return errors.Join(r.errs...) }
