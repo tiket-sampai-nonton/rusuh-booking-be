@@ -483,11 +483,11 @@ curl localhost:8081/health
 | Join queue | SRS-F-04-01..10 | TC-QUE-01, TC-QUE-02, TC-QUE-07, TC-QUE-08 | Integration |
 | Logged-in join (NIK stored) | SRS-F-27-10 | TC-USR-09 | E2E |
 | Logged-in join (no NIK) | SRS-F-27-10a | TC-USR-09a | E2E |
-| Status Document | SRS-F-05-01..11 | TC-QUE-03, TC-QUE-04, TC-QUE-06, TC-QUE-10, TC-QUE-12, TC-QUE-15 | Integration |
+| Status Document | SRS-F-05-01..11 | TC-QUE-03, TC-QUE-04, TC-QUE-06, TC-QUE-10, TC-QUE-11, TC-QUE-12, TC-QUE-15 | Integration |
 | Claim/Admission | SRS-F-06-01..08 | TC-QUE-09, TC-QUE-13, TC-QUE-14 | Integration + E2E |
 | FIFO guarantee | SRS-Q-FUN-03 | TC-QUE-08, TC-QUE-14 | Integration |
-| Rate limiting | SRS-F-04-09 | TC-QUE-11 | Integration |
-| Sold out | SRS-F-10-01..03 | TC-QUE-05 | Integration |
+| Rate limiting | SRS-F-04-09 | [TP] | Inspection |
+| Sold out | SRS-F-10-01..03 | TC-PERF-05 | Integration |
 | Move entry | SRS-F-01-10 | TC-QUE-16 | Integration + E2E |
 | Leave queue | SRS-F-13-03 | TC-QUE-17 | Integration + E2E |
 | Performance | SRS-Q-PERF-* | TC-PERF-01, TC-PERF-02, TC-PERF-03, TC-PERF-05 | k6 load test |

@@ -569,7 +569,7 @@ curl localhost:8083/health
 | Pending | VA transfer | pending → settlement |
 | Expired | Wait TTL | expire webhook |
 | Duplicate callback | Send webhook 2x | Idempotent, single effect |
-| Invalid signature | Modify signature | 400 rejected |
+| Invalid signature | Modify signature | 401 rejected (WEBHOOK_SIGNATURE_INVALID) |
 | Out-of-order | settlement before pending | Handled correctly |
 
 ---
@@ -666,7 +666,7 @@ curl localhost:8083/health
 | `PAYMENT_METHOD_UNAVAILABLE` | 400 | Metode tidak tersedia | Pilih metode lain |
 | `GATEWAY_ERROR` | 502 | Midtrans error | Retry atau pilih metode lain |
 | `GATEWAY_TIMEOUT` | 504 | Midtrans timeout | Retry |
-| `INVALID_SIGNATURE` | 400 | Webhook signature salah | (Internal) Log alert |
+| `WEBHOOK_SIGNATURE_INVALID` | 401 | Webhook signature salah atau kosong | (Internal) Log alert |
 | `DUPLICATE_CALLBACK` | 200 | Webhook sudah diproses | (Internal) Ignore |
 | `PAYMENT_PAGE_TOKEN_INVALID` | 403 | Token WebView salah/expired | Request token baru |
 | `VISITOR_MISMATCH` | 403 | Visitor tidak cocok | Gunakan device sama |
