@@ -42,6 +42,46 @@ func TestSignVerify_RoundTrip(t *testing.T) {
 	assert.Equal(t, "buyer", got.Scope)
 }
 
+func TestSignVerify_BuyerIdentityClaims(t *testing.T) {
+	pub, priv := keys(t)
+	s, err := NewSigner(priv, "k1")
+	require.NoError(t, err)
+	v, err := NewVerifier(map[string]ed25519.PublicKey{"k1": pub}, "rbt-user", "rbt", 5*time.Second)
+	require.NoError(t, err)
+
+	t.Run("with NIK", func(t *testing.T) {
+		c := claims()
+		c.Email = "buyer@example.com"
+		c.NIKHash = "abcd1234567890abcd1234567890abcd1234567890abcd1234567890abcd1234"
+		c.HasNIK = true
+
+		tok, err := s.Sign(c)
+		require.NoError(t, err)
+		got, err := v.Verify(tok, now.Add(time.Minute))
+		require.NoError(t, err)
+
+		assert.Equal(t, "buyer@example.com", got.Email)
+		assert.Equal(t, "abcd1234567890abcd1234567890abcd1234567890abcd1234567890abcd1234", got.NIKHash)
+		assert.True(t, got.HasNIK)
+	})
+
+	t.Run("without NIK", func(t *testing.T) {
+		c := claims()
+		c.Email = "guest@example.com"
+		c.NIKHash = ""
+		c.HasNIK = false
+
+		tok, err := s.Sign(c)
+		require.NoError(t, err)
+		got, err := v.Verify(tok, now.Add(time.Minute))
+		require.NoError(t, err)
+
+		assert.Equal(t, "guest@example.com", got.Email)
+		assert.Empty(t, got.NIKHash)
+		assert.False(t, got.HasNIK)
+	})
+}
+
 func TestVerify_Failures(t *testing.T) {
 	pub, priv := keys(t)
 	otherPub, otherPriv := keys(t)

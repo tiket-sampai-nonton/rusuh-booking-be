@@ -22,7 +22,7 @@ var (
 	ErrClaims    = errors.New("token: klaim tidak sesuai")
 )
 
-// Claims are the registered claims RBT uses plus a scope string.
+// Claims are the registered claims RBT uses plus custom claims for buyer identity.
 type Claims struct {
 	Issuer    string `json:"iss"`
 	Subject   string `json:"sub"`
@@ -32,6 +32,12 @@ type Claims struct {
 	IssuedAt  int64  `json:"iat"`
 	NotBefore int64  `json:"nbf,omitempty"`
 	ExpiresAt int64  `json:"exp"`
+
+	// Custom claims for logged-in buyer identity (SDD-USER-001 §6.1, SRS-F-27-10).
+	// Queue/Booking use these for offline NIK validation without calling User Service.
+	Email   string `json:"email,omitempty"`    // user's email address
+	NIKHash string `json:"nik_hash,omitempty"` // HMAC-SHA256 of NIK, hex-encoded; empty if no NIK stored
+	HasNIK  bool   `json:"has_nik,omitempty"`  // true if account has NIK stored
 }
 
 type header struct {
