@@ -16,6 +16,10 @@ type IAccountRepository interface {
 	GetByID(ctx context.Context, id string) (entity.Account, error)
 	UpdateProfile(ctx context.Context, id string, upd entity.ProfileUpdate) (entity.Account, error)
 	TouchLogin(ctx context.Context, id string, at time.Time) error
+	// GetNIKHashByID returns the nik_hash for a given account. Returns nil, nil if account has no NIK.
+	GetNIKHashByID(ctx context.Context, id string) ([]byte, error)
+	// GetEmailEncByID returns the encrypted email for a given account. Caller must unseal via IPIIProtector.
+	GetEmailEncByID(ctx context.Context, id string) ([]byte, error)
 }
 
 // ISessionRepository persists refresh-token sessions.

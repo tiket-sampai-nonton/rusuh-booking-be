@@ -4,13 +4,20 @@
 |-------|-------|
 | **Service** | Notification Service |
 | **Document ID** | SDD-NOTIFICATION-001 |
-| **Version** | 1.0 |
-| **Date** | 2026-10-19 |
+| **Version** | 1.1 |
+| **Date** | 2026-10-20 |
 | **Status** | Draft |
 | **Owner** | BE-1 |
 | **Port** | 8084 |
 | **Schema** | `notification` (role `svc_notification`) |
 | **Region** | ap-southeast-3 (Jakarta) |
+
+## Change History
+
+| Version | Date | Author | Summary |
+|---------|------|--------|---------|
+| 1.1 | 2026-10-20 | BE-1 | Menambahkan consumer otp.requested untuk OTP email login |
+| 1.0 | 2026-10-19 | BE-1 | Initial version |
 
 ---
 
@@ -32,6 +39,7 @@ Notification Service mengelola pengiriman email dan push notification. Service i
 | E-ticket Email | §3.2.20 | Kirim e-tiket setelah payment |
 | Expiry Email | §3.2.17 | Kirim notif pembayaran expired |
 | Review Email | §3.2.17 | Kirim notif pembayaran terlambat |
+| OTP Login Email | §3.2.27 | Kirim kode OTP untuk login |
 | Turn Soon Push | §3.2.25 | Push "giliran sebentar lagi" |
 | Turn Arrived Push | §3.2.25 | Push "giliran tiba" |
 | Delivery Tracking | §3.2.21 | Track status pengiriman |
@@ -124,6 +132,7 @@ CREATE INDEX idx_push_subs_event ON notification.push_subscriptions(event_id);
 | `booking.paid` | Booking | Send e-ticket email |
 | `booking.expired` | Booking | Send expiry email |
 | `booking.review` | Booking | Send review email |
+| `otp.requested` | User | Decrypt and send OTP email |
 | `queue.turn.soon` | Queue | Send push notification |
 | `queue.turn.arrived` | Queue | Send push notification |
 
@@ -135,6 +144,8 @@ Queue: notification.booking.events
   - booking.paid
   - booking.expired
   - booking.review
+Queue: notification.otp (no retry - time-sensitive)
+  - otp.requested
 Queue: notification.queue.events
   - queue.turn.soon
   - queue.turn.arrived
@@ -150,6 +161,20 @@ notification.booking.events → fail → notification.booking.events.retry.5s �
 - Max 3 attempts
 - 5 second delay between retries
 - After 3 failures → DLQ
+
+### 5.4 otp.requested Consumer
+
+**Queue:** `notification.otp` (no retry - time-sensitive)
+
+**Action:**
+1. Decrypt `emailEnc` and `codeEnc` using shared PII encryption key
+2. Render OTP email template with code and expiry
+3. Send via SMTP
+4. Log delivery (without plaintext code)
+
+**Idempotency:** Skip if `messageId` already processed within 5 minutes (Valkey dedup key)
+
+**On failure:** Log error, do not retry (user will request new code)
 
 ### 5.4 Idempotency
 
@@ -231,6 +256,22 @@ Booking ID: {{.BookingId}}
 Total: Rp {{.Amount}}
 
 Tim kami akan memproses refund dalam 3-5 hari kerja.
+
+Terima kasih,
+Tim Rusuh Booking Tiket
+```
+
+### 6.5 OTP Login Template
+
+```
+Subject: Kode Login Rusuh Booking Tiket
+
+Kode login Anda: {{.Code}}
+
+Kode ini berlaku selama 5 menit.
+Jangan bagikan kode ini kepada siapa pun.
+
+Jika Anda tidak meminta kode ini, abaikan email ini.
 
 Terima kasih,
 Tim Rusuh Booking Tiket
@@ -378,6 +419,8 @@ curl localhost:8084/health
 | DLQ/Retry | SRS-Q-REL-01 | TC-MSG-01, TC-MSG-02, TC-MSG-04 | Integration |
 | Idempotency | SRS-Q-REL-01 | TC-MSG-03 | Integration |
 | Turn notification | SRS-F-25-01..13 | TC-QUE-04 (trigger), E2E | Integration |
+| OTP email delivery | SRS-F-27-02, SRS-F-27-12 | TC-MSG-05 | Integration |
+| OTP invalid encryption | SRS-F-27-12 | TC-MSG-06 | Unit |
 
 ### Key Test Scenarios
 
@@ -387,6 +430,8 @@ curl localhost:8084/health
 | TC-MSG-02 | DLQ redrive | Message processed, no duplicate | DLQ handling |
 | TC-MSG-03 | Duplicate booking.paid | Single email sent | Idempotency |
 | TC-MSG-04 | Handler fails transient then succeeds | Retry with x-rbt-attempt=2, then ack | Retry mechanism |
+| TC-MSG-05 | OTP email via Notification | Email received within 5s | OTP delivery |
+| TC-MSG-06 | Invalid OTP encryption | Rejected, logged as error | Security |
 | TC-TKT-01 | E-ticket content | Contains QR, ticket codes | Template |
 | TC-TKT-02 | Email delivery | Received in inbox | SMTP integration |
 
@@ -465,6 +510,25 @@ curl localhost:8084/health
     "platform": "ANDROID",
     "claimDeadline": "2026-10-19T10:03:00Z",
     "position": 0
+  }
+}
+```
+
+### A.4 otp.requested
+
+```json
+{
+  "messageId": "uuid",
+  "eventType": "otp.requested",
+  "schemaVersion": "v1",
+  "occurredAt": "2026-10-20T13:45:00Z",
+  "correlationId": "uuid",
+  "producer": "user-service",
+  "payload": {
+    "emailEnc": "base64(AES-256-GCM encrypted email)",
+    "codeEnc": "base64(AES-256-GCM encrypted 6-digit code)",
+    "expiresAt": "2026-10-20T13:50:00Z",
+    "locale": "id"
   }
 }
 ```

@@ -165,7 +165,7 @@ func (u *Auth) VerifyOTP(ctx context.Context, req dto.VerifyOTPRequest, client i
 	if err := u.d.Accounts.TouchLogin(ctx, acc.ID, now); err != nil {
 		return dto.TokenResponse{}, apperror.Internal(err)
 	}
-	resp, err := u.openSession(ctx, acc, client, now, "")
+	resp, err := u.openSession(ctx, acc, email.String(), client, now, "")
 	if err != nil {
 		return dto.TokenResponse{}, err
 	}
@@ -206,7 +206,18 @@ func (u *Auth) Refresh(ctx context.Context, req dto.RefreshRequest, client inbou
 	if !acc.Active() {
 		return dto.TokenResponse{}, inbound.ErrAccountDisabled
 	}
-	resp, err := u.openSession(ctx, acc, client, now, sess.ID)
+
+	// Fetch email for token claims (Refresh flow doesn't have email in context)
+	emailEnc, err := u.d.Accounts.GetEmailEncByID(ctx, acc.ID)
+	if err != nil {
+		return dto.TokenResponse{}, apperror.Internal(fmt.Errorf("fetch email: %w", err))
+	}
+	email, err := u.d.PII.UnsealEmail(emailEnc)
+	if err != nil {
+		return dto.TokenResponse{}, apperror.Internal(fmt.Errorf("unseal email: %w", err))
+	}
+
+	resp, err := u.openSession(ctx, acc, email, client, now, sess.ID)
 	if err != nil {
 		return dto.TokenResponse{}, err
 	}
@@ -234,7 +245,8 @@ func (u *Auth) Logout(ctx context.Context, req dto.RefreshRequest, client inboun
 }
 
 // openSession issues a refresh token (baru, atau rotasi dari rotateFrom) and an access token.
-func (u *Auth) openSession(ctx context.Context, acc entity.Account, client inbound.ClientInfo, now time.Time, rotateFrom string) (dto.TokenResponse, error) {
+// email param is required because: for VerifyOTP we have it from request; for Refresh we fetch it.
+func (u *Auth) openSession(ctx context.Context, acc entity.Account, email string, client inbound.ClientInfo, now time.Time, rotateFrom string) (dto.TokenResponse, error) {
 	raw, err := u.d.Secrets.RefreshToken()
 	if err != nil {
 		return dto.TokenResponse{}, apperror.Internal(err)
@@ -252,7 +264,14 @@ func (u *Auth) openSession(ctx context.Context, acc entity.Account, client inbou
 	if err != nil {
 		return dto.TokenResponse{}, apperror.Internal(err)
 	}
-	access, accessExp, err := u.d.Tokens.IssueAccess(acc.ID, now)
+
+	// Fetch nikHash for token claims (nil if account has no NIK)
+	nikHash, err := u.d.Accounts.GetNIKHashByID(ctx, acc.ID)
+	if err != nil && !errors.Is(err, entity.ErrNotFound) {
+		return dto.TokenResponse{}, apperror.Internal(fmt.Errorf("fetch nik hash: %w", err))
+	}
+
+	access, accessExp, err := u.d.Tokens.IssueAccess(acc.ID, email, nikHash, now)
 	if err != nil {
 		return dto.TokenResponse{}, apperror.Internal(err)
 	}

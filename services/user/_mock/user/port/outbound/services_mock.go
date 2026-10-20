@@ -189,9 +189,9 @@ func (m *MockITokenIssuer) EXPECT() *MockITokenIssuerMockRecorder {
 }
 
 // IssueAccess mocks base method.
-func (m *MockITokenIssuer) IssueAccess(accountID string, now time.Time) (string, time.Time, error) {
+func (m *MockITokenIssuer) IssueAccess(accountID, email string, nikHash []byte, now time.Time) (string, time.Time, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "IssueAccess", accountID, now)
+	ret := m.ctrl.Call(m, "IssueAccess", accountID, email, nikHash, now)
 	ret0, _ := ret[0].(string)
 	ret1, _ := ret[1].(time.Time)
 	ret2, _ := ret[2].(error)
@@ -199,9 +199,9 @@ func (m *MockITokenIssuer) IssueAccess(accountID string, now time.Time) (string,
 }
 
 // IssueAccess indicates an expected call of IssueAccess.
-func (mr *MockITokenIssuerMockRecorder) IssueAccess(accountID, now any) *gomock.Call {
+func (mr *MockITokenIssuerMockRecorder) IssueAccess(accountID, email, nikHash, now any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IssueAccess", reflect.TypeOf((*MockITokenIssuer)(nil).IssueAccess), accountID, now)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IssueAccess", reflect.TypeOf((*MockITokenIssuer)(nil).IssueAccess), accountID, email, nikHash, now)
 }
 
 // MockISecretGenerator is a mock of ISecretGenerator interface.
@@ -366,4 +366,19 @@ func (m *MockIPIIProtector) SealNIK(nik string) ([]byte, error) {
 func (mr *MockIPIIProtectorMockRecorder) SealNIK(nik any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SealNIK", reflect.TypeOf((*MockIPIIProtector)(nil).SealNIK), nik)
+}
+
+// UnsealEmail mocks base method.
+func (m *MockIPIIProtector) UnsealEmail(enc []byte) (string, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "UnsealEmail", enc)
+	ret0, _ := ret[0].(string)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// UnsealEmail indicates an expected call of UnsealEmail.
+func (mr *MockIPIIProtectorMockRecorder) UnsealEmail(enc any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UnsealEmail", reflect.TypeOf((*MockIPIIProtector)(nil).UnsealEmail), enc)
 }

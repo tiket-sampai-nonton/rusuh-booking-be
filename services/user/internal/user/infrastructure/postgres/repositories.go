@@ -94,6 +94,32 @@ func (r *Accounts) TouchLogin(ctx context.Context, id string, at time.Time) erro
 	return err
 }
 
+// GetNIKHashByID returns the nik_hash for a given account. Returns nil, nil if account has no NIK.
+func (r *Accounts) GetNIKHashByID(ctx context.Context, id string) ([]byte, error) {
+	var nikHash []byte
+	err := r.pool.QueryRow(ctx, `SELECT nik_hash FROM accounts WHERE id = $1::uuid`, id).Scan(&nikHash)
+	switch {
+	case errors.Is(err, pgx.ErrNoRows), pkgpg.IsCode(err, "22P02"):
+		return nil, entity.ErrNotFound
+	case err != nil:
+		return nil, fmt.Errorf("accounts: get nik hash: %w", err)
+	}
+	return nikHash, nil // nikHash may be nil if account has no NIK
+}
+
+// GetEmailEncByID returns the encrypted email for a given account. Caller must unseal via IPIIProtector.
+func (r *Accounts) GetEmailEncByID(ctx context.Context, id string) ([]byte, error) {
+	var emailEnc []byte
+	err := r.pool.QueryRow(ctx, `SELECT email_enc FROM accounts WHERE id = $1::uuid`, id).Scan(&emailEnc)
+	switch {
+	case errors.Is(err, pgx.ErrNoRows), pkgpg.IsCode(err, "22P02"):
+		return nil, entity.ErrNotFound
+	case err != nil:
+		return nil, fmt.Errorf("accounts: get email enc: %w", err)
+	}
+	return emailEnc, nil
+}
+
 // Sessions implements outbound.ISessionRepository.
 type Sessions struct{ pool *pgxpool.Pool }
 

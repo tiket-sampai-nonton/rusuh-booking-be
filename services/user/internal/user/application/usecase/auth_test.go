@@ -153,7 +153,7 @@ func TestRequestOTP_Failures(t *testing.T) {
 	})
 }
 
-func expectSession(m mocks, rotateFrom string) {
+func expectSession(m mocks, rotateFrom string, email string) {
 	m.secrets.EXPECT().RefreshToken().Return("refresh-raw", nil)
 	sess := entity.Session{ID: "s-2", AccountID: "acc-1", ExpiresAt: now.Add(settings.RefreshTTL)}
 	if rotateFrom == "" {
@@ -162,7 +162,8 @@ func expectSession(m mocks, rotateFrom string) {
 	} else {
 		m.sessions.EXPECT().Rotate(gomock.Any(), rotateFrom, gomock.Any(), now).Return(sess, nil)
 	}
-	m.tokens.EXPECT().IssueAccess("acc-1", now).Return("access-jwt", now.Add(15*time.Minute), nil)
+	m.accounts.EXPECT().GetNIKHashByID(gomock.Any(), "acc-1").Return(nil, nil) // no NIK
+	m.tokens.EXPECT().IssueAccess("acc-1", email, nil, now).Return("access-jwt", now.Add(15*time.Minute), nil)
 }
 
 func TestVerifyOTP_ExistingAccount(t *testing.T) {
@@ -171,7 +172,7 @@ func TestVerifyOTP_ExistingAccount(t *testing.T) {
 	m.otp.EXPECT().Clear(gomock.Any(), emailKey).Return(nil)
 	m.accounts.EXPECT().FindByEmailHash(gomock.Any(), emailH).Return(activeAcc, true, nil)
 	m.accounts.EXPECT().TouchLogin(gomock.Any(), "acc-1", now).Return(nil)
-	expectSession(m, "")
+	expectSession(m, "", "arnu@gmail.com")
 
 	resp, err := u.VerifyOTP(context.Background(), dto.VerifyOTPRequest{Email: "arnu@gmail.com", Code: "123456"}, client)
 	require.NoError(t, err)
@@ -188,7 +189,7 @@ func TestVerifyOTP_FirstLoginCreatesAccount(t *testing.T) {
 	m.pii.EXPECT().SealEmail("arnu@gmail.com").Return([]byte("enc"), nil)
 	m.accounts.EXPECT().Create(gomock.Any(), entity.NewAccount{EmailHash: emailH, EmailEnc: []byte("enc"), EmailMasked: "ar***@gmail.com"}).Return(activeAcc, nil)
 	m.accounts.EXPECT().TouchLogin(gomock.Any(), "acc-1", now).Return(nil)
-	expectSession(m, "")
+	expectSession(m, "", "arnu@gmail.com")
 
 	_, err := u.VerifyOTP(context.Background(), dto.VerifyOTPRequest{Email: "arnu@gmail.com", Code: "123456"}, client)
 	require.NoError(t, err)
@@ -271,32 +272,42 @@ func TestVerifyOTP_WrongCodeReportsAttemptsLeft(t *testing.T) {
 
 func TestOpenSession_Failures(t *testing.T) {
 	ctx := context.Background()
+	email := "arnu@gmail.com"
 	t.Run("refresh generator", func(t *testing.T) {
 		u, m := newAuth(t)
 		m.secrets.EXPECT().RefreshToken().Return("", errors.New("entropy"))
-		_, err := u.openSession(ctx, activeAcc, client, now, "")
+		_, err := u.openSession(ctx, activeAcc, email, client, now, "")
 		assert.Equal(t, apperror.CodeInternal, code(err))
 	})
 	t.Run("create", func(t *testing.T) {
 		u, m := newAuth(t)
 		m.secrets.EXPECT().RefreshToken().Return("r", nil)
 		m.sessions.EXPECT().Create(gomock.Any(), gomock.Any()).Return(entity.Session{}, errors.New("db"))
-		_, err := u.openSession(ctx, activeAcc, client, now, "")
+		_, err := u.openSession(ctx, activeAcc, email, client, now, "")
 		assert.Equal(t, apperror.CodeInternal, code(err))
 	})
 	t.Run("rotate lost race", func(t *testing.T) {
 		u, m := newAuth(t)
 		m.secrets.EXPECT().RefreshToken().Return("r", nil)
 		m.sessions.EXPECT().Rotate(gomock.Any(), "s-1", gomock.Any(), now).Return(entity.Session{}, entity.ErrRevoked)
-		_, err := u.openSession(ctx, activeAcc, client, now, "s-1")
+		_, err := u.openSession(ctx, activeAcc, email, client, now, "s-1")
 		assert.Equal(t, inbound.CodeSessionInvalid, code(err))
+	})
+	t.Run("get nik hash error", func(t *testing.T) {
+		u, m := newAuth(t)
+		m.secrets.EXPECT().RefreshToken().Return("r", nil)
+		m.sessions.EXPECT().Create(gomock.Any(), gomock.Any()).Return(entity.Session{ID: "s"}, nil)
+		m.accounts.EXPECT().GetNIKHashByID(gomock.Any(), "acc-1").Return(nil, errors.New("db"))
+		_, err := u.openSession(ctx, activeAcc, email, client, now, "")
+		assert.Equal(t, apperror.CodeInternal, code(err))
 	})
 	t.Run("issue access", func(t *testing.T) {
 		u, m := newAuth(t)
 		m.secrets.EXPECT().RefreshToken().Return("r", nil)
 		m.sessions.EXPECT().Create(gomock.Any(), gomock.Any()).Return(entity.Session{ID: "s"}, nil)
-		m.tokens.EXPECT().IssueAccess(gomock.Any(), gomock.Any()).Return("", time.Time{}, errors.New("sign"))
-		_, err := u.openSession(ctx, activeAcc, client, now, "")
+		m.accounts.EXPECT().GetNIKHashByID(gomock.Any(), "acc-1").Return(nil, nil)
+		m.tokens.EXPECT().IssueAccess(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return("", time.Time{}, errors.New("sign"))
+		_, err := u.openSession(ctx, activeAcc, email, client, now, "")
 		assert.Equal(t, apperror.CodeInternal, code(err))
 	})
 }
@@ -310,7 +321,9 @@ func TestRefresh(t *testing.T) {
 		u, m := newAuth(t)
 		m.sessions.EXPECT().FindByTokenHash(gomock.Any(), []byte("h:old")).Return(active, true, nil)
 		m.accounts.EXPECT().GetByID(gomock.Any(), "acc-1").Return(activeAcc, nil)
-		expectSession(m, "s-1")
+		m.accounts.EXPECT().GetEmailEncByID(gomock.Any(), "acc-1").Return([]byte("enc-email"), nil)
+		m.pii.EXPECT().UnsealEmail([]byte("enc-email")).Return("arnu@gmail.com", nil)
+		expectSession(m, "s-1", "arnu@gmail.com")
 		resp, err := u.Refresh(ctx, req, client)
 		require.NoError(t, err)
 		assert.Equal(t, "refresh-raw", resp.RefreshToken)
@@ -361,9 +374,22 @@ func TestRefresh(t *testing.T) {
 			m.sessions.EXPECT().FindByTokenHash(gomock.Any(), gomock.Any()).Return(active, true, nil)
 			m.accounts.EXPECT().GetByID(gomock.Any(), "acc-1").Return(entity.Account{ID: "acc-1", Status: entity.AccountDisabled}, nil)
 		}, inbound.CodeAccountDisabled},
+		{"fetch email error", req, func(m mocks) {
+			m.sessions.EXPECT().FindByTokenHash(gomock.Any(), gomock.Any()).Return(active, true, nil)
+			m.accounts.EXPECT().GetByID(gomock.Any(), "acc-1").Return(activeAcc, nil)
+			m.accounts.EXPECT().GetEmailEncByID(gomock.Any(), "acc-1").Return(nil, errors.New("db"))
+		}, apperror.CodeInternal},
+		{"unseal email error", req, func(m mocks) {
+			m.sessions.EXPECT().FindByTokenHash(gomock.Any(), gomock.Any()).Return(active, true, nil)
+			m.accounts.EXPECT().GetByID(gomock.Any(), "acc-1").Return(activeAcc, nil)
+			m.accounts.EXPECT().GetEmailEncByID(gomock.Any(), "acc-1").Return([]byte("enc"), nil)
+			m.pii.EXPECT().UnsealEmail(gomock.Any()).Return("", errors.New("decrypt"))
+		}, apperror.CodeInternal},
 		{"rotate race", req, func(m mocks) {
 			m.sessions.EXPECT().FindByTokenHash(gomock.Any(), gomock.Any()).Return(active, true, nil)
 			m.accounts.EXPECT().GetByID(gomock.Any(), "acc-1").Return(activeAcc, nil)
+			m.accounts.EXPECT().GetEmailEncByID(gomock.Any(), "acc-1").Return([]byte("enc"), nil)
+			m.pii.EXPECT().UnsealEmail(gomock.Any()).Return("arnu@gmail.com", nil)
 			m.secrets.EXPECT().RefreshToken().Return("r", nil)
 			m.sessions.EXPECT().Rotate(gomock.Any(), "s-1", gomock.Any(), now).Return(entity.Session{}, entity.ErrRevoked)
 		}, inbound.CodeSessionInvalid},

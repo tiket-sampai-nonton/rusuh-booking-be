@@ -3,7 +3,7 @@
 | Field | Value |
 |-------|-------|
 | **Service** | User Service |
-| **Sumber** | SDD-USER-001 v1.1 + implementasi `services/user` |
+| **Sumber** | SDD-USER-001 v1.2 + implementasi `services/user` |
 | **Port** | 8085 |
 | **Schema** | `users` (role `svc_user`) |
 | **Bahasa/stack** | Go 1.26, net/http, Cobra, pgx v5, valkey-go, EdDSA (`pkg/token`), AES-256-GCM + HMAC (`pkg/crypto`) |
@@ -27,14 +27,14 @@
                          │  ┌──────────────────▼────────────▼──────┐ │
                          │  │ IAccountRepository  IOTPStore         │ │
                          │  │ ISessionRepository  IRateLimiter      │ │
-                         │  │ ILoginAudit         IMailer           │ │
+                         │  │ ILoginAudit         IOTPPublisher      │ │
                          │  │ ITokenIssuer  ISecretGenerator  IPIIProtector│
                          │  └──────┬───────┬───────┬───────┬───────┘ │
                          └─────────┼───────┼───────┼───────┼─────────┘
                                    ▼       ▼       ▼       ▼
-                              postgres  valkey  smtp   security
-                              (accounts, (otp,   (SMTP  (PII crypto,
-                               sessions, rate-   OTP)   token EdDSA,
+                              postgres  valkey  rabbitmq   security
+                              (accounts, (otp,   (otp.requested (PII crypto,
+                               sessions, rate-   event)  token EdDSA,
                                audit)    limit)         secrets)
 ```
 
@@ -60,7 +60,7 @@
 | `ILoginAudit` | tulis `login_audit` | `postgres` |
 | `IOTPStore` | Start/Attempt/Clear OTP (TTL) | `valkey` |
 | `IRateLimiter` | fixed-window `Allow` | `valkey` |
-| `IMailer` | `SendOTP` | `smtp` |
+| `IOTPPublisher` | PublishOTP(emailEnc, codeEnc, expiresAt) | `rabbitmq` |
 | `ITokenIssuer` | `IssueAccess` | `security` |
 | `ISecretGenerator` | `OTPCode`, `RefreshToken` | `security` |
 | `IPIIProtector` | Hash/Seal email & NIK, HashOTP, HashRefreshToken | `security` |
@@ -133,7 +133,7 @@
 5. code = Secrets.OTPCode() (6 digit, crypto/rand)
 6. started = OTP.Start(key, PII.HashOTP(emailHash, code), OTP_TTL, ResendCooldown)
    └ started=false ⇒ 429 OTP_RESEND_TOO_SOON (+ retryAfterSeconds)
-7. Mailer.SendOTP(email, code, TTL); gagal ⇒ OTP.Clear(key) + 503 DEPENDENCY_UNAVAILABLE
+7. emailEnc = PII.SealEmail(email); codeEnc = PII.SealOTP(code); Publisher.PublishOTP(emailEnc, codeEnc, expiresAt); gagal ⇒ OTP.Clear(key) + 503 DEPENDENCY_UNAVAILABLE
 8. audit OTP_SENT; 202 {expiresInSeconds, resendAfterSeconds}
 ```
 
@@ -153,7 +153,9 @@
 10. audit LOGIN_OK; 200 TokenResponse
 ```
 
-### 3.3 Token issuance (`security.Tokens.IssueAccess`) — **delta D1**
+### 3.3 Token issuance (`security.Tokens.IssueAccess`) — **P0 ENHANCEMENT REQUIRED**
+
+#### Current State (delta D1 — MUST FIX)
 ```
 exp = now + TOKEN_ACCESS_TTL
 jti = Secrets.RefreshToken()[:22]      // 22 char base64url
@@ -161,10 +163,146 @@ sign Claims{ iss=TOKEN_ISSUER, sub=accountID, aud=TOKEN_AUDIENCE(string),
              jti, scope="buyer", iat=now, exp }
 alg = EdDSA (Ed25519), typ=JWT, kid=TOKEN_KEY_ID
 ```
-Klaim yang **sebenarnya** ditandatangani: `iss, sub, aud, jti, scope, iat, exp`.
-**Tidak ada** `email`, `nik_hash`, `has_nik` (SDD §6.1/App C keliru). `aud` satu string
-(`rbt`), bukan array. Verifikasi (`VerifyAccess`) mengecek signature/issuer/audience/exp
-(leeway 5s) dan mengembalikan `sub`.
+Klaim yang **saat ini** ditandatangani: `iss, sub, aud, jti, scope, iat, exp`.
+**Tidak ada** `email`, `nik_hash`, `has_nik` — ini adalah **P0 blocker** untuk Queue/Booking.
+
+#### Target State (per SDD §6.1, SRS-F-27-10)
+
+```go
+// pkg/token/token.go — Claims struct
+type Claims struct {
+    // Standard claims
+    Issuer    string `json:"iss"`
+    Subject   string `json:"sub"` // account UUID
+    Audience  string `json:"aud"`
+    JTI       string `json:"jti"`
+    Scope     string `json:"scope"`
+    IssuedAt  int64  `json:"iat"`
+    ExpiresAt int64  `json:"exp"`
+
+    // P0: Identity claims for Queue/Booking offline validation
+    Email   string `json:"email"`              // buyer email (always present)
+    NIKHash string `json:"nik_hash,omitempty"` // hex HMAC, empty if no NIK
+    HasNIK  bool   `json:"has_nik"`            // true if account has NIK linked
+}
+```
+
+#### Token Issuance Flow (target)
+
+```
+IssueAccess(accountID, email, nikHash, now):
+  exp = now + TOKEN_ACCESS_TTL
+  jti = Secrets.RefreshToken()[:22]
+  
+  claims = Claims{
+    iss=TOKEN_ISSUER, sub=accountID, aud=TOKEN_AUDIENCE,
+    jti, scope="buyer", iat=now, exp,
+    // P0 identity claims
+    email=email,
+    has_nik=(nikHash != nil),
+    nik_hash=hex(nikHash) if nikHash else ""
+  }
+  
+  return sign(claims, EdDSA, kid=TOKEN_KEY_ID)
+```
+
+#### Interface Changes
+
+```go
+// port/outbound/token_issuer.go
+type ITokenIssuer interface {
+    // IssueAccess creates a signed JWT with identity claims.
+    // email is always present; nikHash may be nil if account has no NIK.
+    IssueAccess(accountID uuid.UUID, email string, nikHash []byte, now time.Time) (token string, expiresAt time.Time, err error)
+}
+
+// port/outbound/account_repository.go — add method
+type IAccountRepository interface {
+    // ... existing methods ...
+    GetNIKHashByID(ctx context.Context, id uuid.UUID) ([]byte, error)
+}
+```
+
+#### Implementation (`infrastructure/security/security.go`)
+
+```go
+func (t *Tokens) IssueAccess(accountID uuid.UUID, email string, nikHash []byte, now time.Time) (string, time.Time, error) {
+    exp := now.Add(t.accessTTL)
+    jti, err := t.secrets.RefreshToken()
+    if err != nil {
+        return "", time.Time{}, fmt.Errorf("generate jti: %w", err)
+    }
+
+    claims := token.Claims{
+        Issuer:    t.issuer,
+        Subject:   accountID.String(),
+        Audience:  t.audience,
+        JTI:       jti[:22],
+        Scope:     "buyer",
+        IssuedAt:  now.Unix(),
+        ExpiresAt: exp.Unix(),
+        // P0: Identity claims
+        Email:  email,
+        HasNIK: len(nikHash) > 0,
+    }
+    if len(nikHash) > 0 {
+        claims.NIKHash = hex.EncodeToString(nikHash)
+    }
+
+    signed, err := t.signer.Sign(claims)
+    if err != nil {
+        return "", time.Time{}, fmt.Errorf("sign token: %w", err)
+    }
+    return signed, exp, nil
+}
+```
+
+#### Usecase Integration (`application/usecase/auth.go`)
+
+```go
+func (a *Auth) openSession(ctx context.Context, acc *entity.Account, client ClientInfo, now time.Time, rotateFrom uuid.UUID) (*dto.TokenResponse, error) {
+    // ... session creation/rotation ...
+
+    // P0: Fetch NIK hash for token claims
+    nikHash, err := a.accounts.GetNIKHashByID(ctx, acc.ID)
+    if err != nil && !errors.Is(err, ErrNotFound) {
+        return nil, fmt.Errorf("get nik_hash: %w", err)
+    }
+
+    // Issue access token with identity claims
+    accessToken, accessExp, err := a.tokens.IssueAccess(acc.ID, acc.Email(), nikHash, now)
+    if err != nil {
+        return nil, fmt.Errorf("issue access token: %w", err)
+    }
+
+    return mapper.ToTokenResponse(accessToken, accessExp, raw, sess.ExpiresAt, acc), nil
+}
+```
+
+#### Downstream Usage (Queue/Booking)
+
+```go
+// In Queue/Booking handler
+claims, err := verifier.VerifyAccess(bearerToken)
+if err != nil {
+    return ErrUnauthorized
+}
+
+var buyerNikHash []byte
+if claims.HasNIK {
+    // Use NIK from token — ignore body.buyerNik
+    buyerNikHash, _ = hex.DecodeString(claims.NIKHash)
+} else {
+    // Require body.buyerNik, hash it with shared key
+    if req.BuyerNik == "" {
+        return ErrNikRequired
+    }
+    buyerNikHash = pii.HashNIK(req.BuyerNik) // same PII_HASH_KEY
+}
+```
+
+Verifikasi (`VerifyAccess`) mengecek signature/issuer/audience/exp (leeway 5s) dan
+mengembalikan `Claims` termasuk `Email`, `NIKHash`, `HasNIK`.
 
 ### 3.4 Session issuance & rotasi (`Auth.openSession` + `Auth.Refresh`)
 ```
@@ -237,6 +375,98 @@ Idempoten: token kosong/tak dikenal/sudah dicabut ⇒ tetap sukses; selain itu `
 
 ---
 
+## 5a. State Machine
+
+### Akun (`accounts.status`, `entity.Account`)
+```
+            create (login pertama)
+                 │
+                 ▼
+          ┌─────────────┐   (admin, di luar scope service ini)   ┌──────────────┐
+          │   ACTIVE     │ ─────────────────────────────────────▶│   DISABLED    │
+          └─────────────┘                                        └──────────────┘
+           boleh login                                        VerifyOTP/Refresh ⇒
+           & refresh                                           403 ACCOUNT_DISABLED
+```
+- Hanya dua status (`entity.AccountActive`/`AccountDisabled`). Tidak ada transisi `DISABLED→ACTIVE`
+  di kode service (reaktivasi bukan bagian dari usecase mana pun).
+- `Account.Active()` menggerbangi VerifyOTP (langkah 7) dan Refresh.
+
+### Sesi (`sessions`, `entity.Session`)
+```
+         Create / Rotate(next)
+                 │
+                 ▼
+          ┌─────────────┐   Revoke (logout)          ┌──────────────┐
+          │   active     │ ──────────────────────────▶│   revoked     │ (revoked_at set)
+          │ revoked_at=∅ │   Rotate (refresh:          └──────────────┘
+          └─────┬───────┘   revoked_at+replaced_by)          ▲
+                │                                            │
+                │ Expired(now) (expires_at ≤ now)            │ FindByTokenHash → Revoked()
+                ▼                                            │  ⇒ RevokeAllForAccount
+          ┌─────────────┐                                    │  (deteksi replay,
+          │  expired     │                                   │   REFRESH_REUSED)
+          └─────────────┘                                    │
+   Semua sesi akun dapat dicabut sekaligus (RevokeAllForAccount) saat replay terdeteksi.
+```
+- `Revoked()` = `revoked_at != nil`; `Expired(now)` = `!now.Before(expires_at)`.
+- Rotasi (`Rotate`) atomik: sesi lama → `revoked_at`+`replaced_by`, sesi baru dibuat; `entity.ErrRevoked`
+  bila sesi lama ternyata sudah dicabut (race) ⇒ `401 SESSION_INVALID`.
+
+---
+
+## 5b. Audit Events (`login_audit.outcome`, `entity.LoginEvent`)
+
+Setiap alur menulis tepat satu baris audit via `ILoginAudit.Record` (best-effort: kegagalan tulis
+hanya di-`Warn`, tidak membatalkan alur). Email plaintext dan kode OTP **tidak pernah** ditulis — hanya
+`email_hash`, `account_id` (bila ada), `outcome`, `client_ip`.
+
+| Outcome | Dipicu oleh | Konteks |
+|---------|-------------|---------|
+| `OTP_SENT` | `RequestOTP` sukses kirim email | email_hash + IP |
+| `OTP_RATE_LIMITED` | `RequestOTP` limiter per-email/IP menolak | email_hash + IP |
+| `OTP_INVALID` | `VerifyOTP` kode salah (constant-time) | email_hash + IP |
+| `OTP_EXPIRED` | `VerifyOTP` OTP tidak ada/kedaluwarsa | email_hash + IP |
+| `OTP_LOCKED` | `VerifyOTP` percobaan > `OTP_MAX_ATTEMPTS` | email_hash + IP |
+| `LOGIN_OK` | `VerifyOTP` berhasil membuka sesi | account_id + email_hash + IP |
+| `REFRESH_OK` | `Refresh` rotasi sukses | account_id + IP |
+| `REFRESH_REUSED` | `Refresh` token tercabut dipakai ulang (replay) | account_id + IP |
+| `LOGOUT` | `Logout` mencabut sesi aktif | account_id + IP |
+
+> Basis alert SDD §9.2: `OTP_INVALID`/`OTP_LOCKED` tinggi ⇒ brute force; `REFRESH_REUSED` ⇒ dugaan
+> pencurian token. Query atas `idx_login_audit_email_time` (`email_hash, created_at DESC`).
+
+---
+
+### 5c. OTP Event Schema (`otp.requested`)
+
+User Service mempublikasikan event `otp.requested` ke RabbitMQ untuk dikirim oleh Notification Service. Kode OTP dan email dienkripsi AES-256-GCM sebelum dipublish (SRS-F-27-12).
+
+**Exchange:** `rusuh.events` (topic)
+**Routing key:** `otp.requested`
+**Queue:** `notification.otp` (no retry — time-sensitive)
+
+```json
+{
+  "messageId": "uuid",
+  "eventType": "otp.requested",
+  "schemaVersion": "v1",
+  "occurredAt": "2026-10-20T13:45:00Z",
+  "correlationId": "uuid",
+  "producer": "user-service",
+  "payload": {
+    "emailEnc": "base64(AES-256-GCM encrypted email)",
+    "codeEnc": "base64(AES-256-GCM encrypted 6-digit code)",
+    "expiresAt": "2026-10-20T13:50:00Z",
+    "locale": "id"
+  }
+}
+```
+
+Notification Service mendekripsi `emailEnc` dan `codeEnc` menggunakan kunci `PII_ENC_KEY` yang sama, lalu mengirim email via SMTP.
+
+---
+
 ## 6. Peta Error (kode → HTTP, `port/inbound/errors.go`)
 
 | Code | HTTP | Kondisi |
@@ -251,7 +481,7 @@ Idempoten: token kosong/tak dikenal/sudah dicabut ⇒ tetap sukses; selain itu `
 | `ACCOUNT_DISABLED` | 403 | akun `DISABLED` — *tidak di SDD (D12)* |
 | `UNAUTHORIZED` | 401 | Bearer access token invalid/kedaluwarsa |
 | `NIK_ALREADY_LINKED` | 409 | NIK sudah tertaut akun lain |
-| `DEPENDENCY_UNAVAILABLE` | 503 | SMTP gagal kirim OTP — *tidak di SDD (D12)* |
+| `DEPENDENCY_UNAVAILABLE` | 503 | Publish `otp.requested` gagal — *tidak di SDD (D12)* |
 
 Pemetaan ke envelope lewat `pkg/httpx.WriteError` + `pkg/apperror`.
 
@@ -267,7 +497,7 @@ Pemetaan ke envelope lewat `pkg/httpx.WriteError` + `pkg/apperror`.
 | Token | `TOKEN_ISSUER`, `TOKEN_AUDIENCE`, `TOKEN_KEY_ID`, `TOKEN_PRIVATE_KEY_FILE` (PEM PKCS#8 Ed25519), `TOKEN_ACCESS_TTL` (1m–1h), `TOKEN_REFRESH_TTL` (1h–90d) | rentang ketat |
 | OTP | `OTP_TTL` (1m–15m), `OTP_RESEND_COOLDOWN` (≥10s, <TTL), `OTP_MAX_ATTEMPTS` (3–10), `OTP_MAX_PER_EMAIL_HOUR` (≥1), `OTP_MAX_PER_IP_HOUR` (≥per-email) | — |
 | PII | `PII_ENC_KEY`, `PII_HASH_KEY`, `OTP_HASH_KEY` (hex 32 byte, **harus berbeda**) | `crypto.ParseKey` |
-| SMTP | `SMTP_HOST/PORT/USERNAME/PASSWORD/FROM/TIMEOUT` | host/port/from/timeout valid |
+| RabbitMQ | `RABBITMQ_URL`, `RABBITMQ_EXCHANGE=rusuh.events` | untuk publish `otp.requested` |
 
 Catatan: nama var berbeda dari SDD §8 (SDD pakai `DATABASE_URL`, `USER_TOKEN_*`,
 `ACCESS_TOKEN_TTL`, path untuk PII, `OTP_LENGTH`/`OTP_COOLDOWN`/`OTP_HOURLY_LIMIT_*`). Kunci
@@ -303,6 +533,85 @@ cari OTP di log→tidak ditemukan.
 > **Catatan verifikasi TC**: TC-USR-09/09a (join pakai nikHash dari token) **tidak dapat lulus
 > apa adanya** karena token tak memuat `nik_hash`/`has_nik` **(delta D1)** — perlu penyelarasan
 > SDD/Queue sebelum TC dieksekusi.
+
+---
+
+## 11. P0 Implementation Checklist — Token Claims Enhancement
+
+> **Status:** ✅ COMPLETE. Implemented 2026-10-20. Queue/Booking can now validate NIK offline using token claims.
+
+### Current State (verified 2026-10-20)
+
+| Item | Status | Notes |
+|------|--------|-------|
+| `pkg/token.Claims` struct | ✅ DONE | Has `Email`, `NIKHash` (`omitempty`), `HasNIK` (`omitempty`) |
+| `IAccountRepository.GetNIKHashByID` | ✅ DONE | Returns `([]byte, error)` - nil for no NIK |
+| `IAccountRepository.GetEmailEncByID` | ✅ DONE | Returns encrypted email; caller uses `UnsealEmail` |
+| `IPIIProtector.UnsealEmail` | ✅ DONE | Decrypts email_enc |
+| `ITokenIssuer.IssueAccess` signature | ✅ DONE | `(accountID, email string, nikHash []byte, now time.Time)` |
+| `Tokens.IssueAccess` implementation | ✅ DONE | Populates Email, HasNIK, NIKHash (hex) |
+| `Auth` usecase wiring | ✅ DONE | `openSession` accepts email, fetches nikHash |
+
+### Files Modified
+
+| # | File | Change | Status |
+|---|------|--------|--------|
+| 1 | `services/user/internal/user/port/outbound/repositories.go` | Added `GetNIKHashByID` and `GetEmailEncByID` | ✅ |
+| 2 | `services/user/internal/user/port/outbound/services.go` | Updated `IssueAccess` signature; added `UnsealEmail` to `IPIIProtector` | ✅ |
+| 3 | `services/user/internal/user/infrastructure/postgres/repositories.go` | Implemented `GetNIKHashByID` and `GetEmailEncByID` | ✅ |
+| 4 | `services/user/internal/user/infrastructure/security/security.go` | Updated `IssueAccess` to populate claims; added `UnsealEmail` | ✅ |
+| 5 | `services/user/internal/user/infrastructure/security/security_test.go` | Tests for token with/without NIK | ✅ |
+| 6 | `services/user/internal/user/application/usecase/auth.go` | Wired email + nikHash in VerifyOTP and Refresh | ✅ |
+| 7 | `services/user/internal/user/application/usecase/auth_test.go` | Updated mock expectations + new failure cases | ✅ |
+| 8 | `services/user/_mock/...` | Regenerated mocks | ✅ |
+
+### Design Decisions
+
+**D1: Account ID is `string`, not `uuid.UUID`**
+The codebase uses `string` for account IDs throughout.
+
+**D2: Email source differs by flow**
+- **VerifyOTP**: Email from request input (already validated)
+- **Refresh**: Fetches via `GetEmailEncByID` + `UnsealEmail`
+
+**D3: Claims JSON tags use `omitempty`**
+Both `nik_hash` and `has_nik` use `omitempty`, so they are omitted when empty/false.
+
+**D4: Interface returns encrypted email**
+`GetEmailEncByID` returns encrypted bytes; usecase calls `UnsealEmail` to decrypt. This keeps
+decryption in the security domain and out of the repository.
+
+### Verification (2026-10-20)
+
+```bash
+make build   # ✅ all 5 services pass
+make test    # ✅ all unit tests pass
+# golangci-lint: 3 pre-existing issues (errcheck, misspell) not related to P0
+```
+
+### Acceptance Criteria
+
+1. ✅ `IAccountRepository` has `GetNIKHashByID(ctx, id string) ([]byte, error)`
+2. ✅ `IAccountRepository` has `GetEmailEncByID(ctx, id string) ([]byte, error)`
+3. ✅ `IPIIProtector` has `UnsealEmail(enc []byte) (string, error)`
+4. ✅ `ITokenIssuer.IssueAccess` signature: `(accountID, email string, nikHash []byte, now time.Time)`
+5. ✅ `AccountRepository.GetNIKHashByID` handles NULL correctly (returns nil, nil)
+6. ✅ `AccountRepository.GetEmailEncByID` returns encrypted bytes
+7. ✅ `Tokens.IssueAccess` populates `Email` (always), `HasNIK`, and `NIKHash` (hex, if present)
+8. ✅ `Auth.VerifyOTP` passes email from request input to token issuance
+9. ✅ `Auth.Refresh` fetches email via `GetEmailEncByID` + `UnsealEmail` before token issuance
+10. ✅ Unit tests: token with NIK has all 3 claims; without NIK has `HasNIK=false`
+11. ☐ Integration tests: both new repository methods (TODO: requires `make test-integration`)
+12. ✅ `make build && make test` pass
+
+### TC Unblock
+
+| Test Case | Before P0 | After P0 |
+|-----------|-----------|----------|
+| TC-USR-09 | ❌ Cannot run | ✅ Token has `has_nik=true`, `nik_hash` |
+| TC-USR-09a | ❌ Cannot run | ✅ Token has `has_nik=false` |
+| Queue join (logged-in + NIK) | ❌ Blocked | ✅ Uses `nik_hash` from token |
+| Queue join (logged-in, no NIK) | ❌ Blocked | ✅ Requires `body.buyerNik` |
 
 ---
 

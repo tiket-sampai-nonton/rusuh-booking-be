@@ -4,7 +4,7 @@
 |-------|-------|
 | **System / Software** | Rusuh Booking Tiket (Queue, Booking, Payment, Notification, User Service; Web; Mobile) |
 | **Document ID** | SRS-RBT-001 |
-| **Version** | 1.3 |
+| **Version** | 1.4 |
 | **Date** | 2026-10-19 |
 | **Status** | Draft. Baseline requirement = PRD v5.4; seluruh requirement `NOT_VERIFIED` |
 | **Author(s)** | Tim PT. Tiket Sampai Nonton Sentosa |
@@ -22,6 +22,7 @@
 
 | Version | Date | Author | Summary of change | Baseline |
 |---------|------|--------|-------------------|----------|
+| 1.4 | 2026-10-20 | Tim PT. Tiket Sampai Nonton Sentosa | SRS-F-27-12 direvisi: OTP boleh lewat broker dengan enkripsi; CMP-NOTIF ditambahkan ke §3.2.27 | Keputusan arsitektur: OTP email via Notification Service |
 | 1.3 | 2026-10-19 | Tim PT. Tiket Sampai Nonton Sentosa | Memperjelas **logged-in user NIK handling**: SRS-F-27-10 direvisi (NIK dari token.nikHash, body optional/ignored), SRS-F-27-10a ditambahkan (logged-in tanpa NIK → body required), SRS-F-01-01 direvisi (guest vs logged-in). Desain menghindari PII di API untuk logged-in user | PRD v5.4, US-092, US-094 |
 | 1.2 | 2026-10-19 | Tim PT. Tiket Sampai Nonton Sentosa | Katalog event dengan filter: §3.2.28 Event Catalog Filter (CAT-01, SRS-F-28-01..06) untuk filter waktu, lokasi, status; field `city` ditambahkan ke skema event; cache key CDN mencakup filter params | PRD v5.3 |
 | 1.1 | 2026-10-19 | Tim PT. Tiket Sampai Nonton Sentosa | Keputusan bersama BE-2: akun opsional dengan login OTP (§3.2.27, SRS-F-01-08 direvisi), event sourcing Booking dan Payment (SRS-C-09, SRS-D-10..12), circuit breaker menjadi MUST (§3.2.19), keamanan akun (SRS-Q-SEC-10..12), alert email (SRS-F-90-06), kontrak OpenAPI satu file per service | PRD v4.6 + D-03, D-04, D-19, D-21, D-40, D-41 |
@@ -729,7 +730,7 @@ Kontrak per endpoint (contoh request/response) ada di SDD-RBT-001 Interface view
 
 #### 3.2.27 Optional Account and OTP Login (USR-01)
 
-**Alloc:** CMP-USER, CMP-QUEUE, CMP-BOOKING, CMP-WEB, CMP-MOBILE
+**Alloc:** CMP-USER, CMP-NOTIF, CMP-QUEUE, CMP-BOOKING, CMP-WEB, CMP-MOBILE
 
 | ID | Requirement | Source | Pri | Ver | Test |
 |----|-------------|--------|-----|-----|------|
@@ -745,7 +746,7 @@ Kontrak per endpoint (contoh request/response) ada di SDD-RBT-001 Interface view
 | SRS-F-27-10 | When a logged-in customer with a stored NIK joins the queue, the Queue Service shall use the `nikHash` from the access token claims; the `buyerNik` field in the request body shall be optional and ignored if present; the account identifier shall be carried to the admission and the booking. | D-03, BR-02, US-092 | M | T | TC-USR-09 |
 | SRS-F-27-10a | When a logged-in customer without a stored NIK joins the queue, the Queue Service shall require the buyer NIK in the request body (same as guest); the system should offer to save the NIK to the account after successful join. | D-03, US-094 | M | T | TC-USR-09a |
 | SRS-F-27-11 | A logged-in customer shall be able to list the bookings made while logged in. | D-03 | S | T | TC-USR-10 |
-| SRS-F-27-12 | Login codes shall not pass through the message broker and shall not appear in logs. | GR-15 | M | I | TC-USR-11 |
+| SRS-F-27-12 | Login codes shall be encrypted (AES-256-GCM) when passed through the message broker and shall not appear in plaintext in logs or event payloads. | GR-15 | M | I | TC-USR-11 |
 
 #### 3.2.28 Event Catalog Filter (CAT-01, v5.3)
 

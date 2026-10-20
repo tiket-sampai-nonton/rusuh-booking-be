@@ -47,6 +47,15 @@ func (p *PII) SealEmail(email string) ([]byte, error) {
 	return p.sealer.Seal([]byte(email), []byte("users.accounts.email"))
 }
 
+// UnsealEmail decrypts the email.
+func (p *PII) UnsealEmail(enc []byte) (string, error) {
+	data, err := p.sealer.Open(enc, []byte("users.accounts.email"))
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
+}
+
 // HashNIK returns HMAC(nik); kunci yang sama dipakai Queue/Booking untuk buyer_nik_hash sehingga hasilnya bisa dicocokkan.
 func (p *PII) HashNIK(nik string) []byte { return p.hasher.Hash("nik:" + nik) }
 
@@ -102,15 +111,28 @@ func NewTokens(signer *token.Signer, verifier *token.Verifier, issuer, audience 
 	return &Tokens{signer: signer, verifier: verifier, issuer: issuer, audience: audience, ttl: ttl, now: now}
 }
 
-// IssueAccess signs an access token for accountID.
-func (t *Tokens) IssueAccess(accountID string, now time.Time) (string, time.Time, error) {
+// IssueAccess signs an access token for accountID with identity claims.
+func (t *Tokens) IssueAccess(accountID, email string, nikHash []byte, now time.Time) (string, time.Time, error) {
 	exp := now.Add(t.ttl)
 	jti, err := Secrets{}.RefreshToken()
 	if err != nil {
 		return "", time.Time{}, err
 	}
-	tok, err := t.signer.Sign(token.Claims{Issuer: t.issuer, Subject: accountID, Audience: t.audience, ID: jti[:22],
-		Scope: "buyer", IssuedAt: now.Unix(), ExpiresAt: exp.Unix()})
+	claims := token.Claims{
+		Issuer:    t.issuer,
+		Subject:   accountID,
+		Audience:  t.audience,
+		ID:        jti[:22],
+		Scope:     "buyer",
+		IssuedAt:  now.Unix(),
+		ExpiresAt: exp.Unix(),
+		Email:     email,
+		HasNIK:    len(nikHash) > 0,
+	}
+	if len(nikHash) > 0 {
+		claims.NIKHash = fmt.Sprintf("%x", nikHash)
+	}
+	tok, err := t.signer.Sign(claims)
 	return tok, exp, err
 }
 

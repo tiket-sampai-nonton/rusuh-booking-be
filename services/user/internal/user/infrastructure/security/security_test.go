@@ -75,17 +75,50 @@ func TestTokens_IssueAndVerify(t *testing.T) {
 	clock := now
 	tk := NewTokens(signer, verifier, "rbt-user", "rbt", 15*time.Minute, func() time.Time { return clock })
 
-	tok, exp, err := tk.IssueAccess("acc-1", now)
-	require.NoError(t, err)
-	assert.Equal(t, now.Add(15*time.Minute), exp)
+	t.Run("without NIK", func(t *testing.T) {
+		tok, exp, err := tk.IssueAccess("acc-1", "buyer@example.com", nil, now)
+		require.NoError(t, err)
+		assert.Equal(t, now.Add(15*time.Minute), exp)
 
-	id, err := tk.VerifyAccess(tok)
-	require.NoError(t, err)
-	assert.Equal(t, "acc-1", id)
+		id, err := tk.VerifyAccess(tok)
+		require.NoError(t, err)
+		assert.Equal(t, "acc-1", id)
 
-	clock = now.Add(16 * time.Minute)
-	_, err = tk.VerifyAccess(tok)
-	assert.ErrorIs(t, err, inbound.ErrUnauthorized)
-	_, err = tk.VerifyAccess("garbage")
-	assert.ErrorIs(t, err, inbound.ErrUnauthorized)
+		// Verify token claims directly
+		claims, err := verifier.Verify(tok, now)
+		require.NoError(t, err)
+		assert.Equal(t, "buyer@example.com", claims.Email)
+		assert.False(t, claims.HasNIK)
+		assert.Empty(t, claims.NIKHash)
+	})
+
+	t.Run("with NIK", func(t *testing.T) {
+		nikHash := []byte{0xab, 0xcd, 0xef}
+		tok, exp, err := tk.IssueAccess("acc-2", "user@example.com", nikHash, now)
+		require.NoError(t, err)
+		assert.Equal(t, now.Add(15*time.Minute), exp)
+
+		id, err := tk.VerifyAccess(tok)
+		require.NoError(t, err)
+		assert.Equal(t, "acc-2", id)
+
+		// Verify token claims directly
+		claims, err := verifier.Verify(tok, now)
+		require.NoError(t, err)
+		assert.Equal(t, "user@example.com", claims.Email)
+		assert.True(t, claims.HasNIK)
+		assert.Equal(t, "abcdef", claims.NIKHash)
+	})
+
+	t.Run("expired", func(t *testing.T) {
+		tok, _, _ := tk.IssueAccess("acc-1", "buyer@example.com", nil, now)
+		clock = now.Add(16 * time.Minute)
+		_, err = tk.VerifyAccess(tok)
+		assert.ErrorIs(t, err, inbound.ErrUnauthorized)
+	})
+
+	t.Run("garbage", func(t *testing.T) {
+		_, err := tk.VerifyAccess("garbage")
+		assert.ErrorIs(t, err, inbound.ErrUnauthorized)
+	})
 }

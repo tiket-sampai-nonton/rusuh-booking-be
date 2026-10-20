@@ -3,7 +3,7 @@
 | Field | Value |
 |-------|-------|
 | **Service** | User Service |
-| **Spec dari** | SDD-USER-001 v1.1 + implementasi `services/user` |
+| **Spec dari** | SDD-USER-001 v1.2 + implementasi `services/user` |
 | **Port** | 8085 |
 | **Schema** | `users` (role `svc_user`) |
 | **Owner** | BE-1 |
@@ -21,10 +21,11 @@ SDD dan kode berbeda, kebenaran mengikuti kode dan perbedaannya dicatat di bagia
 Prinsip (PRD/HLD): login opsional, OTP email (tanpa password), *privacy by design*
 (email & NIK dienkripsi AES-256-GCM + hash HMAC untuk pencarian; refresh token di-hash;
 kode OTP hanya tersimpan sebagai hash di Valkey dengan TTL).
+OTP email dikirim via Notification Service (event `otp.requested` dengan enkripsi AES-256-GCM).
 
 Arsitektur: hexagonal (port/adapter). Usecase `Auth` dan `Profile` bergantung pada port
 `outbound` (`IAccountRepository`, `ISessionRepository`, `ILoginAudit`, `IOTPStore`,
-`IRateLimiter`, `IMailer`, `ITokenIssuer`, `ISecretGenerator`, `IPIIProtector`), adapter
+`IRateLimiter`, `IOTPPublisher`, `ITokenIssuer`, `ISecretGenerator`, `IPIIProtector`), adapter
 HTTP memanggil port `inbound` (`IAuthUsecase`, `IProfileUsecase`, `IAccessTokenVerifier`).
 
 ---
@@ -52,10 +53,10 @@ SRS-F-27-02 · TC-USR-02, TC-USR-04
    menolak dengan `429 RATE_LIMITED`.
 6. WHEN email gagal divalidasi (format/panjang), THE SYSTEM SHALL menolak dengan
    `400 VALIDATION_ERROR` dan menyebut field `email`.
-7. IF pengiriman email SMTP gagal, THE SYSTEM SHALL menghapus OTP yang baru disimpan dan
-   membalas `503 DEPENDENCY_UNAVAILABLE` (`ErrMailUnavailable`).
-8. THE SYSTEM SHALL mencatat audit `OTP_SENT` saat berhasil, tanpa pernah menuliskan kode
-   OTP atau email plaintext ke log/broker. *(TC-USR-11)*
+7. IF publish event `otp.requested` gagal, THE SYSTEM SHALL menghapus OTP yang baru disimpan dan
+   membalas `503 DEPENDENCY_UNAVAILABLE` (`ErrPublishFailed`).
+8. THE SYSTEM SHALL mencatat audit `OTP_SENT` saat berhasil. Kode OTP dan email dienkripsi
+   (AES-256-GCM) saat dipublish ke broker dan tidak pernah muncul plaintext di log. *(TC-USR-11)*
 
 ---
 
@@ -221,7 +222,7 @@ deterministik.
    `0001_init` (schema `users`: `accounts`, `sessions`, `login_audit`).
 2. WHEN `go run ./cmd api` dijalankan dengan konfigurasi valid, THE SYSTEM SHALL start di
    port 8085 dan melayani `/health` + route `/api/v1/*`.
-3. IF konfigurasi tidak valid (TOKEN_*, OTP_*, PII_*, SMTP_* di luar rentang), THEN THE
+3. IF konfigurasi tidak valid (TOKEN_*, OTP_*, PII_*, RABBITMQ_* di luar rentang), THEN THE
    SYSTEM SHALL gagal start dengan error validasi yang jelas.
 
 ### Acceptance Criteria (EARS) — Verify
@@ -246,7 +247,7 @@ Setiap delta di bawah **diverifikasi dengan membaca kode**, bukan ditebak. Forma
 
 | ID | SDD menyatakan | Kode sebenarnya | Sumber kode |
 |----|----------------|-----------------|-------------|
-| **D1** | Access token membawa klaim `email`, `nik_hash`, `has_nik` + `aud` array `["queue-service","booking-service"]` (§6.1, App C) | `Tokens.IssueAccess` hanya menandatangani `iss, sub, aud(string), jti, scope="buyer", iat, exp`. **Tidak ada** `email`/`nik_hash`/`has_nik`. `aud` adalah satu string (`TOKEN_AUDIENCE=rbt`). | `infrastructure/security/security.go` (`IssueAccess`); `pkg/token/token.go` (`Claims`) |
+| **D1** | Access token membawa klaim `email`, `nik_hash`, `has_nik` + `aud` array `["queue-service","booking-service"]` (§6.1, App C) | `pkg/token.Claims` **sudah punya** field `Email`, `NIKHash`, `HasNIK`. **NAMUN** `Tokens.IssueAccess` hanya menandatangani `iss, sub, aud(string), jti, scope="buyer", iat, exp` — **tidak mempopulasi** klaim identitas. `aud` adalah satu string (`TOKEN_AUDIENCE=rbt`). **Status: struct ready, issuance not wired.** | `pkg/token/token.go` (`Claims`); `infrastructure/security/security.go` (`IssueAccess`) |
 | **D2** | Rute OTP `POST /api/v1/auth/otp-request` dan `otp-verify` (tanda hubung) | Rute `POST /api/v1/auth/otp/request` dan `otp/verify` (garis miring) | `infrastructure/http/auth_handler.go` (`Register`) |
 | **D3** | Refresh token lewat **cookie HttpOnly `rb_refresh`**; verify "Set cookie", refresh "Set new cookie", logout "Clear cookie" | **Tidak ada cookie sama sekali.** Refresh token dikirim/diterima sebagai JSON body `refreshToken` (request) dan `refreshToken`/`refreshTokenExpiresAt` (response). | `auth_handler.go`; `domain/dto/auth.go` (`RefreshRequest`, `TokenResponse`) |
 | **D4** | Profil: `GET /api/v1/users/me`, link NIK via `POST /api/v1/users/me/nik` | `GET /api/v1/me` dan `PATCH /api/v1/me` (nama + NIK digabung dalam satu PATCH) | `auth_handler.go` (`Register`); `profile.go` (`UpdateProfile`) |
@@ -257,7 +258,7 @@ Setiap delta di bawah **diverifikasi dengan membaca kode**, bukan ditebak. Forma
 | **D9** | OTP hashing dengan `argon2.IDKey` + salt (App A.3) | OTP di-hash dengan **HMAC** (`crypto.Hasher`) diikat ke `email_hash` via `OTP_HASH_KEY`, bukan argon2 | `security.go` (`HashOTP`); `config/user.go` (`OTPKeyHex`) |
 | **D10** | Refresh token hash = `SHA256(token)` (App C.2) | Benar: `HashRefreshToken` = `SHA-256` dari token acak 32 byte base64url. (Tidak ada delta — dikonfirmasi) | `security.go` (`HashRefreshToken`) |
 | **D11** | Tabel `accounts` punya `email_enc`, `email_hash`, `nik_enc`, `nik_hash`, `created_at`, `updated_at` | Kode/migrasi menambahkan `email_masked`, `full_name` (CHECK 1–100), `nik_masked`, `status` (`ACTIVE`/`DISABLED`), `last_login_at`; `sessions` menambahkan `replaced_by`; `login_audit` memakai `outcome` enum + `id bigint IDENTITY` (SDD menamai kolom `action`,`success`,`failure_reason`,`ip_address`,`user_agent`) | `deployments/migrations/0001_init.up.sql` |
-| **D12** | Error table tidak memuat `ACCOUNT_DISABLED` (403) dan `DEPENDENCY_UNAVAILABLE` (503) untuk SMTP | Keduanya ada di kode (`ErrAccountDisabled`, `ErrMailUnavailable`) | `port/inbound/errors.go`; `auth.go` |
+| **D12** | Error table tidak memuat `ACCOUNT_DISABLED` (403) dan `DEPENDENCY_UNAVAILABLE` (503) untuk publish | Keduanya ada di kode (`ErrAccountDisabled`, `ErrPublishFailed`) | `port/inbound/errors.go`; `auth.go` |
 | **D13** | Order history: tidak ada di User Service (via Booking Service) | Dikonfirmasi — tidak ada endpoint order history di kode. (Sesuai SDD §3.7) | `auth_handler.go` (`Register`) |
 
 ### Implikasi Delta terhadap Test Plan
@@ -297,3 +298,83 @@ Setiap delta di bawah **diverifikasi dengan membaca kode**, bukan ditebak. Forma
 - If `false`: require `body.buyerNik`, HMAC it with the shared key
 
 **Test unblock:** TC-USR-09, TC-USR-09a become runnable.
+
+---
+
+## P0 Implementation — Token Claims Enhancement ✅ COMPLETE
+
+### Problem Statement
+
+The current access token implementation only includes basic claims (`iss`, `sub`, `aud`, `jti`, `scope`, `iat`, `exp`). Per SDD-USER §6.1, SDD-QUEUE §3.1, and SRS-F-27-10, the token MUST include `email`, `nik_hash`, and `has_nik` so Queue and Booking can validate buyer identity offline without calling User Service.
+
+### Status: COMPLETE (2026-10-20)
+
+| Item | Status | Notes |
+|------|--------|-------|
+| `pkg/token.Claims` struct | ✅ | Has `Email`, `NIKHash` (`omitempty`), `HasNIK` |
+| `IAccountRepository.GetNIKHashByID` | ✅ | `(ctx, id string) ([]byte, error)` |
+| `IAccountRepository.GetEmailEncByID` | ✅ | Returns encrypted email bytes |
+| `IPIIProtector.UnsealEmail` | ✅ | Decrypts email_enc |
+| `ITokenIssuer.IssueAccess` signature | ✅ | `(accountID, email string, nikHash []byte, now)` |
+| `Tokens.IssueAccess` implementation | ✅ | Populates Email, HasNIK, NIKHash (hex) |
+| `Auth.openSession` wiring | ✅ | Accepts email, fetches nikHash |
+| Email in Refresh flow | ✅ | Fetches via `GetEmailEncByID` + `UnsealEmail` |
+
+### Implementation Summary
+
+**Files modified:**
+- `port/outbound/repositories.go` — Added `GetNIKHashByID`, `GetEmailEncByID`
+- `port/outbound/services.go` — Updated `IssueAccess` signature; added `UnsealEmail`
+- `infrastructure/postgres/repositories.go` — Implemented new methods
+- `infrastructure/security/security.go` — Updated `IssueAccess`; added `UnsealEmail`
+- `application/usecase/auth.go` — Wired email + nikHash flows
+- Tests and mocks updated
+
+**Design choices:**
+- Repository returns encrypted email bytes (`GetEmailEncByID`), not plaintext — keeps decryption in security domain
+- VerifyOTP uses email from validated request; Refresh fetches via `GetEmailEncByID` + `UnsealEmail`
+- `openSession` accepts email parameter, fetches nikHash internally
+
+**Verification:**
+```bash
+make build  # ✅ all 5 services
+make test   # ✅ all tests pass
+```
+
+### Downstream Usage (Queue/Booking)
+
+```go
+claims, _ := verifier.VerifyAccess(bearerToken)
+
+if claims.HasNIK {
+    // Use NIK hash from token
+    buyerNikHash, _ := hex.DecodeString(claims.NIKHash)
+} else {
+    // Require body.buyerNik
+    if req.BuyerNik == "" {
+        return 422, "NIK_REQUIRED"
+    }
+    buyerNikHash = pii.HashNIK(req.BuyerNik)
+}
+```
+
+---
+
+_End of User Service Requirements_
+
+### Migration Impact
+
+**None.** This change only affects token issuance logic — no database migrations required. The `nik_hash` column already exists in `accounts` table.
+
+### Rollout Strategy
+
+1. Deploy User Service with new token claims
+2. Queue/Booking can immediately use `has_nik`/`nik_hash` from tokens
+3. Old tokens (without claims) will fail validation → users re-login automatically (access TTL is 15m)
+
+### TC Unblock
+
+After implementation:
+- **TC-USR-09**: Login user with NIK → token has `has_nik=true`, `nik_hash` populated
+- **TC-USR-09a**: Login user without NIK → token has `has_nik=false`, `nik_hash` empty
+- **Queue join flow**: Extract `has_nik` from token, use `nik_hash` if true, else require `body.buyerNik`

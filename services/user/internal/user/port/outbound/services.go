@@ -30,7 +30,7 @@ type IMailer interface {
 
 // ITokenIssuer signs access tokens.
 type ITokenIssuer interface {
-	IssueAccess(accountID string, now time.Time) (token string, expiresAt time.Time, err error)
+	IssueAccess(accountID, email string, nikHash []byte, now time.Time) (token string, expiresAt time.Time, err error)
 }
 
 // ISecretGenerator produces random secrets.
@@ -43,6 +43,7 @@ type ISecretGenerator interface {
 type IPIIProtector interface {
 	HashEmail(email string) []byte
 	SealEmail(email string) ([]byte, error)
+	UnsealEmail(enc []byte) (string, error)
 	HashNIK(nik string) []byte
 	SealNIK(nik string) ([]byte, error)
 	HashOTP(emailHash []byte, code string) []byte

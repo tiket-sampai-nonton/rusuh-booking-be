@@ -634,12 +634,17 @@ sequenceDiagram
     autonumber
     participant C as Customer
     participant U as User Service
+    participant MQ as RabbitMQ
+    participant N as Notification Service
     participant E as Email (SES)
     
     Note over C,E: REQUEST OTP
     C->>U: POST /auth/otp-request<br/>{email: "user@example.com"}
-    Note over U: Generate 6-digit code<br/>Store with 5min TTL<br/>Rate limit: 1/60s, 5/hour
-    U->>E: Send OTP email
+    Note over U: Generate 6-digit code<br/>Store hash with 5min TTL<br/>Rate limit: 1/60s, 5/hour
+    U->>MQ: Publish otp.requested (encrypted)
+    MQ->>N: Deliver
+    N->>N: Decrypt code
+    N->>E: Send OTP email
     U-->>C: 202 Accepted<br/>{retryAfterSeconds: 60}
     
     Note over C,E: VERIFY OTP

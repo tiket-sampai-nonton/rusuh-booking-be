@@ -5,8 +5,8 @@
 | **System** | Rusuh Booking Tiket |
 | **Design subjects** | CMP-QUEUE, CMP-BOOKING, CMP-PAYMENT, CMP-NOTIF, CMP-USER, CMP-PLATFORM (web dan mobile dirinci di kontrak dan wireframe) |
 | **Document ID** | SDD-RBT-001 |
-| **Version** | 1.3 |
-| **Date** | 2026-10-19 |
+| **Version** | 1.4 |
+| **Date** | 2026-10-20 |
 | **Status** | Draft. Desain baseline = PRD v4.6 Final Canonical; implementasi `NOT_VERIFIED` |
 | **Issuing organization** | Tim Rusuh Booking Tiket |
 | **Author(s)** | Tim PT. Tiket Sampai Nonton Sentosa (BE-1, BE-2) |
@@ -27,6 +27,7 @@
 | 1.0 | 2026-10-17 | Tim PT. Tiket Sampai Nonton Sentosa | Dipecah dari PRD v4.6 §7.4, §9.5, §9.8, §11, §16.2, Lampiran A–F, J, M, N |
 | 1.1 | 2026-10-17 | Tim PT. Tiket Sampai Nonton Sentosa | Struktur proyek, aturan dependency, dan prinsip desain kode disesuaikan dengan standar proyek organisasi (ADR-016); menggantikan Lampiran F v4.6 |
 | 1.2 | 2026-10-18 | Tim PT. Tiket Sampai Nonton Sentosa | §4.1.3 hanya repository backend; web dan mobile di repository terpisah (ADR-017); deskripsi pipeline |
+| 1.4 | 2026-10-20 | Tim PT. Tiket Sampai Nonton Sentosa | OTP email via Notification Service: User Service infrastructure diperbarui (smtp → publisher), event otp.requested ditambahkan |
 | 1.3 | 2026-10-19 | Tim PT. Tiket Sampai Nonton Sentosa | Keputusan bersama BE-2: verb Cobra dan struktur cmd (§4.1), User Service (§4.1.2, §4.4.4, §4.6.1), event sourcing Booking/Payment (§4.4.3, §4.5.3), retry/DLQ dan guard urutan consumer (§4.5.4), tinjauan skema (§4.4.5), env D-24 (§6.1), `/health`, circuit breaker MUST, alert email (§7), testify (§9) |
 
 ---
@@ -198,7 +199,7 @@ Semua service juga punya verb `migrate up|down|status` dan `healthcheck`.
 | `domain/entity/` | Account, Session, OTPChallenge, LoginEvent, sentinel error repository |
 | `domain/valueobject/` | Email, NIK (validasi struktur), OTPCode, DependencyName |
 | `application/usecase/` | `auth.go` (OTP, verifikasi, rotasi, logout), `profile.go`, `check_health.go` |
-| `infrastructure/` | `http/` (handler + middleware Bearer), `postgres/` (akun, sesi, audit), `valkey/` (OTP store, rate limiter), `smtp/` (mailer OTP), `security/` (PII, token EdDSA, generator), `healthcheck/` |
+| `infrastructure/` | `http/` (handler + middleware Bearer), `postgres/` (akun, sesi, audit), `valkey/` (OTP store, rate limiter), `publisher/` (otp.requested event), `security/` (PII, token EdDSA, generator), `healthcheck/` |
 | `deployments/` | Dockerfile, migrations schema `users` |
 
 #### 4.1.3 Struktur Repository `rusuh-booking-be` (monorepo backend)
@@ -2614,7 +2615,7 @@ Token, kontrol keamanan, threat model, dan anti-calo ada di HLD §4.6. Retensi d
 | Token | JWT EdDSA, `jti` untuk token sekali pakai, binding visitor | SRS-Q-SEC-05 |
 | Webhook | Verifikasi signature, order, amount, transisi legal | SRS-F-15-01 |
 | Middleware | `pkg/httpx` (HLD Appendix B, O.5) | SRS-F-22-02 |
-| Login OTP | Kode 6 digit dari `crypto/rand`; disimpan sebagai HMAC terikat email di Valkey ber-TTL; lock setelah 5 percobaan; cooldown dan rate limit per email/IP; respons seragam | SRS-F-27-02..04 |
+| Login OTP | Kode 6 digit dari `crypto/rand`; disimpan sebagai HMAC terikat email di Valkey ber-TTL; lock setelah 5 percobaan; cooldown dan rate limit per email/IP; respons seragam; **kode dienkripsi AES-256-GCM saat dikirim ke Notification Service via RabbitMQ** | SRS-F-27-02..04, SRS-F-27-12 |
 | Sesi | Access token EdDSA 15 menit; refresh token 32 byte acak, disimpan SHA-256; rotasi satu pemenang (transaksi + `revoked_at IS NULL`); reuse mencabut semua sesi | SRS-F-27-05..07 |
 | PII akun | Email dan NIK AES-256-GCM dengan AAD per kolom + HMAC untuk lookup; respons hanya versi tersamar | SRS-Q-SEC-10 |
 | Event store | Payload event ditolak bila memuat field PII/secret plaintext | SRS-D-10 |

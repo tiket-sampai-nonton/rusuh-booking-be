@@ -542,7 +542,7 @@ Prinsip pemilihan: **(1)** sesuai tech radar klien, **(2)** setiap komponen puny
 | Penyimpanan OTP | Valkey dengan TTL: hash kode (HMAC terikat email) dan hitungan percobaan. Hilang saat Valkey restart hanya berarti minta kode baru (ADR-008 diperbarui) |
 | Token | Access token JWT EdDSA 15 menit (`aud=rbt`, `scope=buyer`); refresh token acak 32 byte, disimpan sebagai hash di `users.sessions`, berlaku 30 hari, **dirotasi** setiap refresh; token lama yang dipakai ulang mencabut semua sesi akun |
 | PII | Email dan NIK disimpan AES-256-GCM + hash HMAC; satu NIK hanya boleh tertaut ke satu akun (`uq_accounts_nik`) agar kuota NIK pembeli tidak diakali lewat banyak akun |
-| Pengiriman OTP | Langsung lewat SMTP dari User Service, tidak lewat RabbitMQ: kode OTP adalah secret dan envelope event tidak boleh memuat secret |
+| Pengiriman OTP | Lewat RabbitMQ ke Notification Service (event `otp.requested`): kode OTP dienkripsi AES-256-GCM dalam payload; Notification Service mendekripsi dan mengirim email; konsisten dengan prinsip Notification Service memiliki semua pengiriman email |
 | Integrasi | Klien mengisi form join dari `GET /me`; join tetap mengirim NIK dan email seperti guest. Bila `Authorization` dikirim, Queue memverifikasi token dengan public key User Service, mencocokkan `nik_hash`, dan meneruskan `accountId` ke alokasi → `admissions.account_id` → `bookings.account_id`; `GET /api/v1/me/bookings` di Booking menampilkan riwayat |
 | Guest | Tidak berubah: NIK + email diketik dua kali, tanpa OTP (SRS-F-01-08 direvisi menjadi "guest checkout tidak memerlukan OTP") |
 

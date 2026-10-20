@@ -4,7 +4,7 @@
 |-------|-------|
 | **System of interest** | Rusuh Booking Tiket |
 | **Document ID** | AD-RBT-001 |
-| **Version** | 1.6 |
+| **Version** | 1.7 |
 | **Date** | 2026-10-19 |
 | **Status** | Draft. Desain baseline = PRD v5.4; implementasi `NOT_VERIFIED` |
 | **Architect(s)** | Tim PT. Tiket Sampai Nonton Sentosa (BE-1, BE-2) |
@@ -27,6 +27,7 @@
 | 1.2 | 2026-10-18 | Tim PT. Tiket Sampai Nonton Sentosa | Tiga repository (ADR-017); saga koreografi (ADR-018); SonarCloud menggantikan SonarCloud |
 | 1.3 | 2026-10-19 | Tim PT. Tiket Sampai Nonton Sentosa | Keputusan bersama BE-2: User Service (ADR-020), event sourcing Booking dan Payment (ADR-019), alternatif gRPC/EKS/Kong (ADR-021), runtime boilerplate (ADR-022); `/health` tunggal; alert email |
 | 1.4 | 2026-10-19 | Tim PT. Tiket Sampai Nonton Sentosa | Katalog event dengan filter: CloudFront cache key diperluas (`timeframe`, `city`, `status`); alokasi komponen CAT-01 (CMP-BOOKING, CMP-WEB, CMP-MOBILE, CMP-EDGE) |
+| 1.7 | 2026-10-20 | Tim PT. Tiket Sampai Nonton Sentosa | OTP email via Notification Service: context diagram diperbarui (OTP tidak langsung ke SMTP), CMP-NOTIF ditambahkan ke §3.2.27, service catalogue diperbarui |
 | 1.6 | 2026-10-19 | Tim PT. Tiket Sampai Nonton Sentosa | Menambahkan sequence diagram **Join with Logged-in User** (§4.4): NIK dari token.nikHash, body tidak kirim buyerNik; tabel perbandingan Guest vs Logged-in; desain menghindari PII di request/response |
 | 1.5 | 2026-10-19 | Tim PT. Tiket Sampai Nonton Sentosa | Rigor mortis fix: User Service ditambahkan ke Service Catalogue dengan endpoint publik; schema `users` ditambahkan ke tabel Schema per Service |
 
@@ -143,7 +144,6 @@ flowchart LR
     SYS <-->|charge, status, cancel / webhook| MT[Midtrans Sandbox]
     SYS -->|email| SMTP[SMTP: Mailpit / SES]
     SYS -->|push| FCM[FCM / APNs]
-    SYS -->|OTP login| SMTP
 ```
 
 #### Actors
@@ -246,8 +246,8 @@ Trade-off lengkap di Lampiran L [v4.6 → ADR Appendix A].
 | **Queue Service** | Guest session, join, sequence FIFO, waiting set, promotor, claim window, admission token, Status Document, indikator peluang, posisi eksak, leave | `POST /events/{id}/queue-entries`, `GET /queue-status/{eventId}`, `GET /queue-entries/me`, `POST /queue-entries/{id}/claim`, `DELETE /queue-entries/{id}` | Valkey; `queue.entry_audit`, `queue.event_settings` | Booking (internal), RabbitMQ | BE-1 |
 | **Booking Service** | Event & kategori, supply, alokasi, sesi pemilihan, pemulihan sesi, validasi NIK, kuota, NIK pemegang, hold, ubah pesanan, kunci pesanan, booking, settlement, expiry + resolve, cancel, tiket, tautan tiket, konfigurasi event + audit | `GET /events`, `GET /events/{id}`, `POST /booking-sessions`, `GET /booking-sessions/current`, `GET /booking-sessions/{id}`, `POST /booking-sessions/{id}/attendee-checks`, `POST /booking-sessions/{id}/cancel`, `POST /bookings`, `PUT /bookings/{id}/items`, `GET /bookings/{id}`, `POST /bookings/{id}/cancel`, `GET /bookings/{id}/tickets` | `booking.*` | Payment (internal), RabbitMQ | BE-2 |
 | **Payment Service** | Payment page view model, metode, payment page token, attempt/charge, webhook, signature, rekonsiliasi, cancel di gateway, resolve, kasus refund | `GET /payments/{bookingId}/page`, `POST /payments/{bookingId}/page-tokens`, `POST /payment-page-sessions`, `POST /payments/{bookingId}/attempts`, `GET /payments/{bookingId}/status`, `POST /webhooks/midtrans` | `payment.*` | Booking (internal read), Midtrans, RabbitMQ | BE-2 |
-| **Notification Service** | Consumer event, template email, SMTP, push notification giliran (FCM), retry, DLQ, redrive | `POST /push-subscriptions`, `DELETE /push-subscriptions/{eventId}` | `notification.*` | RabbitMQ, SMTP, FCM | BE-1 |
-| **User Service** | Akun opsional, login OTP email, rotasi refresh token, profil (nama, NIK tersimpan terenkripsi), riwayat pesanan (proxy ke Booking) | `POST /auth/otp/request`, `POST /auth/otp/verify`, `POST /auth/refresh`, `POST /auth/logout`, `GET /me`, `PATCH /me` | `users.*` | Valkey (OTP), RabbitMQ | BE-1 |
+| **Notification Service** | Consumer event, template email (e-tiket, expired, OTP login), SMTP, push notification giliran (FCM), retry, DLQ, redrive | `POST /push-subscriptions`, `DELETE /push-subscriptions/{eventId}` | `notification.*` | RabbitMQ, SMTP, FCM | BE-1 |
+| **User Service** | Akun opsional, login OTP email, rotasi refresh token, profil (nama, NIK tersimpan terenkripsi), riwayat pesanan (proxy ke Booking) | `POST /auth/otp/request`, `POST /auth/otp/verify`, `POST /auth/refresh`, `POST /auth/logout`, `GET /me`, `PATCH /me` | `users.*` | Valkey (OTP challenge), RabbitMQ (otp.requested publisher) | BE-1 |
 | **Platform (shared libs)** | HTTP middleware, error envelope, token (JWT EdDSA), crypto (HMAC, AES-GCM), NIK validator, outbox library, consumer (ack/retry/DLQ), resilience, telemetry, config, clock | — | — | — | BE-1 (+ review BE-2) |
 
 #### Internal APIs (sinkron)
@@ -1440,7 +1440,7 @@ Alasan best practice per komponen ada di ADR-015; matriks trade-off ada di ADR-R
 | 3.2.24 | Refresh, Connection Loss, and Back Button (SES-03) | SRS-F-24-01 … SRS-F-24-13 (13) | CMP-BOOKING, CMP-WEB, CMP-MOBILE |
 | 3.2.25 | Near-Real-Time and Turn Notification (QUE-05) | SRS-F-25-01 … SRS-F-25-13 (13) | CMP-QUEUE, CMP-BOOKING, CMP-NOTIF, CMP-WEB, CMP-MOBILE, CMP-EDGE |
 | 3.2.26 | Configuration (CFG-01) | SRS-F-26-01 … SRS-F-26-08 (8) | CMP-BOOKING, CMP-QUEUE, CMP-PLATFORM |
-| 3.2.27 | Optional Account and OTP Login (USR-01) | SRS-F-27-01 … SRS-F-27-12 (12) | CMP-USER, CMP-QUEUE, CMP-BOOKING, CMP-WEB, CMP-MOBILE |
+| 3.2.27 | Optional Account and OTP Login (USR-01) | SRS-F-27-01 … SRS-F-27-12 (12) | CMP-USER, CMP-NOTIF, CMP-QUEUE, CMP-BOOKING, CMP-WEB, CMP-MOBILE |
 | 3.2.28 | Event Catalog Filter (CAT-01) | SRS-F-28-01 … SRS-F-28-06 (6) | CMP-BOOKING, CMP-WEB, CMP-MOBILE, CMP-EDGE |
 | 3.1, 3.3–3.7 | Interface, quality, data, constraint, operasional | SRS-IF, SRS-Q, SRS-D, SRS-C, SRS-F-90 | Lintas komponen; lihat kolom komponen di quality scenario §4.7.1 |
 

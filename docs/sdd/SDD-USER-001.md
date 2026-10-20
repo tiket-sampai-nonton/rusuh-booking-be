@@ -4,9 +4,9 @@
 |-------|-------|
 | **Service** | User Service |
 | **Document ID** | SDD-USER-001 |
-| **Version** | 1.1 |
-| **Date** | 2026-10-19 |
-| **Status** | Draft. Desain baseline = PRD v5.4, SRS v1.3, HLD v1.6 |
+| **Version** | 1.2 |
+| **Date** | 2026-10-20 |
+| **Status** | Draft. Desain baseline = PRD v5.4, SRS v1.4, HLD v1.7 |
 | **Owner** | BE-1 |
 | **Port** | 8085 |
 | **Schema** | `users` (role `svc_user`) |
@@ -16,6 +16,7 @@
 
 | Version | Date | Author | Summary |
 |---------|------|--------|---------|
+| 1.2 | 2026-10-20 | BE-1 | OTP email via Notification Service: SMTP adapter dihapus, diganti otp.requested event publisher |
 | 1.1 | 2026-10-19 | BE-1 | Align baseline metadata with PRD v5.4, SRS v1.3, HLD v1.6 for logged-in NIK handling |
 | 1.0 | 2026-10-19 | BE-1 | Initial version |
 
@@ -265,7 +266,7 @@ CREATE INDEX idx_login_audit_email ON users.login_audit(email_hash, created_at D
 5. Store hash in Valkey: otp:{emailHash} with 5 min TTL
 6. Set cooldown key: otp:cooldown:{emailHash} with 60s TTL
 7. Increment hourly counters
-8. Send email via SMTP
+8. Publish `otp.requested` event to RabbitMQ (code encrypted)
 9. Return 202
 ```
 
@@ -287,10 +288,36 @@ CREATE INDEX idx_login_audit_email ON users.login_audit(email_hash, created_at D
 
 ### 5.3 Security Notes
 
-- OTP code never logged or stored in broker
+- OTP code encrypted (AES-256-GCM) when published to RabbitMQ
+- OTP code never appears in plaintext in logs or event payloads
 - Only hash stored in Valkey
 - Email encrypted at rest (accounts.email_enc)
 - Refresh token hashed (sessions.refresh_token_hash)
+
+### 5.4 OTP Event Schema
+
+Event `otp.requested` published to RabbitMQ:
+
+```json
+{
+  "messageId": "uuid",
+  "eventType": "otp.requested",
+  "schemaVersion": "v1",
+  "occurredAt": "2026-10-20T13:45:00Z",
+  "correlationId": "uuid",
+  "producer": "user-service",
+  "payload": {
+    "emailEnc": "base64(AES-256-GCM encrypted email)",
+    "codeEnc": "base64(AES-256-GCM encrypted 6-digit code)",
+    "expiresAt": "2026-10-20T13:50:00Z",
+    "locale": "id"
+  }
+}
+```
+
+**Routing:** Exchange `rbt.events`, routing key `otp.requested`, queue `notification.otp`
+
+**Note:** No retry queue — OTP is time-sensitive; if delivery fails, user requests new code.
 
 ---
 
@@ -393,12 +420,8 @@ DATABASE_URL=postgres://svc_user:xxx@localhost:5432/rusuh?search_path=users
 # Valkey
 VALKEY_URL=localhost:6379
 
-# SMTP (for OTP email)
-SMTP_HOST=email-smtp.ap-southeast-3.amazonaws.com
-SMTP_PORT=587
-SMTP_USER=AKIAXXXXXXXX
-SMTP_PASSWORD=xxxxxx
-SMTP_FROM=noreply@rusuh.example
+# RabbitMQ (for otp.requested event)
+RABBITMQ_URL=amqp://guest:guest@localhost:5672/
 
 # Token
 USER_TOKEN_PRIVATE_KEY_PATH=/keys/user.key
@@ -438,7 +461,7 @@ OTP_MAX_ATTEMPTS=5
 |-------|-----------|----------|
 | UserOTPFailRateHigh | fail_rate > 30% for 10m | Warning |
 | UserBruteForceDetected | locked_rate > 5% for 5m | Critical |
-| UserSMTPFailure | smtp_error_rate > 10% for 5m | Critical |
+| UserOTPPublishFailure | otp_publish_error_rate > 10% for 5m | Critical |
 
 ---
 
