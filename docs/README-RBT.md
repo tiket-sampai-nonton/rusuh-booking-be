@@ -31,7 +31,6 @@ PRD v4.6 menggabungkan PRD, SRS, HLD, LLD, keputusan arsitektur, rencana penguji
 | 04f–04g | `analisa/04f-E2E-VERIFICATION.md`, `analisa/04g-E2E-FLOW-DIAGRAMS-MERMAID.md` | — | — | Matriks verifikasi end-to-end dan diagram alur |
 | 04 (indeks) | `analisa/04-SDD-INDEX.md` | — | — | Indeks SDD dan ringkasan komunikasi antar service |
 | 08–08c | `analisa/08-INTEGRATION-INDEX.md`, `08a-frontend-integration.md`, `08b-payment-gateway-integration.md`, `08c-inter-service-communication.md` | — | — | Panduan integrasi FE, Midtrans, dan antar service |
-| 09 | `analisa/09-Panduan-Lokal-dan-Implementasi.md` | — | — | Persiapan lokal, urutan coding, dan peta dokumen untuk developer |
 
 ### Struktur folder `docs/` (v1.6)
 

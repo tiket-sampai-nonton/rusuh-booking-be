@@ -34,3 +34,11 @@ Rincian: `specs/*/tasks.md` (sub-task R) dan `specs/README.md` bagian "Status op
 - Usulan DEV-2 "Task 14" (status `REVIEW` pada attempt Payment) **tidak diambil**: migrasi `0001` tidak memuat status itu dan tidak boleh diubah. Nominal webhook tidak cocok → callback ditolak/dicatat tanpa mengubah state; `REVIEW` hanya status booking.
 - Defect baru di kode DEV-2: query sold-out di `settle` membaca kolom `total_units` yang tidak ada (`total_capacity`). Dalam transaksi PostgreSQL, ini membuat transaksi aborted sehingga semua settlement gagal (booking 9.R3).
 - Pengikatan admission token ke visitor kini hanya di usecase (token tidak lagi membawa visitor); aman selama pengecekan `admission.VisitorID` dipertahankan.
+
+## Tambahan — observability lokal (21 Oktober 2026)
+
+Keputusan: ADR-023 (OQ-5 ditutup). Log JSON ke stdout + access log + `trace_id`; metrik Prometheus; lokal memakai Prometheus, Loki, Grafana Alloy (pengganti Promtail yang end-of-life Maret 2026), dan Grafana.
+
+Temuan: service belum punya access log (hanya error 5xx dan panic), jadi Loki hanya berisi sedikit log sampai platform 4.5 dibuat.
+
+Verifikasi `make obs` (dijalankan): keempat komponen sehat; file log JSON masuk Loki dengan label `container`/`level`/`source`; pencarian `| json | requestId="…"` mengembalikan baris yang benar; log container RabbitMQ terbaca; Grafana memuat datasource Prometheus + Loki dan dua dashboard; query Grafana→Loki lewat proxy berstatus 200. Loki 3.5.0 menghasilkan error kosmetik "negative structured metadata bytes"; hilang setelah naik ke 3.5.7. Metrik belum bisa diuji karena `/metrics` belum dibuat (platform 4.2).

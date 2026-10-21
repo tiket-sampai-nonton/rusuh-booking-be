@@ -94,12 +94,16 @@ Trace: SRS-Q-MNT-02, SRS-Q-MNT-03, SRS-Q-SEC-03, SRS-F-90-06 · TC-OBS-01, TC-OB
 
 #### Acceptance Criteria
 
-1. THE platform SHALL menyediakan `pkg/telemetry` untuk mendaftarkan counter/gauge/histogram dan mengeksposnya di endpoint metrik terpisah dari `/health`. *(Library belum dipilih — OQ-5; task diblokir sampai ADR.)*
-2. THE platform SHALL menyediakan middleware metrik HTTP (`method`, `route` template, `status`) dan durasi request.
+1. THE platform SHALL menyediakan `pkg/telemetry` berbasis Prometheus client (`client_golang`; keputusan OQ-5, ADR-023) untuk mendaftarkan counter/gauge/histogram dan mengeksposnya di `GET /metrics`, terpisah dari `/health`. Endpoint ini tidak dirutekan edge (R7.2, R11.2).
+2. THE platform SHALL menyediakan middleware metrik HTTP: `rbt_http_requests_total{service,method,route,status}` dan histogram `rbt_http_request_duration_seconds{service,method,route}`, ditambah metrik runtime Go dan proses (goroutine, memori) bawaan Prometheus client. `route` adalah template (`/bookings/{bookingId}`), bukan path asli.
 3. THE metrik SHALL tidak memakai identifier berkardinalitas tinggi (NIK, booking ID, entry ID, email) sebagai label; label yang diizinkan: `service`, `route`, `status`, `event_id`, `reason`, `name`.
 4. THE `pkg/logger` SHALL meredaksi atribut ber-kunci sensitif (`nik`, `buyerNik`, `email`, `emailConfirmation`, `token`, `authorization`, `signature`, `signature_key`, `password`, `code`, `pushToken`, `secret`) sebelum ditulis, termasuk di dalam payload request yang dilog saat error (R2.8).
 5. THE `GET /health` SHALL tetap satu endpoint per service (200 UP / 503 DOWN, `Cache-Control: no-store`) untuk ALB dan HEALTHCHECK container. *(Sudah ada di kelima service [kode].)*
 6. THE breaker SHALL melaporkan perubahan state sebagai metrik `breaker_state{name}` lewat `OnStateChange`.
+7. THE platform SHALL menyediakan middleware **access log**: satu baris INFO per request berisi `method`, `route` (template), `status`, `duration_ms`, `bytes`, `requestId`, `trace_id`. `/health` dan `/metrics` tidak dilog. Status ≥ 500 dilog `ERROR`, 4xx `WARN`. Saat ini tidak ada access log; hanya error 5xx dan panic yang dilog [kode: `pkg/httpx`].
+8. THE setiap baris log SHALL memuat field baku `time`, `level`, `msg`, `service`, `verb`, `env`, dan — dalam konteks request — `requestId` serta `trace_id`. `trace_id` diambil dari header `X-Amzn-Trace-Id` (ditambahkan ALB; dipakai AWS X-Ray), atau `traceparent` (W3C), atau dibuat baru; `requestId` dikembalikan di header `X-Request-ID`. Antar-service meneruskan header yang sama sehingga satu permintaan dapat ditelusuri lintas service.
+9. THE `LOG_FORMAT` SHALL mendukung `json` (default; langsung terbaca CloudWatch Logs / Logs Insights dan Loki), `gcp` (JSON dengan `severity`, `message`, `timestamp`, `logging.googleapis.com/trace` agar terbaca Google Cloud Logging), dan `text` (dev). Log selalu ditulis ke stdout; pengumpulan ke backend dilakukan agen di luar aplikasi (Alloy lokal, CloudWatch agent / FireLens di AWS, Ops Agent di GCP) — aplikasi tidak bergantung pada vendor tertentu.
+10. THE stack observability lokal (Prometheus, Loki, Alloy, Grafana) SHALL tersedia lewat `make obs` (R7.6) dengan datasource dan dashboard ter-provision, tanpa konfigurasi manual.
 
 ## Requirement 5 — Kontrak API & event sebagai sumber kebenaran
 
@@ -141,6 +145,7 @@ Trace: SRS-Q-FLX-03, SRS-C-05, SRS-IF-24, SRS-F-90-04 · SDD-RBT §4.1.3
 3. THE `tools/seed` SHALL membuat data event sintetis (event, kategori, kapasitas, konfigurasi) lewat endpoint admin internal Booking atau SQL seed; data pribadi hanya sintetis.
 4. THE simulator pembayaran SHALL hanya aktif saat `APP_ENV ∈ {ci, local-offline}` dan hasilnya berlabel `SIMULATED`. *(Implementasi di payment spec; platform menyediakan variabel lingkungan dan profil compose.)*
 5. THE `make smoke` SHALL menjalankan alur bahagia singkat (join → claim → hold → bayar simulasi → tiket) terhadap compose.
+6. THE observability lokal SHALL dijalankan lewat `make obs` (compose profile `observability`, tidak ikut `make up`): Prometheus :9090, Loki :3100, Alloy :12345, Grafana :3000 (tanpa login, khusus lokal). Alloy (pengganti Promtail yang end-of-life sejak Maret 2026) membaca log container compose dan file `logs/*.log` untuk service yang dijalankan dengan `go run`; retensi log 30 hari (R13). *(Sudah ada — task 7.5.)*
 
 ## Requirement 8 — Gerbang CI & kualitas
 

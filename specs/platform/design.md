@@ -118,13 +118,22 @@ Kolom `outbox_events` di Booking dan Payment identik [kode: migrasi `0001_init`]
 implementasi melayani keduanya. `messageId = outbox_events.id` memberi consumer hilir kunci dedup
 stabil (Notification `deliveries.source_message_id`).
 
-### 4. `pkg/telemetry` & redaksi log (Requirement 4)
+### 4. Observability: log, metrik, korelasi (Requirement 4)
 
-- Registry dan handler metrik dipasang di composition root (`/metrics` di port yang sama atau port ops
-  terpisah — diputuskan bersama ADR library, OQ-5). Edge **tidak** merutekan endpoint metrik.
-- Konvensi nama: `rbt_<service>_<nama>_<unit>`; metrik service didefinisikan di design service.
-- `pkg/logger`: `slog.HandlerOptions.ReplaceAttr` meredaksi kunci sensitif (case-insensitive,
-  termasuk nested group) menjadi `"[REDACTED]"`; test memastikan NIK 16 digit dan email tidak muncul.
+```
+service (stdout, JSON) ──► Alloy ──► Loki ──┐
+service /metrics ◄── scrape ── Prometheus ──┴──► Grafana (dashboard + pencarian requestId)
+```
+
+- **Log** selalu ke stdout (12-factor). Satu format JSON dengan field baku `time, level, msg, service, verb, env, requestId, trace_id`. Agen pengumpul berbeda per lingkungan, aplikasi sama:
+  - lokal: Alloy → Loki (konfigurasi di `deployments/observability/alloy/config.alloy`);
+  - AWS: CloudWatch agent / FireLens → CloudWatch Logs, JSON dibaca Logs Insights tanpa parser tambahan;
+  - GCP: `LOG_FORMAT=gcp` agar `severity/message/timestamp` dikenali Cloud Logging.
+- **Korelasi**: `requestId` (header `X-Request-ID`) dan `trace_id` (dari `X-Amzn-Trace-Id` yang ditambah ALB, atau `traceparent`). Cukup untuk menelusuri satu request lintas service di Loki dan menautkannya ke X-Ray / Cloud Trace bila dipakai nanti, tanpa memasang SDK tracing sekarang.
+- **Label Loki** hanya `container`, `source`, `level` (kardinalitas rendah). `requestId`, `trace_id`, `bookingId` dicari lewat `| json`, bukan label.
+- **Access log** satu baris per request (bukan per detail) agar volume log kecil dan mudah dijelaskan; detail error dan payload request (diredaksi, R2.8) ditulis hanya saat gagal.
+- **Metrik** Prometheus `client_golang`: `rbt_http_requests_total`, `rbt_http_request_duration_seconds`, runtime Go, `breaker_state`, serta metrik bisnis per service (design masing-masing). Label dibatasi allowlist R4.3.
+- **Redaksi** `ReplaceAttr` meredaksi kunci sensitif di semua handler (`json`, `gcp`, `text`).
 
 ### 5. Kontrak (Requirement 5)
 

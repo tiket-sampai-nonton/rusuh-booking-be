@@ -1,0 +1,71 @@
+// Grafana Alloy: pengganti Promtail (Promtail end-of-life Maret 2026). Alurnya sama:
+// baca log -> beri label -> kirim ke Loki.
+//
+// Dua sumber log:
+//  1. container compose (make up)              -> label source="docker"
+//  2. file di ./logs/*.log (service lewat go run) -> label source="file"
+//     contoh: go run ./cmd api 2>&1 | tee ../../logs/notification-api.log
+
+discovery.docker "containers" {
+  host = "unix:///var/run/docker.sock"
+  filter {
+    name   = "label"
+    values = ["com.docker.compose.project=rusuh-booking-be"]
+  }
+}
+
+discovery.relabel "containers" {
+  targets = discovery.docker.containers.targets
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label  = "container"
+  }
+}
+
+loki.source.docker "containers" {
+  host       = "unix:///var/run/docker.sock"
+  targets    = discovery.relabel.containers.output
+  labels     = { source = "docker" }
+  forward_to = [loki.process.rbt.receiver]
+}
+
+local.file_match "host" {
+  path_targets = [{ "__path__" = "/var/log/rbt/*.log" }]
+}
+
+discovery.relabel "host" {
+  targets = local.file_match.host.targets
+  rule {
+    source_labels = ["__path__"]
+    regex         = ".*/([^/]+)\\.log"
+    target_label  = "container"
+    replacement   = "$1"
+  }
+  rule {
+    target_label = "source"
+    replacement  = "file"
+  }
+}
+
+loki.source.file "host" {
+  targets    = discovery.relabel.host.output
+  forward_to = [loki.process.rbt.receiver]
+}
+
+// Log service berformat JSON (slog). Hanya "level" yang dijadikan label (kardinalitas rendah);
+// requestId, trace_id, dll. tetap di isi log dan dicari dengan | json.
+loki.process "rbt" {
+  stage.json {
+    expressions = { level = "level" }
+  }
+  stage.labels {
+    values = { level = "" }
+  }
+  forward_to = [loki.write.local.receiver]
+}
+
+loki.write "local" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}

@@ -227,5 +227,58 @@ services:
       mailpit: { condition: service_started }
     restart: unless-stopped
 
+  # ------------------------------------------------------------ observability
+  # Tidak ikut `make up`. Jalankan: make obs  (profile "observability").
+  # Grafana http://localhost:3000 (tanpa login, khusus lokal), Prometheus :9090, Loki :3100, Alloy :12345.
+  prometheus:
+    profiles: ["observability"]
+    image: prom/prometheus:v3.5.0
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.retention.time=7d"]
+    volumes:
+      - ./deployments/observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - promdata:/prometheus
+    ports: ["9090:9090"]
+    extra_hosts: ["host.docker.internal:host-gateway"]
+
+  loki:
+    profiles: ["observability"]
+    image: grafana/loki:3.5.7
+    command: ["-config.file=/etc/loki/loki.yaml"]
+    volumes:
+      - ./deployments/observability/loki/loki.yaml:/etc/loki/loki.yaml:ro
+      - lokidata:/loki
+    ports: ["3100:3100"]
+
+  alloy:
+    profiles: ["observability"]
+    image: grafana/alloy:v1.10.0
+    command: ["run", "--server.http.listen-addr=0.0.0.0:12345", "--storage.path=/var/lib/alloy/data", "/etc/alloy/config.alloy"]
+    volumes:
+      - ./deployments/observability/alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - ./logs:/var/log/rbt:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    ports: ["12345:12345"]
+    depends_on:
+      loki: { condition: service_started }
+
+  grafana:
+    profiles: ["observability"]
+    image: grafana/grafana:12.0.0
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+    volumes:
+      - ./deployments/observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./deployments/observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafanadata:/var/lib/grafana
+    ports: ["3000:3000"]
+    depends_on:
+      prometheus: { condition: service_started }
+      loki: { condition: service_started }
+
 volumes:
+  promdata:
+  lokidata:
+  grafanadata:
   pgdata:

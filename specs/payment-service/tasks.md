@@ -15,6 +15,7 @@ Sambil menunggu, pakai klien Booking palsu di test.
 ## Tasks
 
 - [ ] 0. Config + plumbing bersama
+  - Variabel sudah ditambahkan ke `services/payment/.env.example` (2026-10-21); yang tersisa membaca dan memvalidasinya di `internal/config`
   - [ ] 0.1 Config: `PAYMENT_PROVIDER` (simulator/midtrans), `MIDTRANS_*`, `PAYMENT_METHODS_ENABLED`, `PAYMENT_PAGE_TOKEN_TTL_SECONDS`, `BOOKING_SERVICE_URL`, kunci token, nilai breaker (design §6) — fail-fast
     - _Requirements: 11.2, 9.1_
   - [ ] 0.2 Domain attempt (status + transisi), VO metode/instruksi/order ID, error domain

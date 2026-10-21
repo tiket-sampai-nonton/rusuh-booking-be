@@ -38,6 +38,7 @@
 | ADR-020 | User Service untuk akun opsional dengan login OTP email; guest checkout tetap utama | 2026-10-19 | CN-02, CN-06 | SRS §3.2.27, SRS-F-01-08, SRS-Q-SEC-10..11 |
 | ADR-021 | Usulan BE-2 yang dicatat sebagai alternatif (gRPC internal, EKS + Helm, API Gateway/Kong) | 2026-10-19 | CN-02, CN-05, CN-09 | NFR-01, NFR-03 |
 | ADR-022 | Runtime dan tooling boilerplate: Go 1.26, verb Cobra, client standar, migrasi tertanam, `/health` | 2026-10-19 | CN-09 | SRS-C-02, SRS-C-08, SRS-F-19-03 |
+| ADR-023 | Observability: log JSON ke stdout, metrik Prometheus, Grafana + Loki (Alloy), korelasi `trace_id` | 2026-10-21 | CN-09 | SRS-Q-MNT-02, SRS-Q-MNT-03, SRS-Q-SEC-03, SRS-F-90-06 |
 
 ---
 
@@ -611,6 +612,33 @@ Pola yang diadopsi dari usulan BE-2: **satu image banyak verb** (`api`, `worker`
 **Consequences.** Positif: satu konvensi untuk kedua BE; boilerplate sudah terbukti jalan (migrasi lima schema, `/health`, alur OTP end-to-end). Negatif: tiga dependency pihak ketiga baru (Cobra, testify, mock) yang perlu dicatat di tech radar; `go.sum` wajib di-commit (`make tidy`).
 
 **Confirmation.** CI stage `code-quality` memeriksa `go.mod`/`go.sum` rapi dan `_mock/` sesuai port; `case-coverage` menjalankan integration test; evidence `docs/evidence/2026-10-19-boilerplate-v1.5.md`.
+
+---
+
+## ADR-023: Observability — log JSON ke stdout, metrik Prometheus, Grafana + Loki, korelasi `trace_id`
+
+| Field | Value |
+|-------|-------|
+| **Status** | Accepted (keputusan tim, 21 Oktober 2026; menutup OQ-5) |
+| **Date** | 2026-10-21 |
+| **Concerns** | CN-09 |
+| **Related requirements** | SRS-Q-MNT-02, SRS-Q-MNT-03, SRS-Q-SEC-03, SRS-F-90-06 |
+| **Affected components** | Semua service, CMP-PLATFORM |
+
+**Context.** Metrik real-time dan log terstruktur diwajibkan (SRS-Q-MNT-02), tetapi library metrik belum dipilih dan service belum punya access log. Tim ingin log dan metrik langsung terlihat di lokal dan formatnya terbaca layanan cloud (CloudWatch, X-Ray, Google Cloud Logging).
+
+**Considered options.** Prometheus client + Loki vs OpenTelemetry penuh (metrik, log, trace lewat collector) vs hanya log. Pengumpul log: Promtail vs Grafana Alloy.
+
+**Decision.**
+- Log JSON (`slog`) ke **stdout** dengan field baku `time, level, msg, service, verb, env, requestId, trace_id`; access log satu baris per request. `LOG_FORMAT=gcp` untuk Cloud Logging. Aplikasi tidak bergantung pada vendor; agen pengumpul yang berbeda per lingkungan.
+- Metrik dengan **Prometheus client** (`client_golang`) di `GET /metrics`; Grafana sebagai dashboard.
+- Lokal: Prometheus, Loki, **Grafana Alloy**, Grafana (`make obs`). Alloy dipilih menggantikan Promtail yang end-of-life sejak Maret 2026; fungsinya sama.
+- Korelasi lintas service lewat `requestId` dan `trace_id` (`X-Amzn-Trace-Id` / `traceparent`). Tracing penuh (OpenTelemetry/X-Ray SDK) ditunda.
+- Label Loki hanya `container`, `source`, `level`; ID bisnis dan NIK/email tidak pernah menjadi label maupun isi log (redaksi, platform R4.4).
+
+**Consequences.** Positif: sederhana dijelaskan, satu format log untuk semua cloud, dapat dijalankan penuh di laptop. Negatif: tanpa trace span (hanya korelasi ID); satu dependency baru (`client_golang`) perlu dicatat di tech radar.
+
+**Confirmation.** Platform task 4.2, 4.5, 4.6; stack lokal terverifikasi 2026-10-21 (`docs/evidence/2026-10-21-keputusan-spec-dan-docs.md`).
 
 ---
 

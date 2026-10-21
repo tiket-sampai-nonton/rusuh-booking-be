@@ -1,0 +1,30 @@
+# Prometheus lokal. Setiap service mengekspos /metrics (platform task 4.2) — sampai itu dibuat,
+# target di bawah berstatus DOWN; itu normal.
+global:
+  scrape_interval: 10s
+  evaluation_interval: 10s
+
+scrape_configs:
+  # Service dijalankan sebagai container (make up). Nama = nama service di docker-compose.yaml.
+  - job_name: rbt-containers
+    metrics_path: /metrics
+    static_configs:
+      - { targets: ["queue-api:8081"],        labels: { service: queue,        mode: container } }
+      - { targets: ["booking-api:8082"],      labels: { service: booking,      mode: container } }
+      - { targets: ["payment-api:8083"],      labels: { service: payment,      mode: container } }
+      - { targets: ["notification-api:8084"], labels: { service: notification, mode: container } }
+      - { targets: ["user-api:8085"],         labels: { service: user,         mode: container } }
+
+  # Service dijalankan dari source di laptop (go run ./cmd api).
+  - job_name: rbt-host
+    metrics_path: /metrics
+    static_configs:
+      - { targets: ["host.docker.internal:8081"], labels: { service: queue,        mode: host } }
+      - { targets: ["host.docker.internal:8082"], labels: { service: booking,      mode: host } }
+      - { targets: ["host.docker.internal:8083"], labels: { service: payment,      mode: host } }
+      - { targets: ["host.docker.internal:8084"], labels: { service: notification, mode: host } }
+      - { targets: ["host.docker.internal:8085"], labels: { service: user,         mode: host } }
+
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]

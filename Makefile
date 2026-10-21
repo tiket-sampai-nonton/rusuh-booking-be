@@ -14,7 +14,7 @@ export TEST_POSTGRES_DATABASE ?= rbt
 export TEST_VALKEY_SERVER   ?= [{"host":"localhost","port":6379}]
 export TEST_RABBITMQ_URL    ?= amqp://guest:guest@localhost:5672/
 
-.PHONY: help keys infra up down logs ps build test test-integration cover lint fmt tidy mock isolation migrate-% run-% ci
+.PHONY: help keys infra obs up down logs ps build test test-integration cover lint fmt tidy mock isolation migrate-% run-% ci
 
 help: ## Daftar target
 	@grep -E '^[a-zA-Z_%-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-18s %s\n", $$1, $$2}'
@@ -30,11 +30,15 @@ $(KEY):
 infra: ## Jalankan PostgreSQL, Valkey, RabbitMQ, Mailpit saja
 	docker compose up -d postgres valkey rabbitmq mailpit
 
+obs: ## Jalankan Prometheus, Loki, Alloy, Grafana (profile observability); Grafana di http://localhost:3000
+	@mkdir -p logs
+	docker compose --profile observability up -d prometheus loki alloy grafana
+
 up: keys ## Jalankan semua (infra + migrasi + service) dengan Docker Compose
 	docker compose up -d --build
 
-down: ## Hentikan dan hapus volume lokal
-	docker compose down -v
+down: ## Hentikan dan hapus volume lokal (termasuk observability)
+	docker compose --profile observability down -v
 
 logs: ## Ikuti log
 	docker compose logs -f

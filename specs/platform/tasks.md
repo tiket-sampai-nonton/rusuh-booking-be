@@ -63,16 +63,22 @@ Setiap task selesai bila `make ci` hijau.
     - _Requirements: 3.4, 3.5_
 
 - [ ] 4. Implement telemetry & redaksi log
-  - [ ] 4.1 ADR pemilihan library metrik (Prometheus client vs OpenTelemetry) sesuai tech radar — **blocked: OQ-5**
+  - [x] 4.1 Keputusan library: Prometheus client (`client_golang`) — dipilih karena paling sederhana dijelaskan dan langsung cocok dengan Prometheus/Grafana lokal; tracing penuh (OpenTelemetry) ditunda, korelasi cukup lewat `trace_id` di log. Tercatat sebagai ADR-023 di `docs/analisa/05-ADR-RBT.md`
     - _Requirements: 4.1_
-  - [ ] 4.2 `pkg/telemetry`: registry, handler endpoint metrik, middleware HTTP (`method`, route template, `status`, durasi), adaptor `OnStateChange` breaker → `breaker_state{name}`
+  - [ ] 4.2 `pkg/telemetry`: registry Prometheus, handler `GET /metrics`, middleware HTTP (`rbt_http_requests_total`, `rbt_http_request_duration_seconds`, route template), adaptor `OnStateChange` breaker → `breaker_state{name}`; pasang di composition root kelima service. Setelah selesai, dashboard "RBT — HTTP & Runtime" otomatis terisi
     - _Requirements: 4.1, 4.2, 4.6_
-    - _Depends on: 4.1_
   - [ ] 4.3 Lint/test yang menolak label berkardinalitas tinggi (allowlist label)
     - _Requirements: 4.3_
   - [ ] 4.4 `pkg/logger` `ReplaceAttr` redaksi kunci sensitif (termasuk group bersarang) + test NIK/email tidak muncul
     - **Property 6: PII never logged**
     - _Requirements: 4.4_
+  - [ ] 4.5 Middleware access log di `pkg/httpx` (field R4.7; lewati `/health`, `/metrics`) + `trace_id` dari `X-Amzn-Trace-Id` / `traceparent` dan diteruskan ke klien HTTP internal; log memuat `env`
+    - _Requirements: 4.7, 4.8_
+    - _Depends on: 4.4_
+  - [ ] 4.6 `LOG_FORMAT=gcp` di `pkg/logger.ReplaceAttr` (`level→severity`, `msg→message`, `time→timestamp`, `trace_id→logging.googleapis.com/trace`); validasi `LOG_FORMAT` menerima `json|gcp|text`; test keluaran
+    - _Requirements: 4.9_
+  - [x] 4.7 Stack lokal `make obs`: Prometheus, Loki, Alloy, Grafana + 2 dashboard (Logs, HTTP & Runtime) — lihat 7.5
+    - _Requirements: 4.10_
 
 - [ ] 5. Lengkapi dan gerbangi kontrak
   - [ ] 5.1 CI job `contracts`: validasi 7 OpenAPI 3.1 (kin-openapi) dan JSON Schema 2020-12, dipicu perubahan `docs/contracts/`
@@ -91,6 +97,8 @@ Setiap task selesai bila `make ci` hijau.
 - [ ] 6. Kunci & secret
   - [ ] 6.1 Perluas `make keys`: kunci Ed25519 untuk Queue (visitor/queue/admission), Payment (page token), Booking (ticket link), dan service token per pemanggil; mount ke compose; tetap di `.gitignore`
     - _Requirements: 6.1, 6.3_
+  - [ ] 6.4 Seragamkan nama variabel kunci: `TOKEN_PUBLIC_KEY_FILE` (Queue, Notification) vs `TOKEN_PUBLIC_KEY_PATH` (Booking), `PII_HMAC_KEY` (Queue) vs `PII_HASH_KEY` (lainnya); satu nama untuk satu arti, koordinasikan dengan nuzirwan
+    - _Requirements: 6.3_
   - [ ] 6.2 Dokumentasikan prosedur rotasi `kid` di `README.md` deployment
     - _Requirements: 6.2_
   - [ ] 6.3 Verifikasi stage `secret-detection` memindai `specs/` dan `docs/` juga
@@ -105,6 +113,11 @@ Setiap task selesai bila `make ci` hijau.
     - _Depends on: booking tasks 13_
   - [ ] 7.3 Profil compose `local-offline` dengan `PAYMENT_PROVIDER=simulator`, `APP_ENV=local-offline`
     - _Requirements: 7.4_
+  - [x] 7.5 Observability lokal (`make obs`): `deployments/observability/{prometheus,loki,alloy,grafana}`, profile `observability` di compose, target `make obs`, folder `logs/` di-ignore. Terverifikasi 2026-10-21: keempat komponen sehat; log file dan container RabbitMQ masuk Loki; pencarian `| json | requestId=…` berjalan; datasource + 2 dashboard ter-provision. Cara pakai: catatan lokal pemilik platform (tidak di-commit)
+    - _Requirements: 7.6, 4.10_
+  - [ ] 7.6 Perbaiki temuan uji lokal 2026-10-21: (a) `make up` — hanya User yang punya kunci di compose, jadi Queue/Booking/Notification berhenti saat start (config fail-fast); isi env kunci/PII untuk semuanya dan lengkapi `.env.example`; (b) worker Notification dan Payment ikut membuka HTTP di `APP_PORT` sehingga bentrok dengan `api` saat dijalankan dari source dengan `.env` yang sama; beri `APP_PORT` terpisah atau jangan buka HTTP di worker
+    - _Requirements: 7.1, 6.1_
+    - _Depends on: 6.1_
   - [ ] 7.4 `make smoke`: alur bahagia lewat edge
     - _Requirements: 7.5_
     - _Depends on: booking 1–10, queue 1–7, payment 1–6_
@@ -137,7 +150,7 @@ Setiap task selesai bila `make ci` hijau.
     - _Requirements: 10.4_
   - _Depends on: service specs selesai_
 
-- [ ] 11. Deployment cloud — **prioritas rendah** (setelah demo lokal jalan)
+- [ ] 11. Deployment cloud — **prioritas rendah** (setelah demo lokal jalan). Log ke CloudWatch: agent/FireLens membaca stdout container (format `json`); Cloud Logging di GCP: `LOG_FORMAT=gcp` + Ops Agent; metrik: Amazon Managed Prometheus / Cloud Monitoring scrape `/metrics` dari jaringan privat
   - [ ] 11.1 Modul Terraform `network`, `edge` (CloudFront + WAF), `alb`, `asg`, `stateful`, `iam-oidc`, `budget`; environment `staging` `ap-southeast-3`
     - _Requirements: 11.1, 11.5_
   - [ ] 11.2 Header rahasia CloudFront → ALB; ALB tolak tanpa header (403); `/internal/*` tidak dirutekan

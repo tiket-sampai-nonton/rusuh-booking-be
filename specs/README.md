@@ -141,5 +141,6 @@ Masih terbuka:
 - **OQ-15** — jawaban DEV-2 ("`SESSION_EXPIRED` ada di `booking.expired`") menjawab event yang berbeda. Pertanyaannya tentang `outcome` di `booking.journey.ended`, yang memang belum memuat nilai itu. Saat ini kode tidak mengirim `journey.ended` sama sekali untuk sesi habis (booking 10.R1). Usul: pakai `EXPIRED`.
 - **OQ-11** — diputuskan tim: data pribadi booking dibersihkan 30 hari setelah event, token push dihapus saat penjualan berakhir, outbox terkirim dihapus setelah 7 hari, log disimpan 30 hari, email pembeli di Booking dienkripsi (platform R13, booking R19). Konfirmasi akhir ke klien tetap perlu.
 - **OQ-22** — usulan respons status Payment yang lebih ramping; menunggu FE.
-- **OQ-5** (library metrik), **OQ-6** (target uptime): menunggu keputusan.
+- **OQ-5** — diputuskan: Prometheus client + Grafana/Loki/Alloy (ADR-023). Tinggal implementasi (platform 4.2, 4.5, 4.6).
+- **OQ-6** (target uptime): menunggu keputusan.
 - **OQ-2, 7, 8, 10, 12, 14, 16, 20**: rekomendasi di tabel dipakai sampai ada keberatan.

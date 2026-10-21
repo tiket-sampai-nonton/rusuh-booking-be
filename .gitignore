@@ -20,3 +20,9 @@ coverage.*
 
 # Kunci token lokal (make keys)
 /deployments/compose/keys/
+
+# Log service yang dijalankan lewat go run (dibaca Alloy, make obs)
+/logs/
+
+# Catatan pribadi (tidak masuk repo)
+/docs/analisa/09-Panduan-Lokal-dan-Implementasi.md
