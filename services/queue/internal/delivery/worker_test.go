@@ -24,5 +24,5 @@ func TestLoop_RunsJobsUntilCancelled(t *testing.T) {
 	assert.Eventually(t, func() bool { return ok.Load() >= 2 && failed.Load() >= 2 }, time.Second, 5*time.Millisecond)
 	cancel()
 	assert.NoError(t, <-done)
-	assert.Empty(t, jobs(&Clients{}))
+	assert.Empty(t, jobs(testConfig(t), &Clients{}, slog.New(slog.NewTextHandler(io.Discard, nil))))
 }

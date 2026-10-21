@@ -126,42 +126,42 @@ func (mr *MockIRateLimiterMockRecorder) Allow(ctx, key, limit, window any) *gomo
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Allow", reflect.TypeOf((*MockIRateLimiter)(nil).Allow), ctx, key, limit, window)
 }
 
-// MockIMailer is a mock of IMailer interface.
-type MockIMailer struct {
+// MockIOTPPublisher is a mock of IOTPPublisher interface.
+type MockIOTPPublisher struct {
 	ctrl     *gomock.Controller
-	recorder *MockIMailerMockRecorder
+	recorder *MockIOTPPublisherMockRecorder
 	isgomock struct{}
 }
 
-// MockIMailerMockRecorder is the mock recorder for MockIMailer.
-type MockIMailerMockRecorder struct {
-	mock *MockIMailer
+// MockIOTPPublisherMockRecorder is the mock recorder for MockIOTPPublisher.
+type MockIOTPPublisherMockRecorder struct {
+	mock *MockIOTPPublisher
 }
 
-// NewMockIMailer creates a new mock instance.
-func NewMockIMailer(ctrl *gomock.Controller) *MockIMailer {
-	mock := &MockIMailer{ctrl: ctrl}
-	mock.recorder = &MockIMailerMockRecorder{mock}
+// NewMockIOTPPublisher creates a new mock instance.
+func NewMockIOTPPublisher(ctrl *gomock.Controller) *MockIOTPPublisher {
+	mock := &MockIOTPPublisher{ctrl: ctrl}
+	mock.recorder = &MockIOTPPublisherMockRecorder{mock}
 	return mock
 }
 
 // EXPECT returns an object that allows the caller to indicate expected use.
-func (m *MockIMailer) EXPECT() *MockIMailerMockRecorder {
+func (m *MockIOTPPublisher) EXPECT() *MockIOTPPublisherMockRecorder {
 	return m.recorder
 }
 
-// SendOTP mocks base method.
-func (m *MockIMailer) SendOTP(ctx context.Context, to, code string, ttl time.Duration) error {
+// PublishOTP mocks base method.
+func (m *MockIOTPPublisher) PublishOTP(ctx context.Context, emailEnc, codeEnc []byte, expiresAt time.Time) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "SendOTP", ctx, to, code, ttl)
+	ret := m.ctrl.Call(m, "PublishOTP", ctx, emailEnc, codeEnc, expiresAt)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
-// SendOTP indicates an expected call of SendOTP.
-func (mr *MockIMailerMockRecorder) SendOTP(ctx, to, code, ttl any) *gomock.Call {
+// PublishOTP indicates an expected call of PublishOTP.
+func (mr *MockIOTPPublisherMockRecorder) PublishOTP(ctx, emailEnc, codeEnc, expiresAt any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SendOTP", reflect.TypeOf((*MockIMailer)(nil).SendOTP), ctx, to, code, ttl)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PublishOTP", reflect.TypeOf((*MockIOTPPublisher)(nil).PublishOTP), ctx, emailEnc, codeEnc, expiresAt)
 }
 
 // MockITokenIssuer is a mock of ITokenIssuer interface.
@@ -351,6 +351,21 @@ func (m *MockIPIIProtector) SealEmail(email string) ([]byte, error) {
 func (mr *MockIPIIProtectorMockRecorder) SealEmail(email any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SealEmail", reflect.TypeOf((*MockIPIIProtector)(nil).SealEmail), email)
+}
+
+// SealOTP mocks base method.
+func (m *MockIPIIProtector) SealOTP(code string) ([]byte, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "SealOTP", code)
+	ret0, _ := ret[0].([]byte)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// SealOTP indicates an expected call of SealOTP.
+func (mr *MockIPIIProtectorMockRecorder) SealOTP(code any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SealOTP", reflect.TypeOf((*MockIPIIProtector)(nil).SealOTP), code)
 }
 
 // SealNIK mocks base method.

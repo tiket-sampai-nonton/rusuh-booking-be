@@ -85,27 +85,24 @@ func (p PII) Validate() error {
 	return errors.Join(errs...)
 }
 
-// SMTP holds SMTP_* variables (pengiriman OTP langsung, tidak lewat broker: OTP adalah secret).
-type SMTP struct {
-	Host     string
-	Port     int
-	Username string
-	Password string
-	From     string
-	Timeout  time.Duration
+// RabbitMQ holds RABBITMQ_* variables for publishing otp.requested events.
+type RabbitMQ struct {
+	URL         string
+	Exchange    string
+	ConfirmWait time.Duration
 }
 
-// Validate checks SMTP.
-func (s SMTP) Validate() error {
+// Validate checks RabbitMQ config.
+func (r RabbitMQ) Validate() error {
 	var errs []error
-	if s.Host == "" || s.Port <= 0 || s.Port > 65535 {
-		errs = append(errs, errors.New("SMTP_HOST dan SMTP_PORT wajib valid"))
+	if r.URL == "" {
+		errs = append(errs, errors.New("RABBITMQ_URL wajib diisi"))
 	}
-	if !strings.Contains(s.From, "@") {
-		errs = append(errs, errors.New("SMTP_FROM harus berisi alamat email"))
+	if r.Exchange == "" {
+		errs = append(errs, errors.New("RABBITMQ_EXCHANGE wajib diisi"))
 	}
-	if s.Timeout <= 0 {
-		errs = append(errs, errors.New("SMTP_TIMEOUT harus > 0"))
+	if r.ConfirmWait <= 0 {
+		errs = append(errs, errors.New("RABBITMQ_CONFIRM_TIMEOUT harus > 0"))
 	}
 	return errors.Join(errs...)
 }

@@ -33,30 +33,30 @@ var (
 )
 
 type mocks struct {
-	accounts *mock_outbound.MockIAccountRepository
-	sessions *mock_outbound.MockISessionRepository
-	audit    *mock_outbound.MockILoginAudit
-	otp      *mock_outbound.MockIOTPStore
-	limiter  *mock_outbound.MockIRateLimiter
-	mailer   *mock_outbound.MockIMailer
-	tokens   *mock_outbound.MockITokenIssuer
-	secrets  *mock_outbound.MockISecretGenerator
-	pii      *mock_outbound.MockIPIIProtector
+	accounts  *mock_outbound.MockIAccountRepository
+	sessions  *mock_outbound.MockISessionRepository
+	audit     *mock_outbound.MockILoginAudit
+	otp       *mock_outbound.MockIOTPStore
+	limiter   *mock_outbound.MockIRateLimiter
+	publisher *mock_outbound.MockIOTPPublisher
+	tokens    *mock_outbound.MockITokenIssuer
+	secrets   *mock_outbound.MockISecretGenerator
+	pii       *mock_outbound.MockIPIIProtector
 }
 
 func newAuth(t *testing.T) (*Auth, mocks) {
 	t.Helper()
 	ctrl := gomock.NewController(t)
 	m := mocks{
-		accounts: mock_outbound.NewMockIAccountRepository(ctrl),
-		sessions: mock_outbound.NewMockISessionRepository(ctrl),
-		audit:    mock_outbound.NewMockILoginAudit(ctrl),
-		otp:      mock_outbound.NewMockIOTPStore(ctrl),
-		limiter:  mock_outbound.NewMockIRateLimiter(ctrl),
-		mailer:   mock_outbound.NewMockIMailer(ctrl),
-		tokens:   mock_outbound.NewMockITokenIssuer(ctrl),
-		secrets:  mock_outbound.NewMockISecretGenerator(ctrl),
-		pii:      mock_outbound.NewMockIPIIProtector(ctrl),
+		accounts:  mock_outbound.NewMockIAccountRepository(ctrl),
+		sessions:  mock_outbound.NewMockISessionRepository(ctrl),
+		audit:     mock_outbound.NewMockILoginAudit(ctrl),
+		otp:       mock_outbound.NewMockIOTPStore(ctrl),
+		limiter:   mock_outbound.NewMockIRateLimiter(ctrl),
+		publisher: mock_outbound.NewMockIOTPPublisher(ctrl),
+		tokens:    mock_outbound.NewMockITokenIssuer(ctrl),
+		secrets:   mock_outbound.NewMockISecretGenerator(ctrl),
+		pii:       mock_outbound.NewMockIPIIProtector(ctrl),
 	}
 	m.pii.EXPECT().HashEmail("arnu@gmail.com").Return(emailH).AnyTimes()
 	m.pii.EXPECT().HashOTP(emailH, "123456").Return(codeH).AnyTimes()
@@ -64,7 +64,7 @@ func newAuth(t *testing.T) (*Auth, mocks) {
 	m.pii.EXPECT().HashRefreshToken(gomock.Any()).DoAndReturn(func(raw string) []byte { return []byte("h:" + raw) }).AnyTimes()
 	m.audit.EXPECT().Record(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	u := NewAuth(AuthDeps{Accounts: m.accounts, Sessions: m.sessions, Audit: m.audit, OTP: m.otp, Limiter: m.limiter,
-		Mailer: m.mailer, Tokens: m.tokens, Secrets: m.secrets, PII: m.pii, Clock: clock.Fixed{T: now},
+		Publisher: m.publisher, Tokens: m.tokens, Secrets: m.secrets, PII: m.pii, Clock: clock.Fixed{T: now},
 		Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}, settings)
 	return u, m
 }
@@ -81,7 +81,9 @@ func TestRequestOTP_Success(t *testing.T) {
 	allowAll(m)
 	m.secrets.EXPECT().OTPCode().Return("123456", nil)
 	m.otp.EXPECT().Start(gomock.Any(), emailKey, codeH, 5*time.Minute, time.Minute).Return(true, nil)
-	m.mailer.EXPECT().SendOTP(gomock.Any(), "arnu@gmail.com", "123456", 5*time.Minute).Return(nil)
+	m.pii.EXPECT().SealEmail("arnu@gmail.com").Return([]byte("email-enc"), nil)
+	m.pii.EXPECT().SealOTP("123456").Return([]byte("code-enc"), nil)
+	m.publisher.EXPECT().PublishOTP(gomock.Any(), []byte("email-enc"), []byte("code-enc"), now.Add(5*time.Minute)).Return(nil)
 
 	resp, err := u.RequestOTP(context.Background(), dto.RequestOTPRequest{Email: " Arnu@Gmail.com "}, client)
 	require.NoError(t, err)
@@ -141,12 +143,14 @@ func TestRequestOTP_Failures(t *testing.T) {
 		assert.Equal(t, inbound.CodeOTPResendTooSoon, code(err))
 		assert.Equal(t, "60", apperror.From(err).Details["retryAfterSeconds"])
 	})
-	t.Run("mail fails clears challenge", func(t *testing.T) {
+	t.Run("publish fails clears challenge", func(t *testing.T) {
 		u, m := newAuth(t)
 		allowAll(m)
 		m.secrets.EXPECT().OTPCode().Return("123456", nil)
 		m.otp.EXPECT().Start(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(true, nil)
-		m.mailer.EXPECT().SendOTP(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(errors.New("smtp down"))
+		m.pii.EXPECT().SealEmail(gomock.Any()).Return([]byte("e-enc"), nil)
+		m.pii.EXPECT().SealOTP(gomock.Any()).Return([]byte("c-enc"), nil)
+		m.publisher.EXPECT().PublishOTP(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(errors.New("broker down"))
 		m.otp.EXPECT().Clear(gomock.Any(), emailKey).Return(errors.New("also down"))
 		_, err := u.RequestOTP(ctx, req, client)
 		assert.Equal(t, apperror.CodeDependencyUnavailable, code(err))

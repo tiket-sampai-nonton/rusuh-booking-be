@@ -31,7 +31,25 @@ func RunWorker(ctx context.Context, cfg config.Config, logger *slog.Logger, need
 	errCh := make(chan error, 1)
 	go func() { errCh <- serve(ctx, cfg, handler, logger) }()
 
-	err = loop(ctx, cfg.Worker.Interval, jobs(clients), logger)
+	mod, err := newQueueModule(cfg, clients, logger)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if mod.rmqConn != nil {
+			_ = mod.rmqConn.Close()
+		}
+	}()
+	// Consume Booking events (release slots, block quota, close on sold-out) alongside the jobs.
+	if clients.MQ != nil && mod.consumer != nil {
+		go func() {
+			if cerr := clients.MQ.Consume(ctx, mod.consumer.Subscription(), logger); cerr != nil {
+				logger.Error("queue consumer berhenti", "error", cerr)
+			}
+		}()
+	}
+
+	err = loop(ctx, cfg.Worker.Interval, mod.jobs, logger)
 	if serr := <-errCh; serr != nil && !errors.Is(serr, context.Canceled) {
 		return serr
 	}
@@ -55,5 +73,15 @@ func loop(ctx context.Context, every time.Duration, js []Job, logger *slog.Logge
 	}
 }
 
-// jobs returns the background jobs of this worker. Kosong di boilerplate.
-func jobs(*Clients) []Job { return nil }
+// jobs builds the worker's background jobs from a composed module (empty without Postgres/Valkey).
+func jobs(cfg config.Config, clients *Clients, logger *slog.Logger) []Job {
+	mod, err := newQueueModule(cfg, clients, logger)
+	if err != nil {
+		logger.Error("queue: gagal menyusun worker jobs", "error", err)
+		return nil
+	}
+	if mod.rmqConn != nil {
+		_ = mod.rmqConn.Close()
+	}
+	return mod.jobs
+}

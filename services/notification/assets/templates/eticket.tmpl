@@ -1,0 +1,14 @@
+Halo,
+
+Pembayaran Anda berhasil! Referensi: {{.PublicRef}}
+
+Event  : {{.EventName}}
+Tanggal: {{.EventStartsAt}}
+Venue  : {{.EventVenue}}
+
+Tiket:
+{{range .Tickets}}- {{.CategoryCode}} | {{.TicketCode}} | {{.AttendeeName}} | {{.AttendeeNikMasked}}
+{{end}}
+Lihat e-tiket: {{.TicketLinkToken}}
+
+Tunjukkan kode tiket di pintu masuk. Terima kasih — Tim Rusuh Booking Tiket

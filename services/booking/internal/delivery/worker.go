@@ -6,6 +6,9 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/clock"
+
+	bookingrabbitmq "github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/infrastructure/rabbitmq"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/config"
 )
 
@@ -15,8 +18,8 @@ type Job struct {
 	Run  func(context.Context) error
 }
 
-// RunWorker connects the needed clients, serves GET /health on APP_PORT, and runs jobs every
-// WORKER_INTERVAL until ctx is cancelled. Job nyata didaftarkan di jobs() saat fitur dibangun.
+// RunWorker connects the needed clients, serves GET /health on APP_PORT, runs the background jobs every
+// WORKER_INTERVAL, and consumes payment.* events until ctx is cancelled.
 func RunWorker(ctx context.Context, cfg config.Config, logger *slog.Logger, need Need) error {
 	clients, err := NewClients(ctx, cfg, need)
 	if err != nil {
@@ -31,7 +34,12 @@ func RunWorker(ctx context.Context, cfg config.Config, logger *slog.Logger, need
 	errCh := make(chan error, 1)
 	go func() { errCh <- serve(ctx, cfg, handler, logger) }()
 
-	err = loop(ctx, cfg.Worker.Interval, jobs(clients), logger)
+	js, consumerErr := startConsumer(ctx, cfg, clients, logger)
+	if consumerErr != nil {
+		logger.Error("booking: gagal memulai consumer payment.*", "error", consumerErr)
+	}
+
+	err = loop(ctx, cfg.Worker.Interval, js, logger)
 	if serr := <-errCh; serr != nil && !errors.Is(serr, context.Canceled) {
 		return serr
 	}
@@ -55,5 +63,52 @@ func loop(ctx context.Context, every time.Duration, js []Job, logger *slog.Logge
 	}
 }
 
-// jobs returns the background jobs of this worker. Kosong di boilerplate.
-func jobs(*Clients) []Job { return nil }
+// startConsumer subscribes the payment.* consumer (if RabbitMQ + Postgres are available) and returns
+// the periodic jobs: the two sweepers and the outbox relay.
+func startConsumer(ctx context.Context, cfg config.Config, clients *Clients, logger *slog.Logger) ([]Job, error) {
+	mod, err := newBookingModule(cfg, clients, logger)
+	if err != nil {
+		return nil, err
+	}
+	var js []Job
+	if mod.sweepSess != nil {
+		js = append(js, Job{Name: "session-sweeper", Run: mod.sweepSess.SweepSessions})
+		js = append(js, Job{Name: "expiry-sweeper", Run: mod.sweepExp.SweepExpiries})
+	}
+
+	if clients.MQ == nil || clients.PG == nil {
+		return js, nil
+	}
+	pub, err := clients.MQ.NewPublisher()
+	if err != nil {
+		return js, err
+	}
+	relay := bookingrabbitmq.NewOutboxRelay(mod.outbox, pub, clock.System{}.Now, logger)
+	js = append(js, Job{Name: "outbox-relay", Run: relay.RunOnce})
+
+	consumer := bookingrabbitmq.NewPaymentConsumer(mod.settle, logger)
+	go func() {
+		if cerr := clients.MQ.Consume(ctx, consumer.Subscription(), logger); cerr != nil && !errors.Is(cerr, context.Canceled) {
+			logger.Error("booking: consumer payment.* berhenti", "error", cerr)
+		}
+	}()
+	return js, nil
+}
+
+// jobs returns the periodic background jobs for a worker with the given clients. Without Postgres it
+// returns nil (nothing to sweep or relay). Real wiring happens in startConsumer, which also subscribes
+// the payment consumer; this function exists so the composition root (and tests) can inspect the job
+// set without opening a broker consumer.
+func jobs(clients *Clients) []Job {
+	if clients == nil || clients.PG == nil {
+		return nil
+	}
+	mod, err := newBookingModule(config.Config{}, clients, slog.Default())
+	if err != nil || mod.sweepSess == nil {
+		return nil
+	}
+	return []Job{
+		{Name: "session-sweeper", Run: mod.sweepSess.SweepSessions},
+		{Name: "expiry-sweeper", Run: mod.sweepExp.SweepExpiries},
+	}
+}

@@ -73,6 +73,18 @@ func TestRequestOTP(t *testing.T) {
 	rec = do(f, "POST", "/api/v1/auth/otp/request", `{"email":"a@b.id"}`, nil)
 	assert.Equal(t, stdhttp.StatusTooManyRequests, rec.Code)
 	assert.Equal(t, inbound.CodeOTPResendTooSoon, errCode(t, rec))
+
+	// AC1.4/AC1.5: rate limited → 429 RATE_LIMITED
+	f.auth.EXPECT().RequestOTP(gomock.Any(), gomock.Any(), gomock.Any()).Return(dto.RequestOTPResponse{}, inbound.ErrRateLimited)
+	rec = do(f, "POST", "/api/v1/auth/otp/request", `{"email":"a@b.id"}`, nil)
+	assert.Equal(t, stdhttp.StatusTooManyRequests, rec.Code)
+	assert.Equal(t, apperror.CodeRateLimited, errCode(t, rec))
+
+	// AC1.7: publish fails → 503 DEPENDENCY_UNAVAILABLE
+	f.auth.EXPECT().RequestOTP(gomock.Any(), gomock.Any(), gomock.Any()).Return(dto.RequestOTPResponse{}, inbound.ErrPublishFailed)
+	rec = do(f, "POST", "/api/v1/auth/otp/request", `{"email":"a@b.id"}`, nil)
+	assert.Equal(t, stdhttp.StatusServiceUnavailable, rec.Code)
+	assert.Equal(t, apperror.CodeDependencyUnavailable, errCode(t, rec))
 }
 
 func TestVerifyRefreshLogout(t *testing.T) {

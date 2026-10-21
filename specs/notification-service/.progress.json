@@ -1,0 +1,17 @@
+{
+  "service": "notification",
+  "status": "COMPLETE",
+  "verifiedAt": "2026-10-21T00:40:00+07:00",
+  "verification": {
+    "go_build": "pass",
+    "gowork_off_build": "pass",
+    "go_test_race": "pass",
+    "golangci_lint": "pass (0 issues)"
+  },
+  "notes": [
+    "notification_type values follow migration CHECK (BOOKING_PAID/BOOKING_EXPIRED/BOOKING_REVIEW/TURN_SOON/TURN_ARRIVED); OTP not tracked in deliveries.",
+    "OTP consumer runs on a dedicated connection with MaxRetries=0 (no retry queue).",
+    "PII AADs match User Service: users.accounts.email and otp.requested.code.",
+    "FCM sender is self-contained (OAuth2 JWT-bearer); noopPush used when FCM_CREDENTIALS_PATH unset."
+  ]
+}

@@ -39,5 +39,11 @@ func NewHandler(cfg config.Config, clients *Clients, logger *slog.Logger) (http.
 	mux := http.NewServeMux()
 	bookinghttp.NewHealthHandler(health).Register(mux)
 
-	return httpx.Chain(mux, httpx.RequestID(), httpx.Recover(logger)), nil
+	mod, err := newBookingModule(cfg, clients, logger)
+	if err != nil {
+		return nil, err
+	}
+	mod.Register(mux)
+
+	return httpx.Chain(mux, httpx.CORS(), httpx.RequestID(), httpx.Recover(logger)), nil
 }

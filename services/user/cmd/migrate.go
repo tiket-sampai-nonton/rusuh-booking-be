@@ -56,7 +56,7 @@ var migrateStatusCmd = &cobra.Command{
 				if s.Applied {
 					mark = "applied " + s.AppliedAt.UTC().Format("2006-01-02T15:04:05Z")
 				}
-				fmt.Fprintf(cmd.OutOrStdout(), "%04d_%s\t%s\n", s.Version, s.Name, mark)
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%04d_%s\t%s\n", s.Version, s.Name, mark)
 			}
 			return err
 		})

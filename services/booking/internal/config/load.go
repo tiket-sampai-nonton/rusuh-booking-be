@@ -65,7 +65,7 @@ func Load() (Config, error) {
 		ConfirmWait:  r.Duration("RABBITMQ_CONFIRM_TIMEOUT", 5*time.Second),
 	}
 
-	// Kesalahan parsing dan validasi dilaporkan bersama agar semua variabel yang salah terlihat sekaligus.
+	// Kesalahan parsing dan validasi dilaporkan bersama agar semua variable yang salah terlihat sekaligus.
 	if err := errors.Join(append(parseErrs, r.Err(), cfg.Validate())...); err != nil {
 		return Config{}, fmt.Errorf("config: %w", err)
 	}

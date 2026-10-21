@@ -1,0 +1,15 @@
+{
+  "status": "IN_PROGRESS",
+  "startedAt": "2026-10-20T23:41:04+07:00",
+  "steps": {
+    "config": "in_progress",
+    "domain": "pending",
+    "ports": "pending",
+    "infrastructure": "pending",
+    "usecases": "pending",
+    "http": "pending",
+    "workers": "pending",
+    "wiring": "pending",
+    "tests": "pending"
+  }
+}
