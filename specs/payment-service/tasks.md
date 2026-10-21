@@ -540,3 +540,45 @@ make ci                 # final gate before PR
 | I-6 money change ⇒ outbox in same tx | Task 4/5 (`AppendAndProject` + outbox in one tx) |
 | I-7 no PII/secret in event/outbox/log | Task 11 (`eventstore.ErrForbiddenField`) |
 | I-8 refund idempotent without inbox | Task 7/8 (`refund_cases.attempt_id UNIQUE`) |
+
+
+---
+
+## Task 14: Amount Mismatch Handling (OQ-17) [TODO]
+
+**Traces to:** OQ-17, SRS-F-16-02
+
+### Background
+When webhook reports a different amount than expected, the booking should not become PAID. Instead, mark for manual review.
+
+### What to implement
+1. Add `REVIEW` to payment_attempts status enum in migration (if not present)
+2. In webhook handler, compare `webhook.gross_amount` with `attempt.amount_minor`
+3. If mismatch: set attempt status to `REVIEW`, do NOT publish `payment.succeeded`, alert Ops
+
+### Acceptance Criteria
+- [ ] AC-OQ17.1: Amount mismatch (`webhook.gross_amount != attempt.amount_minor`) → attempt status `REVIEW`, NOT `SUCCEEDED`
+- [ ] AC-OQ17.2: `REVIEW` status does not trigger `payment.succeeded` event
+- [ ] AC-OQ17.3: Alert/log for Ops investigation on amount mismatch
+
+---
+
+## Task 15: Consume publicRef for Order ID (OQ-21) [TODO]
+
+**Traces to:** OQ-21, SDD §4.6.4
+
+### Background
+Midtrans order_id format per main SDD: `RB-{publicRef}-{attemptNo}`. Payment needs publicRef from Booking's `/payable` endpoint.
+
+### What to implement
+1. Update `IBookingClient.GetPayable()` return type to include `PublicRef string`
+2. Update Payable HTTP client to parse `publicRef` from response
+3. Use `fmt.Sprintf("RB-%s-%d", payable.PublicRef, attemptNo)` for Midtrans order_id
+
+### Acceptance Criteria
+- [ ] AC-OQ21.1: `GetPayable()` returns `publicRef` field from Booking
+- [ ] AC-OQ21.2: Midtrans `order_id` format is `RB-{publicRef}-{attemptNo}`
+- [ ] AC-OQ21.3: Missing publicRef → fail attempt creation with clear error
+
+### Dependency
+Requires Booking to add `publicRef` to Payable schema (internal-booking.yaml) — done in OQ-21 fix.

@@ -471,6 +471,8 @@ UPDATE booking.admissions SET edit_count = edit_count + 1 WHERE id = $admissionI
 
 ### Acceptance Criteria
 - [ ] AC9.1: `payment.succeeded{ bookingId, attemptId, settlementTime, amountMinor, method }` & `status != PAID` → one tx: `held→sold` (`category_inventories`, `event_supply`, `buyer_quotas`), items `HELD→PAID`, issue `tickets`, append `BookingPaid`, status `PAID` + set `paid_at`/`settlement_time`, write outbox `booking.paid` + `booking.journey.ended`
+- [ ] AC9.1a: IF `paid_quantity >= max_quantity` after settlement, THEN publish `booking.quota.exhausted { eventId, buyerNikHash }` (OQ-13, TC-MSG-03)
+- [ ] AC9.1b: IF `sold_units >= total_units` after settlement (SRS-F-10-01), THEN publish `booking.sold_out { eventId }` (OQ-13, TC-MSG-03)
 - [ ] AC9.2: Idempotent — duplicate delivery does not double tickets (guard + `ON CONFLICT (booking_item_id) DO NOTHING`)
 - [ ] AC9.3: `payment.failed{ bookingId, attemptId, reason }` → log only; booking waits for TTL
 - [ ] AC9.4 (tickets): one `tickets` row per `booking_item` (`public_code UNIQUE`, 1:1 `booking_item_id`)

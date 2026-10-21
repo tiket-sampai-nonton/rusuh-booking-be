@@ -4,6 +4,7 @@ package worker
 
 import (
 	"context"
+	"log/slog"
 	"time"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/clock"
@@ -20,15 +21,19 @@ type Promoter struct {
 	pub      outbound.IEventPublisher
 	audit    outbound.IEntryAuditRepo
 	clock    clock.IClock
+	logger   *slog.Logger
 	batchMax int
 }
 
 // NewPromoter accepts interfaces and returns the concrete worker.
-func NewPromoter(store outbound.IQueueStore, settings outbound.IEventSettingsRepo, booking outbound.IBookingClient, pub outbound.IEventPublisher, audit outbound.IEntryAuditRepo, clk clock.IClock, batchMax int) *Promoter {
+func NewPromoter(store outbound.IQueueStore, settings outbound.IEventSettingsRepo, booking outbound.IBookingClient, pub outbound.IEventPublisher, audit outbound.IEntryAuditRepo, clk clock.IClock, logger *slog.Logger, batchMax int) *Promoter {
 	if batchMax <= 0 {
 		batchMax = 200
 	}
-	return &Promoter{store: store, settings: settings, booking: booking, pub: pub, audit: audit, clock: clk, batchMax: batchMax}
+	if logger == nil {
+		logger = slog.Default()
+	}
+	return &Promoter{store: store, settings: settings, booking: booking, pub: pub, audit: audit, clock: clk, logger: logger, batchMax: batchMax}
 }
 
 // Run promotes one batch for every configured event.
@@ -106,6 +111,13 @@ func (p *Promoter) runEvent(ctx context.Context, eventID string) error {
 			}
 		case "SOLD_OUT":
 			_ = p.store.SetSale(ctx, eventID, "CLOSED", true)
+		case "ALREADY_ACTIVE":
+			// Bug indicator: Queue constraints should prevent this. End entry and log for investigation (OQ-18).
+			if _, err := p.store.EndEntry(ctx, eventID, a.QueueEntryID, "ALREADY_ACTIVE", now.UnixMilli()); err != nil {
+				p.logger.Warn("failed to end ALREADY_ACTIVE entry", "error", err)
+			}
+			p.logger.Warn("ALREADY_ACTIVE dari Booking — kemungkinan bug constraint antrean",
+				"eventId", eventID, "queueEntryId", a.QueueEntryID)
 		}
 	}
 	if len(promoteCands) == 0 {

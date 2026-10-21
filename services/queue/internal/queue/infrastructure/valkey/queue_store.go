@@ -308,13 +308,35 @@ func (s *QueueStore) MarkMissed(ctx context.Context, eventID, entryID string, no
 
 // MarkMissedAndClean atomically sets status MISSED, removes from active ZSET, and cleans
 // NIK/visitor/email constraint keys so the user can rejoin (TC-QUE-09).
-// Uses end_entry.lua with outcome=UNCLAIMED via raw EVAL (no EVALSHA caching issue).
+// Uses raw EVAL (not the LuaScript EVALSHA wrapper) to avoid cluster routing issues.
 func (s *QueueStore) MarkMissedAndClean(ctx context.Context, eventID, entryID string, nowMs int64) (bool, error) {
 	ent, ok, err := s.GetEntry(ctx, eventID, entryID)
 	if err != nil {
 		return false, err
 	}
-	if !ok || ent.Status != valueobject.StatusAdmitted {
+	if !ok {
+		return false, nil
+	}
+
+	// If already MISSED (set by claim.lua before sweeper ran), still clean constraint keys.
+	if ent.Status == valueobject.StatusMissed {
+		keys := []string{
+			s.kNik(eventID, ent.BuyerNikHashHex()),
+			s.kVisitor(eventID, ent.VisitorID),
+			s.kEmail(eventID, ent.EmailHashHex()),
+		}
+		for _, resp := range s.c.DoMulti(ctx,
+			s.c.B().Del().Key(keys[0]).Build(),
+			s.c.B().Del().Key(keys[1]).Build(),
+			s.c.B().Del().Key(keys[2]).Build(),
+			s.c.B().Zrem().Key(s.kActive(eventID)).Member(entryID).Build(),
+		) {
+			_ = resp.Error() // best-effort cleanup
+		}
+		return true, nil
+	}
+
+	if ent.Status != valueobject.StatusAdmitted {
 		return false, nil
 	}
 
@@ -324,16 +346,17 @@ func (s *QueueStore) MarkMissedAndClean(ctx context.Context, eventID, entryID st
 	}
 	args := []string{entryID, "UNCLAIMED", strconv.FormatInt(nowMs, 10)}
 
-	// Use raw EVAL (not EVALSHA) to ensure the updated end_entry.lua runs.
-	arr, eerr := s.endEntry.Exec(ctx, s.c, keys, args).ToArray()
+	// Use raw EVAL to ensure the current end_entry.lua runs on the correct master node.
+	arr, eerr := s.c.Do(ctx, s.c.B().Eval().Script(lua.EndEntry).
+		Numkeys(int64(len(keys))).Key(keys...).Arg(args...).Build()).ToArray()
 	if eerr != nil {
-		return false, fmt.Errorf("valkey: end_entry.lua (missed+clean): %w", eerr)
+		return false, fmt.Errorf("valkey: end_entry (missed+clean): %w", eerr)
 	}
-	if len(arr) < 2 {
+	if len(arr) == 0 {
 		return false, nil
 	}
-	final, _ := arr[0].ToString()
-	return final == "OK", nil
+	tag, _ := arr[0].ToString()
+	return tag == "OK", nil
 }
 
 // AddQuotaExhausted records a NIK hash in the quota_exhausted set (idempotent SADD).

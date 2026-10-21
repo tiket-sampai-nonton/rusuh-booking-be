@@ -121,7 +121,7 @@ func newQueueModule(cfg config.Config, clients *Clients, logger *slog.Logger) (*
 		queuehttp.NewLeaveHandler(leaveUC, visitorAuth),
 	}
 
-	promoter := worker.NewPromoter(store, settingsRepo, booking, publisher, auditRepo, clk, cfg.WorkerTuning.PromoteBatchMax)
+	promoter := worker.NewPromoter(store, settingsRepo, booking, publisher, auditRepo, clk, logger, cfg.WorkerTuning.PromoteBatchMax)
 	sweeper := worker.NewSweeper(store, settingsRepo, publisher, clk)
 	statusPub := worker.NewStatusPublisher(store, settingsRepo, booking, clk, cfg.WorkerTuning.StatusInterval)
 	jobs := []Job{
@@ -175,7 +175,7 @@ func loadUserVerifier(cfg config.Config, fallback *token.Verifier) (*token.Verif
 	if err != nil {
 		return nil, err
 	}
-	v, err := token.NewVerifier(map[string]ed25519.PublicKey{cfg.Token.KeyID: pub}, cfg.Token.Issuer, cfg.Token.Audience, 5*time.Second)
+	v, err := token.NewVerifier(map[string]ed25519.PublicKey{cfg.Token.UserKeyID: pub}, cfg.Token.UserIssuer, cfg.Token.Audience, 5*time.Second)
 	if err != nil {
 		return nil, err
 	}

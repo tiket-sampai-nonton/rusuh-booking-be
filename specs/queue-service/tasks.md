@@ -780,6 +780,7 @@ func (h *ClaimHandler) Register(mux) { mux.HandleFunc("POST /api/v1/queue-entrie
 - [ ] AC6.2: `RESERVED` → `active`, `ADMITTED`, store `allocationId`, publish `queue.turn.arrived`.
 - [ ] AC6.3: `NO_SUPPLY_NOW` → stays `waiting` at same seq.
 - [ ] AC6.4: `QUOTA_EXHAUSTED` → `SADD quota_exhausted`, entry `REJECTED`.
+- [ ] AC6.4a: `ALREADY_ACTIVE` → end entry with status `ALREADY_ACTIVE`, log warning (bug indicator — Queue constraints should have prevented this)
 - [ ] AC6.5: `SOLD_OUT` → close queue, next entry `SOLD_OUT`.
 - [ ] AC6.6: FIFO preserved across promotions (TC-QUE-08/14).
 - [ ] AC6.7: valid visitor + `ADMITTED` + `now<claimDeadline` → issue `admissionToken`(EdDSA,60s)+`bookingUrl`, status `CLAIMED`.
