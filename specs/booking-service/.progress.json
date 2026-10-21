@@ -24,7 +24,7 @@
     "sessionTTL": "payment_expires_at from admission snapshot; ReplaceItems never resets it",
     "settlementAtomicity": "Settle guarded by status!=PAID + ON CONFLICT on tickets (idempotent)"
   },
-  "notImplemented": ["AC11.7: Reconciliation job — detect stock/booking drift → alert (SRS-F-90-01, TC-OPS-01)"]
+  "notImplemented": ["AC11.7: Reconciliation job — detect stock/booking drift → alert (SRS-F-90-01, TC-OPS-01)"],
   "previousStatus": "COMPLETE",
   "reworkTasks": [
     "1.R1",

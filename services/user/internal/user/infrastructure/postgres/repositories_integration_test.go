@@ -101,6 +101,29 @@ func TestAccounts(t *testing.T) {
 	_, err = repo.UpdateProfile(ctx, "6f1c0e7a-0000-4000-8000-000000000009", entity.ProfileUpdate{FullName: &name})
 	assert.ErrorIs(t, err, entity.ErrNotFound)
 
+	// Task 7.1: GetNIKHashByID — account without NIK returns nil, nil
+	nikHashNil, err := repo.GetNIKHashByID(ctx, b.ID)
+	require.NoError(t, err)
+	assert.Nil(t, nikHashNil, "account without NIK must return nil hash")
+
+	// Task 7.1: GetNIKHashByID — account with NIK returns stored hash
+	nikHash, err := repo.GetNIKHashByID(ctx, a.ID)
+	require.NoError(t, err)
+	assert.Equal(t, []byte("n2"), nikHash, "account with NIK must return stored hash")
+
+	// Task 7.1: GetEmailEncByID — returns stored encrypted email
+	emailEnc, err := repo.GetEmailEncByID(ctx, a.ID)
+	require.NoError(t, err)
+	assert.Equal(t, []byte("enc"), emailEnc, "GetEmailEncByID must return the stored email_enc")
+
+	// Task 7.1: GetNIKHashByID — unknown ID returns ErrNotFound
+	_, err = repo.GetNIKHashByID(ctx, "6f1c0e7a-0000-4000-8000-000000000009")
+	assert.ErrorIs(t, err, entity.ErrNotFound)
+
+	// Task 7.1: GetEmailEncByID — unknown ID returns ErrNotFound
+	_, err = repo.GetEmailEncByID(ctx, "6f1c0e7a-0000-4000-8000-000000000009")
+	assert.ErrorIs(t, err, entity.ErrNotFound)
+
 	audit := NewAudit(pool)
 	require.NoError(t, audit.Record(ctx, entity.LoginEvent{AccountID: a.ID, EmailHash: []byte("h1"), Outcome: entity.AuditLoginOK, ClientIP: "203.0.113.9"}))
 	require.NoError(t, audit.Record(ctx, entity.LoginEvent{Outcome: entity.AuditRefreshReused}))

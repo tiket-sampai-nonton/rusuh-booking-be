@@ -210,7 +210,7 @@ func (u *JoinQueue) tryDirectAdmission(ctx context.Context, eventID string, ent 
 		return false
 	}
 	a := resp.Allocations[0]
-	if a.Status != "RESERVED" {
+	if a.Status != "GRANTED" {
 		return false
 	}
 	deadline := now.Add(u.s.ClaimWindow)

@@ -113,6 +113,10 @@ func (p *Promoter) runEvent(ctx context.Context, eventID string) error {
 			if ent, found, gerr := p.store.GetEntry(ctx, eventID, a.QueueEntryID); gerr == nil && found {
 				_ = p.store.AddQuotaExhausted(ctx, eventID, ent.BuyerNikHashHex())
 			}
+			// End the entry so it doesn't permanently block the queue head (spec 11.R1).
+			if _, err := p.store.EndEntry(ctx, eventID, a.QueueEntryID, "BUYER_QUOTA_EXHAUSTED", now.UnixMilli()); err != nil {
+				p.logger.Warn("failed to end BUYER_QUOTA_EXHAUSTED entry", "error", err)
+			}
 		case "SOLD_OUT":
 			_ = p.store.SetSale(ctx, eventID, "CLOSED", true)
 		case "ALREADY_ACTIVE":

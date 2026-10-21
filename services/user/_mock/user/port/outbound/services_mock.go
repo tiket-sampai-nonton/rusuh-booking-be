@@ -151,17 +151,17 @@ func (m *MockIOTPPublisher) EXPECT() *MockIOTPPublisherMockRecorder {
 }
 
 // PublishOTP mocks base method.
-func (m *MockIOTPPublisher) PublishOTP(ctx context.Context, emailEnc, codeEnc []byte, expiresAt time.Time) error {
+func (m *MockIOTPPublisher) PublishOTP(ctx context.Context, emailEnc, codeEnc, emailHash []byte, now, expiresAt time.Time) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "PublishOTP", ctx, emailEnc, codeEnc, expiresAt)
+	ret := m.ctrl.Call(m, "PublishOTP", ctx, emailEnc, codeEnc, emailHash, now, expiresAt)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // PublishOTP indicates an expected call of PublishOTP.
-func (mr *MockIOTPPublisherMockRecorder) PublishOTP(ctx, emailEnc, codeEnc, expiresAt any) *gomock.Call {
+func (mr *MockIOTPPublisherMockRecorder) PublishOTP(ctx, emailEnc, codeEnc, emailHash, now, expiresAt any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PublishOTP", reflect.TypeOf((*MockIOTPPublisher)(nil).PublishOTP), ctx, emailEnc, codeEnc, expiresAt)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PublishOTP", reflect.TypeOf((*MockIOTPPublisher)(nil).PublishOTP), ctx, emailEnc, codeEnc, emailHash, now, expiresAt)
 }
 
 // MockITokenIssuer is a mock of ITokenIssuer interface.
@@ -353,21 +353,6 @@ func (mr *MockIPIIProtectorMockRecorder) SealEmail(email any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SealEmail", reflect.TypeOf((*MockIPIIProtector)(nil).SealEmail), email)
 }
 
-// SealOTP mocks base method.
-func (m *MockIPIIProtector) SealOTP(code string) ([]byte, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "SealOTP", code)
-	ret0, _ := ret[0].([]byte)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// SealOTP indicates an expected call of SealOTP.
-func (mr *MockIPIIProtectorMockRecorder) SealOTP(code any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SealOTP", reflect.TypeOf((*MockIPIIProtector)(nil).SealOTP), code)
-}
-
 // SealNIK mocks base method.
 func (m *MockIPIIProtector) SealNIK(nik string) ([]byte, error) {
 	m.ctrl.T.Helper()
@@ -381,6 +366,21 @@ func (m *MockIPIIProtector) SealNIK(nik string) ([]byte, error) {
 func (mr *MockIPIIProtectorMockRecorder) SealNIK(nik any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SealNIK", reflect.TypeOf((*MockIPIIProtector)(nil).SealNIK), nik)
+}
+
+// SealOTP mocks base method.
+func (m *MockIPIIProtector) SealOTP(code string) ([]byte, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "SealOTP", code)
+	ret0, _ := ret[0].([]byte)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// SealOTP indicates an expected call of SealOTP.
+func (mr *MockIPIIProtectorMockRecorder) SealOTP(code any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SealOTP", reflect.TypeOf((*MockIPIIProtector)(nil).SealOTP), code)
 }
 
 // UnsealEmail mocks base method.

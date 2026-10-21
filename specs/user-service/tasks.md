@@ -9,11 +9,11 @@ User→SMTP) tidak relevan lagi.
 
 ## Tasks
 
-- [ ] 1. Request OTP
+- [x] 1. Request OTP
   - Ada: rate limit, cooldown, anti-enumerasi, audit, publish `otp.requested` terenkripsi
-  - [ ] 1.R1 Envelope OTP: `aggregateId` dikirim kosong (envelope mewajibkannya) dan `occurredAt` diisi `expiresAt`. Isi `aggregateId` = `email_hash` hex dan `occurredAt` = waktu sekarang
+  - [x] 1.R1 Envelope OTP: `aggregateId` dikirim kosong (envelope mewajibkannya) dan `occurredAt` diisi `expiresAt`. Isi `aggregateId` = `email_hash` hex dan `occurredAt` = waktu sekarang
     - _Requirements: 1.7_
-  - [ ] 1.R2 Tambah schema kontrak `otp.requested.v1` + `user-service` ke enum `producer` (platform 5.2, owner: kamu)
+  - [x] 1.R2 Tambah schema kontrak `otp.requested.v1` + `user-service` ke enum `producer` (platform 5.2, owner: kamu)
     - _Depends on: platform 5.2_
     - **Property 5: PII never in plaintext**
     - _Requirements: 1.8_
@@ -34,8 +34,8 @@ User→SMTP) tidak relevan lagi.
 - [x] 5. Get profile
   - _Requirements: 5.1, 5.2, 5.3, 5.4_
 
-- [ ] 6. Update profile
-  - [ ] 6.R1 Validasi NIK pakai `pkg/nik` di usecase (VO sekarang lebih longgar). Respons tetap `400 VALIDATION_ERROR` sesuai `user.yaml`
+- [x] 6. Update profile
+  - [x] 6.R1 Validasi NIK pakai `pkg/nik` di usecase (VO sekarang lebih longgar). Respons tetap `400 VALIDATION_ERROR` sesuai `user.yaml`
     - _Depends on: platform 1_
     - _Requirements: 6.3_
   - **Property 6: One NIK per account**
@@ -43,7 +43,7 @@ User→SMTP) tidak relevan lagi.
 
 - [ ] 7. Klaim token untuk validasi service lain
   - Ada: `email`, `nik_hash`, `has_nik` di access token
-  - [ ] 7.1 Integration test `GetNIKHashByID` (NULL → `nil`) dan `GetEmailEncByID`
+  - [x] 7.1 Integration test `GetNIKHashByID` (NULL → `nil`) dan `GetEmailEncByID`
     - **Property 4: Identity claims consistency**
     - _Requirements: 7.1, 7.2_
   - [ ] 7.2 Distribusi kunci publik ke Queue & Booking (compose/SSM) + prosedur rotasi `kid`

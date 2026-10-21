@@ -937,3 +937,42 @@ func (mr *MockICancelSessionUsecaseMockRecorder) CancelSession(ctx, sessionID, v
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CancelSession", reflect.TypeOf((*MockICancelSessionUsecase)(nil).CancelSession), ctx, sessionID, visitorID)
 }
+
+// MockIReleaseAllocationUsecase is a mock of IReleaseAllocationUsecase interface.
+type MockIReleaseAllocationUsecase struct {
+	ctrl     *gomock.Controller
+	recorder *MockIReleaseAllocationUsecaseMockRecorder
+	isgomock struct{}
+}
+
+// MockIReleaseAllocationUsecaseMockRecorder is the mock recorder for MockIReleaseAllocationUsecase.
+type MockIReleaseAllocationUsecaseMockRecorder struct {
+	mock *MockIReleaseAllocationUsecase
+}
+
+// NewMockIReleaseAllocationUsecase creates a new mock instance.
+func NewMockIReleaseAllocationUsecase(ctrl *gomock.Controller) *MockIReleaseAllocationUsecase {
+	mock := &MockIReleaseAllocationUsecase{ctrl: ctrl}
+	mock.recorder = &MockIReleaseAllocationUsecaseMockRecorder{mock}
+	return mock
+}
+
+// EXPECT returns an object that allows the caller to indicate expected use.
+func (m *MockIReleaseAllocationUsecase) EXPECT() *MockIReleaseAllocationUsecaseMockRecorder {
+	return m.recorder
+}
+
+// Release mocks base method.
+func (m *MockIReleaseAllocationUsecase) Release(ctx context.Context, allocationID string) (dto.ReleaseResponse, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Release", ctx, allocationID)
+	ret0, _ := ret[0].(dto.ReleaseResponse)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// Release indicates an expected call of Release.
+func (mr *MockIReleaseAllocationUsecaseMockRecorder) Release(ctx, allocationID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Release", reflect.TypeOf((*MockIReleaseAllocationUsecase)(nil).Release), ctx, allocationID)
+}

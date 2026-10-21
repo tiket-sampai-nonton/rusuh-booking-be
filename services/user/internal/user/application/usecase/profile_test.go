@@ -10,6 +10,7 @@ import (
 	"go.uber.org/mock/gomock"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/apperror"
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/clock"
 
 	mock_outbound "github.com/tiket-sampai-nonton/rusuh-booking-be/services/user/_mock/user/port/outbound"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/user/internal/user/domain/dto"
@@ -23,7 +24,7 @@ func newProfile(t *testing.T) (*Profile, *mock_outbound.MockIAccountRepository, 
 	ctrl := gomock.NewController(t)
 	repo := mock_outbound.NewMockIAccountRepository(ctrl)
 	pii := mock_outbound.NewMockIPIIProtector(ctrl)
-	return NewProfile(repo, pii), repo, pii
+	return NewProfile(repo, pii, clock.Fixed{T: now}), repo, pii
 }
 
 func TestGetProfile(t *testing.T) {
@@ -60,6 +61,7 @@ func TestUpdateProfile(t *testing.T) {
 		{"nothing", dto.UpdateProfileRequest{}, nil, apperror.CodeValidationFailed},
 		{"blank name", dto.UpdateProfileRequest{FullName: ptr("   ")}, nil, apperror.CodeValidationFailed},
 		{"bad nik", dto.UpdateProfileRequest{NIK: ptr("123")}, nil, apperror.CodeValidationFailed},
+		{"nik fails pkg/nik kab=00", dto.UpdateProfileRequest{NIK: ptr("3100010101900001")}, nil, apperror.CodeValidationFailed},
 		{"seal error", dto.UpdateProfileRequest{NIK: ptr("3174010101900001")}, func(_ *mock_outbound.MockIAccountRepository, p *mock_outbound.MockIPIIProtector) {
 			p.EXPECT().SealNIK(gomock.Any()).Return(nil, errors.New("aes"))
 		}, apperror.CodeInternal},

@@ -16,15 +16,15 @@ Setiap task selesai bila `make ci` hijau.
   - CI `ci.yml` (build, lint+depguard, coverage ≥80%, isolation, scan), compose infra + 5 service, `make keys` untuk User
   - _Requirements: 2.7, 2.8, 4.5, 6.2, 7.1, 8.1_
 
-- [ ] 1. Implement `pkg/nik` validator struktur NIK
-  - [ ] 1.1 Buat `pkg/nik/nik.go` dengan `Validate(s, now)` dan error sentinel sesuai SDD-RBT §4.9
+- [x] 1. Implement `pkg/nik` validator struktur NIK
+  - [x] 1.1 Buat `pkg/nik/nik.go` dengan `Validate(s, now)` dan error sentinel sesuai SDD-RBT §4.9
     - Daftar provinsi sebagai `map[int]bool`; cek kab/kec ≠ `00`; tanggal kalender (DD+40), tidak di masa depan; urut ≠ `0000`
     - _Requirements: 1.1, 1.2, 1.3, 1.4_
     - _Design: §1_
-  - [ ] 1.2 Test table-driven korpus SDD §4.9 (laki-laki, perempuan, 30 Feb, 0000, provinsi tak dikenal, kab 00, panjang, non-digit, abad sebelumnya)
+  - [x] 1.2 Test table-driven korpus SDD §4.9 (laki-laki, perempuan, 30 Feb, 0000, provinsi tak dikenal, kab 00, panjang, non-digit, abad sebelumnya)
     - **Property 1: NIK validator determinism**
     - _Requirements: 1.5_
-  - [ ] 1.3 Dokumentasikan pemakaian di usecase (bukan domain) di godoc paket
+  - [x] 1.3 Dokumentasikan pemakaian di usecase (bukan domain) di godoc paket
     - _Requirements: 1.1_
 
 - [ ] 2. Implement middleware autentikasi & proteksi di `pkg/httpx`
@@ -85,6 +85,7 @@ Setiap task selesai bila `make ci` hijau.
   - [ ] 5.1 CI job `contracts`: validasi 7 OpenAPI 3.1 (kin-openapi) dan JSON Schema 2020-12, dipicu perubahan `docs/contracts/`
     - _Requirements: 5.1_
   - [ ] 5.2 Schema `otp.requested.v1.schema.json` sudah ada (DEV-2, checkpoint #1) ✅. Tersisa: tambah `user-service` ke enum `producer` di `envelope.schema.json` (additive) — tanpa ini envelope OTP dari User gagal validasi kontrak — **perlu persetujuan pemilik kontrak (OQ-4)**
+    - Catatan: `user-service` sudah ditambahkan ke enum `producer` di `envelope.schema.json` ✅
     - _Requirements: 5.3_
   - [ ] 5.3 Breaking-change check terhadap `main` (path/field/enum dihapus atau dipersempit → gagal)
     - **Property 7: Additive contracts**

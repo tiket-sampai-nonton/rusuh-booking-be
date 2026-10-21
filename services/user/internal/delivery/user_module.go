@@ -101,7 +101,7 @@ func newUserModule(cfg config.Config, clients *Clients, logger *slog.Logger) (re
 		OTPTTL: cfg.OTP.TTL, ResendCooldown: cfg.OTP.ResendCooldown, MaxAttempts: cfg.OTP.MaxAttempts,
 		MaxPerEmailHour: cfg.OTP.MaxPerEmailHour, MaxPerIPHour: cfg.OTP.MaxPerIPHour, RefreshTTL: cfg.Token.RefreshTTL,
 	})
-	profile := usecase.NewProfile(accounts, pii)
+	profile := usecase.NewProfile(accounts, pii, clk)
 	// Di luar lokal service berada di belakang ALB: IP klien diambil dari X-Forwarded-For.
 	return userhttp.NewAuthHandler(auth, profile, tokens, cfg.App.Env != "local"), nil
 }

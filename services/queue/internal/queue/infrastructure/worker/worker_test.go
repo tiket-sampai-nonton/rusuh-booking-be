@@ -84,6 +84,8 @@ func TestPromoter_QuotaExhaustedAddsSet(t *testing.T) {
 	}, nil)
 	m.store.EXPECT().GetEntry(ctx, "ev1", "e1").Return(entity.Entry{ID: "e1", BuyerNikHash: []byte{0xaa}}, true, nil)
 	m.store.EXPECT().AddQuotaExhausted(ctx, "ev1", "aa").Return(nil)
+	// Entry is ended so it doesn't permanently block the queue head (spec 11.R1).
+	m.store.EXPECT().EndEntry(ctx, "ev1", "e1", "BUYER_QUOTA_EXHAUSTED", gomock.Any()).Return("BUYER_QUOTA_EXHAUSTED", nil)
 	// no GRANTED → no Promote
 
 	p := worker.NewPromoter(m.store, m.settings, m.booking, m.pub, m.audit, wnow, nil, 200)

@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -232,31 +233,55 @@ func (r *AdmissionRepo) DueSessions(ctx context.Context, now time.Time, limit in
 func (r *AdmissionRepo) ExpireSession(ctx context.Context, admissionID string, now time.Time) error {
 	return pkgpg.WithTx(ctx, r.pool, pgx.TxOptions{IsoLevel: pgx.ReadCommitted}, func(tx pgx.Tx) error {
 		var status vo.AdmissionStatus
-		var eventID string
+		var eventID, queueEntryID string
 		var units int
-		err := tx.QueryRow(ctx, `SELECT status, event_id::text, units FROM booking.admissions WHERE id=$1::uuid FOR UPDATE`, admissionID).
-			Scan(&status, &eventID, &units)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil
-		}
-		if err != nil {
+		if err := tx.QueryRow(ctx, `SELECT status, event_id::text, queue_entry_id::text, units
+			FROM booking.admissions WHERE id=$1::uuid FOR UPDATE`, admissionID).
+			Scan(&status, &eventID, &queueEntryID, &units); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return nil
+			}
 			return err
 		}
 		if !status.IsActive() {
-			return nil
+			return nil // already terminal, idempotent
 		}
+
 		endReason := "SESSION_EXPIRED"
+		outcome := "EXPIRED"
 		if status == vo.AdmissionReserved {
 			endReason = "UNCLAIMED"
+			outcome = "UNCLAIMED"
+		}
+
+		// Release allocated stock.
+		// RESERVED and ACTIVE: stock is in allocated_units (no booking hold exists yet).
+		// EDITABLE: stock is in held_units, released by booking expiry sweeper via UoW — skip here.
+		if status == vo.AdmissionReserved || status == vo.AdmissionActive {
 			if _, err := tx.Exec(ctx, `
-				UPDATE booking.event_supply SET allocated_units = allocated_units - $2, version=version+1, updated_at=$3
-				 WHERE event_id=$1::uuid`, eventID, units, now); err != nil {
+				UPDATE booking.event_supply
+				   SET allocated_units = allocated_units - $2, version = version + 1, updated_at = $3
+				 WHERE event_id = $1::uuid`, eventID, units, now); err != nil {
 				return err
 			}
 		}
+
+		if _, err := tx.Exec(ctx, `
+			UPDATE booking.admissions SET status = 'EXPIRED', ended_at = $2, end_reason = $3
+			 WHERE id = $1::uuid`, admissionID, now, endReason); err != nil {
+			return err
+		}
+
+		// Publish journey.ended so Queue releases the slot (booking 10.R1, K7).
+		payload, err := json.Marshal(map[string]any{
+			"eventId": eventID, "queueEntryId": queueEntryID, "outcome": outcome,
+		})
+		if err != nil {
+			return err
+		}
 		_, err = tx.Exec(ctx, `
-			UPDATE booking.admissions SET status='EXPIRED', ended_at=$2, end_reason=$3 WHERE id=$1::uuid`,
-			admissionID, now, endReason)
+			INSERT INTO booking.outbox_events (routing_key, aggregate_id, schema_version, payload)
+			VALUES ('booking.journey.ended', $1::uuid, 1, $2)`, admissionID, payload)
 		return err
 	})
 }

@@ -6,6 +6,7 @@ package rabbitmq
 import (
 	"context"
 	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"time"
 
@@ -36,13 +37,13 @@ func NewOTPPublisher(pub *pkgrabbitmq.Publisher) *OTPPublisher {
 }
 
 // PublishOTP publishes an otp.requested event with encrypted email and code.
-func (p *OTPPublisher) PublishOTP(ctx context.Context, emailEnc, codeEnc []byte, expiresAt time.Time) error {
+func (p *OTPPublisher) PublishOTP(ctx context.Context, emailEnc, codeEnc []byte, emailHash []byte, now time.Time, expiresAt time.Time) error {
 	payload := otpPayload{
 		EmailEnc:  base64.RawURLEncoding.EncodeToString(emailEnc),
 		CodeEnc:   base64.RawURLEncoding.EncodeToString(codeEnc),
 		ExpiresAt: expiresAt.UTC().Format(time.RFC3339),
 	}
-	env, err := pkgrabbitmq.NewEnvelope(routingKeyOTP, producerName, "", "", payload, expiresAt)
+	env, err := pkgrabbitmq.NewEnvelope(routingKeyOTP, producerName, hex.EncodeToString(emailHash), "", payload, now)
 	if err != nil {
 		return fmt.Errorf("otp publisher: build envelope: %w", err)
 	}
