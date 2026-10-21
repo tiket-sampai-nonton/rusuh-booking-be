@@ -197,22 +197,16 @@ subscription dan jalankan tiap `Consume` sebagai goroutine di bawah root context
 (graceful-shutdown saat `ctx.Done`), selain tetap menyajikan `/health`:
 
 ```go
+// Nama queue & routing key berversi mengikuti SDD-RBT §4.6.2 (K8); satu queue per tujuan
+// sehingga DLQ dan redrive dapat dilakukan per jenis notifikasi.
 subs := []rabbitmq.Subscription{
-    {
-        Queue:       "notification.booking.events",
-        RoutingKeys: []string{"booking.paid", "booking.expired", "booking.review"},
-        Handler:     bookingHandler(deps), // dispatch by RoutingKey
-    },
-    {
-        Queue:       "notification.queue.events",
-        RoutingKeys: []string{"queue.turn.soon", "queue.turn.arrived"},
-        Handler:     turnHandler(deps),
-    },
-    {
-        Queue:       "notification.otp",
-        RoutingKeys: []string{"otp.requested"},
-        Handler:     otpHandler(deps), // no retry - time sensitive
-    },
+    {Queue: "notification.booking-paid",    RoutingKeys: []string{"booking.paid.v1"},    Handler: bookingPaid(deps)},
+    {Queue: "notification.booking-expired", RoutingKeys: []string{"booking.expired.v1"}, Handler: bookingExpired(deps)},
+    {Queue: "notification.booking-review",  RoutingKeys: []string{"booking.review.v1"},  Handler: bookingReview(deps)},
+    {Queue: "notification.turn-soon",       RoutingKeys: []string{"queue.turn.soon.v1"}, Handler: turnSoon(deps)},
+    {Queue: "notification.turn-arrived",    RoutingKeys: []string{"queue.turn.arrived.v1"}, Handler: turnArrived(deps)},
+    // OQ-4: schema otp.requested.v1 belum ada di kontrak; nama queue dari SDD-NOTIFICATION §5.4
+    {Queue: "notification.otp",             RoutingKeys: []string{"otp.requested.v1"},   Handler: otpHandler(deps)}, // tanpa retry
 }
 for _, s := range subs {
     s := s
@@ -231,12 +225,18 @@ for _, s := range subs {
 
 | Routing key | Queue | notification_type | channel | Aksi |
 |-------------|-------|-------------------|---------|------|
-| `booking.paid` | `notification.booking.events` | BOOKING_PAID | EMAIL | render `eticket` → kirim email |
-| `booking.expired` | `notification.booking.events` | BOOKING_EXPIRED | EMAIL | render `expired` → kirim email |
-| `booking.review` | `notification.booking.events` | BOOKING_REVIEW | EMAIL | render `review` → kirim email |
-| `queue.turn.soon` | `notification.queue.events` | TURN_SOON | PUSH | lookup subscription → kirim FCM |
-| `queue.turn.arrived` | `notification.queue.events` | TURN_ARRIVED | PUSH | cek deadline → lookup → kirim FCM |
-| `otp.requested` | `notification.otp` | OTP_LOGIN | EMAIL | decrypt emailEnc/codeEnc → render otp_login → kirim email |
+| `booking.paid.v1` | `notification.booking-paid` | BOOKING_PAID | EMAIL | render `eticket` → kirim email |
+| `booking.expired.v1` | `notification.booking-expired` | BOOKING_EXPIRED | EMAIL | render `expired` → kirim email |
+| `booking.review.v1` | `notification.booking-review` | BOOKING_REVIEW | EMAIL | render `review` → kirim email |
+| `queue.turn.soon.v1` | `notification.turn-soon` | TURN_SOON | PUSH | lookup subscription → kirim push |
+| `queue.turn.arrived.v1` | `notification.turn-arrived` | TURN_ARRIVED | PUSH | cek deadline → lookup → kirim push |
+| `otp.requested.v1` | `notification.otp` | OTP_LOGIN *(butuh migrasi `0002`)* | EMAIL | decrypt emailEnc/codeEnc → render otp_login → kirim email |
+
+**Migrasi `0002_otp_delivery` (baru, additive):** `ALTER TABLE deliveries DROP CONSTRAINT <check
+notification_type>`, tambah ulang dengan `OTP_LOGIN`; ganti CHECK referensi menjadi
+`(booking_id IS NOT NULL) OR (queue_entry_id IS NOT NULL) OR (notification_type = 'OTP_LOGIN')`;
+CHECK channel tetap. `0001` tidak diubah. *(Nama constraint ditentukan dari katalog PostgreSQL saat
+implementasi karena CHECK di `0001` tidak bernama.)*
 
 ### 4.3 Handler logic dengan idempotency (state guard + ON CONFLICT)
 
@@ -283,22 +283,28 @@ func (h *NotifyHandler) HandleBookingPaid(ctx context.Context, d rabbitmq.Delive
 `ClaimDelivery` (repository Postgres, parameterized):
 
 ```sql
-INSERT INTO deliveries (source_message_id, notification_type, channel, booking_id,
-                        recipient_hash, status, attempts)
-VALUES ($1,$2,$3,$4,$5,'SENDING',0)
-ON CONFLICT (source_message_id, notification_type) DO NOTHING;
--- rowsAffected: 1 = klaim berhasil (kirim), 0 = duplikat (skip, ack)
+-- Klaim kondisional: baris baru, atau lanjutan percobaan (RETRY/PENDING), atau SENDING basi (lease habis).
+INSERT INTO deliveries (source_message_id, notification_type, channel, booking_id, queue_entry_id,
+                        recipient_hash, status, attempts, next_attempt_at)
+VALUES ($1,$2,$3,$4,$5,$6,'SENDING',1, now() + $lease)
+ON CONFLICT (source_message_id, notification_type) DO UPDATE
+   SET status = 'SENDING', attempts = deliveries.attempts + 1, next_attempt_at = now() + $lease
+ WHERE deliveries.status IN ('PENDING','RETRY')
+    OR (deliveries.status = 'SENDING' AND deliveries.next_attempt_at < now())
+RETURNING id;
+-- baris kembali = klaim berhasil (kirim); kosong = SENT/DEAD/SENDING aktif → ack tanpa kirim (R8)
 ```
+`BumpAttempt` (kirim gagal transien) → `status = 'RETRY'`, `last_error` (tanpa PII); `MarkDead` →
+`DEAD`; `MarkSent` → `SENT`, `sent_at`, `provider_message_id`. `$lease` ≥ timeout SMTP + margin
+[nilai: 2 × `SMTP_TIMEOUT`, keputusan desain].
 
-Ini adalah **state guard** yang code-principles minta: tidak ada tabel inbox;
-konflik di kunci unik + `DO NOTHING` = dedup. Karena efek samping (kirim) **non-
-idempoten**, klaim dilakukan **sebelum** kirim — postur pessimistic ringan via
-conditional insert (`[[decision-optimistic-vs-pessimistic-deduplication-posture]]`).
+Ini **state guard** yang code-principles minta: tidak ada tabel inbox; kunci unik + update kondisional
+= dedup. Klaim dilakukan **sebelum** kirim (efek samping non-idempoten).
 
-> Race crash-after-claim: bila proses mati setelah `SENDING` tapi sebelum kirim,
-> baris `SENDING` dengan `next_attempt_at` lampau direset ke `RETRY` oleh job
-> rekonsiliasi (indeks `idx_deliveries_retry(status, next_attempt_at)`), sehingga
-> tidak ada e-tiket hilang diam-diam.
+> **Perbaikan dari spec lama:** versi `ON CONFLICT DO NOTHING` membuat redelivery dari
+> `<queue>.retry.*` selalu dianggap duplikat sehingga email tidak pernah dikirim ulang setelah SMTP
+> pulih (melanggar R2.2, TC-MSG-01/04). Crash setelah klaim tetapi sebelum kirim: pesan belum di-ack →
+> broker mengirim ulang → baris `SENDING` dengan lease habis diklaim ulang; tidak perlu job reset terpisah.
 
 ### 4.4 Handler push dengan cek deadline (`queue.turn.arrived`)
 
@@ -549,7 +555,7 @@ ke-1 → retry tier 1 (5s), ke-2 → 30s, ke-3 → 2m, ke-4 (`> maxRetries=3`) �
 ## 8. Delivery State Machine
 
 ```
-            ClaimDelivery (ON CONFLICT DO NOTHING)
+            ClaimDelivery (insert, atau update kondisional dari PENDING/RETRY/SENDING-basi)
   (new) ───────────────────────────────────► SENDING
                                                  │
                  kirim sukses ──────────────────►│──► SENT   (sent_at, provider_message_id)
@@ -666,15 +672,15 @@ Required: `emailEnc, codeEnc, expiresAt`. `locale` default `id`. Email dan kode 
 ### 11.1 Email flow (`booking.paid`)
 
 ```
-Booking ──booking.paid──► rusuh.events ──► notification.booking.events
+Booking ──booking.paid.v1──► rusuh.events ──► notification.booking-paid
                                                       │
                                            worker (Consume → handle)
                                                       │
                         unmarshal + validate payload ─┤ (gagal → Permanent → DLQ)
                                                       │
-                 ClaimDelivery ON CONFLICT DO NOTHING ┤
-                        ├─ rowsAffected=0 ─► ack (duplikat, R8)
-                        └─ rowsAffected=1 ─► SENDING
+                 ClaimDelivery (klaim kondisional §4.3) ┤
+                        ├─ kosong ─► ack (SENT/DEAD/SENDING aktif, R8)
+                        └─ id ─────► SENDING
                                                       │
                              tmpl.Render("eticket") ──┤ (gagal → MarkDead + Permanent → DLQ)
                                                       │
@@ -686,7 +692,7 @@ Booking ──booking.paid──► rusuh.events ──► notification.booking.
 ### 11.2 Push flow (`queue.turn.arrived`)
 
 ```
-Queue ──queue.turn.arrived──► rusuh.events ──► notification.queue.events
+Queue ──queue.turn.arrived.v1──► rusuh.events ──► notification.turn-arrived
                                                       │
                                            worker (Consume → handle)
                                                       │
@@ -694,8 +700,8 @@ Queue ──queue.turn.arrived──► rusuh.events ──► notification.queu
                                │ tidak
              subs.Get(visitorId,eventId) ─ nil ─────► ack (tidak ada subscription, R4/R5)
                                │ ada
-                 ClaimDelivery ON CONFLICT ─ 0 ──────► ack (duplikat, R8)
-                               │ 1 (SENDING)
+                 ClaimDelivery (kondisional) ─ kosong ► ack (R8)
+                               │ id (SENDING)
                      fcm.Send(push) ────────┤
                         ├─ token invalid ─► subs.Delete + MarkDead + ack
                         ├─ transien ──────► BumpAttempt + return err ─► retry/DLQ
@@ -705,7 +711,7 @@ Queue ──queue.turn.arrived──► rusuh.events ──► notification.queu
 ### 11.3 OTP email flow (`otp.requested`)
 
 ```
-User ──otp.requested──► rusuh.events ──► notification.otp
+User ──otp.requested.v1──► rusuh.events ──► notification.otp      (schema: OQ-4)
                                                 │
                                      worker (Consume → handle)
                                                 │
@@ -759,10 +765,12 @@ pernah membocorkan SQL/stack trace/secret (`[[api-design]]`, `[[security-and-aut
 ## 13. Adapter outbound
 
 - **SMTP (`infrastructure/smtp`)** — `net/smtp` PlainAuth ke SES
-  (`SMTP_HOST/PORT/USER/PASSWORD/FROM`); lokal via Mailpit (SMTP 1025, UI 8025).
-  Timeout per kirim. Implementasi `IEmailSender`.
-- **FCM (`infrastructure/fcm`)** — HTTP v1 ke `FCM_PROJECT_ID` (`FCM_CREDENTIALS_PATH`).
-  Implementasi `IPushSender`; `IsTokenInvalid` memicu hapus subscription.
+  (`SMTP_HOST/PORT/USERNAME/PASSWORD/FROM/TIMEOUT`, nama SDD-RBT §6.1); lokal via Mailpit (SMTP 1025, UI 8025).
+  Dibungkus `pkg/resilience` breaker `smtp` (timeout 3 s, ambang 5, cooldown 30 s, probe 1, bulkhead 10 —
+  PROPOSED SDD-RBT §4.6.2). Implementasi `IEmailSender`.
+- **Push (`infrastructure/fcm`, `infrastructure/pushlog`)** — `PUSH_PROVIDER=fcm`: HTTP v1 ke
+  `FCM_PROJECT_ID` (`FCM_CREDENTIALS_PATH`); `PUSH_PROVIDER=log` (lokal/CI, SRS-IF-23): menulis
+  "push terkirim" ke log tanpa token. Implementasi `IPushSender`; `IsTokenInvalid` memicu hapus subscription.
 - **Template (`infrastructure/template`)** — `text/template` dari `assets/templates/`
   (`eticket`, `expired`, `review`) di-embed `embed.FS`. Implementasi `ITemplateRenderer`.
 - **Postgres (`infrastructure/postgres`)** — `pgxpool` (`pkg/postgres`), query
@@ -770,7 +778,7 @@ pernah membocorkan SQL/stack trace/secret (`[[api-design]]`, `[[security-and-aut
 
 ---
 
-## 14. Konfigurasi (env, D-24) [implemented]
+## 14. Konfigurasi (env, D-24) — sebagian implemented
 
 Dari `internal/config/load.go` (fail-fast; semua error dilaporkan sekaligus):
 
@@ -786,11 +794,13 @@ Dari `internal/config/load.go` (fail-fast; semua error dilaporkan sekaligus):
 | `RABBITMQ_MAX_RETRIES` | 3 | |
 | `RABBITMQ_RETRY_DELAYS` | 5s,30s,2m | retry berjenjang |
 | `RABBITMQ_CONFIRM_TIMEOUT` | 5s | publisher confirm |
-| `PII_ENC_KEY` | (hex 32 byte) | shared dengan User Service untuk dekripsi `otp.requested` payload |
 
-Target tambahan (belum di config): `SMTP_*`, `FCM_*`, `TEMPLATE_PATH`, `PII_*`
-(kunci HMAC/AES untuk `recipient_hash` & enkripsi token). Semua secret lewat
-env/SSM, tidak di-commit (security-privacy.md).
+**Target (belum di config [kode] — spec lama keliru menandai `PII_ENC_KEY` sebagai implemented):**
+`SMTP_HOST/PORT/USERNAME/PASSWORD/FROM/TIMEOUT`; `PUSH_PROVIDER=fcm|log` (default `log` lokal/CI);
+`FCM_PROJECT_ID`, `FCM_CREDENTIALS_PATH`; `PII_ENC_KEY` (hex 32 byte, sama dengan User untuk dekripsi
+`otp.requested`); kunci HMAC `recipient_hash`; kunci enkripsi `push_token_enc`; kunci publik Queue
+(verifikasi visitor token di API push-subscription); breaker SMTP. Template di-embed (`assets/templates/`),
+tanpa `TEMPLATE_PATH`. Semua secret lewat env/SSM.
 
 ---
 
@@ -828,12 +838,40 @@ Per testing-review.md + `[[testing-strategy]]`:
   - TC-TKT-01/02: render e-tiket memuat `ticketCode`, `attendeeName`, NIK tersamar.
   - R5: deadline lewat → skip; token invalid → hapus subscription.
   - Poison payload → `rabbitmq.Permanent` → `Decide` = DeadLetter.
-- **Repository** — `ON CONFLICT DO NOTHING` mengembalikan rowsAffected benar;
+- **Repository** — klaim kondisional: baris baru → id; `RETRY`/`SENDING` basi → id; `SENT`/`DEAD`/`SENDING` aktif → kosong;
   integration adapter (build tag `integration`, Postgres+RabbitMQ nyata) di stage
   `case-coverage` untuk TC-MSG-01 (SMTP down → retry) dan TC-MSG-02 (DLQ redrive).
 - **Coverage** ≥ 80% (`COVERAGE_MIN`); `cmd/`, `internal/delivery/`,
   `internal/config/`, `_mock/` dikecualikan (bootstrap/wiring).
 - **E2E/BDD** — alur Queue→Booking→Payment→Notification saat flow pertama siap.
+
+---
+
+## 16a. Correctness Properties
+
+### Property 1: At most one send after success
+Untuk setiap jumlah pengiriman ulang pesan yang sama, tidak ada pengiriman tambahan setelah delivery `SENT` tercatat.
+**Validates: Requirements 8.1, 8.2, 6.1**
+
+### Property 2: Retry eventually sends
+Untuk setiap kegagalan SMTP transien yang pulih sebelum retry terakhir, email akhirnya terkirim tepat satu kali tercatat `SENT`.
+**Validates: Requirements 2.2, 9.1, 9.4**
+
+### Property 3: Poison goes straight to DLQ
+Untuk setiap payload rusak atau `schemaVersion` tak dikenal, pesan masuk DLQ tanpa melewati retry queue dan delivery (bila ada) `DEAD`.
+**Validates: Requirements 1.3, 9.3, 12.3**
+
+### Property 4: Late push discarded
+Untuk setiap `queue.turn.arrived.v1` yang diproses setelah `claimDeadline`, tidak ada push terkirim.
+**Validates: Requirement 5.2**
+
+### Property 5: Notification failure never affects source
+Untuk setiap kegagalan Notification (SMTP/FCM/DB), status booking/payment/akun tidak berubah dan Notification tidak menerbitkan event.
+**Validates: Requirements 2.2, 9.2**
+
+### Property 6: No secret in logs
+Untuk setiap log record, tidak ada kode OTP, token push, alamat email, atau NIK plaintext.
+**Validates: Requirements 11.3, 12.5**
 
 ---
 

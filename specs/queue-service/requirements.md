@@ -76,8 +76,24 @@ Status kode per 2026-10-20: **boilerplate standar organisasi berfungsi**; logika
 | Status enum | `WAITING\|ADMITTED\|CLAIMED\|REJECTED\|UNCLAIMED\|ENDED` | `WAITING\|ADMITTED\|CLAIMED\|MISSED\|LEFT\|SOLD_OUT\|CLOSED\|COMPLETED\|ENDED` (QueueEntry) |
 | Turn events payload | `{ entryId, eventId, pushToken, position/claimDeadline }` | `{ eventId, queueEntryId, visitorId[, claimDeadline] }` — **tanpa** pushToken/position (Notification me-resolve kontak) |
 | Event key naming | `entryId` | `queueEntryId` (semua event schema) |
+| Outcome alokasi Booking (spec lama) | `RESERVED`, `QUOTA_EXHAUSTED`, entry `REJECTED` | **`GRANTED`, `NO_SUPPLY_NOW`, `SOLD_OUT`, `BUYER_QUOTA_EXHAUSTED`, `ALREADY_ACTIVE`** (`internal-booking.yaml`); status entry tidak punya `REJECTED` → `ENDED` + `reason` (K6) |
+| Claim sweeper (spec lama) | publish `booking.journey.ended(UNCLAIMED)` | Queue **tidak** menerbitkan event `booking.*`; Booking session sweeper yang menerbitkannya saat claim window habis (SDD-RBT C.5/C.10, K7) |
+| Direct admission (spec lama) | slot bebas + supply snapshot → `ADMITTED` | Wajib `allocations:batch` → `GRANTED` lebih dulu (invarian #2, SRS-F-04-07, SRS-F-06-02) |
+| Routing key | `queue.turn.soon` | `queue.turn.soon.v1`, `queue.turn.arrived.v1`; consume `booking.*.v1` (SDD-RBT §4.6.2, K8) |
 
 > Requirement di bawah adalah **target**. Acceptance criteria berlaku saat fitur dibangun; yang sudah `Implemented` ditandai eksplisit.
+
+## Glossary
+
+- **Entry** — satu antrean pembeli per event (`q:{e}:entry:<entryId>`), status `WAITING → ADMITTED → CLAIMED → COMPLETED/ENDED` atau terminal `MISSED/LEFT/SOLD_OUT/CLOSED`.
+- **seq** — nomor urut FIFO monotonik per event (`INCR` atomik di `join.lua`).
+- **servingSeq** — seq terdepan yang sedang dilayani; posisi = `seq − servingSeq − removedAhead`.
+- **Active slot** — kapasitas entry `ADMITTED`/`CLAIMED` bersamaan (`event_settings.active_slot_capacity`).
+- **Admission / allocation** — reservasi unit di Booking untuk entry (`allocationId = admissions.id`); entry hanya `ADMITTED` bila Booking membalas `GRANTED`.
+- **Claim window / claimDeadline** — batas klaim giliran (dari Booking `claimDeadline`, default 180 s).
+- **Status Document** — JSON agregat per event tanpa data pribadi, di-cache CDN 1 s.
+- **Zona** — `GUARANTEED` (`seq ≤ guaranteedUntilSeq`), `POSSIBLE`, `NOT_ENOUGH`, atau habis.
+- **Visitor / queue / admission token** — JWT EdDSA terbitan Queue (HLD tabel Token).
 
 ---
 
@@ -113,8 +129,8 @@ Status kode per 2026-10-20: **boilerplate standar organisasi berfungsi**; logika
 1. WHEN body `email` kosong ATAU `email != emailConfirmation`, THE Queue Service SHALL menolak dengan `422 EMAIL_MISMATCH` (atau `400 VALIDATION_ERROR` bila field tidak ada).
 2. IF `consentNik != true`, THEN THE Queue Service SHALL menolak dengan `400 VALIDATION_ERROR`.
 3. IF `buyerNik` wajib (guest atau login tanpa NIK) tetapi kosong, THEN THE Queue Service SHALL menolak dengan `422 NIK_REQUIRED`.
-4. IF `buyerNik` tidak cocok pola `^[0-9]{16}$`, THEN THE Queue Service SHALL menolak dengan `422 NIK_INVALID`.
-5. WHEN join valid, tidak ada pengantre lebih awal, DAN slot aktif tersedia, THE Queue Service SHALL langsung memberi `201` dengan `status = ADMITTED`, `claimDeadline`, dan `queueToken`.
+4. IF `buyerNik` gagal validasi struktur `pkg/nik` (16 digit, provinsi, kab/kec, tanggal lahir, nomor urut — platform R1), THEN THE Queue Service SHALL menolak dengan `422 NIK_INVALID` (SRS-F-11-01, TC-GST-02).
+5. WHEN join valid, tidak ada pengantre lebih awal, slot aktif tersedia, DAN Booking membalas `GRANTED` untuk entry itu lewat `allocations:batch`, THE Queue Service SHALL langsung memberi `201` dengan `status = ADMITTED`, `claimDeadline`, dan `queueToken`; bila Booking membalas selain `GRANTED` atau tidak terjangkau, entry tetap `WAITING` (SRS-F-04-07, invarian #2).
 6. WHEN join valid tetapi harus menunggu, THE Queue Service SHALL memberi `201` dengan `status = WAITING` dan `seq` monotonik tanpa celah.
 7. THE Queue Service SHALL menjalankan seluruh pengecekan constraint join (quota_exhausted, NIK, visitor, email) dan `INCR seq` secara **atomik** lewat satu skrip Lua (`join.lua`) dengan semua KEYS pada hash tag `{e:<eventId>}` yang sama.
 8. IF NIK sudah punya entry aktif di event, THEN THE Queue Service SHALL menolak dengan `409 NIK_ALREADY_IN_QUEUE`.
@@ -194,17 +210,20 @@ Status kode per 2026-10-20: **boilerplate standar organisasi berfungsi**; logika
 
 ### Acceptance Criteria (EARS)
 
-1. WHILE ada slot bebas (`active_slot_capacity - len(active) > 0`), THE worker Promotor SHALL mengambil N entry teratas dari `q:{e}:waiting` **sesuai urutan seq** (ZRANGEBYSCORE naik) dan meminta reservasi ke Booking lewat `POST /internal/v1/allocations:batch`.
-2. WHEN Booking membalas `RESERVED` untuk sebuah entry, THE Queue Service SHALL memindahkan entry ke `q:{e}:active` (score = `claimDeadline`), menyetel `status = ADMITTED`, menyimpan `allocationId`, dan mem-publish `queue.turn.arrived`.
-3. WHEN Booking membalas `NO_SUPPLY_NOW`, THE Queue Service SHALL mempertahankan entry di `waiting` pada `seq` yang sama (tidak kehilangan posisi) dan mencoba lagi pada siklus berikutnya.
-4. WHEN Booking membalas `QUOTA_EXHAUSTED`, THE Queue Service SHALL menambah `buyerNikHash` ke `q:{e}:quota_exhausted` dan menyetel entry `REJECTED`.
-5. WHEN Booking membalas `SOLD_OUT`, THE Queue Service SHALL menutup antrean (`saleState = CLOSED`, `soldOut = true`) dan menyetel entry berikutnya `SOLD_OUT`.
+1. WHILE ada slot bebas (`active_slot_capacity - len(active) > 0`), THE worker Promotor SHALL mengambil N entry teratas dari `q:{e}:waiting` **sesuai urutan seq** (ZRANGEBYSCORE naik) dan meminta reservasi ke Booking lewat `POST /internal/v1/allocations:batch` (service token, breaker Queue→Booking: timeout 500 ms, ambang 5, cooldown 5 s, bulkhead 50 — PROPOSED SDD-RBT §4.6.2).
+2. WHEN Booking membalas `GRANTED` untuk sebuah entry, THE Queue Service SHALL memindahkan entry ke `q:{e}:active` (score = `claimDeadline` dari Booking), menyetel `status = ADMITTED`, menyimpan `allocationId`, dan mem-publish `queue.turn.arrived.v1`.
+3. WHEN Booking membalas `NO_SUPPLY_NOW`, THE Queue Service SHALL mempertahankan entry di `waiting` pada `seq` yang sama (tidak kehilangan posisi) dan mencoba lagi pada siklus berikutnya; entry ber-seq lebih besar dalam batch yang sama juga tidak di-admit pada siklus itu.
+4. WHEN Booking membalas `BUYER_QUOTA_EXHAUSTED`, THE Queue Service SHALL menambah `buyerNikHash` ke `q:{e}:quota_exhausted`, mengakhiri entry (`status = ENDED`, `reason = BUYER_QUOTA_EXHAUSTED`, audit `REJECTED`), dan membersihkan constraint key.
+5. WHEN Booking membalas `SOLD_OUT`, THE Queue Service SHALL menutup antrean (`saleState = CLOSED`, `soldOut = true`) dan menyetel entry `WAITING` menjadi `SOLD_OUT`.
 6. THE Queue Service SHALL menjaga FIFO lintas promosi: tidak ada entry ber-seq lebih besar yang di-admit sebelum entry ber-seq lebih kecil yang masih eligible (SRS-Q-FUN-03; TC-QUE-08, TC-QUE-14).
-7. WHEN `POST .../claim` dipanggil dengan visitor valid DAN status entry `ADMITTED` DAN `now < claimDeadline`, THE Queue Service SHALL menerbitkan `admissionToken` EdDSA sekali-pakai (TTL 60s) + `bookingUrl`, dan menyetel status `CLAIMED` secara atomik (`claim.lua`).
+7. WHEN `POST .../claim` dipanggil dengan visitor valid DAN status entry `ADMITTED` DAN `now < claimDeadline`, THE Queue Service SHALL menerbitkan `admissionToken` EdDSA sekali-pakai (TTL `ADMISSION_TOKEN_TTL_SECONDS`, default 60, < claim window; klaim `jti, eventId, entryId, allocationId, visitorId`) + `bookingUrl`, dan menyetel status `CLAIMED` secara atomik (`claim.lua`).
 8. IF `now >= entry.claimDeadline` atau status sudah `MISSED`, THEN THE Queue Service SHALL menolak claim dengan `410 TURN_MISSED`.
 9. IF event sudah sold out saat claim, THEN THE Queue Service SHALL menolak dengan `410 EVENT_SOLD_OUT`.
-10. WHEN deadline claim lewat tanpa claim, THE worker Claim Sweeper SHALL menyetel status `MISSED`, menghapus dari `active`, merilis slot, dan mem-publish `booking.journey.ended` dengan `outcome = UNCLAIMED`.
-11. WHEN posisi entry mencapai `preTurnNotifyPosition` DAN `pre_turn_notify_enabled == true`, THE Queue Service SHALL mem-publish `queue.turn.soon` sekali (TC-QUE-13).
+10. WHEN deadline claim lewat tanpa claim, THE worker Claim Sweeper SHALL menyetel status `MISSED`, menghapus dari `active`, dan merilis slot Queue; **tidak** mem-publish event `booking.*` — Booking melepas alokasinya sendiri dan menerbitkan `booking.journey.ended.v1 (UNCLAIMED)` (K7, SRS-F-06-06).
+11. WHEN posisi entry mencapai `preTurnNotifyPosition` DAN `pre_turn_notify_enabled == true`, THE Queue Service SHALL mem-publish `queue.turn.soon.v1` sekali (TC-QUE-13).
+12. THE Promotor SHALL berjalan **satu per event** di seluruh instance worker (lease/lock terdistribusi di Valkey), sehingga dua instance tidak mem-promote event yang sama bersamaan (SRS-F-06-01).
+13. WHEN Booking membalas `ALREADY_ACTIVE`, THE Queue Service SHALL memperlakukan entry sesuai keputusan OQ-18 *(belum ditetapkan dokumen mana pun)*; sampai diputuskan, entry dibiarkan `WAITING` dan dicatat sebagai anomali (alert).
+14. Klaim giliran yang terlewat SHALL tidak memberi kesempatan kedua atau prioritas; pembeli boleh antre ulang dari belakang bila kuota masih ada (SRS-F-06-07).
 
 ---
 
@@ -219,10 +238,10 @@ Status kode per 2026-10-20: **boilerplate standar organisasi berfungsi**; logika
 
 ### Acceptance Criteria (EARS)
 
-1. WHEN `DELETE /api/v1/queue-entries/{entryId}` dipanggil pada entry milik visitor itu, THE Queue Service SHALL menyetel status `LEFT`, menghapus constraint keys (nik/visitor/email), merilis slot bila sedang `ADMITTED`, dan menjawab `204 No Content`.
-2. WHEN pembeli yang sudah `LEFT` join kembali, THE Queue Service SHALL memberinya `seq` baru (dari belakang antrean).
-3. WHEN entry dipindahkan ke perangkat baru lewat tautan email, THE Queue Service SHALL memindahkan kepemilikan ke visitor baru dengan **posisi/seq sama** dan menonaktifkan tautan lama.
-4. WHEN tautan pindah lama dipakai setelah dipindahkan, THE Queue Service SHALL menolak dan perangkat lama SHALL melihat `ENTRY_MOVED` (TC-QUE-16).
+1. WHEN `DELETE /api/v1/queue-entries/{entryId}` dipanggil pada entry `WAITING`/`ADMITTED` milik visitor itu, THE Queue Service SHALL menyetel status `LEFT`, menghapus constraint keys (nik/visitor/email), merilis slot bila sedang `ADMITTED`, dan menjawab `204 No Content`.
+2. WHEN entry `ADMITTED` ditinggalkan, THE Queue Service SHALL memanggil `POST /internal/v1/allocations/{allocationId}:release` (`reason = QUEUE_ENTRY_GONE`) sebagai kompensasi saga (ADR-018); kegagalan panggilan SHALL dicoba ulang oleh worker sampai `released` diterima atau Booking sweeper mengakhiri admission pada claim deadline.
+3. WHEN pembeli yang sudah `LEFT` join kembali, THE Queue Service SHALL memberinya `seq` baru (dari belakang antrean).
+4. WHEN entry dipindahkan ke perangkat baru lewat tautan email, THE Queue Service SHALL memindahkan kepemilikan ke visitor baru dengan **posisi/seq sama**, menonaktifkan tautan lama, dan perangkat lama SHALL melihat `ENTRY_MOVED` (TC-QUE-16). *(SHOULD; tidak ada endpoint di `queue.yaml` — **OQ-3, blocked**.)*
 5. IF entry tidak ditemukan, THEN THE Queue Service SHALL menjawab `404 NOT_FOUND`.
 
 ---
@@ -237,9 +256,9 @@ Status kode per 2026-10-20: **boilerplate standar organisasi berfungsi**; logika
 
 ### Acceptance Criteria (EARS)
 
-1. WHEN `booking.journey.ended` dikonsumsi DAN entry berstatus `CLAIMED`, THE Queue Service SHALL merilis slot dan menyetel entry ke status terminal sesuai `outcome` (`PAID → COMPLETED`, lainnya → `ENDED`) secara idempoten (`end_entry.lua` guard transisi).
-2. WHEN `booking.journey.ended` dikonsumsi untuk entry yang sudah terminal, THE Queue Service SHALL mengabaikannya tanpa error (idempoten).
-3. WHEN `booking.quota.exhausted` dikonsumsi, THE Queue Service SHALL menambah `payload.buyerNikHash` ke `q:{e}:quota_exhausted` lewat `SADD` (idempoten).
+1. WHEN `booking.journey.ended.v1` dikonsumsi DAN entry berstatus `CLAIMED`, THE Queue Service SHALL merilis slot dan menyetel entry ke status terminal sesuai `outcome` (`PAID → COMPLETED`, lainnya → `ENDED`) secara idempoten (`end_entry.lua` guard transisi); WHEN entry masih `ADMITTED` dan `outcome = UNCLAIMED`, entry SHALL menjadi `MISSED` dan slot dirilis (balapan dengan Claim Sweeper aman).
+2. WHEN `booking.journey.ended.v1` dikonsumsi untuk entry yang sudah terminal, THE Queue Service SHALL mengabaikannya tanpa error (idempoten).
+3. WHEN `booking.quota.exhausted.v1` dikonsumsi, THE Queue Service SHALL menambah `payload.buyerNikHash` ke `q:{e}:quota_exhausted` lewat `SADD` (idempoten). *(Kapan Booking menerbitkannya: OQ-13.)*
 4. WHEN `booking.sold_out` dikonsumsi, THE Queue Service SHALL menyetel `saleState = CLOSED`, `soldOut = true`, dan menolak waiting berikutnya.
 5. IF payload rusak / tak dapat diparse, THEN THE Queue Service SHALL mengembalikan `rabbitmq.Permanent(err)` agar langsung ke DLQ (bukan retry tak berujung).
 6. THE consumer SHALL retry berjenjang (`RABBITMQ_RETRY_DELAYS`) dan masuk DLQ setelah `RABBITMQ_MAX_RETRIES`.
@@ -251,16 +270,17 @@ Status kode per 2026-10-20: **boilerplate standar organisasi berfungsi**; logika
 
 **User Story:** Sebagai sistem, saya ingin mempublikasikan event giliran, agar Notification bisa mengirim push/email tanpa Queue tahu detail kontak.
 
-- **SRS trace:** SRS-F-03-25 (turn notification)
+- **SRS trace:** SRS-F-06-05, SRS-F-25-10..12 (turn notification)
 - **TC trace:** TC-QUE-13, TC-PERF-05
-- **Events published:** `queue.turn.soon`, `queue.turn.arrived`
+- **Events published:** `queue.turn.soon.v1`, `queue.turn.arrived.v1`
 
 ### Acceptance Criteria (EARS)
 
-1. WHEN entry mencapai posisi pra-giliran, THE Queue Service SHALL mem-publish `queue.turn.soon` dengan payload `{ eventId, queueEntryId, visitorId }`.
-2. WHEN entry di-admit (giliran tiba), THE Queue Service SHALL mem-publish `queue.turn.arrived` dengan payload `{ eventId, queueEntryId, visitorId, claimDeadline }`.
-3. THE payload event SHALL **tidak** memuat NIK plaintext, email, secret, atau token (ditegakkan `pkg/eventstore`/kontrak `additionalProperties:false`).
-4. THE event SHALL dibungkus envelope (`messageId`, `eventType`, `schemaVersion`, `occurredAt`, `producer = queue-service`, `aggregateId`, `payload`), dipublikasikan ke exchange `rusuh.events` (topic) dengan konfirmasi publisher.
+1. WHEN entry mencapai posisi pra-giliran, THE Queue Service SHALL mem-publish `queue.turn.soon.v1` dengan payload `{ eventId, queueEntryId, visitorId }`.
+2. WHEN entry di-admit (giliran tiba), THE Queue Service SHALL mem-publish `queue.turn.arrived.v1` dengan payload `{ eventId, queueEntryId, visitorId, claimDeadline }`.
+3. THE payload event SHALL **tidak** memuat NIK plaintext, email, secret, atau token (ditegakkan kontrak `additionalProperties:false` + validasi payload sebelum publish, platform R5.4).
+4. THE event SHALL dibungkus envelope (`messageId`, `eventType`, `schemaVersion`, `occurredAt`, `producer = queue-service`, `aggregateId`, `payload`), dipublikasikan langsung ke exchange `rusuh.events` (topic) dengan konfirmasi publisher — Queue **tidak** memakai outbox (ADR-010).
+5. IF publish gagal, THEN THE Queue Service SHALL mencatat dan melewatinya (push best effort, SDD-RBT §4.6.2 "Retry Ownership"); kegagalan tidak membatalkan admission.
 
 ---
 
@@ -285,7 +305,7 @@ Status kode per 2026-10-20: **boilerplate standar organisasi berfungsi**; logika
 
 | # (invariants.md) | Invarian | Requirement penegak |
 |---|----------|---------------------|
-| 2 | Jangan PHP: admission hanya bila alokasi direservasi | Req 6.1–6.2 (promote hanya setelah `RESERVED`) |
+| 2 | Jangan PHP: admission hanya bila alokasi direservasi | Req 2.5, 6.1–6.2 (promote/direct admission hanya setelah `GRANTED`) |
 | 3 | Kuota 3 tiket/NIK/event lintas sesi | Req 2.8, 2.10, 6.4, 8.3 |
 | 4 | Timer booking/pembayaran server-authoritative | Req 4.4, 6.7–6.10 (claimDeadline, poll server) |
 | 5 | Pembayaran sukses idempoten (dari webhook/rekonsiliasi) | Req 8.1–8.2 (konsumsi `journey.ended` idempoten) |

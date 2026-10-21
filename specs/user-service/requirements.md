@@ -1,118 +1,94 @@
-# Requirements — User Service
+# Requirements Document — User Service
 
 | Field | Value |
 |-------|-------|
-| **Service** | User Service |
-| **Spec dari** | SDD-USER-001 v1.2 + implementasi `services/user` |
+| **Spec** | user-service |
+| **Service** | `services/user` |
 | **Port** | 8085 |
-| **Schema** | `users` (role `svc_user`) |
+| **Schema / Role** | `users` / `svc_user` |
 | **Owner** | BE-1 |
-| **SRS** | §3.2.27 (SRS-F-27-xx) |
-| **Test Plan** | TC-USR-xx (`docs/test/06-TP-RBT-001.md`) |
+| **Sumber (urut prioritas)** | **kode `services/user`** (terimplementasi, evidence `docs/evidence/2026-10-19-boilerplate-v1.5.md`) → migrasi `0001_init` → kontrak `docs/contracts/openapi/user.yaml` → SRS §3.2.27 (SRS-F-27-xx), SRS-Q-SEC-10/11 → ADR-020 → `docs/sdd/SDD-USER-001.md` v1.2 |
+| **Test Plan** | TC-USR-01..12, TC-MSG-05/06 |
 
-## Pendahuluan
+## Introduction
 
-User Service mengelola **akun opsional** dengan login OTP email tanpa password. Login
-tidak pernah menjadi syarat membeli tiket — pembeli boleh tetap guest. Dokumen ini adalah
-spec Kiro yang **digroundkan ke kode nyata** di `services/user`, bukan hanya ke SDD. Di mana
-SDD dan kode berbeda, kebenaran mengikuti kode dan perbedaannya dicatat di bagian
-[Deltas](#deltas-sdd-vs-kode).
+User Service mengelola **akun opsional** dengan login OTP email tanpa password; login tidak pernah
+menjadi syarat membeli (pembeli tetap boleh guest). Prinsip *privacy by design*: email & NIK dienkripsi
+AES-256-GCM + hash HMAC untuk pencarian; refresh token disimpan sebagai hash; kode OTP hanya sebagai
+hash di Valkey dengan TTL.
 
-Prinsip (PRD/HLD): login opsional, OTP email (tanpa password), *privacy by design*
-(email & NIK dienkripsi AES-256-GCM + hash HMAC untuk pencarian; refresh token di-hash;
-kode OTP hanya tersimpan sebagai hash di Valkey dengan TTL).
-OTP email dikirim via Notification Service (event `otp.requested` dengan enkripsi AES-256-GCM).
+Spec ini **digroundkan ke kode nyata**. Di mana SDD dan kode berbeda, perilaku kode yang sudah
+terverifikasi dicatat di [Deltas](#deltas-sdd-vs-kode); di mana kode belum mengikuti keputusan
+arsitektur (ADR-020), requirement ditandai **[target]**.
 
-Arsitektur: hexagonal (port/adapter). Usecase `Auth` dan `Profile` bergantung pada port
-`outbound` (`IAccountRepository`, `ISessionRepository`, `ILoginAudit`, `IOTPStore`,
-`IRateLimiter`, `IOTPPublisher`, `ITokenIssuer`, `ISecretGenerator`, `IPIIProtector`), adapter
-HTTP memanggil port `inbound` (`IAuthUsecase`, `IProfileUsecase`, `IAccessTokenVerifier`).
+### Status Implementasi (audit kode 2026-10-21)
+
+| Area | Status | Bukti |
+|------|--------|-------|
+| OTP request/verify, refresh rotasi + deteksi replay, logout, profil GET/PATCH, audit login, rate limit, PII crypto | ✅ | `application/usecase/{auth,profile}.go`, `infrastructure/{postgres,valkey,security,http}` |
+| Klaim identitas di access token (`email`, `nik_hash`, `has_nik`) — dulu "P0 / D1" | ✅ | `infrastructure/security/security.go` `IssueAccess(accountID, email, nikHash, now)`; `pkg/token.Claims` |
+| Pengiriman OTP lewat **event `otp.requested`** ke Notification (ADR-020, SDD-USER v1.2) | ❌ **target** — kode masih mengirim langsung via SMTP (`IMailer`, `infrastructure/smtp/mailer.go`) | `delivery/user_module.go`, `usecase/auth.go` |
+| Validasi struktur NIK setara `pkg/nik` (SDD-RBT §4.9) | ⚠️ parsial — VO `NewNIK` memeriksa provinsi 11–94, tanggal 1–31/bulan 1–12, urut ≠ 0000; tidak memeriksa kab/kec `00`, tanggal kalender, daftar provinsi | `domain/valueobject/nik.go` |
+| Breaker pada panggilan SMTP (SRS-F-19-03) | ❌ | tidak ada `pkg/resilience` di `smtp` adapter (OQ-9) |
+| Metrik `rbt_user_*` | ❌ | — |
+
+## Glossary
+
+- **OTP challenge** — `otp:{emailHashHex}` di Valkey: hash kode (HMAC terikat `email_hash`), jumlah percobaan, TTL `OTP_TTL`.
+- **Session** — baris `sessions` per refresh token (hash SHA-256); dirotasi setiap refresh (`revoked_at` + `replaced_by`).
+- **Replay** — refresh token yang sudah dicabut dipakai lagi → semua sesi akun dicabut.
+- **Access token** — JWT EdDSA (`iss`, `sub`, `aud`, `jti`, `scope=buyer`, `iat`, `exp`, `email`, `nik_hash?`, `has_nik?`), TTL `TOKEN_ACCESS_TTL`, diverifikasi Queue/Booking secara offline.
 
 ---
 
 ## Requirement 1 — Request OTP
 
-**User story:** Sebagai pembeli, saya ingin meminta kode OTP ke email saya, sehingga saya
-bisa login tanpa password.
+**User story:** Sebagai pembeli, saya ingin meminta kode OTP ke email saya, sehingga saya bisa login tanpa password.
 
-SRS-F-27-02 · TC-USR-02, TC-USR-04
+SRS-F-27-02, SRS-F-27-04, SRS-F-27-12 · TC-USR-02, TC-USR-04, TC-USR-11, TC-MSG-05
 
 ### Acceptance Criteria (EARS)
 
-1. WHEN klien `POST /api/v1/auth/otp/request` dengan email valid, THE SYSTEM SHALL
-   membuat kode 6 digit acak kriptografis, menyimpan **hash**-nya di Valkey dengan TTL
-   `OTP_TTL`, dan membalas `202 Accepted` berisi `expiresInSeconds` dan `resendAfterSeconds`.
-2. WHEN email terdaftar maupun belum terdaftar, THE SYSTEM SHALL membalas respons `202`
-   yang identik (anti-enumerasi akun). *(TC-USR-02)*
-3. IF cooldown resend untuk email masih aktif (dicek atomik saat menyimpan OTP), THEN THE
-   SYSTEM SHALL menolak dengan `429 OTP_RESEND_TOO_SOON` dan menyertakan
-   `retryAfterSeconds`. *(TC-USR-04)*
-4. IF permintaan per-email melebihi `OTP_MAX_PER_EMAIL_HOUR` dalam 1 jam, THE SYSTEM SHALL
-   menolak dengan `429 RATE_LIMITED` dan mencatat audit `OTP_RATE_LIMITED`.
-5. IF permintaan per-IP melebihi `OTP_MAX_PER_IP_HOUR` dalam 1 jam, THE SYSTEM SHALL
-   menolak dengan `429 RATE_LIMITED`.
-6. WHEN email gagal divalidasi (format/panjang), THE SYSTEM SHALL menolak dengan
-   `400 VALIDATION_ERROR` dan menyebut field `email`.
-7. IF publish event `otp.requested` gagal, THE SYSTEM SHALL menghapus OTP yang baru disimpan dan
-   membalas `503 DEPENDENCY_UNAVAILABLE` (`ErrPublishFailed`).
-8. THE SYSTEM SHALL mencatat audit `OTP_SENT` saat berhasil. Kode OTP dan email dienkripsi
-   (AES-256-GCM) saat dipublish ke broker dan tidak pernah muncul plaintext di log. *(TC-USR-11)*
-
----
+1. WHEN klien `POST /api/v1/auth/otp/request` dengan email valid, THE SYSTEM SHALL membuat kode 6 digit acak kriptografis, menyimpan **hash**-nya di Valkey dengan TTL `OTP_TTL`, dan membalas `202 Accepted` berisi `expiresInSeconds` dan `resendAfterSeconds`. ✅
+2. WHEN email terdaftar maupun belum, THE SYSTEM SHALL membalas `202` identik (anti-enumerasi). ✅ *(TC-USR-02)*
+3. IF cooldown resend masih aktif (dicek atomik saat menyimpan OTP), THEN `429 OTP_RESEND_TOO_SOON` + `retryAfterSeconds`. ✅ *(TC-USR-04)*
+4. IF permintaan per-email melebihi `OTP_MAX_PER_EMAIL_HOUR`/jam, THEN `429 RATE_LIMITED` + audit `OTP_RATE_LIMITED`. ✅
+5. IF permintaan per-IP melebihi `OTP_MAX_PER_IP_HOUR`/jam, THEN `429 RATE_LIMITED`. ✅
+6. IF email tidak valid, THEN `400 VALIDATION_ERROR` field `email`. ✅
+7. WHEN kode dibuat, THE SYSTEM SHALL mempublikasikan event `otp.requested.v1 { emailEnc, codeEnc, expiresAt, locale? }` (email & kode AES-256-GCM dengan `PII_ENC_KEY`) ke `rusuh.events` dengan publisher confirm; IF publish gagal, THEN OTP dihapus dan `503 DEPENDENCY_UNAVAILABLE`. **[target — ADR-020; schema belum ada: OQ-4]** *Perilaku saat ini [kode]: kirim SMTP langsung; gagal → OTP dihapus + `503 DEPENDENCY_UNAVAILABLE` (`ErrMailUnavailable`).*
+8. THE SYSTEM SHALL mencatat audit `OTP_SENT` saat berhasil; kode OTP dan email plaintext tidak pernah muncul di log, payload broker, atau audit. ✅ untuk log/audit; payload broker **[target]** *(TC-USR-11)*
 
 ## Requirement 2 — Verify OTP & Login
 
-**User story:** Sebagai pembeli, saya ingin memverifikasi kode OTP untuk masuk, sehingga
-akun saya dibuat otomatis pada login pertama dan saya menerima token.
+**User story:** Sebagai pembeli, saya ingin memverifikasi kode OTP untuk masuk, sehingga akun dibuat otomatis pada login pertama dan saya menerima token.
 
-SRS-F-27-03..05 · TC-USR-03, TC-USR-05
+SRS-F-27-03, SRS-F-27-05 · TC-USR-03, TC-USR-05
 
 ### Acceptance Criteria (EARS)
 
-1. WHEN klien `POST /api/v1/auth/otp/verify` dengan email dan kode 6 digit yang benar, THE
-   SYSTEM SHALL menghapus OTP, menemukan-atau-membuat akun berdasarkan `email_hash`,
-   membuka sesi (refresh token), menerbitkan access token, dan membalas `200` berisi
-   `tokenType`, `accessToken`, `accessTokenExpiresAt`, `refreshToken`,
-   `refreshTokenExpiresAt`, dan objek `account`.
-2. WHEN akun belum ada, THE SYSTEM SHALL membuat akun baru (email terenkripsi + hash +
-   masked) dan mencatat audit `LOGIN_OK`.
-3. IF OTP tidak ada di Valkey (kedaluwarsa atau belum diminta), THEN THE SYSTEM SHALL
-   menolak dengan `OTP_EXPIRED` dan mencatat audit `OTP_EXPIRED`.
-4. IF jumlah percobaan melebihi `OTP_MAX_ATTEMPTS`, THEN THE SYSTEM SHALL menghapus OTP,
-   menolak dengan `OTP_LOCKED`, dan mencatat audit `OTP_LOCKED`. *(TC-USR-03)*
-5. IF kode salah (dibanding dengan `subtle.ConstantTimeCompare`), THEN THE SYSTEM SHALL
-   menolak dengan `OTP_INVALID` menyertakan `attemptsLeft`, dan mencatat audit `OTP_INVALID`.
-6. IF akun berstatus `DISABLED`, THEN THE SYSTEM SHALL menolak dengan `403 ACCOUNT_DISABLED`.
-7. WHEN login sukses, THE SYSTEM SHALL memperbarui `last_login_at` akun.
-8. THE SYSTEM SHALL membandingkan kode via hash OTP yang diikat ke `email_hash`, sehingga
-   kode untuk satu email tidak berlaku untuk email lain.
-
----
+1. WHEN `POST /api/v1/auth/otp/verify` dengan email dan kode benar, THE SYSTEM SHALL menghapus OTP, menemukan-atau-membuat akun berdasarkan `email_hash`, membuka sesi, menerbitkan access token, dan membalas `200 { tokenType, accessToken, accessTokenExpiresAt, refreshToken, refreshTokenExpiresAt, account }`. ✅
+2. WHEN akun belum ada, THE SYSTEM SHALL membuat akun (email terenkripsi + hash + masked) dan mencatat audit `LOGIN_OK`. ✅
+3. IF OTP tidak ada (kedaluwarsa/belum diminta), THEN `401 OTP_EXPIRED` + audit `OTP_EXPIRED`. ✅
+4. IF percobaan melebihi `OTP_MAX_ATTEMPTS`, THEN OTP dihapus, `429 OTP_LOCKED` + audit `OTP_LOCKED`. ✅ *(TC-USR-03)*
+5. IF kode salah (`subtle.ConstantTimeCompare`), THEN `401 OTP_INVALID` + `attemptsLeft` + audit `OTP_INVALID`. ✅
+6. IF akun `DISABLED`, THEN `403 ACCOUNT_DISABLED`. ✅
+7. WHEN login sukses, THE SYSTEM SHALL memperbarui `last_login_at`. ✅
+8. THE kode SHALL terikat ke `email_hash` sehingga kode untuk satu email tidak berlaku untuk email lain. ✅
 
 ## Requirement 3 — Refresh Token (rotasi + deteksi replay)
 
-**User story:** Sebagai pembeli yang sudah login, saya ingin memperpanjang sesi dengan
-refresh token, sehingga saya tidak perlu login ulang tiap 15 menit.
+**User story:** Sebagai pembeli yang sudah login, saya ingin memperpanjang sesi dengan refresh token, sehingga tidak perlu login ulang tiap 15 menit.
 
 SRS-F-27-06 · TC-USR-06
 
 ### Acceptance Criteria (EARS)
 
-1. WHEN klien `POST /api/v1/auth/refresh` dengan `refreshToken` yang valid dan belum
-   dicabut/kedaluwarsa, THE SYSTEM SHALL merotasi sesi (membuat sesi baru, mencabut yang
-   lama secara atomik), menerbitkan access token baru, dan membalas `200` dengan pasangan
-   token baru.
-2. IF `refreshToken` kosong atau tidak ditemukan, THEN THE SYSTEM SHALL menolak dengan
-   `SESSION_INVALID`.
-3. IF refresh token yang **sudah dicabut** dipakai ulang, THEN THE SYSTEM SHALL mencabut
-   **seluruh sesi akun** (deteksi pencurian), mencatat audit `REFRESH_REUSED`, dan menolak
-   dengan `SESSION_INVALID`. *(TC-USR-06)*
-4. IF sesi sudah kedaluwarsa, THEN THE SYSTEM SHALL menolak dengan `SESSION_INVALID`.
-5. IF akun pada sesi tidak ditemukan, THEN THE SYSTEM SHALL menolak dengan `SESSION_INVALID`;
-   IF akun `DISABLED`, THEN `ACCOUNT_DISABLED`.
-6. WHEN rotasi berhasil, THE SYSTEM SHALL mencatat audit `REFRESH_OK`.
-
----
+1. WHEN `POST /api/v1/auth/refresh` dengan `refreshToken` valid, THE SYSTEM SHALL merotasi sesi secara atomik, menerbitkan access token baru (dengan klaim identitas terkini), dan membalas `200` pasangan token baru. ✅
+2. IF `refreshToken` kosong atau tidak ditemukan, THEN `401 SESSION_INVALID`. ✅
+3. IF refresh token yang sudah dicabut dipakai ulang, THEN THE SYSTEM SHALL mencabut **seluruh sesi akun**, audit `REFRESH_REUSED`, dan `401 SESSION_INVALID`. ✅ *(TC-USR-06)*
+4. IF sesi kedaluwarsa, THEN `401 SESSION_INVALID`. ✅
+5. IF akun tidak ditemukan, THEN `401 SESSION_INVALID`; IF akun `DISABLED`, THEN `403 ACCOUNT_DISABLED`. ✅
+6. WHEN rotasi berhasil, THE SYSTEM SHALL mencatat audit `REFRESH_OK`. ✅
 
 ## Requirement 4 — Logout
 
@@ -122,259 +98,117 @@ SRS-F-27-07 · TC-USR-07
 
 ### Acceptance Criteria (EARS)
 
-1. WHEN klien `POST /api/v1/auth/logout` dengan `refreshToken`, THE SYSTEM SHALL mencabut
-   sesi terkait dan membalas `204 No Content`.
-2. IF `refreshToken` kosong, tidak dikenal, atau sudah dicabut, THEN THE SYSTEM SHALL tetap
-   membalas sukses (operasi idempoten).
-3. WHEN sesi dicabut melalui logout, THE SYSTEM SHALL mencatat audit `LOGOUT`.
-
----
+1. WHEN `POST /api/v1/auth/logout` dengan `refreshToken`, THE SYSTEM SHALL mencabut sesi dan membalas `204`. ✅
+2. IF `refreshToken` kosong/tidak dikenal/sudah dicabut, THEN THE SYSTEM SHALL tetap sukses (idempoten). ✅
+3. WHEN sesi dicabut, THE SYSTEM SHALL mencatat audit `LOGOUT`. ✅
 
 ## Requirement 5 — Lihat Profil
 
 **User story:** Sebagai pembeli yang sudah login, saya ingin melihat profil saya.
 
-SRS-F-27-08 · TC-USR-08
+SRS-F-27-09 · TC-USR-08, TC-USR-12
 
 ### Acceptance Criteria (EARS)
 
-1. WHEN klien `GET /api/v1/me` dengan Bearer access token valid, THE SYSTEM SHALL membalas
-   `200` berisi `accountId`, `emailMasked`, `fullName` (opsional), `nikMasked` (opsional),
-   dan `hasNik`.
-2. THE SYSTEM SHALL mengirim email dan NIK **hanya dalam bentuk tersamar** (masked), tidak
-   pernah plaintext. *(TC-USR-12)*
-3. IF Bearer token tidak ada/invalid/kedaluwarsa, THEN THE SYSTEM SHALL menolak dengan
-   `401 UNAUTHORIZED` dan header `WWW-Authenticate: Bearer`.
-4. IF akun tidak ditemukan, THEN THE SYSTEM SHALL memetakan ke `401 UNAUTHORIZED`.
+1. WHEN `GET /api/v1/me` dengan Bearer access token valid, THE SYSTEM SHALL membalas `200 { accountId, emailMasked, fullName?, nikMasked?, hasNik }`. ✅
+2. THE SYSTEM SHALL mengirim email dan NIK **hanya** tersamar. ✅ *(TC-USR-12)*
+3. IF Bearer token tidak ada/invalid/kedaluwarsa, THEN `401 UNAUTHORIZED` + `WWW-Authenticate: Bearer`. ✅
+4. IF akun tidak ditemukan, THEN `401 UNAUTHORIZED`. ✅
 
----
+## Requirement 6 — Update Profil (nama & NIK)
 
-## Requirement 6 — Update Profil (nama & link NIK)
+**User story:** Sebagai pembeli yang sudah login, saya ingin menyimpan nama dan satu NIK pembeli di akun.
 
-**User story:** Sebagai pembeli yang sudah login, saya ingin menautkan NIK dan mengisi nama
-agar tersimpan di akun.
-
-SRS-F-27-08..09 · TC-USR-08
+SRS-F-27-08, SRS-F-27-09, SRS-F-11-01 · TC-USR-08
 
 ### Acceptance Criteria (EARS)
 
-1. WHEN klien `PATCH /api/v1/me` dengan Bearer token valid dan field `fullName` dan/atau
-   `nik`, THE SYSTEM SHALL memperbarui hanya field yang dikirim dan membalas `200` dengan
-   profil terbaru.
-2. IF `fullName` di luar 1–100 karakter, THEN THE SYSTEM SHALL menolak dengan
-   `400 VALIDATION_ERROR` field `fullName`.
-3. IF `nik` tidak 16 digit numerik, THEN THE SYSTEM SHALL menolak dengan
-   `400 VALIDATION_ERROR` field `nik`.
-4. WHEN NIK valid dikirim, THE SYSTEM SHALL menyimpan NIK terenkripsi (`nik_enc`) + hash
-   (`nik_hash`, kunci HMAC sama dengan Queue/Booking) + masked (`nik_masked`).
-5. IF NIK sudah tertaut ke akun lain (unik per NIK), THEN THE SYSTEM SHALL menolak dengan
-   `409 NIK_ALREADY_LINKED`.
-6. IF tidak ada field yang dikirim, THEN THE SYSTEM SHALL menolak dengan
-   `400 VALIDATION_ERROR` ("tidak ada field yang diubah").
+1. WHEN `PATCH /api/v1/me` dengan Bearer token dan `fullName` dan/atau `nik`, THE SYSTEM SHALL memperbarui hanya field yang dikirim dan membalas `200` profil terbaru. ✅
+2. IF `fullName` di luar 1–100 karakter, THEN `400 VALIDATION_ERROR` field `fullName`. ✅
+3. IF `nik` gagal validasi struktur, THEN `400 VALIDATION_ERROR` field `nik`. ✅ *(VO saat ini lebih longgar dari `pkg/nik` — target: aturan sama dengan Queue/Booking, platform R1. Kode error `400` di sini vs `422 NIK_INVALID` di Queue/Booking mengikuti `user.yaml`.)*
+4. WHEN NIK valid, THE SYSTEM SHALL menyimpan `nik_enc` (AES-256-GCM), `nik_hash` (HMAC, kunci sama dengan Queue/Booking), `nik_masked`. ✅
+5. IF NIK sudah tertaut ke akun lain, THEN `409 NIK_ALREADY_LINKED`. ✅
+6. IF tidak ada field yang dikirim, THEN `400 VALIDATION_ERROR`. ✅
 
----
+## Requirement 7 — Token untuk service lain (validasi stateless)
 
-## Requirement 7 — Token untuk service lain (stateless validation)
+**User story:** Sebagai Queue/Booking Service, saya ingin memvalidasi access token tanpa memanggil User Service, sehingga identitas pembeli login dapat dipakai saat join dan riwayat pesanan.
 
-**User story:** Sebagai Queue/Booking Service, saya ingin memvalidasi access token tanpa
-memanggil User Service, sehingga validasi cepat dan stateless.
-
-SRS-F-27-10 · TC-USR-09, TC-USR-09a
+SRS-F-27-10, SRS-F-27-10a, SRS-F-27-11 · TC-USR-09, TC-USR-09a, TC-USR-10
 
 ### Acceptance Criteria (EARS)
 
-1. THE SYSTEM SHALL menerbitkan access token JWT EdDSA (Ed25519) dengan klaim `iss`, `sub`
-   (account UUID), `aud`, `jti`, `scope="buyer"`, `iat`, `exp`; TTL `TOKEN_ACCESS_TTL`.
-2. THE SYSTEM SHALL membagikan public key (via kid) ke Queue dan Booking agar mereka
-   memverifikasi token yang sama tanpa HTTP call ke User Service.
-3. WHEN memverifikasi token, THE SYSTEM SHALL mengecek tanda tangan, issuer, audience, dan
-   `exp` (dengan leeway 5 detik) lalu mengembalikan `sub` sebagai accountID.
-4. **Catatan (delta):** token **tidak** memuat klaim `email`/`nik_hash`/`has_nik` seperti
-   SDD §6.1. Lihat [Deltas](#deltas-sdd-vs-kode) D1 — implikasi untuk TC-USR-09/09a.
+1. THE SYSTEM SHALL menerbitkan access token JWT EdDSA (Ed25519) dengan klaim `iss`, `sub` (account UUID), `aud`, `jti`, `scope="buyer"`, `iat`, `exp`, serta `email`, dan — bila akun punya NIK — `nik_hash` (hex) dan `has_nik=true`; TTL `TOKEN_ACCESS_TTL`. ✅
+2. WHEN akun tidak punya NIK, THE token SHALL tidak memuat `nik_hash` dan `has_nik` (keduanya `omitempty`; verifikator memperlakukan tidak ada = `false`). ✅
+3. THE SYSTEM SHALL membagikan kunci publik (per `kid`) ke Queue dan Booking agar mereka memverifikasi tanpa HTTP call. ✅ (kunci) / distribusi ke service lain **[target, platform R6]**
+4. WHEN memverifikasi token, THE verifikator SHALL mengecek signature, issuer, audience, dan `exp` (leeway 5 s). ✅
+5. WHEN profil mengubah NIK, klaim baru SHALL berlaku pada access token berikutnya (refresh); token lama tetap berlaku sampai `exp` (≤ `TOKEN_ACCESS_TTL`). ✅ *(konsekuensi desain stateless)*
 
----
+## Requirement 8 — Health & Postur Event
 
-## Requirement 8 — Health & Event posture
+**User story:** Sebagai platform, saya ingin probe kesehatan dan perilaku event yang jelas.
 
-**User story:** Sebagai platform (ALB/container), saya ingin probe kesehatan service.
-
-SRS-F-27-xx · (D-23)
+D-23, ADR-020
 
 ### Acceptance Criteria (EARS)
 
-1. WHEN klien `GET /health`, THE SYSTEM SHALL mengembalikan `200 UP` saat Postgres & Valkey
-   sehat, atau `503 DOWN` bila ada dependency bermasalah.
-2. THE SYSTEM SHALL **tidak** mempublikasikan maupun mengonsumsi event broker apa pun (User
-   Service stateless dari perspektif event).
-3. WHEN dependency (Postgres/Valkey) belum ter-wire (mis. unit test), THE SYSTEM SHALL hanya
-   memasang route `/health`.
-
----
+1. WHEN `GET /health`, THE SYSTEM SHALL `200 UP` bila PostgreSQL & Valkey sehat, `503 DOWN` bila tidak. ✅ *(Setelah R1.7, RabbitMQ ikut diperiksa.)*
+2. THE SYSTEM SHALL **hanya** mempublikasikan `otp.requested.v1` **[target]** dan tidak mengonsumsi event apa pun. *(Spec lama menyatakan "tidak mempublikasikan event apa pun" — bertentangan dengan R1.7/ADR-020; diperbaiki (K10).)*
+3. WHEN dependency belum ter-wire (unit test), THE SYSTEM SHALL hanya memasang `/health`. ✅
 
 ## Requirement 9 — Build & Verify
 
-**User story:** Sebagai pengembang, saya ingin membangun dan memverifikasi service secara
-deterministik.
+**User story:** Sebagai pengembang, saya ingin membangun dan memverifikasi service secara deterministik.
 
-### Acceptance Criteria (EARS) — Build (run)
+### Acceptance Criteria (EARS)
 
-1. WHEN `go run ./cmd migrate up` dijalankan, THE SYSTEM SHALL menerapkan migrasi
-   `0001_init` (schema `users`: `accounts`, `sessions`, `login_audit`).
-2. WHEN `go run ./cmd api` dijalankan dengan konfigurasi valid, THE SYSTEM SHALL start di
-   port 8085 dan melayani `/health` + route `/api/v1/*`.
-3. IF konfigurasi tidak valid (TOKEN_*, OTP_*, PII_*, RABBITMQ_* di luar rentang), THEN THE
-   SYSTEM SHALL gagal start dengan error validasi yang jelas.
-
-### Acceptance Criteria (EARS) — Verify
-
-4. WHEN `make build` dijalankan, THE SYSTEM SHALL meng-compile modul `services/user` tanpa
-   error (termasuk isolation build `GOWORK=off`).
-5. WHEN `make test` dijalankan, THE SYSTEM SHALL menjalankan unit test `-race` (usecase,
-   security, mapper, config, handler) dan lulus.
-6. WHEN `make test-integration` dijalankan, THE SYSTEM SHALL menjalankan integration test
-   adapter (build tag `integration`) terhadap PostgreSQL & Valkey nyata dan lulus.
-7. WHEN `make lint` dijalankan, THE SYSTEM SHALL lulus golangci-lint termasuk depguard
-   (lapisan hexagonal dihormati).
-8. THE SYSTEM SHALL menjaga coverage logika ≥ 80% (`make cover`), dengan `cmd/`,
-   `internal/delivery/`, `internal/config/`, `_mock/` dikecualikan.
+1. WHEN `go run ./cmd migrate up`, THE SYSTEM SHALL menerapkan `0001_init` (schema `users`: `accounts`, `sessions`, `login_audit`). ✅
+2. WHEN `go run ./cmd api` dengan konfigurasi valid, THE SYSTEM SHALL start di port 8085. ✅
+3. IF konfigurasi tidak valid (`TOKEN_*`, `OTP_*`, `PII_*` di luar rentang/sama), THEN gagal start dengan error jelas. ✅
+4. WHEN `make build` / `make isolation`, THE modul SHALL ter-compile (termasuk `GOWORK=off`). ✅
+5. WHEN `make test`, unit test `-race` SHALL lulus. ✅
+6. WHEN `make test-integration`, test adapter terhadap PostgreSQL & Valkey nyata SHALL lulus. ✅ *(kecuali integration test `GetNIKHashByID`/`GetEmailEncByID` yang belum ada — user tasks 1.2)*
+7. WHEN `make lint`, golangci-lint + depguard SHALL lulus. *(spec lama mencatat 3 temuan lint pre-existing — verifikasi ulang, user tasks 1.3)*
+8. THE coverage logika SHALL ≥ 80% (`make cover`). ✅ *(evidence v1.5: 94,4%)*
 
 ---
 
 ## Deltas (SDD vs Kode)
 
-Setiap delta di bawah **diverifikasi dengan membaca kode**, bukan ditebak. Format:
-*SDD menyatakan → Kode sebenarnya → sumber*.
+Setiap delta diverifikasi dengan membaca kode. Format: *SDD menyatakan → kode sebenarnya*.
 
 | ID | SDD menyatakan | Kode sebenarnya | Sumber kode |
 |----|----------------|-----------------|-------------|
-| **D1** | Access token membawa klaim `email`, `nik_hash`, `has_nik` + `aud` array `["queue-service","booking-service"]` (§6.1, App C) | `pkg/token.Claims` **sudah punya** field `Email`, `NIKHash`, `HasNIK`. **NAMUN** `Tokens.IssueAccess` hanya menandatangani `iss, sub, aud(string), jti, scope="buyer", iat, exp` — **tidak mempopulasi** klaim identitas. `aud` adalah satu string (`TOKEN_AUDIENCE=rbt`). **Status: struct ready, issuance not wired.** | `pkg/token/token.go` (`Claims`); `infrastructure/security/security.go` (`IssueAccess`) |
-| **D2** | Rute OTP `POST /api/v1/auth/otp-request` dan `otp-verify` (tanda hubung) | Rute `POST /api/v1/auth/otp/request` dan `otp/verify` (garis miring) | `infrastructure/http/auth_handler.go` (`Register`) |
-| **D3** | Refresh token lewat **cookie HttpOnly `rb_refresh`**; verify "Set cookie", refresh "Set new cookie", logout "Clear cookie" | **Tidak ada cookie sama sekali.** Refresh token dikirim/diterima sebagai JSON body `refreshToken` (request) dan `refreshToken`/`refreshTokenExpiresAt` (response). | `auth_handler.go`; `domain/dto/auth.go` (`RefreshRequest`, `TokenResponse`) |
-| **D4** | Profil: `GET /api/v1/users/me`, link NIK via `POST /api/v1/users/me/nik` | `GET /api/v1/me` dan `PATCH /api/v1/me` (nama + NIK digabung dalam satu PATCH) | `auth_handler.go` (`Register`); `profile.go` (`UpdateProfile`) |
-| **D5** | `OTP_INVALID`=400, `OTP_EXPIRED`=400, `OTP_LOCKED`=403 (App B) | `OTP_INVALID`=**401**, `OTP_EXPIRED`=**401**, `OTP_LOCKED`=**429** | `port/inbound/errors.go` |
-| **D6** | Verify response: `accountId`, `isNewAccount`, `accessToken`, `expiresAt` + cookie | Response: `tokenType`, `accessToken`, `accessTokenExpiresAt`, `refreshToken`, `refreshTokenExpiresAt`, `account{...}`. **Tidak ada** `isNewAccount`. | `domain/dto/auth.go` (`TokenResponse`) |
-| **D7** | Profil response: `email` (plaintext), `nikLinked`, `createdAt` | Hanya `emailMasked`, `fullName`, `nikMasked`, `hasNik`, `accountId` — email **tidak pernah** plaintext | `dto/auth.go` (`ProfileResponse`); `mapper/account_mapper.go` |
-| **D8** | Env: `DATABASE_URL`, `VALKEY_URL`, `USER_TOKEN_PRIVATE_KEY_PATH`/`_PUBLIC_KEY_PATH`, `ACCESS_TOKEN_TTL`, `REFRESH_TOKEN_TTL`, `PII_ENCRYPTION_KEY_PATH`, `OTP_LENGTH`, `OTP_COOLDOWN`, `OTP_HOURLY_LIMIT_*` | `POSTGRES_*`(+`POSTGRES_SCHEMA`), `VALKEY_SERVER`(JSON), `TOKEN_ISSUER/AUDIENCE/KEY_ID/PRIVATE_KEY_FILE/ACCESS_TTL/REFRESH_TTL`, `PII_ENC_KEY`/`PII_HASH_KEY`/`OTP_HASH_KEY` (hex, bukan path), `OTP_TTL/RESEND_COOLDOWN/MAX_ATTEMPTS/MAX_PER_EMAIL_HOUR/MAX_PER_IP_HOUR`. Tidak ada `OTP_LENGTH` (hardcoded 6 digit). | `.env.example`; `internal/config/user.go` |
-| **D9** | OTP hashing dengan `argon2.IDKey` + salt (App A.3) | OTP di-hash dengan **HMAC** (`crypto.Hasher`) diikat ke `email_hash` via `OTP_HASH_KEY`, bukan argon2 | `security.go` (`HashOTP`); `config/user.go` (`OTPKeyHex`) |
-| **D10** | Refresh token hash = `SHA256(token)` (App C.2) | Benar: `HashRefreshToken` = `SHA-256` dari token acak 32 byte base64url. (Tidak ada delta — dikonfirmasi) | `security.go` (`HashRefreshToken`) |
-| **D11** | Tabel `accounts` punya `email_enc`, `email_hash`, `nik_enc`, `nik_hash`, `created_at`, `updated_at` | Kode/migrasi menambahkan `email_masked`, `full_name` (CHECK 1–100), `nik_masked`, `status` (`ACTIVE`/`DISABLED`), `last_login_at`; `sessions` menambahkan `replaced_by`; `login_audit` memakai `outcome` enum + `id bigint IDENTITY` (SDD menamai kolom `action`,`success`,`failure_reason`,`ip_address`,`user_agent`) | `deployments/migrations/0001_init.up.sql` |
-| **D12** | Error table tidak memuat `ACCOUNT_DISABLED` (403) dan `DEPENDENCY_UNAVAILABLE` (503) untuk publish | Keduanya ada di kode (`ErrAccountDisabled`, `ErrPublishFailed`) | `port/inbound/errors.go`; `auth.go` |
-| **D13** | Order history: tidak ada di User Service (via Booking Service) | Dikonfirmasi — tidak ada endpoint order history di kode. (Sesuai SDD §3.7) | `auth_handler.go` (`Register`) |
+| D1 | Token membawa `email`, `nik_hash`, `has_nik`; `aud` array | **Terselesaikan**: klaim identitas sudah diisi; `aud` tetap satu string (`TOKEN_AUDIENCE=rbt`); `nik_hash`/`has_nik` `omitempty` | `pkg/token/token.go`, `security.go` |
+| D2 | `POST /auth/otp-request`, `otp-verify` | `POST /api/v1/auth/otp/request`, `otp/verify` | `auth_handler.go` |
+| D3 | Refresh token di cookie HttpOnly `rb_refresh` | JSON body `refreshToken` (request & response), tanpa cookie | `auth_handler.go`, `dto/auth.go` |
+| D4 | `GET /users/me`, `POST /users/me/nik` | `GET`/`PATCH /api/v1/me` | `auth_handler.go`, `profile.go` |
+| D5 | `OTP_INVALID`/`OTP_EXPIRED`=400, `OTP_LOCKED`=403 | `401`, `401`, `429` | `port/inbound/errors.go` |
+| D6 | Verify: `accountId`, `isNewAccount`, `expiresAt` + cookie | `tokenType`, `accessToken`, `accessTokenExpiresAt`, `refreshToken`, `refreshTokenExpiresAt`, `account{…}` | `dto/auth.go` |
+| D7 | Profil: `email` plaintext, `nikLinked`, `createdAt` | `emailMasked`, `fullName`, `nikMasked`, `hasNik`, `accountId` | `dto/auth.go`, `account_mapper.go` |
+| D8 | Env `DATABASE_URL`, `USER_TOKEN_*`, path kunci PII, `OTP_LENGTH`… | D-24: `POSTGRES_*`, `VALKEY_SERVER`, `TOKEN_ISSUER/AUDIENCE/KEY_ID/PRIVATE_KEY_FILE/ACCESS_TTL/REFRESH_TTL`, `PII_ENC_KEY`/`PII_HASH_KEY`/`OTP_HASH_KEY` (hex), `OTP_*`, `SMTP_*`; OTP 6 digit hardcoded | `.env.example`, `config/user.go` |
+| D9 | OTP di-hash argon2 + salt | HMAC terikat `email_hash` (`OTP_HASH_KEY`) | `security.go` |
+| D10 | Refresh hash `SHA256(token)` | Sama (tanpa delta) | `security.go` |
+| D11 | Kolom `accounts`/`login_audit` versi SDD | + `email_masked`, `full_name`, `nik_masked`, `status`, `last_login_at`, `sessions.replaced_by`; `login_audit.outcome` enum | migrasi `0001_init` |
+| D12 | Error `ACCOUNT_DISABLED`, `DEPENDENCY_UNAVAILABLE` tidak ada | Ada: `ErrAccountDisabled` (403), `ErrMailUnavailable` (503) — spec lama menyebut `ErrPublishFailed` (belum ada; akan muncul bersama R1.7) | `port/inbound/errors.go` |
+| D13 | Riwayat pesanan di User Service ("proxy ke Booking" di HLD) | Tidak ada di User; `GET /api/v1/me/bookings` milik Booking (OQ-10) | `auth_handler.go` |
+| D14 | SDD-USER v1.2: SMTP adapter dihapus, diganti publisher `otp.requested` | **Belum**: `infrastructure/smtp/mailer.go` masih dipakai | `user_module.go` |
 
 ### Implikasi Delta terhadap Test Plan
+- **D5** — assertion status TC-USR-03/05: 401/429 (bukan 400/403).
+- **D3/D4/D6** — TC-USR-06/07/08 memakai JSON body dan rute `/api/v1/me`.
+- **D14** — TC-MSG-05/06 dan TC-USR-11 (bagian broker) baru dapat dijalankan setelah user tasks 3.
 
-- **D1** mempengaruhi **TC-USR-09 / TC-USR-09a**: skenario SDD "nikHash diambil dari token"
-  tidak dapat dipenuhi karena token tidak memuat `nik_hash`/`has_nik`. Queue/Booking harus
-  memakai `sub` (accountID) + melakukan lookup/hashing `buyerNik` dari body, atau SDD perlu
-  direvisi. Ini keputusan desain yang harus diselaraskan sebelum TC-USR-09 dieksekusi.
-- **D5** mempengaruhi assertion status code pada TC-USR-03/05 (harap 401/429, bukan 400/403).
-- **D3/D4/D6** mempengaruhi TC-USR-06/07/08 (klien memakai JSON body, bukan cookie; rute `/me`).
+## Traceability
 
-
----
-
-## Implementation Priority
-
-### P0 — Token Claims (D1) — BLOCKING TC-USR-09/09a
-
-**Decision:** Option A — implement the SDD design. Add `email`, `nik_hash`, `has_nik` to the access token so Queue/Booking can validate NIK offline without calling User Service.
-
-**Why:** PRD v5.4 (US-092), SRS v1.3 (SRS-F-27-10), HLD v1.6, SDD-USER §6.1, SDD-QUEUE §3.1 all specify this design. The docs are aligned; only the code needs to catch up.
-
-**Acceptance Criteria:**
-
-1. `pkg/token.Claims` struct has fields `Email string`, `NIKHash string` (hex-encoded), `HasNIK bool` with appropriate JSON tags.
-2. `ITokenIssuer.IssueAccess` signature accepts `(accountID, email string, nikHash []byte, hasNIK bool, now time.Time)`.
-3. `IAccountRepository` has method `GetNIKHashByID(ctx, id) ([]byte, error)` to fetch `nik_hash` for token issuance.
-4. `security.Tokens.IssueAccess` populates the new claims from the passed parameters.
-5. `usecase.Auth.openSession` fetches email (from verify flow) and nikHash (from repository) and passes them to `IssueAccess`.
-6. Unit tests verify: (a) token with NIK carries all three claims; (b) token without NIK has `HasNIK=false` and empty `NIKHash`; (c) email is always present.
-7. `make build && make test && make lint` pass.
-8. Mocks regenerated (`make mock`).
-
-**Downstream impact:** After this is implemented, Queue and Booking can:
-- Extract `has_nik` from token
-- If `true`: use `nik_hash` directly (ignore `body.buyerNik`)
-- If `false`: require `body.buyerNik`, HMAC it with the shared key
-
-**Test unblock:** TC-USR-09, TC-USR-09a become runnable.
-
----
-
-## P0 Implementation — Token Claims Enhancement ✅ COMPLETE
-
-### Problem Statement
-
-The current access token implementation only includes basic claims (`iss`, `sub`, `aud`, `jti`, `scope`, `iat`, `exp`). Per SDD-USER §6.1, SDD-QUEUE §3.1, and SRS-F-27-10, the token MUST include `email`, `nik_hash`, and `has_nik` so Queue and Booking can validate buyer identity offline without calling User Service.
-
-### Status: COMPLETE (2026-10-20)
-
-| Item | Status | Notes |
-|------|--------|-------|
-| `pkg/token.Claims` struct | ✅ | Has `Email`, `NIKHash` (`omitempty`), `HasNIK` |
-| `IAccountRepository.GetNIKHashByID` | ✅ | `(ctx, id string) ([]byte, error)` |
-| `IAccountRepository.GetEmailEncByID` | ✅ | Returns encrypted email bytes |
-| `IPIIProtector.UnsealEmail` | ✅ | Decrypts email_enc |
-| `ITokenIssuer.IssueAccess` signature | ✅ | `(accountID, email string, nikHash []byte, now)` |
-| `Tokens.IssueAccess` implementation | ✅ | Populates Email, HasNIK, NIKHash (hex) |
-| `Auth.openSession` wiring | ✅ | Accepts email, fetches nikHash |
-| Email in Refresh flow | ✅ | Fetches via `GetEmailEncByID` + `UnsealEmail` |
-
-### Implementation Summary
-
-**Files modified:**
-- `port/outbound/repositories.go` — Added `GetNIKHashByID`, `GetEmailEncByID`
-- `port/outbound/services.go` — Updated `IssueAccess` signature; added `UnsealEmail`
-- `infrastructure/postgres/repositories.go` — Implemented new methods
-- `infrastructure/security/security.go` — Updated `IssueAccess`; added `UnsealEmail`
-- `application/usecase/auth.go` — Wired email + nikHash flows
-- Tests and mocks updated
-
-**Design choices:**
-- Repository returns encrypted email bytes (`GetEmailEncByID`), not plaintext — keeps decryption in security domain
-- VerifyOTP uses email from validated request; Refresh fetches via `GetEmailEncByID` + `UnsealEmail`
-- `openSession` accepts email parameter, fetches nikHash internally
-
-**Verification:**
-```bash
-make build  # ✅ all 5 services
-make test   # ✅ all tests pass
-```
-
-### Downstream Usage (Queue/Booking)
-
-```go
-claims, _ := verifier.VerifyAccess(bearerToken)
-
-if claims.HasNIK {
-    // Use NIK hash from token
-    buyerNikHash, _ := hex.DecodeString(claims.NIKHash)
-} else {
-    // Require body.buyerNik
-    if req.BuyerNik == "" {
-        return 422, "NIK_REQUIRED"
-    }
-    buyerNikHash = pii.HashNIK(req.BuyerNik)
-}
-```
-
----
-
-_End of User Service Requirements_
-
-### Migration Impact
-
-**None.** This change only affects token issuance logic — no database migrations required. The `nik_hash` column already exists in `accounts` table.
-
-### Rollout Strategy
-
-1. Deploy User Service with new token claims
-2. Queue/Booking can immediately use `has_nik`/`nik_hash` from tokens
-3. Old tokens (without claims) will fail validation → users re-login automatically (access TTL is 15m)
-
-### TC Unblock
-
-After implementation:
-- **TC-USR-09**: Login user with NIK → token has `has_nik=true`, `nik_hash` populated
-- **TC-USR-09a**: Login user without NIK → token has `has_nik=false`, `nik_hash` empty
-- **Queue join flow**: Extract `has_nik` from token, use `nik_hash` if true, else require `body.buyerNik`
+| Req | SRS | TC | Status |
+|-----|-----|----|--------|
+| 1 Request OTP | F-27-02/04/12 | TC-USR-02/04/11, TC-MSG-05 | ✅ kecuali 1.7–1.8 (event) |
+| 2 Verify | F-27-03/05 | TC-USR-03/05 | ✅ |
+| 3 Refresh | F-27-06 | TC-USR-06 | ✅ |
+| 4 Logout | F-27-07 | TC-USR-07 | ✅ |
+| 5 Profil | F-27-09 | TC-USR-08/12 | ✅ |
+| 6 Update profil | F-27-08/09, F-11-01 | TC-USR-08 | ✅ (NIK parsial) |
+| 7 Token | F-27-10/10a/11 | TC-USR-09/09a/10 | ✅ (distribusi kunci target) |
+| 8 Health & event | D-23, ADR-020 | — | ✅ / target |
+| 9 Build & verify | — | CI | ✅ |

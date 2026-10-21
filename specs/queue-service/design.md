@@ -212,18 +212,29 @@ Required: `admissionToken, bookingUrl`.
 
 ### 2.7 Internal API yang DIPANGGIL (outbound ke Booking)
 
-**`POST /internal/v1/allocations:batch`** (Booking) — reserve alokasi untuk batch admitted.
+Semua panggilan memakai `Authorization: Bearer <service token>` + `X-Request-ID` (platform R2.3) dan
+breaker Queue→Booking (timeout 500 ms, ambang 5, cooldown 5 s, bulkhead 50 — PROPOSED SDD-RBT §4.6.2).
+Kontrak normatif: `internal-booking.yaml` (K6).
+
+**`POST /internal/v1/allocations:batch`** (Booking) — reserve alokasi untuk batch entry terdepan.
 Request:
 ```json
-{ "eventId":"uuid", "entries":[ {"queueEntryId":"uuid","visitorId":"uuid","buyerNikHash":"hex","units":3} ] }
+{ "eventId":"uuid", "entries":[ {"queueEntryId":"uuid","seq":182341,"visitorId":"uuid","buyerNikHash":"hex",
+  "buyerNikMasked":"3174********0001","buyerEmail":"…","accountId":"uuid|null"} ] }
 ```
 Response:
 ```json
-{ "allocations":[ {"queueEntryId":"uuid","allocationId":"uuid","status":"RESERVED","units":3,"claimDeadline":"2026-10-20T10:03:00Z"} ] }
+{ "results":[ {"queueEntryId":"uuid","outcome":"GRANTED","allocationId":"uuid","units":3,"claimDeadline":"2026-10-20T10:03:00Z"} ] }
 ```
-`status ∈ {RESERVED, NO_SUPPLY_NOW, SOLD_OUT, QUOTA_EXHAUSTED}`.
+`outcome ∈ {GRANTED, NO_SUPPLY_NOW, SOLD_OUT, BUYER_QUOTA_EXHAUSTED, ALREADY_ACTIVE}`. Booking
+menghitung `units`; Queue tidak mengirim `units`. `buyerEmail` didekripsi dari `emailEnc` hanya untuk
+panggilan ini (tidak dilog). Idempoten per `queueEntryId` → aman diulang setelah timeout.
 
-**`GET /internal/v1/events/{id}/supply`** (Booking) — snapshot stok; di-cache 1s di Valkey oleh Queue.
+**`POST /internal/v1/allocations/{allocationId}:release`** (Booking) — kompensasi saga saat entry
+`ADMITTED` ditinggalkan (`reason = QUEUE_ENTRY_GONE`) → `{ released }`.
+
+**`GET /internal/v1/events/{id}/supply`** (Booking) — snapshot stok untuk Status Document; di-cache 1s di
+Valkey oleh Queue (`q:{e}:supply`).
 
 ---
 
@@ -456,12 +467,12 @@ return {'OK', final}
           │                                      │  │
           └──────────────────────────────────►  │  └── booking.sold_out ────► SOLD_OUT / CLOSED
                                                  │
-                              promote (RESERVED) │
+                     promote / direct (GRANTED)  │   └── BUYER_QUOTA_EXHAUSTED ─► ENDED (reason)
                                                  ▼
                                              ADMITTED
                                              │   │   │
                      claim (now<deadline) ───┘   │   └── sweeper: now>=deadline ─► MISSED
-                                                 │        (publish journey.ended UNCLAIMED)
+                                                 │        (atau journey.ended UNCLAIMED dari Booking)
                                                  ▼
                                              CLAIMED
                                                  │
@@ -472,12 +483,13 @@ return {'OK', final}
 
 | Status | Masuk dari | Keluar ke | Pemicu |
 |--------|-----------|-----------|--------|
-| `WAITING` | (new) | ADMITTED, LEFT, SOLD_OUT/CLOSED | join (penuh) |
-| `ADMITTED` | (new) direct / WAITING | CLAIMED, MISSED, LEFT | promote / direct admission |
+| `WAITING` | (new) | ADMITTED, LEFT, SOLD_OUT/CLOSED, ENDED | join (penuh) |
+| `ADMITTED` | (new) direct / WAITING | CLAIMED, MISSED, LEFT | promote / direct admission (setelah `GRANTED`) |
 | `CLAIMED` | ADMITTED | COMPLETED, ENDED | claim sukses |
-| `MISSED` | ADMITTED | (terminal) | Claim Sweeper (deadline lewat) |
+| `MISSED` | ADMITTED | (terminal) | Claim Sweeper (deadline lewat) atau `journey.ended(UNCLAIMED)` |
+| `ENDED` (dari WAITING) | WAITING | (terminal) | outcome `BUYER_QUOTA_EXHAUSTED` (`reason`), audit `REJECTED` |
 | `LEFT` | WAITING/ADMITTED | (terminal) | DELETE entry |
-| `SOLD_OUT`/`CLOSED` | WAITING | (terminal) | `booking.sold_out` |
+| `SOLD_OUT`/`CLOSED` | WAITING | (terminal) | `booking.sold_out.v1` |
 | `COMPLETED` | CLAIMED | (terminal) | `journey.ended` outcome=PAID |
 | `ENDED` | CLAIMED | (terminal) | `journey.ended` outcome≠PAID |
 
@@ -491,13 +503,16 @@ Semua event dibungkus **envelope** (`docs/contracts/events/envelope.schema.json`
 
 ### 6.1 Published (producer = `queue-service`)
 
-**`queue.turn.soon` v1** (routing key `queue.turn.soon`) → Notification:
+Routing key berversi (`<event>.v1`, K8). Queue mem-publish langsung (publisher confirm), tanpa outbox
+(ADR-010); gagal publish → dicatat dan dilewati (push best effort).
+
+**`queue.turn.soon` v1** (routing key `queue.turn.soon.v1`) → Notification:
 ```json
 { "eventId":"uuid", "queueEntryId":"uuid", "visitorId":"uuid" }
 ```
 Required: `eventId, queueEntryId, visitorId`. Dipublikasikan saat posisi ≤ `preTurnNotifyPosition` (sekali per entry).
 
-**`queue.turn.arrived` v1** (routing key `queue.turn.arrived`) → Notification:
+**`queue.turn.arrived` v1** (routing key `queue.turn.arrived.v1`) → Notification:
 ```json
 { "eventId":"uuid", "queueEntryId":"uuid", "visitorId":"uuid", "claimDeadline":"date-time" }
 ```
@@ -507,14 +522,18 @@ Required: `eventId, queueEntryId, visitorId, claimDeadline`. Dipublikasikan saat
 
 ### 6.2 Consumed (dari Booking)
 
-**`booking.journey.ended` v1** → rilis slot & finalisasi entry:
+Consumer queue (SDD-RBT §4.6.2): `queue.journey-ended` ← `booking.journey.ended.v1`,
+`queue.quota-exhausted` ← `booking.quota.exhausted.v1`, `queue.sold-out` ← `booking.sold_out.v1`.
+
+**`booking.journey.ended` v1** → rilis slot & finalisasi entry (payload schema v1, bukan versi SDD-BOOKING yang memuat `bookingId`/`visitorId` — OQ-7; `outcome` untuk sesi habis — OQ-15):
 ```json
 { "eventId":"uuid", "queueEntryId":"uuid",
   "outcome":"PAID|EXPIRED|CANCELLED|LEFT_WITHOUT_BUYING|UNCLAIMED" }
 ```
-Idempoten via `end_entry.lua` (guard status terminal). `outcome=PAID → COMPLETED`, lainnya → `ENDED`.
+Idempoten via `end_entry.lua` (guard status terminal). Entry `CLAIMED`: `outcome=PAID → COMPLETED`,
+lainnya → `ENDED`. Entry `ADMITTED` + `UNCLAIMED` → `MISSED`. Entry terminal → no-op.
 
-**`booking.quota.exhausted` v1** → blok NIK:
+**`booking.quota.exhausted` v1** → blok NIK (pemicu di Booking: OQ-13):
 ```json
 { "eventId":"uuid", "buyerNikHash":"string" }
 ```
@@ -547,18 +566,28 @@ Ketiga worker berjalan di proses `queue worker`. Karena `loop()` memakai satu `W
 | Batch size N | `active_slot_capacity - len(active)` dibatasi batas aman (mis. ≤ 200/siklus) |
 | Sumber urutan | `ZRANGEBYSCORE q:{e}:waiting 0 +inf LIMIT 0 N` (seq naik → FIFO) |
 
-**Algoritma per event (tiap tick):**
+**Satu promotor per event (SRS-F-06-01):** sebelum tick, worker mengambil lease
+`q:{e}:promoter = <instanceId>` (`SET NX PX <3×interval>`, diperpanjang tiap tick oleh pemilik). Instance
+tanpa lease melewati event itu. Lease hilang (instance mati) → instance lain mengambil alih setelah PX.
+
+**Algoritma per event (tiap tick, pemegang lease):**
 1. `free = active_slot_capacity - ZCARD(active)`; bila `free <= 0` → skip.
 2. Ambil N=`free` entry teratas `waiting` (seq naik).
-3. Panggil `POST /internal/v1/allocations:batch` (Booking) untuk N entry.
-4. Untuk tiap balasan:
-   - `RESERVED` → kumpulkan triplet (entryId, allocationId, claimDeadline).
-   - `NO_SUPPLY_NOW` → biarkan di waiting (posisi tetap).
-   - `QUOTA_EXHAUSTED` → `SADD quota_exhausted`, entry → `REJECTED`.
-   - `SOLD_OUT` → tutup antrean, entry → `SOLD_OUT`.
-5. `EVALSHA promote.lua` (atomik: waiting→active, ADMITTED).
-6. Untuk tiap entry promoted → publish `queue.turn.arrived`.
+3. Panggil `POST /internal/v1/allocations:batch` (Booking) untuk N entry (urut seq). Error/breaker OPEN → skip tick (retry tick berikutnya, idempoten per `queueEntryId`).
+4. Untuk tiap hasil, urut seq:
+   - `GRANTED` → kumpulkan (entryId, allocationId, claimDeadline).
+   - `NO_SUPPLY_NOW` → berhenti memproses sisa batch pada tick ini (FIFO); entry tetap di waiting.
+   - `BUYER_QUOTA_EXHAUSTED` → `SADD quota_exhausted`, entry → `ENDED` (`reason`), hapus constraint key, audit `REJECTED`.
+   - `SOLD_OUT` → `HSET sale saleState=CLOSED soldOut=1`; entry `WAITING` → `SOLD_OUT` (bertahap oleh publisher).
+   - `ALREADY_ACTIVE` → OQ-18 (sementara: tetap WAITING + alert).
+5. `EVALSHA promote.lua` (atomik: waiting→active, ADMITTED) **hanya** untuk entry `GRANTED`.
+6. Untuk tiap entry promoted → publish `queue.turn.arrived.v1`.
 7. Append `entry_audit(action=ADMITTED)` (batch asinkron).
+
+**Direct admission (join):** setelah `join.lua` → `OK`, bila `ZCARD(waiting)` hanya berisi entry ini dan
+ada slot bebas, usecase memanggil `allocations:batch` untuk satu entry; `GRANTED` → `promote.lua` →
+respons `ADMITTED`; selain itu respons `WAITING` (promotor akan mencoba lagi). Tidak pernah promote
+berdasarkan supply snapshot saja (invarian #2).
 
 ### 7.2 Status Publisher
 
@@ -582,10 +611,16 @@ Ketiga worker berjalan di proses `queue worker`. Karena `loop()` memakai satu `W
 **Algoritma per event (tiap tick):**
 1. `expired = ZRANGEBYSCORE active 0 now`.
 2. Untuk tiap entry `expired` yang masih `ADMITTED`:
-   - set status `MISSED`, `ZREM active` (rilis slot) — atomik via skrip kecil.
-   - publish `booking.journey.ended` `{eventId, queueEntryId, outcome:"UNCLAIMED"}` (agar Booking melepas reservasi).
+   - set status `MISSED`, `ZREM active` (rilis slot) — atomik via `end_entry.lua` (guard sama dengan consumer).
+   - **tidak** publish event: Booking session sweeper melepas alokasi `RESERVED` saat `expires_at` (= claimDeadline) lewat dan menerbitkan `booking.journey.ended.v1 (UNCLAIMED)` sendiri (K7).
    - append `entry_audit(action=MISSED)`.
 3. Slot yang bebas akan dipakai Promotor pada siklus berikutnya (FIFO berikutnya).
+
+### 7.4 Release Retrier (kompensasi saga)
+Entry `LEFT` yang sebelumnya `ADMITTED` dicatat di `q:{e}:release_pending` (hash entryId→allocationId).
+Tiap tick: `POST /internal/v1/allocations/{allocationId}:release`; `released` diterima (true/false) →
+`HDEL`. Gagal → coba tick berikut; setelah claimDeadline lewat entri dihapus (Booking sweeper sudah
+mengakhiri admission).
 
 ---
 
@@ -602,8 +637,8 @@ Klien            JoinHandler        JoinQueue UC      Valkey(Lua)       Booking 
   │                     │               ├─ resolve nikHash per auth state   │               │
   │                     │               ├─EVALSHA join.lua─►│               │               │
   │                     │               │  OK,seq,WAITING ◄─┤               │               │
-  │                     │               ├─ (slot bebas?) supply snapshot────►│               │
-  │                     │               │  ada slot → promote.lua (ADMITTED) │               │
+  │                     │               ├─ (paling depan & slot bebas?) allocations:batch ─►│  │
+  │                     │               │  GRANTED → promote.lua (ADMITTED)  │  (else WAITING)│
   │                     │               ├─ append(JOINED) ──────────────────────────────────►│
   │  201 WAITING/ADMITTED◄──────────────┤                 │               │               │
   │                     │               │  (Valkey down → 503 DEPENDENCY_UNAVAILABLE)        │
@@ -616,7 +651,7 @@ Promotor(worker)      Valkey        Booking            RabbitMQ        Klien    
   │ tick(~100ms)        │              │                  │             │              │
   ├ free=cap-ZCARD(active)            │                  │             │              │
   ├ ZRANGEBYSCORE waiting 0 +inf N ──►│                  │             │              │
-  ├ allocations:batch ───────────────►│ RESERVED(+deadline)            │              │
+  ├ allocations:batch ───────────────►│ GRANTED(+deadline)             │              │
   ├ EVALSHA promote.lua (ADMITTED) ──►│                  │             │              │
   ├ publish queue.turn.arrived ───────────────────────► │────────────►(Notification)  │
   │                     │              │                  │  POST claim │              │
@@ -624,7 +659,7 @@ Promotor(worker)      Valkey        Booking            RabbitMQ        Klien    
   │                     │ EVALSHA claim.lua◄──────────────────────────────────────────┤
   │                     │  OK,CLAIMED  │                  │             │  issue token │
   │                     │              │                  │  200 {admissionToken,bookingUrl}◄─┤
-Sweeper(~10s): ZRANGEBYSCORE active 0 now → MISSED + publish journey.ended(UNCLAIMED)
+Sweeper(~10s): ZRANGEBYSCORE active 0 now → MISSED (tanpa publish; Booking menerbitkan journey.ended UNCLAIMED)
 ```
 
 ### 8.3 Status polling (CDN-first)
@@ -669,7 +704,7 @@ Pemetaan error domain → HTTP di `infrastructure/http` memakai `pkg/apperror`. 
 
 *Implemented* di `internal/config` (`config.go`, `load.go`): `APP_*`, `LOG_*`, `HTTP_SHUTDOWN_TIMEOUT`, `HEALTH_TIMEOUT`, `WORKER_INTERVAL`, `POSTGRES_*` (+`POSTGRES_SCHEMA=queue`), `VALKEY_*` (`VALKEY_SERVER` JSON array), `RABBITMQ_*` (exchange `rusuh.events` topic, retry delays, prefetch, max retries, confirm timeout). Semua divalidasi `Config.Validate` saat start — gagal cepat, semua error dilaporkan sekaligus (`errors.Join`).
 
-**Target** (ditambah saat fitur dibangun): `BOOKING_SERVICE_URL`, `TOKEN_PRIVATE_KEY_PATH`/`TOKEN_PUBLIC_KEY_PATH` (EdDSA, `pkg/token`), `PII_HMAC_KEY`/`PII_ENC_KEY` (hash NIK + enkripsi email), `QUEUE_PROMOTOR_INTERVAL_MS`, `QUEUE_SWEEPER_INTERVAL_MS`, `RATE_LIMIT_*`.
+**Target** (ditambah saat fitur dibangun): `BOOKING_SERVICE_URL`; kunci privat penerbit visitor/queue/admission token + `kid` (pola `TOKEN_*_FILE` seperti User), kunci publik User (verifikasi `userBearer`), kunci privat service token; `PII_HASH_KEY` (**nama SDD-RBT §6.1**, sama dengan Booking/User — spec lama menulis `PII_HMAC_KEY`) dan kunci enkripsi email; `ADMISSION_TOKEN_TTL_SECONDS=60` (30–120, < claim window); `QUEUE_PROMOTOR_INTERVAL_MS`, `QUEUE_SWEEPER_INTERVAL_MS`, `RATE_LIMIT_*` *(tiga terakhir usulan spec, belum ada di SDD-RBT §4.10 [asumsi])*.
 
 > **Sumber kebenaran parameter antrean = `event_settings` (per-event), bukan env.** SDD §9 menyebut `QUEUE_MAX_ACTIVE_SLOTS`/`QUEUE_CLAIM_WINDOW_SECONDS`/`QUEUE_POLLING_INTERVAL_MS` sebagai env, tetapi migrasi aktual menaruh nilai setara di `event_settings` (`active_slot_capacity`, `status_publish_interval_ms`, `poll_*_ms`). Desain ini mengutamakan `event_settings` (dapat diubah tanpa deploy); env hanya default/fallback untuk interval worker.
 
@@ -686,7 +721,7 @@ Pemetaan error domain → HTTP di `infrastructure/http` memakai `pkg/apperror`. 
 
 ## 12. Keamanan & Privasi
 
-- NIK hanya sebagai `HMAC-SHA256(NIK, PII_HMAC_KEY)`; plaintext tidak disimpan/dilog. Email disimpan terenkripsi AES-256-GCM (`emailEnc`), `emailHash` HMAC untuk constraint.
+- NIK divalidasi `pkg/nik` lalu hanya disimpan sebagai `HMAC-SHA256(NIK, PII_HASH_KEY)`; plaintext tidak disimpan/dilog. Email disimpan terenkripsi AES-256-GCM (`emailEnc`), `emailHash` HMAC untuk constraint.
 - `admissionToken`/`queueToken`/`visitorToken` EdDSA via `pkg/token`; `admissionToken` sekali-pakai TTL 60s, terbit **hanya** lewat jalur antrean (NFR-07).
 - Fail closed: Valkey/Booking down → join/claim ditolak (`503 DEPENDENCY_UNAVAILABLE`).
 - Rate limit per email + IP di Valkey; cookie `rb_visitor` HttpOnly/Secure/SameSite=Lax.
@@ -705,7 +740,7 @@ Mengikuti `.kiro/steering/testing-review.md` (testify, table-driven, mock `_mock
 | Integration (Valkey+Lua) | atomisitas `join.lua`, constraint NIK/visitor/email, 10.000 join paralel tanpa celah seq, FIFO lintas promosi, `claim.lua` deadline, `leave.lua` cleanup | TC-GST-03..05, TC-QUE-07, TC-QUE-08, TC-QUE-14, TC-QUE-17 |
 | Integration (consumer) | idempoten kirim-ganda `journey.ended`/`quota.exhausted`/`sold_out`; payload rusak → DLQ | TC-QUE-05 |
 | Integration (PG) | append `entry_audit`, recovery dari audit | — |
-| Integration (promotor) | promote hanya setelah RESERVED (Jangan PHP), slot aktif tinggi tanpa oversell | TC-PERF-04 |
+| Integration (promotor) | promote hanya setelah `GRANTED` (Jangan PHP), satu promotor per event (dua instance), slot aktif tinggi tanpa oversell | TC-PERF-04 |
 | E2E | guest flow, logged-in (NIK stored / no NIK), direct admission, leave & rejoin, move entry, missed turn | TC-GST-01, TC-QUE-02, TC-QUE-05, TC-USR-09/09a, TC-QUE-16, TC-QUE-17 |
 | Load (k6) | 20.000 join/s, cache hit Status Document, p95<1s, sold-out notif ≤5s | TC-PERF-01..03, TC-PERF-05 |
 
@@ -728,6 +763,42 @@ make test-integration                       # Valkey/PG/RabbitMQ nyata (integrat
 make lint                                   # golangci-lint v2 + depguard (lapisan hexagonal)
 make cover                                  # ambang 80%
 ```
+
+---
+
+## 13a. Correctness Properties
+
+### Property 1: Gapless monotonic sequence
+Untuk setiap himpunan join paralel pada satu event, nilai `seq` yang diterbitkan unik, naik, dan tanpa celah.
+**Validates: Requirements 2.6, 2.7**
+
+### Property 2: FIFO admission
+Untuk setiap dua entry eligible dengan `seq_a < seq_b`, entry b tidak pernah `ADMITTED` lebih dulu dari a; frekuensi polling tidak mengubah urutan.
+**Validates: Requirements 6.3, 6.6**
+
+### Property 3: No admission without reservation
+Untuk setiap entry `ADMITTED`, ada `allocationId` hasil `GRANTED` dari Booking.
+**Validates: Requirements 2.5, 6.2**
+
+### Property 4: One active entry per NIK / visitor / email
+Untuk setiap event, paling banyak satu entry aktif per `buyerNikHash`, per `visitorId` (bila `one_active_per_visitor`), dan per `emailHash` (bila `one_active_per_email`).
+**Validates: Requirements 1.5, 2.8, 2.9**
+
+### Property 5: Idempotent consumers
+Untuk setiap pengiriman ulang `booking.journey.ended.v1` / `quota.exhausted.v1` / `sold_out.v1`, state Valkey akhir sama dengan pengiriman tunggal.
+**Validates: Requirements 8.1, 8.2, 8.3, 8.7**
+
+### Property 6: Fail closed
+Untuk setiap join/claim saat Valkey tidak terjangkau, respons `503 DEPENDENCY_UNAVAILABLE` dan tidak ada entry/seq yang tercipta setengah jadi.
+**Validates: Requirement 2.13**
+
+### Property 7: Single promoter
+Untuk dua instance worker yang berjalan bersamaan, paling banyak satu mem-promote event yang sama pada satu waktu.
+**Validates: Requirement 6.12**
+
+### Property 8: No PII in Status Document & events
+Untuk setiap Status Document dan payload `queue.turn.*`, tidak ada NIK, email, atau token.
+**Validates: Requirements 4.7, 9.3**
 
 ---
 

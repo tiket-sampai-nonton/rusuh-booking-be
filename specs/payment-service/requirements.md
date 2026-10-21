@@ -1,149 +1,214 @@
-# Requirements — Payment Service
+# Requirements Document — Payment Service
 
 | Field | Value |
 |-------|-------|
-| **Service** | Payment Service |
-| **Spec ID** | SPEC-PAYMENT-REQ-001 |
-| **Sumber kebenaran (LLD)** | `docs/sdd/SDD-PAYMENT-001.md` |
-| **Kontrak** | `docs/contracts/openapi/payment.yaml`, `docs/contracts/openapi/internal-payment.yaml`, `docs/contracts/events/{payment.succeeded,payment.failed,booking.review}.v1.schema.json` |
-| **SRS** | §3.2.13–§3.2.19 (SRS-F-13..19), Keamanan (SRS-C-21, SRS-Q-SEC-*) |
+| **Spec** | payment-service |
+| **Service** | `services/payment` |
 | **Port** | 8083 |
 | **Schema / Role** | `payment` / `svc_payment` |
 | **Owner** | BE-2 |
-| **Arsitektur** | Hexagonal + Event Sourcing (ADR-019) |
-| **Status implementasi** | **Boilerplate Sprint 1** — lihat §Status Implementasi |
+| **Arsitektur** | Hexagonal + Event Sourcing agregat PaymentAttempt (ADR-019) |
+| **Sumber (urut prioritas)** | migrasi `0001_init`, `0002_event_store` → kontrak `docs/contracts/openapi/{payment,internal-payment,internal-booking}.yaml`, `docs/contracts/events/{payment.succeeded,payment.failed,booking.review}.v1.schema.json` → SRS §3.1.3, §3.2.13–3.2.19 → **SDD-RBT-001 §4.6.2–4.6.3** (breaker, aturan transaksi Midtrans, resolve) → `docs/sdd/SDD-PAYMENT-001.md` |
 
-> **Aturan grounding:** jika SDD prosa berbeda dari kontrak OpenAPI/skema event atau migrasi DDL, **kontrak dan migrasi yang berlaku** (file migrasi terterapkan tidak boleh diubah — `structure.md`). Spec ini sudah direkonsiliasi ke kontrak nyata (mis. enum metode `VA_BCA/VA_BNI/VA_BRI/VA_PERMATA/QRIS/GOPAY`, envelope `{meta,data}`, resolve `mode`/`outcome`, error code `IDEMPOTENCY_KEY_REUSED`/`PAYMENT_PROVIDER_UNAVAILABLE`).
+## Introduction
+
+Payment Service mengintegrasikan Midtrans Sandbox (atau simulator lokal), menangani payment page
+(web + mobile WebView), charge (attempt), webhook, status, resolve untuk Booking, dan refund case.
+Siklus **PaymentAttempt** direkam dengan event sourcing: `payment_events` adalah sumber kebenaran,
+`payment_attempts` read model yang diproyeksikan sinkron dalam transaksi yang sama (ADR-019).
+
+Prinsip inti: (1) **signature webhook terverifikasi adalah satu-satunya bukti pembayaran**;
+(2) **paling banyak satu attempt terbuka per booking**; (3) **webhook idempoten dan out-of-order aman**;
+(4) **tidak ada transaksi gateway sebelum `payment-lock` Booking berhasil** — nominal = versi terkunci;
+(5) **Payment tidak memutuskan PAID** — Booking yang memutuskan berdasarkan `settlement_time`.
+
+### Status Implementasi (audit kode 2026-10-21)
+
+| Komponen | Berkas | Status |
+|----------|--------|--------|
+| Verb Cobra, config subset (`APP_*`, `LOG_*`, `HTTP_*`, `HEALTH_TIMEOUT`, `WORKER_INTERVAL`, `POSTGRES_*`, `RABBITMQ_*`), composition root, `GET /health` | `cmd/*`, `internal/config/*`, `internal/delivery/*` | ✅ |
+| Migrasi `payment_attempts`, `payment_callbacks`, `payment_page_tokens`, `refund_cases`, `idempotency_records`, `outbox_events`, `payment_events` (+ trigger append-only) | `deployments/migrations/0001_init`, `0002_event_store` | ✅ |
+| `pkg/resilience` (Breaker + Bulkhead, tanpa nilai default), `pkg/eventstore`, `pkg/apperror` | `pkg/` | ✅ (shared) |
+| Endpoint publik/internal, usecase, adapter Midtrans/simulator, webhook, event sourcing attempt, outbox relay, consumer `booking.review`, worker | — | ❌ |
+
+### Delta terhadap spec/SDD lama (ditandai Δ)
+
+| # | Lama | Yang dipakai |
+|---|------|--------------|
+| Δ1 | Booking payable bila "HELD/LOCKED" | `PENDING_PAYMENT` dan `now < paymentExpiresAt` (Booking `payment-lock` outcome) |
+| Δ2 | Default breaker `FailureThreshold=3, Cooldown=60s` | `pkg/resilience` tanpa default [kode]; nilai PROPOSED SDD-RBT §4.6.2: charge timeout 3 s / ambang 5 / cooldown 20 s / bulkhead 20; status timeout 2 s / ambang 5 / cooldown 15 s / bulkhead 10 / retry maks 2 (K9) |
+| Δ3 | `order_id = RBT-{bookingId}-{attemptNo}` | `RB-{publicRef}-{attemptNo}` (SDD-RBT §4.6.3) |
+| Δ4 | Resolve membuka refund case bila menemukan settle | Resolve hanya melaporkan `SUCCEEDED + settlementTime`; refund case dibuka dari `booking.review` (Booking yang menilai tepat waktu/terlambat) |
+| Δ5 | `custom_expiry` VA tetap 900 s | Diturunkan dari `paymentExpiresAt` booking (SRS-IF-21, SRS-F-26-05) |
+| Δ6 | Attempt baru disimpan setelah charge | Attempt `CREATED` (order ID deterministik) disimpan **sebelum** charge sehingga timeout ambigu dapat direkonsiliasi (SRS-F-14-05) |
+| Δ7 | Envelope `eventId`, routing key `payment.succeeded` | Envelope `messageId`; routing key berversi `payment.succeeded.v1` (K8) |
+| Δ8 | Error `BOOKING_EXPIRED` (410), `VISITOR_MISMATCH` (403), `ATTEMPT_IN_PROGRESS` (409) | Tidak ada di `payment.yaml` maupun SRS §3.1.4 — **OQ-19** |
+
+## Glossary
+
+- **Attempt** — satu upaya bayar dengan satu `method`; `attempt_no` naik per booking; status `CREATED → PENDING → SUCCEEDED/FAILED/CANCELLED/EXPIRED`, transien `UNKNOWN`, lanjutan `REFUND_REQUIRED → REFUNDED`.
+- **Attempt terbuka** — status `CREATED`, `PENDING`, atau `UNKNOWN` (`uq_attempt_open_per_booking`).
+- **Payment page token** — JWT/opaque sekali pakai TTL ≈ 60 s untuk membuka `/pay/{bookingId}` di WebView; ditukar menjadi cookie `rb_pay`.
+- **Resolve** — permintaan Booking untuk memastikan status pembayaran: `CHECK` atau `CHECK_AND_CANCEL`.
+- **Refund case** — kasus Ops untuk pembayaran yang diterima tetapi tidak menghasilkan tiket (`LATE_SETTLEMENT`, `SETTLED_AFTER_CANCEL`, `DUPLICATE_PAYMENT`).
 
 ---
 
-## Status Implementasi (grounding ke kode nyata)
+## Requirement 1 — Payment Page
 
-Pembacaan `services/payment/` (19 Okt) menunjukkan service masih **boilerplate**. Tabel delta per komponen nyata:
+**User Story:** Sebagai pembeli yang punya pesanan menunggu pembayaran, saya ingin melihat total, batas waktu, dan metode yang tersedia, agar dapat membayar sebelum TTL habis.
 
-| Komponen | Berkas nyata | Status | Catatan |
-|----------|--------------|--------|---------|
-| Verb Cobra | `cmd/{main,root,api,worker,migrate,healthcheck}.go` | **IMPL** | `api`, `worker`, `migrate up\|down\|status`, `healthcheck` |
-| Config loader | `internal/config/{config.go,load.go}` | **IMPL (subset)** | Memuat `APP_*`, `LOG_*`, `HTTP_*`, `HEALTH_TIMEOUT`, `WORKER_INTERVAL`, `POSTGRES_*`, `RABBITMQ_*`. **Belum**: `PAYMENT_PROVIDER`, `MIDTRANS_*`, `BOOKING_SERVICE_URL`, `TOKEN_PUBLIC_KEY_PATH`, `PAYMENT_PAGE_TOKEN_TTL*`, CB config |
-| Composition root | `internal/delivery/{server.go,worker.go,clients.go,serve.go}` | **IMPL** | Hanya mendaftarkan `GET /health`; worker loop kosong (interval saja) |
-| Domain `payment` | `internal/payment/**` | **IMPL (health only)** | Hanya slice health (entity/usecase/handler/mapper/vo health). Tidak ada usecase/handler/adapter bisnis |
-| Migrasi `0001_init` | `deployments/migrations/0001_init.up.sql` | **IMPL** | `payment_attempts`, `payment_callbacks`, `payment_page_tokens`, `refund_cases`, `idempotency_records`, `outbox_events` + semua index/constraint |
-| Migrasi `0002_event_store` | `deployments/migrations/0002_event_store.up.sql` | **IMPL** | `payment_events` + trigger append-only + `trg_payment_events_no_truncate` + kolom `payment_attempts.stream_version` |
-| Mock | `_mock/payment/port/{inbound,outbound}/*` | **IMPL (health only)** | Hanya mock health |
-| Lib resilience | `pkg/resilience/breaker.go` | **IMPL (shared)** | `Breaker` (Closed/Open/HalfOpen) + `Bulkhead`; TC-RES-01/02 PASS |
-| Lib event store | `pkg/eventstore/eventstore.go` | **IMPL (shared)** | Append + optimistic concurrency; tolak payload PII/secret |
-| Error mapping | `pkg/apperror/apperror.go` | **IMPL (shared)** | domain error → `errorCode` |
+Trace: SRS-F-14-01, SRS-F-14-02, SRS-F-19-02, SRS-Q-SEC-01 · TC-PAY-01, TC-PAY-10, TC-SEC-03
 
-**Belum ada (target spec ini):** seluruh endpoint publik/internal payment, usecase (12), adapter Midtrans/simulator, verifikasi webhook, event sourcing attempt, projeksi read model, outbox relay, consumer `booking.review`, circuit breaker gateway, worker expiry sweeper, DTO/mapper/VO bisnis.
+### Acceptance Criteria (EARS)
 
-> Tanda **[IMPL]** = sudah ada di kode; **[TARGET]** = belum, harus dibangun. Kriteria ditulis sebagai target yang di-trace ke SDD/SRS/kontrak.
+1. WHEN klien `GET /api/v1/payments/{bookingId}/page` dengan visitor token (`rb_visitor` / `X-Visitor-Token`) atau cookie `rb_pay` milik booking itu, THE service SHALL mengembalikan `200 PaymentPage{ bookingId, methods[], amountMinor, paymentExpiresAt, serverTime, canEdit, editableUntil, currentAttempt }` dengan data booking dari `GET /internal/v1/bookings/{id}/payable`.
+2. THE `methods[]` SHALL berisi metode di `PAYMENT_METHODS_ENABLED` (default `VA_BCA,VA_BNI,VA_BRI,QRIS,GOPAY`; kartu kredit tidak pernah ada) dan menandai metode yang breaker-nya OPEN sebagai sedang gangguan (SRS-F-14-02, SRS-F-19-02). *(Bentuk penanda di kontrak `PaymentPage` perlu diverifikasi saat implementasi.)*
+3. IF booking tidak menunggu pembayaran, THEN THE service SHALL menolak `409 BOOKING_NOT_PAYABLE`.
+4. IF token bukan milik booking, THEN THE service SHALL menolak tanpa membocorkan data booking. *(Kode error: OQ-19.)*
+5. THE respons SHALL tidak memuat NIK plaintext, token, atau payload provider.
 
----
+## Requirement 2 — Page Token untuk Mobile WebView
 
-## Ringkasan
+**User Story:** Sebagai pengguna mobile, saya ingin membuka halaman bayar web di WebView dengan token sekali pakai, agar visitor token tidak bocor ke URL.
 
-Payment Service mengintegrasikan Midtrans (atau simulator lokal), menangani payment page, charge (attempt), webhook callback, settlement, expiry/resolve, dan refund case. Siklus **PaymentAttempt** direkam dengan **event sourcing**: `payment_events` adalah sumber kebenaran, `payment_attempts` adalah read model yang diproyeksikan **sinkron** dalam transaksi yang sama dengan append event (ADR-019). Prinsip inti (SDD §1, invarian repo):
+Trace: SRS-F-18-01, SRS-F-18-02, SRS-Q-SEC-05 · TC-MOB-01, TC-MOB-02, TC-SEC-01
 
-1. **Verifikasi signature adalah satu-satunya bukti pembayaran** — redirect/WebView/bridge/klien bukan bukti.
-2. **At-most-once charge** — paling banyak satu attempt terbuka per booking (`uq_attempt_open_per_booking`); retry via `Idempotency-Key`.
-3. **Webhook idempoten** — callback bisa diterima berkali-kali tanpa efek ganda (`UNIQUE(provider,fingerprint)`), out-of-order aman (status final tidak di-downgrade).
-4. **Audit trail lengkap** — event store append-only untuk compliance.
+### Acceptance Criteria (EARS)
 
----
+1. WHEN `POST /api/v1/payments/{bookingId}/page-tokens` dengan visitor token pemilik dan booking menunggu pembayaran, THE service SHALL menerbitkan `201 { pageToken, pageUrl, expiresAt }` (TTL `PAYMENT_PAGE_TOKEN_TTL_SECONDS`, default 60, rentang 30–120) dan menyimpan **hanya** `token_hash` + `visitor_id` di `payment_page_tokens`.
+2. WHEN `POST /api/v1/payment-page-sessions` dengan `pageToken` yang valid, belum dipakai, dan belum kedaluwarsa, THE service SHALL menandai `used_at`, menyetel cookie `rb_pay` (HttpOnly, Secure, SameSite=Lax), dan membalas `204`.
+3. IF token sudah dipakai / kedaluwarsa / tidak dikenal, THEN THE service SHALL menolak `403 PAYMENT_PAGE_TOKEN_INVALID` (replay ditolak).
+4. IF booking tidak menunggu pembayaran saat token diminta, THEN `409 BOOKING_NOT_PAYABLE`.
 
-## Kebutuhan
+## Requirement 3 — Create Payment Attempt (Charge)
 
-### R1 — Payment Page (SRS-F-14)
+**User Story:** Sebagai pembeli, saya ingin memilih metode lalu menekan "Bayar Sekarang", agar mendapat instruksi pembayaran untuk nominal pesanan yang terkunci.
 
-**User story:** Sebagai pembeli yang booking-nya terkunci, saya ingin melihat halaman pembayaran (jumlah, batas waktu, metode tersedia, attempt saat ini) agar bisa membayar sebelum TTL habis.
+Trace: SRS-F-14-03..07, SRS-F-19-01, SRS-IF-20, SRS-IF-21, SRS-F-26-05 · TC-PAY-01, TC-PAY-02, TC-PAY-05, TC-PAY-08, TC-PAY-10, TC-EDT-04 · invarian backend #11
 
-Kriteria (EARS):
-- **R1.1** WHEN klien `GET /api/v1/payments/{bookingId}/page` dengan token visitor valid (`rb_visitor` cookie / `X-Visitor-Token` header / `rb_pay` cookie), THE service SHALL mengembalikan 200 envelope `{meta,data}` dengan `bookingId`, `methods[]`, `amountMinor`, `paymentExpiresAt`, `serverTime`, `canEdit`, `editableUntil`, `currentAttempt`. _(payment.yaml `PaymentPage`; SDD §3.1; TC-PAY-01, TC-PAY-10)_ **[TARGET]**
-- **R1.2** WHERE booking tidak dalam keadaan payable (bukan HELD/LOCKED), THE service SHALL menolak 409 `BOOKING_NOT_PAYABLE`. _(payment.yaml; TC-PAY-10)_ **[TARGET]**
-- **R1.3** WHERE TTL booking telah habis, THE service SHALL mengembalikan 410 `BOOKING_EXPIRED`. _(SDD App.B)_ **[TARGET]**
-- **R1.4** IF token visitor tidak cocok dengan booking, THEN THE service SHALL menolak 403 `VISITOR_MISMATCH`. _(SDD App.B; TC-SEC-03)_ **[TARGET]**
-- **R1.5** THE service SHALL tidak pernah memuat NIK plaintext pada respons page/status; data pembeli terbatas pada yang diperlukan untuk membayar. _(security-privacy steering; SRS-Q-SEC-*; TC-SEC-03)_ **[TARGET]**
+### Acceptance Criteria (EARS)
 
-### R2 — Page Token untuk Mobile WebView (SRS-F-18)
+1. WHEN `POST /api/v1/payments/{bookingId}/attempts` dengan `Idempotency-Key` (16–64) dan `method ∈ {VA_BCA, VA_BNI, VA_BRI, VA_PERMATA, QRIS, GOPAY}`, THE service SHALL memanggil `POST /internal/v1/bookings/{id}/payment-lock` **lebih dulu**, dan hanya bila `outcome = OK` membuat transaksi di gateway dengan `gross_amount = amountMinor` versi terkunci (SRS-F-14-03/04, invarian #11).
+2. IF `payment-lock` mengembalikan `BOOKING_NOT_PAYABLE` atau `PAYMENT_EXPIRED`, THEN THE service SHALL menolak `409 BOOKING_NOT_PAYABLE` tanpa memanggil gateway.
+3. THE service SHALL menyimpan attempt `CREATED` (append `AttemptCreated`) dengan `provider_order_id = RB-{publicRef}-{attemptNo}` **sebelum** charge; paling banyak satu attempt terbuka per booking (`uq_attempt_open_per_booking`).
+4. THE expiry transaksi di gateway SHALL tidak melewati `paymentExpiresAt` booking (`custom_expiry` dihitung dari sisa waktu) (SRS-IF-21, TC-PAY-02).
+5. WHEN charge berhasil, THE service SHALL append `InstructionIssued` (status `PENDING`, instruksi `VA`/`QR`/`DEEPLINK`) dan membalas `201 { attemptNo, method, status, bookingVersion, expiresAt, instruction }`.
+6. WHEN request diulang dengan `Idempotency-Key` sama dan `request_hash` sama, THE service SHALL mengembalikan respons tersimpan tanpa charge ulang; key sama dengan payload berbeda → `409 IDEMPOTENCY_KEY_REUSED`.
+7. IF `method` tidak aktif, THEN `422 PAYMENT_METHOD_UNAVAILABLE`.
+8. IF gateway timeout/error ambigu, THEN THE service SHALL menandai attempt `UNKNOWN`, **tidak** membuat order baru, merekonsiliasi order yang sama lewat status check, dan membalas `503 PAYMENT_PROVIDER_UNAVAILABLE` (SRS-F-14-05, TC-PAY-05).
+9. WHILE breaker charge OPEN, THE service SHALL menolak cepat `503 PAYMENT_PROVIDER_UNAVAILABLE` tanpa memanggil gateway; IF booking belum pernah menerima instruksi pembayaran, THEN THE service SHALL meminta `POST /internal/v1/bookings/{id}/deadline-extension` sekali (`reason = PROVIDER_UNAVAILABLE`) (SRS-F-19-01, TC-PAY-08).
+10. WHEN pembeli mengganti metode saat ada attempt terbuka, THE service SHALL membatalkan attempt lama di gateway (`cancel`/`expire`, status `CANCELLED`) lalu membuat attempt baru; TTL booking tidak di-reset (SRS-F-14-06, TC-PAY-10).
+11. Memilih metode saja (tanpa menekan bayar / tanpa POST attempts) SHALL tidak mengunci pesanan (SRS-F-14-04).
 
-**User story:** Sebagai pengguna mobile, saya ingin menukar token sekali pakai menjadi sesi halaman bayar agar WebView dapat membuka halaman dengan aman tanpa membocorkan token visitor.
+## Requirement 4 — Webhook Midtrans
 
-- **R2.1** WHEN `POST /api/v1/payments/{bookingId}/page-tokens` dengan visitor valid, THE service SHALL menerbitkan 201 `{pageToken, pageUrl, expiresAt}`, token sekali pakai ber-TTL (`PAYMENT_PAGE_TOKEN_TTL`, default 60s), menyimpan **hanya** `token_hash` (BYTEA) dan `visitor_id`. _(payment.yaml `PageToken`; migrasi `payment_page_tokens`; SDD §3.2; TC-MOB-01)_ **[IMPL: tabel]** **[TARGET: usecase]**
-- **R2.2** WHEN `POST /api/v1/payment-page-sessions` dengan `pageToken` valid & belum dipakai & belum kedaluwarsa, THE service SHALL mengembalikan 204 dan menyetel cookie `rb_pay` (HttpOnly, Secure, SameSite=Lax) serta menandai `used_at`. _(payment.yaml; SDD §3.3; TC-MOB-01)_ **[TARGET]**
-- **R2.3** IF token sudah dipakai / kedaluwarsa / tidak dikenal, THEN THE service SHALL menolak 403 `PAYMENT_PAGE_TOKEN_INVALID`. _(payment.yaml; TC-SEC-01 replay)_ **[TARGET]**
+**User Story:** Sebagai sistem, saya ingin memproses notifikasi Midtrans secara aman dan idempoten, agar status pembayaran akurat dan tidak pernah mundur.
 
-### R3 — Create Payment Attempt / Charge (SRS-F-14, SRS §3.2.24 idempotency)
+Trace: SRS-F-15-01..03, SRS-C-21, SRS-IF-20 · TC-PAY-05, TC-PAY-11, TC-MOB-03
 
-**User story:** Sebagai pembeli, saya ingin memilih metode dan memulai pembayaran agar mendapat instruksi (VA / QR / deeplink).
+### Acceptance Criteria (EARS)
 
-- **R3.1** WHEN `POST /api/v1/payments/{bookingId}/attempts` dengan header `Idempotency-Key` (16–64 char) dan `method ∈ {VA_BCA,VA_BNI,VA_BRI,VA_PERMATA,QRIS,GOPAY}`, THE service SHALL memanggil payment-lock Booking, meng-charge provider, dan mengembalikan 201 `{attemptNo, method, status, bookingVersion, expiresAt, instruction}`. _(payment.yaml `CreateAttemptRequest`/`Attempt`; SDD §3.4; TC-PAY-01)_ **[TARGET]**
-- **R3.2** THE service SHALL memastikan **at-most-once charge**: paling banyak satu attempt terbuka (`status IN (CREATED,PENDING,UNKNOWN)`) per booking, dijaga index parsial `uq_attempt_open_per_booking`. _(migrasi; invariant #5)_ **[IMPL: constraint]** **[TARGET: usecase]**
-- **R3.3** WHEN request diterima dengan `Idempotency-Key` yang sama dan `request_hash` cocok, THE service SHALL mengembalikan respons tersimpan tanpa charge ulang; IF key sama tetapi `request_hash` berbeda, THEN tolak 409 `IDEMPOTENCY_KEY_REUSED`. _(payment.yaml; migrasi `idempotency_records`; idempotency steering)_ **[IMPL: tabel]** **[TARGET: usecase]**
-- **R3.4** IF `method` tidak aktif/didukung, THEN THE service SHALL menolak 422 `PAYMENT_METHOD_UNAVAILABLE`. _(payment.yaml)_ **[TARGET]**
-- **R3.5** WHILE circuit breaker gateway OPEN, THE service SHALL menolak charge dengan 503 `PAYMENT_PROVIDER_UNAVAILABLE` tanpa memanggil gateway (`pkg/resilience.ErrOpen`). _(payment.yaml; SDD App.C; SRS-F-19; TC-PAY-08, TC-RES-01)_ **[TARGET]**
-- **R3.6** IF provider mengembalikan error/timeout, THEN THE service SHALL mengembalikan 503 `PAYMENT_PROVIDER_UNAVAILABLE`, menaikkan hitung kegagalan breaker, dan menyimpan attempt sebagai `UNKNOWN` (bukan di-charge-ulang membabi buta). _(payment.yaml; SDD App.C)_ **[TARGET]**
-- **R3.7** WHEN pembeli mengganti metode (TC-PAY-10), THE service SHALL membatalkan attempt terbuka lama di gateway lalu membuat attempt baru **tanpa mereset TTL booking**. _(SDD §15 TC-PAY-10)_ **[TARGET]**
+1. WHEN `POST /api/v1/webhooks/midtrans`, THE service SHALL memverifikasi `signature_key = SHA512(order_id + status_code + gross_amount + MIDTRANS_SERVER_KEY)` secara constant-time **sebelum** memproses; salah/kosong → simpan callback (`signature_valid=false`, `processing_result=REJECTED`) dan `401 WEBHOOK_SIGNATURE_INVALID`.
+2. THE service SHALL juga memverifikasi order dikenal, `gross_amount` = `amount_minor` attempt, lingkungan (sandbox/production) cocok, dan transisi status legal; kegagalan → `REJECTED`/`ERROR` tanpa perubahan state (SRS-F-15-01).
+3. THE service SHALL memperlakukan signature terverifikasi sebagai **satu-satunya** bukti pembayaran; redirect, WebView return URL, dan bridge event tidak mengubah state (SRS-F-15-03).
+4. WHEN callback `(provider, fingerprint)` sudah pernah diterima, THE service SHALL `INSERT … ON CONFLICT DO NOTHING`, menandai `DUPLICATE`, membalas `200`, tanpa efek ganda — tetapi progres status yang sah tetap diterapkan (SRS-F-15-02).
+5. THE service SHALL memetakan status: `pending → PENDING`; `settlement` (dan `capture` + `fraud_status=accept` bila kartu aktif — di luar baseline) `→ SUCCEEDED` + `settlement_time` (dikonversi ke UTC); `deny`/`failure → FAILED`; `cancel → CANCELLED`; `expire → EXPIRED`; `refund`/`partial_refund`/`chargeback` → dicatat + alert Ops (di luar MVP).
+6. WHEN callback datang out-of-order, THE service SHALL tidak menurunkan status final (`SUCCEEDED`, `FAILED`, `CANCELLED`, `EXPIRED`, `REFUNDED`).
+7. THE service SHALL menyimpan callback ke `payment_callbacks` secara durable **sebelum** membalas 2xx.
 
-### R4 — Webhook Midtrans (SRS-F-15, SRS-C-21)
+## Requirement 5 — Settlement & Publikasi Event
 
-**User story:** Sebagai sistem, saya ingin memproses callback Midtrans secara aman dan idempoten agar status pembayaran akurat.
+**User Story:** Sebagai Booking Service, saya ingin menerima `payment.succeeded` saat pembayaran settle, agar booking dapat diselesaikan berdasarkan waktu settlement.
 
-- **R4.1** WHEN `POST /api/v1/webhooks/midtrans`, THE service SHALL memverifikasi signature `SHA512(order_id + status_code + gross_amount + server_key)` **sebelum** memproses. IF signature tidak cocok atau kosong, THEN tolak 401 `WEBHOOK_SIGNATURE_INVALID` dan simpan callback dengan `signature_valid=false, processing_result=REJECTED`. _(payment.yaml; SDD §8.4; SRS-C-21; TC-PAY-11)_ **[IMPL: kolom callback]** **[TARGET: usecase]**
-- **R4.2** THE service SHALL memperlakukan **verifikasi signature sebagai satu-satunya bukti pembayaran**; tidak ada jalur lain (redirect/WebView/bridge/klien) yang boleh mengubah status menjadi SUCCEEDED. _(security-privacy steering; invariant #5)_ **[TARGET]**
-- **R4.3** WHEN callback dengan `(provider, fingerprint)` yang sudah pernah diproses diterima, THE service SHALL idempoten: `INSERT ... ON CONFLICT DO NOTHING`, tidak ada efek ganda, kembalikan 200, tandai `processing_result=DUPLICATE`. _(migrasi `UNIQUE(provider,fingerprint)`; TC-PAY-05 duplicate)_ **[IMPL: constraint]** **[TARGET: usecase]**
-- **R4.4** WHEN `transaction_status` dipetakan ke status attempt (`settlement|capture→SUCCEEDED`, `pending→PENDING`, `deny|cancel|failure→FAILED`, `expire→EXPIRED`), THE service SHALL meng-append event dan memproyeksikan read model dalam **satu transaksi**, serta menulis outbox bila ada perubahan uang. _(SDD App.A.4; §7)_ **[TARGET]**
-- **R4.5** WHEN callback datang out-of-order (mis. settlement sebelum pending, atau callback setelah status final), THE service SHALL tidak men-downgrade status final (`SUCCEEDED/FAILED/EXPIRED/REFUNDED`). _(SDD §15 matrix; TC-PAY-05)_ **[TARGET]**
-- **R4.6** THE service SHALL mencatat callback ke `payment_callbacks` **durable sebelum** mengembalikan 2xx. _(payment.yaml 200 desc)_ **[TARGET]**
+Trace: SRS-F-16-01, SRS-F-16-03, SRS-Q-REL-04 · TC-PAY-03, TC-PAY-06, TC-CAP-03
 
-### R5 — Settlement & Event Publishing (SRS-F-16)
+### Acceptance Criteria (EARS)
 
-**User story:** Sebagai Booking Service, saya ingin menerima `payment.succeeded` saat pembayaran settle agar booking diselesaikan dan tiket diterbitkan.
+1. WHEN attempt menjadi `SUCCEEDED`, THE service SHALL dalam satu transaksi append `SettlementReceived` (`settlementTime`, `providerTxId`), memproyeksikan read model, dan menulis outbox `payment.succeeded.v1 { bookingId, attemptId, settlementTime, amountMinor, method }` (SRS-F-16-01).
+2. WHEN attempt menjadi `FAILED`, THE service SHALL menulis outbox `payment.failed.v1 { bookingId, attemptId, reason }`.
+3. THE service SHALL tidak menilai ketepatan waktu; `payment.succeeded` tetap diterbitkan untuk settlement terlambat sehingga Booking dapat membuat `REVIEW` (SRS-F-16-03, TC-PAY-06/07).
+4. THE outbox relay SHALL menerbitkan baris pending ke `rusuh.events` dengan publisher confirm (`pkg/outbox`, platform R3); broker down tidak menghilangkan event.
+5. THE payload event, outbox, dan log SHALL tidak memuat data kartu, `MIDTRANS_SERVER_KEY`, token, atau payload provider mentah (ditolak `pkg/eventstore` untuk event store).
 
-- **R5.1** WHEN attempt menjadi SUCCEEDED, THE service SHALL menulis event `AttemptSettled` + outbox `payment.succeeded` `{bookingId, attemptId, settlementTime, amountMinor, method}` dalam transaksi yang sama. _(payment.succeeded.v1 schema; SDD §9.1; TC-PAY-03, TC-PAY-06)_ **[IMPL: outbox table]** **[TARGET: usecase]**
-- **R5.2** WHEN attempt menjadi FAILED, THE service SHALL menulis event `AttemptFailed` + outbox `payment.failed` `{bookingId, attemptId, reason}`. _(payment.failed.v1 schema; SDD §9.1)_ **[TARGET]**
-- **R5.3** THE outbox relay worker SHALL mempublikasikan `outbox_events` yang belum terbit ke RabbitMQ exchange `rusuh.events` (topic) dengan **publisher confirm**, menandai `published_at`, naik `publish_attempts`, dan mencatat `last_error` saat gagal (retry berjenjang `RABBITMQ_RETRY_DELAYS`, DLQ setelah `RABBITMQ_MAX_RETRIES`). _(migrasi `outbox_events`; SDD §10.1)_ **[IMPL: table]** **[TARGET: worker]**
-- **R5.4** WHEN pembayaran settle tepat sebelum expiry (race), THE service SHALL tetap memproses settlement berdasarkan `settlement_time` dan memublikasikan `payment.succeeded` sehingga Booking ditandai PAID. _(SDD §15 TC-PAY-06; RISK-T-02/03)_ **[TARGET]**
+## Requirement 6 — Status Pembayaran
 
-### R6 — Payment Status (SRS-F-14)
+**User Story:** Sebagai pembeli di halaman bayar, saya ingin melihat status attempt terkini, agar tahu kapan pembayaran berhasil.
 
-- **R6.1** WHEN `GET /api/v1/payments/{bookingId}/status`, THE service SHALL mengembalikan 200 `{bookingId, bookingStatus, attempt, serverTime}` dari read model; status pembayaran **tidak pernah** diturunkan dari aksi klien. _(payment.yaml `PaymentStatus`; SDD §3.5; invariant #4)_ **[TARGET]**
+Trace: SRS-F-14-01, SRS-F-25-08 · TC-PAY-01
 
-### R7 — Expiry & Resolve (SRS-F-17)
+### Acceptance Criteria (EARS)
 
-**User story:** Sebagai Booking Service saat expiry sweep, saya ingin meminta Payment memeriksa (dan opsional membatalkan) attempt agar tidak ada pembayaran menggantung.
+1. WHEN `GET /api/v1/payments/{bookingId}/status` oleh pemilik, THE service SHALL mengembalikan `200 { bookingId, bookingStatus, attempt, serverTime }` dari read model (klien polling tiap 3 s).
+2. THE endpoint SHALL read-only; status tidak pernah berubah karena aksi klien.
 
-- **R7.1** WHEN `POST /internal/v1/payments/{bookingId}/resolve` dengan `mode ∈ {CHECK, CHECK_AND_CANCEL}` (service bearer token), THE service SHALL memeriksa gateway dan mengembalikan 200 `{outcome ∈ {SUCCEEDED,NOT_PAID,NO_ATTEMPT,UNKNOWN}, settlementTime?, attemptId?}`. _(internal-payment.yaml `ResolveRequest`/`ResolveResponse`; SDD §4.1; TC-PAY-04, TC-PAY-07)_ **[TARGET]**
-- **R7.2** WHEN attempt PENDING melewati `expires_at` tanpa webhook, THE expiry sweeper SHALL menandai EXPIRED (append `AttemptExpired`), membatalkan di gateway bila perlu. _(SDD §10.2; TC-PAY-04)_ **[TARGET]**
-- **R7.3** IF `CHECK_AND_CANCEL` menemukan pembayaran settle setelah booking dibatalkan/expired, THEN THE service SHALL tidak membatalkannya, membuka `refund_cases` (`SETTLED_AFTER_CANCEL`), menandai attempt `REFUND_REQUIRED`, dan kembalikan `outcome=SUCCEEDED`. _(migrasi `refund_cases`; SDD §4.1; TC-PAY-07)_ **[IMPL: table]** **[TARGET: usecase]**
-- **R7.4** WHILE gateway degraded saat resolve, THE service SHALL mengembalikan `outcome=UNKNOWN` dan membiarkan breaker OPEN (Booking menahan stok/VERIFYING dan retry nanti) alih-alih memblokir. _(SDD §19; TC-PAY-08, TC-RES-01/02)_ **[TARGET]**
+## Requirement 7 — Expiry Attempt & Resolve untuk Booking
 
-### R8 — Refund Cases via `booking.review` (SRS-F-17)
+**User Story:** Sebagai Booking Service saat TTL Pembayaran habis atau pembeli membatalkan, saya ingin Payment memastikan dan membatalkan transaksi di gateway, agar stok tidak dilepas sebelum status pembayaran pasti.
 
-**User story:** Sebagai sistem rekonsiliasi, saya ingin membuka refund case idempoten saat Booking meminta review (pembayaran telat).
+Trace: SRS-F-13-02, SRS-F-17-01..03, SRS-Q-REL-05, SRS-IF-34 · TC-PAY-04, TC-PAY-08, TC-PAY-09
 
-- **R8.1** WHEN mengkonsumsi `booking.review` dari Booking `{bookingId, attemptHint?, buyerEmail, amountMinor}`, THE service SHALL membuka refund case **idempoten tanpa tabel inbox**, mengandalkan `refund_cases.attempt_id UNIQUE` + `ON CONFLICT DO NOTHING`. _(booking.review.v1 schema; migrasi; code-principles consumer idempoten)_ **[IMPL: constraint]** **[TARGET: consumer]**
-- **R8.2** IF payload rusak/tak terparse, THEN THE consumer SHALL mengembalikan `rabbitmq.Permanent(err)` agar dikirim ke DLQ, bukan retry tak terbatas. _(code-principles)_ **[TARGET]**
+### Acceptance Criteria (EARS)
 
-### R9 — Circuit Breaker / Degradation (SRS-F-19, D-40)
+1. WHEN `POST /internal/v1/payments/{bookingId}/resolve` dengan service token dan `mode = CHECK`, THE service SHALL mengambil status attempt terbuka/terakhir dari gateway dan membalas `{ outcome ∈ {SUCCEEDED, NOT_PAID, NO_ATTEMPT, UNKNOWN}, settlementTime?, attemptId? }`.
+2. WHEN `mode = CHECK_AND_CANCEL` dan belum dibayar, THE service SHALL membatalkan di gateway (`cancel`/`expire`), lalu `CHECK` ulang: `SUCCEEDED` bila ternyata terbayar di sela proses; `NOT_PAID` bila pembatalan terkonfirmasi; `UNKNOWN` bila gateway tidak menjawab.
+3. WHEN resolve menemukan `SUCCEEDED`, THE service SHALL menerapkan settlement seperti R5.1 (bila belum) dan mengembalikan `settlementTime`; **tidak** membuka refund case (Booking yang menilai tepat waktu; refund case lewat R8) (Δ4).
+4. WHILE breaker status OPEN atau gateway timeout, THE service SHALL mengembalikan `outcome = UNKNOWN` cepat (Booking menahan stok `VERIFYING` dan mencoba lagi).
+5. IF booking tidak punya attempt, THEN `outcome = NO_ATTEMPT`.
+6. WHEN attempt `PENDING` melewati `expires_at` tanpa webhook, THE expiry sweeper SHALL `CHECK` gateway lebih dulu; settle → R5.1; belum → append `AttemptExpired` dan batalkan di gateway (lewat breaker); attempt final di-skip.
+7. THE endpoint `/internal/v1/*` SHALL menolak request tanpa service token valid (`401`) dan tidak dapat diakses dari ALB publik.
 
-- **R9.1** THE service SHALL membungkus setiap panggilan sinkron ke Midtrans (charge, status check, cancel) dengan `pkg/resilience.Breaker` (default `FailureThreshold=3`, `Cooldown=60s`, `HalfOpenProbes=1`, `Timeout` dari config). WHILE OPEN, panggilan ditolak cepat (`ErrOpen`). _(pkg/resilience; SDD App.C; TC-RES-01)_ **[IMPL: lib]** **[TARGET: wiring]**
-- **R9.2** THE breaker SHALL CLOSED→OPEN pada kegagalan beruntun ≥ threshold, OPEN→HALF_OPEN setelah cooldown, HALF_OPEN→CLOSED pada probe sukses atau →OPEN pada probe gagal. _(pkg/resilience; TC-RES-01)_ **[IMPL]**
-- **R9.3** THE service MAY membungkus gateway dengan `Bulkhead` untuk membatasi konkurensi; penuh ⇒ `ErrBulkheadFull`. _(pkg/resilience; TC-RES-02)_ **[TARGET, SHOULD]**
+## Requirement 8 — Refund Case dari `booking.review`
 
-### R10 — Cancel (SRS-F-13)
+**User Story:** Sebagai Ops, saya ingin kasus refund dibuka otomatis saat pembayaran diterima tetapi tidak menghasilkan tiket, agar dana dapat dikembalikan manual lewat dashboard Midtrans.
 
-- **R10.1** WHEN pembeli membatalkan sebelum bayar, THE service SHALL membatalkan attempt di gateway; IF sudah SUCCEEDED, THEN pertahankan PAID; ELSE tandai CANCELLED dan picu Booking melepas stok. _(SDD §15; TC-PAY-09)_ **[TARGET]**
+Trace: SRS-F-17-05, SRS-F-90-03 · TC-PAY-07
 
-### R11 — Keamanan & Isolasi (SRS-Q-SEC-*, SRS-C-21)
+### Acceptance Criteria (EARS)
 
-- **R11.1** THE endpoint `/internal/v1/*` SHALL hanya menerima `Authorization: Bearer <service token>` (EdDSA, ADR-011) dan ditolak dari jaringan publik. _(internal-payment.yaml `serviceBearer`; TC-SEC-02)_ **[TARGET]**
-- **R11.2** THE service SHALL menolak replay page token (TC-SEC-01, 403) dan bypass origin check (TC-SEC-03, 403). **[TARGET]**
-- **R11.3** THE payload `payment_events`, `outbox_events`, dan log SHALL tidak memuat data kartu, `MIDTRANS_SERVER_KEY`, atau token plaintext (ditolak di `pkg/eventstore`; komentar DDL `payload jsonb -- tanpa data kartu, server key, atau token`). _(migrasi 0002; code-principles)_ **[IMPL: DDL+lib]** **[TARGET: enforcement di usecase]**
+1. WHEN mengonsumsi `booking.review.v1 { bookingId, attemptHint?, buyerEmail, amountMinor }` (queue `payment.booking-review`), THE service SHALL membuka `refund_cases` untuk attempt `SUCCEEDED` booking itu dan menandai attempt `REFUND_REQUIRED`, idempoten via `refund_cases.attempt_id UNIQUE` + `ON CONFLICT DO NOTHING` (tanpa tabel inbox).
+2. THE `reason` SHALL `LATE_SETTLEMENT` bila `settlement_time` > deadline booking, `SETTLED_AFTER_CANCEL` bila booking sudah `CANCELLED`/`EXPIRED`, `DUPLICATE_PAYMENT` bila booking sudah `PAID` oleh attempt lain. *(Pemetaan alasan dari payload yang tersedia — `booking.review.v1` tidak membawa alasan; Payment menurunkannya dari datanya sendiri [asumsi desain, lihat design §8.2].)*
+3. IF payload rusak, THEN consumer SHALL `rabbitmq.Permanent(err)` → DLQ.
+4. THE refund case SHALL dapat dilihat Ops dan ditutup manual (`REFUNDED`/`CLOSED`, `resolved_by`); refund dilakukan di dashboard Midtrans, bukan oleh service (SRS-F-90-03).
 
-### R12 — Health & Operasional (D-23)
+## Requirement 9 — Circuit Breaker & Degradasi
 
-- **R12.1** WHEN `GET /health`, THE service SHALL mengembalikan 200 UP / 503 DOWN berdasarkan ping Postgres & RabbitMQ dengan batas `HEALTH_TIMEOUT`. _(payment.yaml `Health`; SDD §13)_ **[IMPL]**
-- **R12.2** THE konfigurasi SHALL divalidasi saat start (fail fast) — sudah untuk `APP_*/LOG_*/HTTP_*/POSTGRES_*/RABBITMQ_*`; harus diperluas untuk `PAYMENT_PROVIDER`, `MIDTRANS_*`, `BOOKING_SERVICE_URL`, `TOKEN_PUBLIC_KEY_PATH`, `PAYMENT_PAGE_TOKEN_TTL*`, CB config. _(config.go; SDD §11)_ **[IMPL: subset]** **[TARGET: Midtrans vars]**
+**User Story:** Sebagai sistem, saya ingin setiap panggilan ke Midtrans dilindungi breaker dan bulkhead, agar gangguan gateway tidak menumpuk request dan pembeli mendapat pesan yang jelas.
+
+Trace: SRS-F-19-01..03, D-40 · TC-RES-01, TC-RES-02, TC-PAY-08
+
+### Acceptance Criteria (EARS)
+
+1. THE service SHALL membungkus charge, status check, dan cancel Midtrans dengan `pkg/resilience.Breaker` + `Bulkhead` memakai konfigurasi awal PROPOSED SDD-RBT §4.6.2 (charge: timeout 3 s, ambang 5, cooldown 20 s, probe 1, bulkhead 20, tanpa blind retry; status: timeout 2 s, ambang 5, cooldown 15 s, probe 1, bulkhead 10, retry maks 2), dapat diubah lewat env.
+2. Penolakan bisnis 4xx dari gateway SHALL tidak dihitung sebagai kegagalan breaker; `context.Canceled` SHALL tidak membuka breaker.
+3. WHILE breaker OPEN, THE panggilan SHALL gagal cepat dengan fallback terdefinisi (R3.9 untuk charge, R7.4 untuk resolve).
+4. Perubahan state breaker SHALL dilaporkan sebagai metrik `breaker_state{name}` (platform R4.6).
+
+## Requirement 10 — Simulator Pembayaran
+
+**User Story:** Sebagai developer/QA, saya ingin mensimulasikan hasil gateway tanpa Midtrans nyata, agar CI dan uji offline dapat menjalankan semua skenario pembayaran.
+
+Trace: SRS-IF-24, SRS-C-03 · TC-PAY-03..11 (CI)
+
+### Acceptance Criteria (EARS)
+
+1. WHERE `PAYMENT_PROVIDER = simulator`, THE service SHALL memakai adapter `IPaymentGateway` simulator dengan kontrak perilaku sama seperti Midtrans (charge, status, cancel, webhook bertanda tangan).
+2. WHEN `POST /api/v1/local-simulator/payments/{attemptId}/scenario` dengan `scenario ∈ {SETTLE, SETTLE_LATE, EXPIRE, DENY, TIMEOUT, DUPLICATE_WEBHOOK, OUT_OF_ORDER}`, THE simulator SHALL mendorong webhook sintetis dan membalas `202`.
+3. THE simulator SHALL hanya aktif pada lingkungan yang diizinkan; di lingkungan lain endpoint membalas `404 NOT_FOUND`. *(Kontrak: `APP_ENV=local|ci`; SRS-IF-24: `ci|local-offline` — OQ-20.)*
+4. THE hasil dari simulator SHALL berlabel `SIMULATED` (mis. `provider = SIMULATOR` di attempt) dan tidak pernah dipakai di demo Midtrans (SRS-C-03).
+
+## Requirement 11 — Health, Konfigurasi & Observability
+
+**User Story:** Sebagai operator, saya ingin endpoint health, konfigurasi tervalidasi, dan metrik pembayaran, agar gangguan gateway cepat terdeteksi.
+
+Trace: D-23, D-24, SRS-Q-MNT-02, SRS-Q-SEC-03 · TC-OBS-01, TC-SEC-03
+
+### Acceptance Criteria (EARS)
+
+1. WHEN `GET /health`, THE service SHALL mengembalikan `200 UP`/`503 DOWN` berdasarkan PostgreSQL & RabbitMQ dalam `HEALTH_TIMEOUT`. ✅ *Terimplementasi.*
+2. THE config SHALL divalidasi saat start (fail fast) — subset sudah ✅; harus diperluas untuk `PAYMENT_PROVIDER`, `MIDTRANS_*`, `PAYMENT_METHODS_ENABLED`, `PAYMENT_PAGE_TOKEN_TTL_SECONDS`, `BOOKING_SERVICE_URL`, kunci token, nilai breaker.
+3. THE service SHALL mengekspos metrik `rbt_payment_attempts_total{method,status}`, `rbt_payment_webhooks_total{status,result}`, `rbt_payment_settlements_total{method}`, latensi Midtrans per operasi, dan state breaker; alert `PaymentCircuitOpen`, `PaymentWebhookErrorRate`, `PaymentSettlementLag`, `PaymentRefundCasesOpen`.
+4. Log SHALL tidak memuat NIK, email, server key, token, signature, atau payload provider mentah.
 
 ---
 
@@ -151,77 +216,38 @@ Kriteria (EARS):
 
 | # | Invarian | Penegak |
 |---|----------|---------|
-| I-1 | **Verifikasi signature = satu-satunya bukti pembayaran** (R4.1/R4.2). Redirect/WebView/bridge bukan bukti. | Usecase webhook + `payment_callbacks.signature_valid` |
-| I-2 | **At-most-once charge** — ≤ 1 attempt terbuka per booking; retry via idempotency key, bukan charge baru (R3.2/R3.3). | `uq_attempt_open_per_booking`, `idempotency_records` |
-| I-3 | **Webhook idempoten & out-of-order aman** — callback ganda tanpa efek ganda; status final tidak di-downgrade (R4.3/R4.5). | `UNIQUE(provider,fingerprint)`, state machine |
-| I-4 | **Status final hanya dari webhook/resolve** — bukan dari aksi klien (R6.1, invariant repo #5). | Read model projeksi; handler status read-only |
-| I-5 | **Event store append-only** — tidak ada UPDATE/DELETE/TRUNCATE `payment_events` (R11.3). | Trigger `trg_payment_events_append_only`/`_no_truncate` |
-| I-6 | **Perubahan uang ⇒ outbox dalam transaksi yang sama** (R5.1/R5.2; code-principles). | Transaksi usecase settlement/failed |
-| I-7 | **Tanpa PII/secret di event/outbox/log** (R11.3). | `pkg/eventstore`, review usecase |
-| I-8 | **Refund case idempoten tanpa inbox** (R8.1). | `refund_cases.attempt_id UNIQUE` + `ON CONFLICT` |
-
----
+| I-1 | Signature terverifikasi = satu-satunya bukti pembayaran | R4.1–4.3 |
+| I-2 | ≤ 1 attempt terbuka per booking; retry via Idempotency-Key, bukan charge baru | `uq_attempt_open_per_booking`, R3.3, R3.6, R3.8 |
+| I-3 | Webhook idempoten & status final tidak mundur | `UNIQUE(provider,fingerprint)`, R4.4–4.6 |
+| I-4 | Status hanya dari webhook/resolve, bukan klien | R6.2 |
+| I-5 | Event store append-only | trigger `trg_payment_events_*` |
+| I-6 | Perubahan uang ⇒ outbox dalam transaksi yang sama | R5.1, R5.2 |
+| I-7 | Tanpa PII/secret di event/outbox/log | R5.5, R11.4 |
+| I-8 | Refund case idempoten tanpa inbox | R8.1 |
+| I-9 | Tidak ada transaksi gateway sebelum `payment-lock` OK; nominal = versi terkunci | R3.1, R3.2 (invarian backend #11) |
 
 ## Build & Verify
 
-### Build (jalankan lokal)
 ```bash
 make infra keys
-cd services/payment && cp .env.example .env    # set PAYMENT_PROVIDER=simulator (TARGET var)
-go run ./cmd migrate up
-go run ./cmd api &
-go run ./cmd worker &
+cd services/payment && cp .env.example .env    # PAYMENT_PROVIDER=simulator
+go run ./cmd migrate up && go run ./cmd api & go run ./cmd worker &
 curl -fsS localhost:8083/health
+make build && make lint && make test && make test-integration && make cover && make ci
 ```
-
-Mode simulator memakai `POST /api/v1/local-simulator/payments/{attemptId}/scenario` (hanya `APP_ENV=local`/`ci`) dengan skenario `SETTLE|SETTLE_LATE|EXPIRE|DENY|TIMEOUT|DUPLICATE_WEBHOOK|OUT_OF_ORDER` untuk mendorong webhook tanpa Midtrans nyata.
-
-### Verify
-```bash
-make build && make lint                         # modul payment (+ depguard lapisan)
-go test ./... -race                             # unit (payment)
-make test-integration                           # adapter: postgres, rabbitmq (build tag integration)
-make cover                                       # ambang logika 80% (COVERAGE_MIN)
-make ci                                          # gerbang akhir sebelum PR
-```
-Coverage dihitung atas kode logika; `cmd/`, `internal/delivery/`, `internal/config/`, `_mock/` dikecualikan. Verifikasi lulus bila `make ci` hijau dan TC kunci di bawah terpenuhi.
-
----
 
 ## Traceability Matrix
 
-| Req | SRS | Test Case | Status |
-|-----|-----|-----------|--------|
-| R1 Payment Page | SRS-F-14 | TC-PAY-01, TC-PAY-02, TC-PAY-10 | TARGET |
-| R2 Page Token/WebView | SRS-F-18 | TC-MOB-01, TC-MOB-02, TC-MOB-03, TC-SEC-01 | TARGET (DB impl) |
-| R3 Create Attempt | SRS-F-14, §3.2.24 | TC-PAY-01, TC-PAY-08, TC-PAY-10 | TARGET (DB impl) |
-| R4 Webhook + Signature | SRS-F-15, SRS-C-21 | TC-PAY-05, TC-PAY-11 | TARGET (DB impl) |
-| R5 Settlement/Publish | SRS-F-16 | TC-PAY-03, TC-PAY-06 | TARGET (DB impl) |
-| R6 Status | SRS-F-14 | TC-PAY-01 | TARGET |
-| R7 Expiry/Resolve | SRS-F-17 | TC-PAY-04, TC-PAY-07, TC-PAY-08 | TARGET (DB impl) |
-| R8 Refund via booking.review | SRS-F-17 | TC-PAY-07 | TARGET (DB impl) |
-| R9 Circuit Breaker | SRS-F-19, D-40 | TC-RES-01, TC-RES-02, TC-PAY-08 | IMPL (lib) / TARGET (wiring) |
-| R10 Cancel | SRS-F-13 | TC-PAY-09 | TARGET |
-| R11 Security/Isolasi | SRS-Q-SEC-*, SRS-C-21 | TC-SEC-01, TC-SEC-02, TC-SEC-03 | TARGET (DB impl) |
-| R12 Health/Config | D-23, SDD §11 | TC-OPS-01 | IMPL (subset) |
-
-### TC kunci (dari `docs/test/06-TP-RBT-001.md`)
-
-| TC ID | Skenario | Ekspektasi | Tool |
-|-------|----------|-----------|------|
-| TC-PAY-01 | Pilih metode & bayar | Instruksi dari Midtrans Sandbox aktual | Katalon |
-| TC-PAY-03 | Sukses tepat waktu | PAID, tiket, email, slot dibebaskan | Katalon + Mailpit |
-| TC-PAY-04 | Tidak dibayar | Resolve → batal di gateway → EXPIRED | Go integration |
-| TC-PAY-05 | Callback idempoten | Duplikat, out-of-order, signature salah | Go integration, Apidog |
-| TC-PAY-06 | Webhook telat tapi bayar tepat waktu | PAID (berdasarkan `settlement_time`) | Go integration |
-| TC-PAY-07 | Pembayaran setelah EXPIRED | REVIEW, tanpa tiket, kasus refund, email | Go integration |
-| TC-PAY-08 | Gateway down saat TTL habis | VERIFYING, stok ditahan, hasil benar setelah pulih | Go integration (failure injection) |
-| TC-PAY-09 | Cancel | Sudah bayar → PAID; belum → CANCELLED + slot dibebaskan | godog |
-| TC-PAY-10 | Ganti metode | Attempt lama dibatalkan; TTL tidak reset | godog |
-| TC-PAY-11 | Webhook signature valid/salah/kosong | Valid 200; salah/kosong 401 `WEBHOOK_SIGNATURE_INVALID` | Integration |
-| TC-MOB-02 | WebView payment | Sukses & expired; deeplink e-wallet | Appium |
-| TC-SEC-01 | Replay token | Ditolak 403 | godog, ZAP |
-| TC-SEC-02 | Bypass origin | Request langsung ke ALB → 403 | Script |
-| TC-SEC-03 | PII | Tidak ada NIK/email/token di log & metrik | Log scan |
-| TC-RES-01 | Breaker trip | OPEN → gagal cepat; HALF_OPEN setelah cooldown; satu probe | Unit (`pkg/resilience`) — PASS |
-| TC-RES-02 | Bulkhead penuh | `ErrBulkheadFull`; slot kembali | Unit — PASS |
+| Req | SRS | Test Case |
+|-----|-----|-----------|
+| 1 Payment Page | F-14-01/02, F-19-02, Q-SEC-01 | TC-PAY-01, TC-PAY-10, TC-SEC-03 |
+| 2 Page Token | F-18-01/02, Q-SEC-05 | TC-MOB-01/02, TC-SEC-01 |
+| 3 Create Attempt | F-14-03..07, F-19-01, IF-20/21 | TC-PAY-01/02/05/08/10, TC-EDT-04 |
+| 4 Webhook | F-15, C-21 | TC-PAY-05, TC-PAY-11, TC-MOB-03 |
+| 5 Settlement/Publish | F-16-01/03, Q-REL-04 | TC-PAY-03, TC-PAY-06, TC-CAP-03 |
+| 6 Status | F-14-01, F-25-08 | TC-PAY-01 |
+| 7 Expiry/Resolve | F-13-02, F-17-01..03, Q-REL-05 | TC-PAY-04, TC-PAY-08, TC-PAY-09 |
+| 8 Refund case | F-17-05, F-90-03 | TC-PAY-07 |
+| 9 Breaker | F-19, D-40 | TC-RES-01/02, TC-PAY-08 |
+| 10 Simulator | IF-24, C-03 | CI |
+| 11 Health/Obs | D-23, Q-MNT-02 | TC-OBS-01, TC-SEC-03 |

@@ -1,325 +1,230 @@
-# Requirements — Notification Service
+# Requirements Document — Notification Service
 
-## 1. Metadata service
+## Metadata service
 
 | Field | Nilai |
 |-------|-------|
-| Service | Notification Service |
-| Document ID | SPEC-NOTIFICATION-REQ (dari `docs/sdd/SDD-NOTIFICATION-001.md`, LLD = source of truth) |
+| Spec | notification-service |
+| Service | `services/notification` |
 | Port | 8084 |
-| Schema | `notification` (role `svc_notification`, hanya melihat schema sendiri) |
+| Schema / Role | `notification` / `svc_notification` |
 | Verb | `api`, `worker`, `migrate up\|down\|status`, `healthcheck` (D-14) |
-| Dependency | PostgreSQL 16, RabbitMQ (exchange `rusuh.events`), SMTP (SES/Mailpit), FCM |
-| Produces events | **tidak ada** (Notification hanya *consume*; tidak otoritatif atas stok/uang/akun) |
+| Dependency | PostgreSQL 16, RabbitMQ (exchange `rusuh.events`), SMTP (Mailpit lokal / SES demo), FCM (cloud) / log adapter (lokal, CI) |
+| Produces events | **tidak ada** — murni consumer; tidak otoritatif atas stok/uang/akun |
 | Owner | BE-1 |
-| Region | ap-southeast-3 (Jakarta) |
-| Sumber | SDD-NOTIFICATION-001 v1.1 §1–§12 + Appendix A–D; kontrak `docs/contracts/`; Test Plan `docs/test/06-TP-RBT-001.md` |
+| Sumber (urut prioritas) | migrasi `0001_init` → kontrak `docs/contracts/openapi/notification.yaml`, `docs/contracts/events/*.schema.json` → SRS §3.1.3 (IF-22/23), §3.2.20–3.2.21, §3.2.25, §3.2.27 → SDD-RBT-001 §4.5.2, §4.6.2 → `docs/sdd/SDD-NOTIFICATION-001.md` v1.1 |
 
-Notification Service meng-*consume* domain event dari Booking dan Queue lalu
-mengirim **email** (e-tiket, expired, review, OTP login) dan **push notification** (giliran)
-ke pembeli. Prinsip: **at-least-once delivery**, **idempotent consumer tanpa
-tabel inbox**, **template-based email**, dan — paling penting — **kegagalan
-notifikasi tidak pernah membatalkan transaksi** (Invarian §6).
+## Introduction
 
----
+Notification Service mengonsumsi event domain dari Booking, Queue, dan User lalu mengirim **email**
+(e-tiket, expired, review, OTP login) dan **push** (giliran). Prinsip: **at-least-once delivery**,
+**consumer idempoten tanpa tabel inbox**, **template-based email**, dan — paling penting —
+**kegagalan notifikasi tidak pernah membatalkan transaksi** (invarian #6).
 
-## 2. Status delta (ground-truth kode vs target SDD)
+### Status Implementasi (audit kode 2026-10-21)
 
-Spec ini membedakan **apa yang sudah ada di `services/notification/`** dari
-**target SDD** yang belum dibangun. Telusur per 2026-10-20:
-
-| Area | Status | Bukti di kode |
-|------|--------|---------------|
-| Struktur hexagonal (port/domain/application/infrastructure) | **ada** | `internal/notification/...` |
-| Cobra verb `api`/`worker`/`migrate`/`healthcheck` | **ada** | `cmd/*.go` |
-| Config fail-fast (D-24) | **ada** | `internal/config/{config.go,load.go}`, `load_test.go` |
-| Client Postgres + RabbitMQ | **ada** | `internal/delivery/clients.go` |
-| `GET /health` deep (ping dependency) | **ada** | `infrastructure/http/health_handler.go`, `server_test.go` |
-| Migrasi `0001_init` (`deliveries`, `push_subscriptions`) | **ada** | `deployments/migrations/0001_init.up.sql` |
-| **Consumer RabbitMQ** (`booking.*`, `queue.turn.*`) | **TARGET** | `internal/delivery/worker.go` → **`jobs()` mengembalikan `nil`**, tidak ada `Subscription` didaftarkan |
-| Adapter SMTP / FCM / template | **TARGET** | folder `infrastructure/{smtp,fcm,template}` belum ada |
-| **Consumer `otp.requested`** (OTP login email) | **TARGET** | queue `notification.otp` belum didaftarkan |
-| Usecase pengiriman + repository `deliveries`/`push_subscriptions` | **TARGET** | hanya usecase `check_health` yang ada |
-| Endpoint `POST`/`DELETE /api/v1/push-subscriptions` | **TARGET** | hanya `/health` terpasang di `server.go` |
-
-> **Catatan `jobs()`:** `internal/delivery/worker.go` memiliki `func jobs(*Clients) []Job { return nil }`
-> dan `worker_test.go` menegaskan `assert.Empty(t, jobs(&Clients{}))`. Worker saat ini
-> hanya menyajikan `/health` dan menjalankan loop job kosong tiap `WORKER_INTERVAL`.
-> Target bukan menambah periodic *job* ke `jobs()`, melainkan mendaftarkan
-> `rabbitmq.Subscription` (consumer event-driven) di `RunWorker` — lihat design.md §4.
+| Area | Status | Bukti |
+|------|--------|-------|
+| Struktur hexagonal, Cobra verb, config fail-fast (`APP_*`, `LOG_*`, `POSTGRES_*`, `RABBITMQ_*`), clients PG + RabbitMQ, `GET /health` | ✅ | `internal/*`, `cmd/*` |
+| Migrasi `deliveries` (dedup + status) + `push_subscriptions` | ✅ | `deployments/migrations/0001_init.up.sql` |
+| `SMTP_*`, `FCM_*`, `PII_*`, `PUSH_PROVIDER` di config | ❌ | tidak ada di `internal/config` / `.env.example` [kode] |
+| Consumer RabbitMQ, adapter SMTP/FCM/template, usecase kirim, endpoint push-subscriptions | ❌ | `worker.go` → `jobs()` mengembalikan `nil` |
+| `deliveries` untuk OTP | ❌ **tidak didukung skema**: `notification_type` CHECK tanpa `OTP_LOGIN`; CHECK mewajibkan `booking_id` atau `queue_entry_id` | butuh migrasi `0002` |
 
 ### Divergensi SDD prosa vs kode/kontrak (kode & kontrak menang)
 
-| Topik | SDD prosa | Ground-truth (menang) | Sumber |
-|-------|-----------|------------------------|--------|
-| Exchange | `rbt.events` (§5.2) | **`rusuh.events`** | `config/load.go`, `.env.example` |
-| Dedup key | `reference_type/reference_id/type/channel` (§5.4) | **`UNIQUE (source_message_id, notification_type)`** | migrasi `0001_init` |
-| Status delivery | `PENDING\|SENT\|DELIVERED\|FAILED` (§4.1) | **`PENDING\|SENDING\|SENT\|RETRY\|DEAD`** | migrasi `0001_init` |
-| Retry | "fixed 5s, 3 attempts" (§5.3) | **`RABBITMQ_RETRY_DELAYS=5s,30s,2m` + `RABBITMQ_MAX_RETRIES=3`** | `config/load.go`, `pkg/rabbitmq` |
-| Platform push | `ANDROID\|IOS\|WEB` (§4.2) | **`ANDROID\|IOS`** saja | migrasi + `notification.yaml` |
-| Envelope | field `eventTitle/venueName/totalAmount` inline | **`messageId, eventType, schemaVersion(int), occurredAt, producer(enum), aggregateId, correlationId, payload`** | `pkg/rabbitmq/envelope.go`, `envelope.schema.json` |
-| Payload `booking.paid` | email terenkripsi base64 + `eventTitle/eventDate/venueName/totalAmount` | **`bookingId, publicRef, buyerEmail(email), event{eventId,name,startsAt,venue}, tickets[{ticketCode,attendeeName,attendeeNikMasked,categoryCode}], ticketLinkToken`** | `booking.paid.v1.schema.json` |
-| Payload `booking.expired` | `eventTitle, amount, expiredAt` | **`bookingId, publicRef, buyerEmail, reason(PAYMENT_TIMEOUT\|SESSION_EXPIRED\|CANCELLED)`** | `booking.expired.v1.schema.json` |
-| Payload `booking.review` | `eventTitle, amount` | **`bookingId, attemptHint?, buyerEmail, amountMinor(int64)`** | `booking.review.v1.schema.json` |
-| Payload `queue.turn.*` | `pushToken/platform/position` inline | **`eventId, queueEntryId, visitorId` (+`claimDeadline` untuk arrived)** — token dilookup dari `push_subscriptions` | `queue.turn.*.v1.schema.json` |
+| Topik | SDD-NOTIFICATION prosa | Yang dipakai | Sumber |
+|-------|------------------------|--------------|--------|
+| Exchange | `rbt.events` | **`rusuh.events`** | `config/load.go` |
+| Dedup key | `reference_type/reference_id/type/channel` | **`UNIQUE (source_message_id, notification_type)`** | migrasi |
+| Status delivery | `PENDING\|SENT\|DELIVERED\|FAILED` | **`PENDING\|SENDING\|SENT\|RETRY\|DEAD`** | migrasi |
+| Retry | "fixed 5s, 3 attempts" | **`RABBITMQ_RETRY_DELAYS=5s,30s,2m` + `RABBITMQ_MAX_RETRIES=3`** | `pkg/rabbitmq` |
+| Platform push | `ANDROID\|IOS\|WEB` | **`ANDROID\|IOS`** | migrasi + `notification.yaml` |
+| Payload event | field inline (`eventTitle`, `pushToken`, …) | schema v1 (`booking.*.v1`, `queue.turn.*.v1`) | `docs/contracts/events/` |
+| Routing key / queue | `booking.paid`, queue gabungan `notification.booking.events` | **`booking.paid.v1`**, queue per tujuan `notification.booking-paid`, … (SDD-RBT §4.6.2, K8) | SDD-RBT §4.6.2 |
 
-Setiap requirement di bawah ditandai **[implemented]** atau **[target]**.
+## Glossary
 
----
-
-## 3. Trace matrix
-
-| Req | Kapabilitas | SRS | Test Case (TP) | Status |
-|-----|-------------|-----|----------------|--------|
-| R1 | E-ticket email | SRS-F-20-01..03 | TC-TKT-01, TC-TKT-02 | target |
-| R2 | Expiry email | SRS-F-21-01..03 | TC-MSG-01 | target |
-| R3 | Review email | SRS-F-21-01..03 | TC-MSG-01 | target |
-| R4 | Turn soon push | SRS-F-25-01..13 | TC-QUE-04, E2E | target |
-| R5 | Turn arrived push (cek deadline) | SRS-F-25-01..13 | TC-QUE-04, E2E | target |
-| R6 | Delivery tracking (state machine) | SRS-F-21 | TC-MSG-01 | target |
-| R7 | Push subscription API | SRS-F-25 | — | target |
-| R8 | Idempotent consumer tanpa inbox | SRS-Q-REL-01 | TC-MSG-03 | target |
-| R9 | Retry berjenjang + DLQ | SRS-Q-REL-01 | TC-MSG-01, TC-MSG-02, TC-MSG-04 | target |
-| R10 | Health endpoint | D-23 | server_test.go | **implemented** |
-| R11 | Konfigurasi fail-fast + privasi payload | D-24, SRS keamanan | load_test.go | implemented (config) / target (privasi kirim) |
-| R12 | OTP login email | SRS-F-27-02, SRS-F-27-12 | TC-MSG-05, TC-MSG-06 | target |
+- **Delivery** — satu baris `deliveries` per `(source_message_id, notification_type)`; status `PENDING → SENDING → SENT` atau `→ RETRY → DEAD`.
+- **source_message_id** — `messageId` envelope (= `outbox_events.id` produsen) — kunci dedup stabil.
+- **Push subscription** — token FCM perangkat per `(visitor_id, event_id)`, disimpan terenkripsi.
+- **Poison message** — payload rusak/tidak dikenal → `rabbitmq.Permanent(err)` → DLQ tanpa retry.
 
 ---
 
-## R1 — E-ticket email [target]
+## Requirement 1 — Email E-tiket [target]
 
-**User story:** Sebagai pembeli yang baru menyelesaikan pembayaran, saya ingin
-menerima e-tiket lewat email agar punya bukti dan kode masuk venue.
+**User Story:** Sebagai pembeli yang baru menyelesaikan pembayaran, saya ingin menerima e-tiket lewat email, agar punya bukti dan kode masuk venue.
 
-Sumber: SRS-F-20-01..03 · TC-TKT-01, TC-TKT-02, TC-TKT-03 · SDD §2, §6.2 · `booking.paid.v1.schema.json`.
+Trace: SRS-F-20-02, SRS-F-20-03, SRS-F-21-01, SRS-IF-22 · TC-TKT-02, TC-PAY-03 · `booking.paid.v1.schema.json`
 
-- **WHEN** event `booking.paid` diterima dari exchange `rusuh.events` (queue
-  `notification.booking.events`), **THE** Notification Service **SHALL** merender
-  template `eticket` dan mengirim email ke `buyerEmail` berisi `event.name`,
-  `event.startsAt`, `event.venue`, daftar `tickets` (`ticketCode`,
-  `attendeeName`, `attendeeNikMasked`, `categoryCode`), `publicRef`, dan
-  `ticketLinkToken` (tautan tiket).
-- **WHEN** email e-tiket berhasil terkirim, **THE** service **SHALL** mengubah
-  baris `deliveries` dengan `notification_type='BOOKING_PAID'`, `channel='EMAIL'`,
-  `status='SENT'`, `sent_at=now()`, dan `provider_message_id`.
-- **IF** template gagal dirender karena payload tidak lengkap/korup, **THEN THE**
-  service **SHALL** memperlakukan event sebagai *poison* (`rabbitmq.Permanent`),
-  menandai delivery `DEAD`, dan tidak me-retry (lihat R9).
-- **WHERE** email terkirim, **THE** isi **SHALL** memuat kode tiket dan NIK
-  tersamar agar bisa diverifikasi di pintu masuk (TC-TKT-01, TC-TKT-02).
+### Acceptance Criteria (EARS)
 
-## R2 — Expiry email [target]
+1. WHEN `booking.paid.v1` diterima (queue `notification.booking-paid`), THE service SHALL merender template `eticket` dan mengirim email teks ke `buyerEmail` berisi `event.name`, `event.startsAt`, `event.venue`, `publicRef`, daftar `tickets` (`ticketCode`, `attendeeName`, `attendeeNikMasked`, `categoryCode`), dan tautan halaman tiket bertanda tangan (`ticketLinkToken`).
+2. WHEN email terkirim, THE service SHALL memperbarui delivery `notification_type='BOOKING_PAID'`, `channel='EMAIL'` menjadi `SENT` dengan `sent_at` dan `provider_message_id`.
+3. IF payload tidak lengkap/korup sehingga template gagal dirender, THEN THE service SHALL memperlakukannya sebagai poison (`rabbitmq.Permanent`), menandai delivery `DEAD`, tanpa retry.
+4. THE email SHALL menampilkan NIK hanya dalam bentuk tersamar (mis. `3174********0001`).
 
-**User story:** Sebagai pembeli yang bookingnya kedaluwarsa, saya ingin
-pemberitahuan agar tahu statusnya.
+## Requirement 2 — Email Booking Expired [target]
 
-Sumber: SRS-F-21-01..03 · TC-MSG-01 · SDD §6.3 · `booking.expired.v1.schema.json`.
+**User Story:** Sebagai pembeli yang pesanannya kedaluwarsa atau dibatalkan, saya ingin pemberitahuan, agar tahu statusnya.
 
-- **WHEN** event `booking.expired` diterima, **THE** service **SHALL** mengirim
-  email dari template `expired` berisi `publicRef` dan `reason`
-  (`PAYMENT_TIMEOUT` | `SESSION_EXPIRED` | `CANCELLED`) dan mencatat delivery
-  `notification_type='BOOKING_EXPIRED'`, `channel='EMAIL'`.
-- **IF** SMTP down saat pengiriman, **THEN THE** service **SHALL** me-retry lewat
-  retry queue dan mengirim setelah pemulihan (TC-MSG-01), bukan menandai gagal
-  permanen.
+Trace: SRS-F-17-02, SRS-F-21-01, SRS-F-21-03 · TC-PAY-04, TC-MSG-01 · `booking.expired.v1.schema.json`
 
-## R3 — Review email [target]
+### Acceptance Criteria (EARS)
 
-**User story:** Sebagai pembeli yang pembayarannya terdeteksi terlambat, saya
-ingin pemberitahuan beserta langkah berikutnya.
+1. WHEN `booking.expired.v1` diterima (queue `notification.booking-expired`), THE service SHALL mengirim email template `expired` berisi `publicRef` dan alasan (`PAYMENT_TIMEOUT` | `SESSION_EXPIRED` | `CANCELLED`) dan mencatat delivery `BOOKING_EXPIRED`/`EMAIL`.
+2. IF SMTP gagal sementara, THEN THE service SHALL me-retry lewat retry queue dan mengirim setelah pulih (TC-MSG-01); status booking tidak terpengaruh (SRS-F-21-03).
 
-Sumber: SRS-F-21-01..03 · TC-MSG-01 · SDD §6.4 · `booking.review.v1.schema.json`.
+## Requirement 3 — Email Review (pembayaran terlambat) [target]
 
-- **WHEN** event `booking.review` diterima, **THE** service **SHALL** mengirim
-  email dari template `review` berisi `bookingId`, `amountMinor` (diformat IDR),
-  dan `attemptHint` bila ada, lalu mencatat delivery
-  `notification_type='BOOKING_REVIEW'`, `channel='EMAIL'`.
+**User Story:** Sebagai pembeli yang pembayarannya diterima setelah batas waktu, saya ingin penjelasan dan langkah pengembalian dana, agar tidak bingung.
 
-## R4 — Turn soon push [target]
+Trace: SRS-F-17-05, SRS-F-21-01 · TC-PAY-07 · `booking.review.v1.schema.json`
 
-**User story:** Sebagai pembeli di waiting room, saya ingin notifikasi push saat
-giliran saya hampir tiba agar bersiap.
+### Acceptance Criteria (EARS)
 
-Sumber: SRS-F-25-01..13 · TC-QUE-04, E2E · SDD §7.2 · `queue.turn.soon.v1.schema.json`.
+1. WHEN `booking.review.v1` diterima (queue `notification.booking-review`), THE service SHALL mengirim email template `review` berisi referensi booking, `amountMinor` diformat IDR, dan pesan "Pembayaran diterima setelah batas waktu; dana dikembalikan dalam X hari kerja", lalu mencatat delivery `BOOKING_REVIEW`/`EMAIL`. *(Nilai X tidak ditetapkan SRS — konten template dikonfirmasi Ops.)*
 
-- **WHEN** event `queue.turn.soon` diterima (queue `notification.queue.events`),
-  **THE** service **SHALL** mencari subscription `(visitor_id, event_id)` dan
-  mengirim push "Giliran Sebentar Lagi" ke token tersubscribe, lalu mencatat
-  delivery `notification_type='TURN_SOON'`, `channel='PUSH'`.
-- **IF** tidak ada subscription untuk `(visitorId, eventId)`, **THEN THE** service
-  **SHALL** melewati pengiriman (ack) tanpa error.
-- **IF** FCM melaporkan token tidak valid, **THEN THE** service **SHALL**
-  menghapus subscription dan ack (bukan retry).
+## Requirement 4 — Push "Giliran sebentar lagi" [target]
 
-## R5 — Turn arrived push (cek deadline) [target]
+**User Story:** Sebagai pembeli di waiting room mobile, saya ingin notifikasi saat giliran hampir tiba, agar bersiap.
 
-**User story:** Sebagai pembeli, saya ingin notifikasi push saat giliran saya
-tiba sehingga bisa segera claim slot.
+Trace: SRS-F-25-10, SRS-F-25-12, SRS-IF-23 · TC-QUE-13 · `queue.turn.soon.v1.schema.json`
 
-Sumber: SRS-F-25-01..13 · TC-QUE-04, E2E · SDD §7.3–§7.4 · `queue.turn.arrived.v1.schema.json`.
+### Acceptance Criteria (EARS)
 
-- **WHEN** event `queue.turn.arrived` diterima, **THE** service **SHALL**
-  mengirim push "Giliran Anda Tiba!" dengan data `eventId`, `queueEntryId`,
-  `type='TURN_ARRIVED'`, dan `claimDeadline`.
-- **IF** `claimDeadline` sudah lewat saat event diproses, **THEN THE** service
-  **SHALL** melewati pengiriman (ack & buang; set `expires_at`) karena push yang
-  telat tidak berguna — entry sudah `UNCLAIMED`.
-- **IF** tidak ada subscription atau token invalid, **THEN THE** service **SHALL**
-  berperilaku sama dengan R4 (ack / hapus subscription).
+1. WHEN `queue.turn.soon.v1` diterima (queue `notification.turn-soon`), THE service SHALL mencari subscription `(visitorId, eventId)` dan mengirim push `TURN_SOON` ("Giliran Anda sebentar lagi. Tetap buka halaman ini."), lalu mencatat delivery `TURN_SOON`/`PUSH`.
+2. IF tidak ada subscription, THEN THE service SHALL ack tanpa error dan tanpa mengirim.
+3. IF provider melaporkan token tidak valid, THEN THE service SHALL menghapus subscription dan ack (tanpa retry).
 
-## R6 — Delivery tracking (state machine) [target]
+## Requirement 5 — Push "Giliran tiba" dengan cek deadline [target]
 
-**User story:** Sebagai operator, saya ingin status setiap pengiriman tercatat
-agar bisa mengukur keberhasilan dan menelusuri kegagalan.
+**User Story:** Sebagai pembeli, saya ingin notifikasi saat giliran tiba, agar segera claim dalam jendela klaim.
 
-Sumber: SRS-F-21 · SDD §4.1.
+Trace: SRS-F-06-05, SRS-F-25-11, SRS-F-25-12 · TC-QUE-13 · `queue.turn.arrived.v1.schema.json`
 
-- **WHEN** sebuah event mulai diproses, **THE** service **SHALL** memegang tepat
-  satu baris `deliveries` per `(source_message_id, notification_type)` sebagai
-  catatan status yang bergerak `PENDING → SENDING → SENT`, atau `→ RETRY → DEAD`.
-- **THE** service **SHALL** menyimpan `attempts`, `last_error`,
-  `provider_message_id`, `next_attempt_at`, dan `recipient_hash` (HMAC, **bukan**
-  recipient plaintext) di setiap baris.
+### Acceptance Criteria (EARS)
 
-## R7 — Push subscription API [target]
+1. WHEN `queue.turn.arrived.v1` diterima (queue `notification.turn-arrived`), THE service SHALL mengirim push `TURN_ARRIVED` ("Giliran Anda tiba, buka dalam 3 menit") dengan data `eventId`, `queueEntryId`, `claimDeadline`.
+2. IF `claimDeadline` sudah lewat saat diproses, THEN THE service SHALL membuang pesan (ack, delivery dengan `expires_at` = `claimDeadline`) karena push terlambat tidak berguna (SRS-F-25-12).
+3. IF tidak ada subscription atau token invalid, THEN perilaku SHALL sama dengan R4.2–4.3.
 
-**User story:** Sebagai aplikasi mobile, saya ingin mendaftarkan/mencabut token
-FCM perangkat agar bisa menerima push untuk sebuah event.
+## Requirement 6 — Pelacakan Delivery [target]
 
-Sumber: SRS-F-25 · SDD §3.1–§3.2 · `docs/contracts/openapi/notification.yaml`.
+**User Story:** Sebagai operator, saya ingin status setiap pengiriman tercatat, agar dapat mengukur keberhasilan dan menelusuri kegagalan.
 
-- **WHEN** `POST /api/v1/push-subscriptions` dengan header `X-Visitor-Token` valid
-  dan body `{eventId, platform(ANDROID|IOS), pushToken(≤4096)}`, **THE** service
-  **SHALL** menyimpan subscription (`push_token_enc` dienkripsi) dengan PK
-  `(visitor_id, event_id)` dan mengembalikan **204**.
-- **IF** subscription untuk `(visitor_id, event_id)` sudah ada, **THEN THE**
-  service **SHALL** memperlakukannya idempoten (upsert) tanpa menduplikasi baris.
-- **WHEN** `DELETE /api/v1/push-subscriptions/{eventId}` dengan `X-Visitor-Token`,
-  **THE** service **SHALL** menghapus subscription pembeli untuk event itu dan
-  mengembalikan **204**.
-- **IF** validasi field gagal, **THEN THE** service **SHALL** mengembalikan 400
-  `VALIDATION_ERROR` lewat `pkg/apperror` dalam `ErrorEnvelope` (tanpa SQL/stack
-  trace/secret).
+Trace: SRS-F-21-02, SRS-D-07 · TC-MSG-02, TC-MSG-03
 
-## R8 — Idempotent consumer tanpa tabel inbox [target]
+### Acceptance Criteria (EARS)
 
-**User story:** Sebagai sistem, saya ingin event yang terkirim ganda (jaminan
-at-least-once) tidak menghasilkan email/push ganda.
+1. WHEN event mulai diproses, THE service SHALL memegang tepat satu baris `deliveries` per `(source_message_id, notification_type)` yang bergerak `PENDING → SENDING → SENT`, atau `→ RETRY → DEAD`.
+2. THE baris SHALL menyimpan `attempts`, `last_error` (tanpa PII), `provider_message_id`, `next_attempt_at`, dan `recipient_hash` (HMAC), **bukan** alamat/token plaintext.
 
-Sumber: SRS-Q-REL-01 · TC-MSG-03 · SDD §5.4, §9.8 · code-principles.
+## Requirement 7 — API Push Subscription [target]
 
-- **WHEN** event yang sama diterima lebih dari sekali, **THE** service **SHALL**
-  mengirim notifikasi tepat satu kali, dijaga oleh `INSERT ... ON CONFLICT
-  (source_message_id, notification_type) DO NOTHING` — **tanpa tabel inbox
-  terpisah**.
-- **IF** `INSERT` delivery mengembalikan 0 baris (konflik), **THEN THE** service
-  **SHALL** menyimpulkan event sudah/sedang diproses dan ack tanpa mengirim ulang.
+**User Story:** Sebagai aplikasi mobile, saya ingin mendaftarkan/mencabut token push perangkat untuk sebuah event, agar dapat menerima notifikasi giliran.
 
-## R9 — Retry berjenjang + DLQ [target]
+Trace: SRS-F-25-12, SRS-D-07 · TC-QUE-13 · `notification.yaml`
 
-**User story:** Sebagai sistem, saya ingin kegagalan transien dicoba ulang dan
-kegagalan permanen dipindah ke DLQ agar satu pesan rusak tidak memblok antrean.
+### Acceptance Criteria (EARS)
 
-Sumber: SRS-Q-REL-01 · TC-MSG-01, TC-MSG-02, TC-MSG-04 · SDD §5.3 · `pkg/rabbitmq`.
+1. WHEN `POST /api/v1/push-subscriptions` dengan visitor token valid dan body `{ eventId, platform ∈ {ANDROID, IOS}, pushToken (≤ 4096) }`, THE service SHALL menyimpan subscription dengan `push_token_enc` (AES-256-GCM) dan PK `(visitor_id, event_id)`, lalu membalas `204`.
+2. IF subscription `(visitor_id, event_id)` sudah ada, THEN THE service SHALL meng-upsert tanpa duplikasi.
+3. WHEN `DELETE /api/v1/push-subscriptions/{eventId}` dengan visitor token, THE service SHALL menghapus subscription dan membalas `204`.
+4. IF validasi gagal, THEN `400 VALIDATION_ERROR` dalam `ErrorEnvelope`.
 
-- **WHEN** handler gagal transien, **THE** service **SHALL** mem-publish ulang
-  pesan ke retry queue `<queue>.retry.<delay>` dengan delay dari
-  `RABBITMQ_RETRY_DELAYS` (default `5s,30s,2m`; tier = `delays[attempt-1]`) dan
-  menaikkan header `x-rbt-attempt`.
-- **WHEN** `attempt > RABBITMQ_MAX_RETRIES` (default 3), **THE** service **SHALL**
-  memindahkan pesan ke `<queue>.dlq`.
-- **IF** payload rusak atau versi schema tidak dikenal, **THEN THE** service
-  **SHALL** mengembalikan `rabbitmq.Permanent(err)` sehingga pesan langsung ke DLQ
-  tanpa membakar retry.
-- **WHEN** retry pertama diproses ulang, **THE** delivery **SHALL** membawa header
-  `x-rbt-attempt=2` lalu ack setelah sukses (TC-MSG-04).
+## Requirement 8 — Consumer Idempoten tanpa Inbox [target]
 
-## R10 — Health endpoint [implemented]
+**User Story:** Sebagai sistem, saya ingin event terkirim ganda tidak menghasilkan email/push ganda setelah sukses tercatat.
 
-Sumber: D-23 · `internal/delivery/server.go`, `health_handler.go`, `server_test.go`.
+Trace: SRS-F-21-02, SRS-Q-FUN-04, SRS-Q-REL-01 · TC-MSG-03
 
-- **THE** service **SHALL** mengekspos `GET /health` yang mengembalikan 200 UP
-  bila semua dependency (Postgres, RabbitMQ) sehat dalam `HEALTH_TIMEOUT`, dan
-  503 DOWN bila ada yang gagal. Dipakai ALB + container HEALTHCHECK. **(Sudah
-  terimplementasi.)**
+### Acceptance Criteria (EARS)
 
-## R11 — Konfigurasi fail-fast + privasi payload
+1. WHEN event yang sama diterima lebih dari sekali, THE service SHALL mengirim paling banyak satu kali setelah `SENT` tercatat, dijaga `INSERT … ON CONFLICT (source_message_id, notification_type) DO NOTHING` — tanpa tabel inbox.
+2. IF baris delivery sudah ada, THEN THE service SHALL melanjutkan hanya bila status `PENDING`/`RETRY` (lanjutan percobaan); `SENT`/`DEAD`/`SENDING` yang masih dipegang → ack tanpa mengirim. At-least-once email diterima apa adanya bila crash terjadi antara kirim dan pencatatan `SENT` (SDD-RBT §4.5.2).
 
-Sumber: D-24 · `internal/config/*` · security-privacy.md · `pkg/eventstore`.
+## Requirement 9 — Retry Berjenjang + DLQ [target]
 
-- **WHEN** service start, **THE** service **SHALL** memuat dan memvalidasi semua
-  env (`APP_*`, `LOG_*`, `POSTGRES_*`, `RABBITMQ_*`) sekaligus dan keluar non-zero
-  bila ada yang invalid. **(Terimplementasi — `load_test.go`.)** `[implemented]`
-- **THE** payload event yang diproses **SHALL NOT** memuat NIK/token plaintext;
-  hanya `attendeeNikMasked` dan `ticketLinkToken` yang diizinkan. `recipient`
-  disimpan sebagai `recipient_hash` (HMAC), bukan email plaintext. `[target]`
-- **THE** service **SHALL NOT** menulis kode OTP, token, atau PII plaintext ke
-  log; hanya identifier (`messageId`, `bookingId`, `queueEntryId`). `[target]`
+**User Story:** Sebagai sistem, saya ingin kegagalan transien dicoba ulang dan kegagalan permanen dipindah ke DLQ, agar satu pesan rusak tidak memblok antrean.
+
+Trace: SRS-F-21-02, SRS-F-90-02, SRS-F-19-03 · TC-MSG-01, TC-MSG-02, TC-MSG-04
+
+### Acceptance Criteria (EARS)
+
+1. WHEN handler gagal transien, THE service SHALL mem-publish ulang ke `<queue>.retry.<delay>` dengan delay dari `RABBITMQ_RETRY_DELAYS` (`5s,30s,2m`) dan menaikkan header percobaan (`pkg/rabbitmq`).
+2. WHEN percobaan > `RABBITMQ_MAX_RETRIES` (3), THE service SHALL memindahkan pesan ke `<queue>.dlq` dan menandai delivery `DEAD`.
+3. IF payload rusak atau `schemaVersion` tidak dikenal, THEN `rabbitmq.Permanent(err)` → DLQ langsung.
+4. WHEN pesan retry diproses ulang dan berhasil, THE service SHALL ack dan menandai `SENT` (TC-MSG-04).
+5. THE pengiriman SMTP SHALL melewati `pkg/resilience` breaker + bulkhead (PROPOSED SDD-RBT §4.6.2: timeout 3 s, ambang 5, cooldown 30 s, probe 1, bulkhead 10, retry maks 3); breaker OPEN diperlakukan sebagai kegagalan transien.
+6. Redrive DLQ SHALL hanya lewat tool teraudit (`tools/redrive`, platform R9.3).
+
+## Requirement 10 — Health Endpoint [implemented]
+
+Trace: D-23 · `server_test.go`
+
+### Acceptance Criteria (EARS)
+
+1. THE service SHALL mengekspos `GET /health` → `200 UP` bila PostgreSQL & RabbitMQ sehat dalam `HEALTH_TIMEOUT`, `503 DOWN` bila tidak. ✅
+
+## Requirement 11 — Konfigurasi Fail-fast & Privasi
+
+Trace: D-24, SRS-Q-SEC-03, SRS-IF-23 · TC-SEC-03, TC-USR-11
+
+### Acceptance Criteria (EARS)
+
+1. WHEN service start, THE service SHALL memvalidasi semua env sekaligus dan keluar non-zero bila invalid. ✅ *(subset `APP_*`, `LOG_*`, `POSTGRES_*`, `RABBITMQ_*`)*
+2. THE config SHALL diperluas untuk `SMTP_*`, `PUSH_PROVIDER ∈ {fcm, log}` (`log` di lokal/CI, SDD-RBT §4.10, SRS-IF-23), `FCM_*`, kunci enkripsi push token, kunci HMAC `recipient_hash`, `PII_ENC_KEY` (dekripsi OTP, sama dengan User) — semuanya divalidasi fail-fast.
+3. THE service SHALL tidak menulis kode OTP, token, alamat email, atau NIK plaintext ke log; hanya identifier (`messageId`, `bookingId`, `queueEntryId`).
+4. THE data yang diproses SHALL hanya PII yang memang ada di schema event (`buyerEmail`, `attendeeNikMasked`, `ticketLinkToken`); token push hanya disimpan terenkripsi.
+
+## Requirement 12 — Email OTP Login [target, blocked OQ-4]
+
+**User Story:** Sebagai pembeli yang meminta OTP login, saya ingin menerima kode lewat email dengan cepat, agar dapat login sebelum kode kedaluwarsa.
+
+Trace: SRS-F-27-02, SRS-F-27-12 · TC-MSG-05, TC-MSG-06, TC-USR-11 · ADR-020 · SDD-NOTIFICATION v1.1 §5.4
+
+### Acceptance Criteria (EARS)
+
+1. WHEN `otp.requested.v1` diterima (queue `notification.otp`), THE service SHALL mendekripsi `emailEnc` dan `codeEnc` dengan `PII_ENC_KEY` (sama dengan User Service), merender template `otp_login`, dan mengirim email. *(Schema event belum ada di kontrak — OQ-4.)*
+2. IF `expiresAt` sudah lewat, THEN THE service SHALL membuang pesan (ack).
+3. IF dekripsi gagal, THEN poison → `rabbitmq.Permanent` → DLQ tanpa retry (TC-MSG-06).
+4. WHEN SMTP gagal, THE service SHALL **tidak** me-retry (time-sensitive) dan meng-ack; pengguna dapat meminta OTP baru.
+5. THE kode OTP SHALL tidak pernah muncul di log, `deliveries.last_error`, atau metrik (TC-USR-11).
+6. THE email SHALL terkirim dalam 5 detik sejak publish dalam kondisi normal (TC-MSG-05).
+7. THE pencatatan delivery OTP SHALL memerlukan migrasi `0002` yang menambah `OTP_LOGIN` ke CHECK `notification_type` dan melonggarkan CHECK referensi (`booking_id`/`queue_entry_id`) untuk OTP; tanpa migrasi itu OTP tidak dicatat di `deliveries`.
 
 ---
 
-## R12 — OTP Login email [target]
+## Invarian #6 — notifikasi tidak pernah membatalkan transaksi
 
-**User story:** Sebagai pembeli yang meminta OTP login, saya ingin menerima kode
-OTP via email agar bisa login ke akun saya.
+- Notification **tidak** memegang `IUnitOfWork` lintas service, **tidak** menulis stok/uang/akun, dan **tidak** mempublikasikan event balik.
+- Bila semua retry habis dan pesan masuk DLQ, transaksi sumber tetap final; efeknya hanya alert `NotificationDLQNotEmpty`.
 
-Sumber: SRS-F-27-02, SRS-F-27-12 · TC-MSG-05, TC-MSG-06 · SDD-NOTIFICATION-001 v1.1 §5.4 · `otp.requested.v1`.
-
-- **WHEN** event `otp.requested` diterima dari exchange `rusuh.events` (queue
-  `notification.otp`), **THE** Notification Service **SHALL** mendekripsi
-  `emailEnc` dan `codeEnc` menggunakan kunci `PII_ENC_KEY` (shared dengan User
-  Service), merender template `otp_login`, dan mengirim email berisi kode OTP.
-- **IF** `expiresAt` sudah lewat saat event diproses, **THEN THE** service
-  **SHALL** melewati pengiriman (ack & buang) karena OTP sudah tidak valid.
-- **IF** dekripsi `emailEnc` atau `codeEnc` gagal (kunci salah atau payload
-  korup), **THEN THE** service **SHALL** memperlakukan event sebagai *poison*
-  (`rabbitmq.Permanent`) dan memindahkan ke DLQ tanpa retry. *(TC-MSG-06)*
-- **WHEN** SMTP gagal, **THE** service **SHALL NOT** me-retry (time-sensitive);
-  user dapat meminta OTP baru. Event di-ack setelah attempt pertama.
-- **THE** service **SHALL NOT** menulis kode OTP plaintext ke log; hanya
-  `messageId` dan status pengiriman yang di-log. *(TC-USR-11)*
-- **THE** email **SHALL** dikirim dalam waktu 5 detik dari publish event untuk
-  memastikan OTP masih valid saat diterima user. *(TC-MSG-05)*
-
----
-
-## 4. Invarian #6 — notifikasi tidak pernah membatalkan transaksi
-
-> **Invarian §6 (invariants.md):** Kegagalan notifikasi tidak membatalkan
-> transaksi (retry + DLQ).
-
-Konsekuensi yang mengikat desain:
-
-- Notification Service **tidak** memegang `IUnitOfWork`, **tidak** menulis
-  stok/uang/akun, dan **tidak** mempublikasikan event balik ke Booking/Payment.
-  Ia murni *sink* event (produces events: tidak ada).
-- **IF** semua retry habis dan pesan masuk DLQ, **THEN THE** transaksi sumber
-  (booking/payment yang sudah final) **SHALL** tetap final; satu-satunya efek
-  adalah alert `NotificationDLQNotEmpty`.
-- Pengiriman notifikasi adalah *best-effort terhadap transaksi* namun *required
-  terhadap dirinya sendiri* (retry sampai `SENT` atau `DEAD`).
-
----
-
-## 5. Build & Verify
+## Build & Verify
 
 ```bash
-# dari services/notification
-go build ./...                      # kompilasi
-go test -race ./...                 # unit test (testify, table-driven)
-golangci-lint run                   # lint + depguard (lapisan hexagonal)
-
-# dari repo root
-make build                          # build semua modul
-make test                           # unit test -race semua modul
-make lint                           # golangci-lint v2
-make test-integration               # + integration (Postgres, Valkey, RabbitMQ dari `make infra`)
-make cover                          # coverage logika, ambang 80% (COVERAGE_MIN)
-make mock                           # regen mock ke _mock/ bila port berubah
-make ci                             # semua pemeriksaan CI lokal (wajib lolos sebelum PR)
+make infra                          # PostgreSQL, RabbitMQ, Mailpit
+cd services/notification && cp .env.example .env
+go run ./cmd migrate up && go run ./cmd api & go run ./cmd worker &
+curl -fsS localhost:8084/health
+make build && make test && make test-integration && make lint && make cover && make ci
 ```
 
-Gate: `make ci` wajib hijau sebelum PR; coverage logika ≥ 80% (`cmd/`,
-`internal/delivery/`, `internal/config/`, `_mock/` dikecualikan sebagai
-bootstrap/wiring). Setiap requirement SRS punya TC di Test Plan
-`docs/test/06-TP-RBT-001.md`.
+## Trace matrix
+
+| Req | SRS | Test Case | Status |
+|-----|-----|-----------|--------|
+| 1 E-tiket | F-20-02/03, F-21-01, IF-22 | TC-TKT-02, TC-PAY-03 | target |
+| 2 Expired | F-17-02, F-21-01/03 | TC-PAY-04, TC-MSG-01 | target |
+| 3 Review | F-17-05, F-21-01 | TC-PAY-07 | target |
+| 4 Turn soon | F-25-10/12, IF-23 | TC-QUE-13 | target |
+| 5 Turn arrived | F-06-05, F-25-11/12 | TC-QUE-13 | target |
+| 6 Delivery | F-21-02, D-07 | TC-MSG-02/03 | target |
+| 7 Push subscription | F-25-12, D-07 | TC-QUE-13 | target |
+| 8 Idempoten | F-21-02, Q-FUN-04, Q-REL-01 | TC-MSG-03 | target |
+| 9 Retry + DLQ | F-21-02, F-90-02, F-19-03 | TC-MSG-01/02/04 | target |
+| 10 Health | D-23 | server_test.go | **implemented** |
+| 11 Config & privasi | D-24, Q-SEC-03, IF-23 | TC-SEC-03, TC-USR-11 | partial |
+| 12 OTP | F-27-02/12 | TC-MSG-05/06, TC-USR-11 | target, blocked OQ-4 |
