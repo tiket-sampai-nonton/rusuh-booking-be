@@ -69,16 +69,13 @@ func Load() (Config, error) {
 		HashKeyHex: r.String("PII_HASH_KEY", ""),
 		OTPKeyHex:  r.String("OTP_HASH_KEY", ""),
 	}
-	cfg.SMTP = SMTP{
-		Host:     r.String("SMTP_HOST", "localhost"),
-		Port:     r.Int("SMTP_PORT", 1025),
-		Username: r.String("SMTP_USERNAME", ""),
-		Password: r.String("SMTP_PASSWORD", ""),
-		From:     r.String("SMTP_FROM", "Rusuh Booking Tiket <no-reply@rusuh.test>"),
-		Timeout:  r.Duration("SMTP_TIMEOUT", 5*time.Second),
+	cfg.RabbitMQ = RabbitMQ{
+		URL:         r.String("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/"),
+		Exchange:    r.String("RABBITMQ_EXCHANGE", "rusuh.events"),
+		ConfirmWait: r.Duration("RABBITMQ_CONFIRM_TIMEOUT", 5*time.Second),
 	}
 
-	// Kesalahan parsing dan validasi dilaporkan bersama agar semua variabel yang salah terlihat sekaligus.
+	// Kesalahan parsing dan validasi dilaporkan bersama agar semua variable yang salah terlihat sekaligus.
 	if err := errors.Join(append(parseErrs, r.Err(), cfg.Validate())...); err != nil {
 		return Config{}, fmt.Errorf("config: %w", err)
 	}

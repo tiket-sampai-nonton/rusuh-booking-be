@@ -1,76 +1,67 @@
 # Implementation Plan: User Service
 
-## Overview
+Owner: **DEV-2**. Penomoran Task 1–9 DEV-2 dipertahankan (semua `[DONE]` di `.progress.json`).
+Sisa pekerjaan dari spec kita ditambahkan sebagai sub-task di task yang relevan dan Task 10.
 
-User Service sudah terimplementasi (evidence `docs/evidence/2026-10-19-boilerplate-v1.5.md`, coverage
-logika 94,4%). Rencana ini mencatat pekerjaan yang sudah selesai (untuk traceability) dan sisa
-pekerjaan: penyelarasan validasi NIK, migrasi pengiriman OTP ke event `otp.requested` (ADR-020),
-breaker SMTP selama transisi, dan observability.
-
-Prasyarat lintas spec: platform task 1 (`pkg/nik`), 5.2 (schema `otp.requested.v1` + `producer`
-`user-service` — OQ-4), 6 (distribusi kunci publik).
+Status 2026-10-21: semua fitur ada. OTP sudah dikirim lewat event `otp.requested`
+(`infrastructure/rabbitmq/otp_publisher.go`); adapter SMTP sudah dihapus, jadi OQ-9 (breaker
+User→SMTP) tidak relevan lagi.
 
 ## Tasks
 
-- [x] 0. Fitur inti (terverifikasi audit 2026-10-21)
-  - OTP request/verify, rate limit + cooldown, audit login, akun otomatis, rotasi refresh + deteksi replay, logout idempoten, profil GET/PATCH, enkripsi/hash PII, migrasi `0001_init`, config fail-fast, `/health`
-  - Klaim identitas token (dulu "P0 / D1"): `IssueAccess(accountID, email, nikHash, now)`, `GetNIKHashByID`, `GetEmailEncByID`, `UnsealEmail`, mock diregenerasi
-  - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 2.8, 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 4.1, 4.2, 4.3, 5.1, 5.2, 5.3, 5.4, 6.1, 6.2, 6.4, 6.5, 6.6, 7.1, 7.2, 7.4, 7.5, 8.1, 8.3, 9.1, 9.2, 9.3, 9.4, 9.5, 9.8_
-
-- [ ] 1. Lengkapi verifikasi yang tertunda
-  - [ ] 1.1 Property test anti-enumerasi, OTP sekali pakai, rotasi/replay, satu NIK per akun (sebagian sudah ada sebagai unit test — pastikan eksplisit)
-    - **Property 1: Anti-enumeration**, **Property 2: OTP single use & bounded attempts**, **Property 3: Refresh rotation & replay revocation**, **Property 6: One NIK per account**
-    - _Requirements: 1.2, 2.4, 3.3, 6.5_
-  - [ ] 1.2 Integration test `GetNIKHashByID` (NULL → `nil, nil`) dan `GetEmailEncByID` terhadap PostgreSQL nyata
-    - **Property 4: Identity claims consistency**
-    - _Requirements: 7.1, 7.2, 9.6_
-  - [ ] 1.3 Jalankan `make lint`; perbaiki temuan errcheck/misspell pre-existing yang dicatat spec lama (bila masih ada)
-    - _Requirements: 9.7_
-
-- [ ] 2. Selaraskan validasi NIK dengan `pkg/nik`
-  - [ ] 2.1 Usecase `Profile.UpdateProfile` memanggil `nik.Validate` sebelum `valueobject.NewNIK`; pertahankan `400 VALIDATION_ERROR` field `nik` (kontrak `user.yaml`)
-    - _Requirements: 6.3_
-    - _Design: platform design §1_
-    - _Depends on: platform 1_
-  - [ ] 2.2 Test paritas: korpus SDD §4.9 ditolak/diterima sama dengan Queue/Booking
-    - _Requirements: 6.3_
-
-- [ ] 3. Migrasi pengiriman OTP ke event (ADR-020) — **blocked: OQ-4**
-  - [ ] 3.1 Port `IOTPPublisher` + adapter `rabbitmq` (`pkg/rabbitmq.Publisher`, publisher confirm, routing key `otp.requested.v1`, envelope `producer = user-service`, `aggregateId` sesuai keputusan OQ-4)
-    - _Requirements: 1.7, 8.2_
-    - _Design: §5c_
-    - _Depends on: platform 5.2_
-  - [ ] 3.2 Config `RABBITMQ_*` (fail-fast) + health check RabbitMQ; `PII.SealOTP` untuk `codeEnc`
-    - _Requirements: 1.7, 8.1_
-  - [ ] 3.3 Ganti `IMailer` dengan `IOTPPublisher` di `Auth.RequestOTP`; gagal publish → `OTP.Clear` + `503 DEPENDENCY_UNAVAILABLE`; hapus adapter `smtp` dan `SMTP_*` setelah Notification task 8 siap
+- [ ] 1. Request OTP
+  - Ada: rate limit, cooldown, anti-enumerasi, audit, publish `otp.requested` terenkripsi
+  - [ ] 1.R1 Envelope OTP: `aggregateId` dikirim kosong (envelope mewajibkannya) dan `occurredAt` diisi `expiresAt`. Isi `aggregateId` = `email_hash` hex dan `occurredAt` = waktu sekarang
     - _Requirements: 1.7_
-    - _Depends on: notification 8.2_
-  - [ ] 3.4 Test: payload terenkripsi (tidak ada email/kode plaintext di payload/log), publish gagal menghapus OTP (TC-USR-11, TC-MSG-05 end-to-end)
+  - [ ] 1.R2 Tambah schema kontrak `otp.requested.v1` + `user-service` ke enum `producer` (platform 5.2, owner: kamu)
+    - _Depends on: platform 5.2_
     - **Property 5: PII never in plaintext**
     - _Requirements: 1.8_
+  - **Property 1: Anti-enumeration**
+  - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 1.6_
 
-- [ ] 4. Breaker SMTP selama transisi (OQ-9)
-  - [ ] 4.1 Bungkus `smtp.Mailer.SendOTP` dengan `pkg/resilience` breaker + bulkhead (timeout 3 s, ambang 5, cooldown 30 s, bulkhead 10 — PROPOSED SDD §4.6.2); OPEN → `503 DEPENDENCY_UNAVAILABLE` cepat
-    - _Requirements: 1.7_
-  - Catatan: dihapus bersama task 3.3; kerjakan hanya bila task 3 tertunda melewati demo
+- [x] 2. Verify OTP & login
+  - **Property 2: OTP single use & bounded attempts**
+  - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 2.8_
 
-- [ ] 5. Distribusi kunci publik ke Queue & Booking
-  - [ ] 5.1 Ekspor kunci publik User (per `kid`) lewat `make keys`/compose dan SSM; dokumentasikan rotasi
-    - _Requirements: 7.3_
+- [x] 3. Refresh token (rotasi + deteksi replay)
+  - **Property 3: Refresh rotation & replay revocation**
+  - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 3.6_
+
+- [x] 4. Logout
+  - _Requirements: 4.1, 4.2, 4.3_
+
+- [x] 5. Get profile
+  - _Requirements: 5.1, 5.2, 5.3, 5.4_
+
+- [ ] 6. Update profile
+  - [ ] 6.R1 Validasi NIK pakai `pkg/nik` di usecase (VO sekarang lebih longgar). Respons tetap `400 VALIDATION_ERROR` sesuai `user.yaml`
+    - _Depends on: platform 1_
+    - _Requirements: 6.3_
+  - **Property 6: One NIK per account**
+  - _Requirements: 6.1, 6.2, 6.4, 6.5, 6.6_
+
+- [ ] 7. Klaim token untuk validasi service lain
+  - Ada: `email`, `nik_hash`, `has_nik` di access token
+  - [ ] 7.1 Integration test `GetNIKHashByID` (NULL → `nil`) dan `GetEmailEncByID`
+    - **Property 4: Identity claims consistency**
+    - _Requirements: 7.1, 7.2_
+  - [ ] 7.2 Distribusi kunci publik ke Queue & Booking (compose/SSM) + prosedur rotasi `kid`
     - _Depends on: platform 6.1_
+    - _Requirements: 7.3_
+  - _Requirements: 7.4, 7.5_
 
-- [ ] 6. Observability
-  - [ ] 6.1 Metrik `rbt_user_*` (request OTP, verify per outcome, refresh, replay) via `pkg/telemetry`; alert brute-force (`OTP_INVALID`/`OTP_LOCKED` tinggi) dan `REFRESH_REUSED`
-    - _Requirements: 1.4, 3.3_
+- [x] 8. Health endpoint
+  - _Requirements: 8.1, 8.2, 8.3_
+
+- [x] 9. Build & verify
+  - _Requirements: 9.1, 9.2, 9.3, 9.4, 9.5, 9.6, 9.7, 9.8_
+
+- [ ] 10. Observability (tambahan dari spec)
+  - [ ] 10.1 Metrik `rbt_user_*` + alert brute force / `REFRESH_REUSED`, setelah OQ-5
     - _Depends on: platform 4.2_
-
-- [ ] 7. Final checkpoint
-  - `make ci` hijau; TC-USR-01..12 lulus; TC-MSG-05/06 lulus setelah task 3
-  - Tanyakan ke user untuk OQ-4 dan OQ-9
+    - _Requirements: 1.4, 3.3_
 
 ## Notes
-
-- Spec lama menyatakan "rollout: token lama tanpa klaim akan gagal validasi" — tidak benar: token lama
-  tetap lolos verifikasi (klaim identitas `omitempty`) dan diperlakukan `has_nik = false` sampai
-  di-refresh (≤ `TOKEN_ACCESS_TTL` 15 menit). Tidak perlu langkah rollout khusus.
-- Riwayat pesanan (`/me/bookings`) milik Booking (OQ-10), bukan task User.
+- Token lama tanpa klaim identitas tetap valid dan dianggap `has_nik = false` sampai di-refresh; tidak perlu langkah rollout khusus.
+- Riwayat pesanan (`/me/bookings`) milik Booking.

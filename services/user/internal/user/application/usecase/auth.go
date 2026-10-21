@@ -33,17 +33,17 @@ type AuthSettings struct {
 
 // AuthDeps are the driven ports of the auth usecase.
 type AuthDeps struct {
-	Accounts outbound.IAccountRepository
-	Sessions outbound.ISessionRepository
-	Audit    outbound.ILoginAudit
-	OTP      outbound.IOTPStore
-	Limiter  outbound.IRateLimiter
-	Mailer   outbound.IMailer
-	Tokens   outbound.ITokenIssuer
-	Secrets  outbound.ISecretGenerator
-	PII      outbound.IPIIProtector
-	Clock    clock.IClock
-	Logger   *slog.Logger
+	Accounts  outbound.IAccountRepository
+	Sessions  outbound.ISessionRepository
+	Audit     outbound.ILoginAudit
+	OTP       outbound.IOTPStore
+	Limiter   outbound.IRateLimiter
+	Publisher outbound.IOTPPublisher
+	Tokens    outbound.ITokenIssuer
+	Secrets   outbound.ISecretGenerator
+	PII       outbound.IPIIProtector
+	Clock     clock.IClock
+	Logger    *slog.Logger
 }
 
 // Auth implements inbound.IAuthUsecase.
@@ -95,12 +95,24 @@ func (u *Auth) RequestOTP(ctx context.Context, req dto.RequestOTPRequest, client
 		return dto.RequestOTPResponse{}, inbound.ErrOTPResendTooSoon.WithDetails(map[string]string{
 			"retryAfterSeconds": strconv.Itoa(int(u.s.ResendCooldown.Seconds()))})
 	}
-	if err := u.d.Mailer.SendOTP(ctx, email.String(), code, u.s.OTPTTL); err != nil {
+	// Enkripsi email dan kode sebelum dipublish — OTP adalah secret, tidak boleh plaintext di broker (SRS-F-27-12).
+	emailEnc, err := u.d.PII.SealEmail(email.String())
+	if err != nil {
+		_ = u.d.OTP.Clear(ctx, key)
+		return dto.RequestOTPResponse{}, apperror.Internal(fmt.Errorf("seal email: %w", err))
+	}
+	codeEnc, err := u.d.PII.SealOTP(code)
+	if err != nil {
+		_ = u.d.OTP.Clear(ctx, key)
+		return dto.RequestOTPResponse{}, apperror.Internal(fmt.Errorf("seal otp: %w", err))
+	}
+	expiresAt := u.d.Clock.Now().Add(u.s.OTPTTL)
+	if err := u.d.Publisher.PublishOTP(ctx, emailEnc, codeEnc, expiresAt); err != nil {
 		if cerr := u.d.OTP.Clear(ctx, key); cerr != nil {
-			u.d.Logger.Warn("gagal menghapus otp setelah email gagal", "error", cerr)
+			u.d.Logger.Warn("gagal menghapus otp setelah publish gagal", "error", cerr)
 		}
-		u.d.Logger.Error("kirim email otp gagal", "error", err)
-		return dto.RequestOTPResponse{}, inbound.ErrMailUnavailable
+		u.d.Logger.Error("publish otp.requested gagal", "error", err)
+		return dto.RequestOTPResponse{}, inbound.ErrPublishFailed
 	}
 	u.audit(ctx, entity.LoginEvent{EmailHash: emailHash, Outcome: entity.AuditOTPSent, ClientIP: client.IP})
 	return dto.RequestOTPResponse{ExpiresInSeconds: int(u.s.OTPTTL.Seconds()), ResendAfterSeconds: int(u.s.ResendCooldown.Seconds())}, nil

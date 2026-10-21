@@ -1,4 +1,4 @@
-// Package config holds the User Service configuration. Nama variabel mengikuti konvensi D-24
+// Package config holds the User Service configuration. Nama variable mengikuti konvensi D-24
 // (APP_*, LOG_*, POSTGRES_*, VALKEY_*, RABBITMQ_*) dan divalidasi saat start (fail fast).
 package config
 
@@ -42,10 +42,10 @@ type Config struct {
 	Postgres postgres.Config
 	Valkey   valkey.Config
 
-	Token Token
-	OTP   OTP
-	PII   PII
-	SMTP  SMTP
+	Token    Token
+	OTP      OTP
+	PII      PII
+	RabbitMQ RabbitMQ
 }
 
 // Validate checks cross-field rules.
@@ -66,7 +66,7 @@ func (c Config) Validate() error {
 	errs = append(errs, c.Postgres.Validate())
 	errs = append(errs, c.Valkey.Validate())
 
-	errs = append(errs, c.Token.Validate(), c.OTP.Validate(), c.PII.Validate(), c.SMTP.Validate())
+	errs = append(errs, c.Token.Validate(), c.OTP.Validate(), c.PII.Validate(), c.RabbitMQ.Validate())
 	if err := errors.Join(errs...); err != nil {
 		return fmt.Errorf("config tidak valid: %w", err)
 	}

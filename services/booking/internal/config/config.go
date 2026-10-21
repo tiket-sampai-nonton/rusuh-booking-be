@@ -1,4 +1,4 @@
-// Package config holds the Booking Service configuration. Nama variabel mengikuti konvensi D-24
+// Package config holds the Booking Service configuration. Nama variable mengikuti konvensi D-24
 // (APP_*, LOG_*, POSTGRES_*, VALKEY_*, RABBITMQ_*) dan divalidasi saat start (fail fast).
 package config
 

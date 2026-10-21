@@ -1,4 +1,4 @@
-// Package config holds the Notification Service configuration. Nama variabel mengikuti konvensi D-24
+// Package config holds the Notification Service configuration. Nama variable mengikuti konvensi D-24
 // (APP_*, LOG_*, POSTGRES_*, VALKEY_*, RABBITMQ_*) dan divalidasi saat start (fail fast).
 package config
 
@@ -33,14 +33,55 @@ type Worker struct {
 	Interval time.Duration
 }
 
+// SMTP holds the email sender settings (SES / Mailpit).
+type SMTP struct {
+	Host     string
+	Port     int
+	User     string
+	Password string
+	From     string
+	Timeout  time.Duration
+}
+
+// FCM holds the push sender settings (FCM HTTP v1).
+type FCM struct {
+	ProjectID       string
+	CredentialsPath string
+}
+
+// PII holds the field-level protection keys (hex, 32 bytes each). EncKeyHex is shared with the
+// User Service so otp.requested ciphertext opens here.
+type PII struct {
+	EncKeyHex  string
+	HashKeyHex string
+}
+
+// Token holds the visitor-token verification settings (public key minted by Queue Service).
+type Token struct {
+	PublicKeyFile string
+	KeyID         string
+	Issuer        string
+	Audience      string
+}
+
+// Subscription holds push-subscription policy.
+type Subscription struct {
+	TTL time.Duration
+}
+
 // Config is the full service configuration.
 type Config struct {
-	App      App
-	Log      logger.Config
-	HTTP     HTTP
-	Worker   Worker
-	Postgres postgres.Config
-	RabbitMQ rabbitmq.Config
+	App          App
+	Log          logger.Config
+	HTTP         HTTP
+	Worker       Worker
+	Postgres     postgres.Config
+	RabbitMQ     rabbitmq.Config
+	SMTP         SMTP
+	FCM          FCM
+	PII          PII
+	Token        Token
+	Subscription Subscription
 }
 
 // Validate checks cross-field rules.
@@ -60,6 +101,8 @@ func (c Config) Validate() error {
 	errs = append(errs, c.Log.Validate())
 	errs = append(errs, c.Postgres.Validate())
 	errs = append(errs, c.RabbitMQ.Validate())
+	// SMTP/FCM/PII/Token are only needed by the worker; they are parsed and validated in the module
+	// wiring (newNotificationModule) so the api verb and /health unit tests boot without them.
 	if err := errors.Join(errs...); err != nil {
 		return fmt.Errorf("config tidak valid: %w", err)
 	}

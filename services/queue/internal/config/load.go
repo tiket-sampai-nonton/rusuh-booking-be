@@ -65,7 +65,40 @@ func Load() (Config, error) {
 		ConfirmWait:  r.Duration("RABBITMQ_CONFIRM_TIMEOUT", 5*time.Second),
 	}
 
-	// Kesalahan parsing dan validasi dilaporkan bersama agar semua variabel yang salah terlihat sekaligus.
+	cfg.Token = Token{
+		Issuer:         r.String("TOKEN_ISSUER", "rbt-queue"),
+		Audience:       r.String("TOKEN_AUDIENCE", "rbt"),
+		KeyID:          r.String("TOKEN_KEY_ID", "queue-1"),
+		PrivateKeyFile: r.String("TOKEN_PRIVATE_KEY_FILE", ""),
+		PublicKeyFile:  r.String("TOKEN_PUBLIC_KEY_FILE", ""),
+		AdmissionTTL:   r.Duration("TOKEN_ADMISSION_TTL", 60*time.Second),
+		VisitorTTL:     r.Duration("TOKEN_VISITOR_TTL", 24*time.Hour),
+		QueueTTL:       r.Duration("TOKEN_QUEUE_TTL", time.Hour),
+	}
+	cfg.PII = PII{
+		EncKeyHex:  r.String("PII_ENC_KEY", ""),
+		HashKeyHex: r.String("PII_HMAC_KEY", ""),
+	}
+	cfg.Booking = Booking{
+		BaseURL: r.String("BOOKING_SERVICE_URL", ""),
+		Timeout: r.Duration("BOOKING_TIMEOUT", 3*time.Second),
+	}
+	cfg.RateLimit = RateLimit{
+		JoinPerEmailWindow: r.Duration("RATE_LIMIT_JOIN_PER_EMAIL_WINDOW", time.Minute),
+		JoinPerIPWindow:    r.Duration("RATE_LIMIT_JOIN_PER_IP_WINDOW", time.Minute),
+		MePerVisitorWindow: r.Duration("RATE_LIMIT_ME_PER_VISITOR_WINDOW", time.Minute),
+		JoinPerEmail:       r.Int("RATE_LIMIT_JOIN_PER_EMAIL", 5),
+		JoinPerIP:          r.Int("RATE_LIMIT_JOIN_PER_IP", 60),
+		MePerVisitor:       r.Int("RATE_LIMIT_ME_PER_VISITOR", 120),
+	}
+	cfg.WorkerTuning = WorkerTuning{
+		PromotorInterval: r.Duration("QUEUE_PROMOTOR_INTERVAL_MS", 100*time.Millisecond),
+		SweeperInterval:  r.Duration("QUEUE_SWEEPER_INTERVAL_MS", 10*time.Second),
+		StatusInterval:   r.Duration("QUEUE_STATUS_INTERVAL_MS", time.Second),
+		PromoteBatchMax:  r.Int("QUEUE_PROMOTE_BATCH_MAX", 200),
+	}
+
+	// Kesalahan parsing dan validasi dilaporkan bersama agar semua variable yang salah terlihat sekaligus.
 	if err := errors.Join(append(parseErrs, r.Err(), cfg.Validate())...); err != nil {
 		return Config{}, fmt.Errorf("config: %w", err)
 	}

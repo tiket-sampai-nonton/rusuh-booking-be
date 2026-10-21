@@ -55,7 +55,33 @@ func Load() (Config, error) {
 		ConfirmWait:  r.Duration("RABBITMQ_CONFIRM_TIMEOUT", 5*time.Second),
 	}
 
-	// Kesalahan parsing dan validasi dilaporkan bersama agar semua variabel yang salah terlihat sekaligus.
+	cfg.SMTP = SMTP{
+		Host:     r.String("SMTP_HOST", "localhost"),
+		Port:     r.Int("SMTP_PORT", 1025),
+		User:     r.String("SMTP_USER", ""),
+		Password: r.String("SMTP_PASSWORD", ""),
+		From:     r.String("SMTP_FROM", "no-reply@rusuh.example"),
+		Timeout:  r.Duration("SMTP_TIMEOUT", 10*time.Second),
+	}
+	cfg.FCM = FCM{
+		ProjectID:       r.String("FCM_PROJECT_ID", ""),
+		CredentialsPath: r.String("FCM_CREDENTIALS_PATH", ""),
+	}
+	cfg.PII = PII{
+		EncKeyHex:  r.String("PII_ENC_KEY", ""),
+		HashKeyHex: r.String("PII_HASH_KEY", ""),
+	}
+	cfg.Token = Token{
+		PublicKeyFile: r.String("TOKEN_PUBLIC_KEY_FILE", ""),
+		KeyID:         r.String("TOKEN_KEY_ID", "visitor-key-1"),
+		Issuer:        r.String("TOKEN_ISSUER", "rusuh-queue"),
+		Audience:      r.String("TOKEN_AUDIENCE", "rusuh-visitor"),
+	}
+	cfg.Subscription = Subscription{
+		TTL: r.Duration("SUBSCRIPTION_TTL", 72*time.Hour),
+	}
+
+	// Kesalahan parsing dan validasi dilaporkan bersama agar semua variable yang salah terlihat sekaligus.
 	if err := errors.Join(append(parseErrs, r.Err(), cfg.Validate())...); err != nil {
 		return Config{}, fmt.Errorf("config: %w", err)
 	}

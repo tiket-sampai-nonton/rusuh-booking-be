@@ -23,9 +23,10 @@ type IRateLimiter interface {
 	Allow(ctx context.Context, key string, limit int, window time.Duration) (bool, error)
 }
 
-// IMailer sends the OTP email.
-type IMailer interface {
-	SendOTP(ctx context.Context, to, code string, ttl time.Duration) error
+// IOTPPublisher publishes otp.requested events to the broker so Notification Service
+// sends the email. Email dan code dienkripsi AES-256-GCM sebelum dipublish (SRS-F-27-12).
+type IOTPPublisher interface {
+	PublishOTP(ctx context.Context, emailEnc, codeEnc []byte, expiresAt time.Time) error
 }
 
 // ITokenIssuer signs access tokens.
@@ -44,6 +45,7 @@ type IPIIProtector interface {
 	HashEmail(email string) []byte
 	SealEmail(email string) ([]byte, error)
 	UnsealEmail(enc []byte) (string, error)
+	SealOTP(code string) ([]byte, error)
 	HashNIK(nik string) []byte
 	SealNIK(nik string) ([]byte, error)
 	HashOTP(emailHash []byte, code string) []byte

@@ -1,4 +1,4 @@
-// Package config holds the Queue Service configuration. Nama variabel mengikuti konvensi D-24
+// Package config holds the Queue Service configuration. Nama variable mengikuti konvensi D-24
 // (APP_*, LOG_*, POSTGRES_*, VALKEY_*, RABBITMQ_*) dan divalidasi saat start (fail fast).
 package config
 
@@ -43,6 +43,12 @@ type Config struct {
 	Postgres postgres.Config
 	Valkey   valkey.Config
 	RabbitMQ rabbitmq.Config
+
+	Token        Token
+	PII          PII
+	Booking      Booking
+	RateLimit    RateLimit
+	WorkerTuning WorkerTuning
 }
 
 // Validate checks cross-field rules.
@@ -63,6 +69,7 @@ func (c Config) Validate() error {
 	errs = append(errs, c.Postgres.Validate())
 	errs = append(errs, c.Valkey.Validate())
 	errs = append(errs, c.RabbitMQ.Validate())
+	errs = append(errs, c.Token.Validate(), c.PII.Validate(), c.Booking.Validate())
 	if err := errors.Join(errs...); err != nil {
 		return fmt.Errorf("config tidak valid: %w", err)
 	}

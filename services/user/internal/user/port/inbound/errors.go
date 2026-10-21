@@ -30,7 +30,7 @@ var (
 	ErrSessionInvalid   = apperror.New(CodeSessionInvalid, http.StatusUnauthorized, "sesi tidak valid; silakan login ulang")
 	ErrAccountDisabled  = apperror.New(CodeAccountDisabled, http.StatusForbidden, "akun dinonaktifkan")
 	ErrNIKAlreadyLinked = apperror.New(CodeNIKAlreadyLinked, http.StatusConflict, "NIK ini sudah tertaut ke akun lain")
-	ErrMailUnavailable  = apperror.New(apperror.CodeDependencyUnavailable, http.StatusServiceUnavailable, "email OTP belum bisa dikirim; coba lagi")
+	ErrPublishFailed    = apperror.New(apperror.CodeDependencyUnavailable, http.StatusServiceUnavailable, "gagal publish event OTP; coba lagi")
 )
 
 // ErrNothingToUpdate is returned by UpdateProfile when no field is sent.

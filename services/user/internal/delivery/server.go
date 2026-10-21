@@ -45,5 +45,5 @@ func NewHandler(cfg config.Config, clients *Clients, logger *slog.Logger) (http.
 	userhttp.NewHealthHandler(health).Register(mux)
 	auth.Register(mux)
 
-	return httpx.Chain(mux, httpx.RequestID(), httpx.Recover(logger)), nil
+	return httpx.Chain(mux, httpx.CORS(), httpx.RequestID(), httpx.Recover(logger)), nil
 }

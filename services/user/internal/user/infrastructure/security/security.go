@@ -69,6 +69,11 @@ func (p *PII) HashOTP(emailHash []byte, code string) []byte {
 	return p.otpHasher.Hash(fmt.Sprintf("%x:%s", emailHash, code))
 }
 
+// SealOTP encrypts the OTP code for transport in the otp.requested event payload.
+func (p *PII) SealOTP(code string) ([]byte, error) {
+	return p.sealer.Seal([]byte(code), []byte("otp.requested.code"))
+}
+
 // HashRefreshToken returns SHA-256 of a high-entropy random token (tidak perlu kunci).
 func (p *PII) HashRefreshToken(raw string) []byte {
 	sum := sha256.Sum256([]byte(raw))
