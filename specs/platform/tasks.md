@@ -40,9 +40,16 @@ Setiap task selesai bila `make ci` hijau.
   - [ ] 2.5 Unit test: cookie vs header menghasilkan identitas sama; token kedaluwarsa; issuer tak dikenal; `aud` salah
     - **Property 4: Internal API closed**, **Property 5: Same auth for web and mobile**
     - _Requirements: 2.1, 2.3_
+  - [ ] 2.6 Format error standar: `pkg/apperror` mengirim hanya `{meta:{code, message}}` dengan `message = "KODE: pesan"` (atau pesan umum untuk 5xx); `requestId` di header `X-Request-ID`; `httpx.WriteError` menulis kode error, detail, error asli, dan payload request (diredaksi lewat 4.4) ke log. Satu perubahan di `pkg/` berlaku untuk lima service; beri tahu tim web/mobile
+    - _Requirements: 2.8, 2.9_
+    - _Depends on: 4.4_
+  - [x] 2.7 `httpx.CORS()` untuk lokal (DEV-2); pastikan hanya dipasang saat `APP_ENV=local`
+    - _Requirements: 2.10_
+  - Catatan: visitor auth sekarang ditulis ulang di tiap service (`security/visitor_auth.go`). Setelah 2.1 selesai, service bisa pindah ke versi `pkg/httpx`; tidak wajib sebelum demo
   - _Depends on: 6.1 (kunci Queue & service lokal untuk test integrasi)_
 
 - [ ] 3. Implement `pkg/outbox` (Write + Relay)
+  - Catatan: Booking sudah punya relay sendiri (`booking/infrastructure/rabbitmq` `NewOutboxRelay`). Cara termudah: pindahkan relay itu ke `pkg/outbox`, lalu pakai juga di Payment
   - [ ] 3.1 `Write(ctx, tx, Message)` menyisipkan ke `outbox_events` dengan tx pemanggil
     - _Requirements: 3.1_
     - _Design: §3_
@@ -110,7 +117,7 @@ Setiap task selesai bila `make ci` hijau.
   - [ ] 8.3 Pastikan `scan-package` gagal pada temuan critical/high tanpa file risk-acceptance
     - _Requirements: 8.4_
 
-- [ ] 9. Tooling operasional
+- [ ] 9. Tooling operasional — **prioritas rendah** (setelah demo lokal jalan)
   - [ ] 9.1 `tools/reconcile` (Cobra): kerangka pemeriksaan per service + lintas service via endpoint internal; metrik `rbt_reconcile_violations{check}`; laporan JSON
     - _Requirements: 9.1_
     - _Depends on: 4.2, booking task 16, payment task 9_
@@ -119,7 +126,7 @@ Setiap task selesai bila `make ci` hijau.
   - [ ] 9.3 `tools/redrive`: DLQ → queue utama dengan batas jumlah dan audit
     - _Requirements: 9.3_
 
-- [ ] 10. Test lintas service & evidence
+- [ ] 10. Test lintas service & evidence — **prioritas rendah** (setelah demo lokal jalan)
   - [ ] 10.1 `tests/features/*.feature` (godog): alur bahagia, expiry, cancel, sold out, edit, navigasi pemulihan
     - _Requirements: 10.1_
   - [ ] 10.2 `tests/k6/`: TC-PERF-01..05
@@ -130,7 +137,7 @@ Setiap task selesai bila `make ci` hijau.
     - _Requirements: 10.4_
   - _Depends on: service specs selesai_
 
-- [ ] 11. Deployment cloud
+- [ ] 11. Deployment cloud — **prioritas rendah** (setelah demo lokal jalan)
   - [ ] 11.1 Modul Terraform `network`, `edge` (CloudFront + WAF), `alb`, `asg`, `stateful`, `iam-oidc`, `budget`; environment `staging` `ap-southeast-3`
     - _Requirements: 11.1, 11.5_
   - [ ] 11.2 Header rahasia CloudFront → ALB; ALB tolak tanpa header (403); `/internal/*` tidak dirutekan
@@ -142,12 +149,28 @@ Setiap task selesai bila `make ci` hijau.
   - [ ] 11.5 Demonstrasi backup/restore PostgreSQL + evidence
     - _Requirements: 11.6_
 
-- [ ] 12. Checkpoint — platform siap dipakai service
+- [ ] 12. Penyelarasan event lintas service
+  - [ ] 12.1 Konstanta bersama routing key + nama queue di `pkg/rabbitmq`, lalu ganti string di kelima service dalam satu PR (sekalian pindah ke `.v1`). Koordinasikan dengan DEV-2 karena menyentuh Booking, Queue, User
+    - _Requirements: 12.1, 12.2_
+  - [ ] 12.2 Test kontrak payload di CI untuk semua event; harus menangkap defect `booking.journey.ended` (booking 12.R1)
+    - _Requirements: 12.3_
+    - _Depends on: 5.1_
+
+- [ ] 13. Retensi data pribadi
+  - [ ] 13.1 Tetapkan env bersama: `PII_RETENTION_DAYS_AFTER_EVENT=30`, `OUTBOX_RETENTION_DAYS=7` + validasi; dokumentasikan kebijakan di README deployment
+    - _Requirements: 13.1, 13.5_
+  - [ ] 13.2 Retensi log 30 hari di konfigurasi deployment (compose: rotasi log driver; cloud: retensi log group)
+    - _Requirements: 13.1_
+  - [ ] 13.3 Pastikan job per service ada: booking 15.2 & 15.3, queue 17.1, notification 12.1, payment 14.1 (outbox) — semua idempoten, ber-metrik, tanpa PII di log
+    - _Requirements: 13.2, 13.3, 13.4_
+
+- [ ] 14. Checkpoint — platform siap dipakai service
   - `make ci` hijau; `pkg/nik`, middleware, `pkg/outbox`, redaksi logger tersedia dengan coverage ≥ 80%
   - Kontrak tervalidasi di CI; OQ-4 dan OQ-5 sudah diputuskan atau dicatat sebagai blocker di spec service
   - Tanyakan ke user bila ada keputusan yang tertunda
 
 ## Notes
+- Urutan kerja yang disarankan untuk owner platform: 2.6 (format error) → 4.4 (redaksi log) → 5.2 (schema OTP) → 1 (`pkg/nik`) → 3 (`pkg/outbox`) → 7 (local) → 12 → 13. Task 9, 10, 11 menyusul setelah alur lokal jalan end-to-end.
 
 - Task bertanda **blocked** menunggu open question di `specs/README.md`; jangan diimplementasikan dengan asumsi.
 - Task 5.2 mengubah `docs/contracts/` — perubahan kontrak harus additive dan direview pemilik kontrak (ADR-017: klien mengunci ref).

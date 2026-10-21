@@ -1,13 +1,19 @@
-# Owner per komponen mengikuti HLD (AD-RBT-001) tabel komponen.
-# GANTI placeholder @GANTI-HANDLE-BE1 / @GANTI-HANDLE-BE2 / @GANTI-HANDLE-FE dengan username GitHub anggota tim.
-*                         @GANTI-HANDLE-BE1 @GANTI-HANDLE-BE2
-/services/queue/          @GANTI-HANDLE-BE1
-/services/notification/   @GANTI-HANDLE-BE1
-/services/user/           @GANTI-HANDLE-BE1
-/pkg/                     @GANTI-HANDLE-BE1 @GANTI-HANDLE-BE2
-/pkg/eventstore/          @GANTI-HANDLE-BE2
-/services/booking/        @GANTI-HANDLE-BE2
-/services/payment/        @GANTI-HANDLE-BE2
-/deployments/             @GANTI-HANDLE-BE1
-/docs/                    @GANTI-HANDLE-BE1 @GANTI-HANDLE-BE2
-/docs/contracts/          @GANTI-HANDLE-BE1 @GANTI-HANDLE-BE2 @GANTI-HANDLE-FE
+# Owner per komponen mengikuti pembagian kerja tim (2026-10-21):
+#   @arnu12rahman (BE-1) — Notification, Payment, platform (pkg/, deployments/, tools/, CI)
+#   @nuzirwan     (BE-2) — User, Queue, Booking, pkg/eventstore
+# GANTI @GANTI-HANDLE-FE dengan username GitHub tim frontend.
+# Baris yang lebih bawah menimpa baris di atasnya untuk path yang sama.
+*                         @arnu12rahman @nuzirwan
+/services/notification/   @arnu12rahman
+/services/payment/        @arnu12rahman
+/services/user/           @nuzirwan
+/services/queue/          @nuzirwan
+/services/booking/        @nuzirwan
+/pkg/                     @arnu12rahman
+/pkg/eventstore/          @nuzirwan
+/deployments/             @arnu12rahman
+/tools/                   @arnu12rahman
+/.github/                 @arnu12rahman
+/docs/                    @arnu12rahman @nuzirwan
+/docs/contracts/          @arnu12rahman @nuzirwan @reyisaacm @rohmanureldi @Schitzos
+/specs/                   @arnu12rahman @nuzirwan

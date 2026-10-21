@@ -6,3 +6,6 @@ Catat setiap penggunaan AI yang berarti: tanggal, alat, tujuan, prompt/spec, has
 | Tanggal | Alat | Tujuan | Artefak | Direview oleh |
 |---|---|---|---|---|
 | 2026-10-17 | Claude | Pemecahan PRD v4.6 menjadi set dokumen; skeleton repo BE | `docs/`, seluruh repo awal | |
+| 2026-10-21 | Claude Code (Opus 5.5) | Audit docs → refactor `specs/` ke format Kiro (requirements, design, tasks) + spec `platform/`; register konflik K1–K12 dan OQ-1..22 | `specs/**` | arnu12rahman |
+| 2026-10-21 | Claude Code (Opus 5.5) | Verifikasi kode DEV-2 dan jawaban OQ DEV-2; resolve konflik merge 5 `tasks.md` (task DEV-2 dipertahankan + rework R) | `specs/*/tasks.md`, `specs/*/.progress.json`, commit `ee90521` | arnu12rahman |
+| 2026-10-21 | Claude Code (Opus 5.5) | Keputusan format error (code + message), retensi & enkripsi PII, penyederhanaan event Payment; restrukturisasi `docs/` ke `docs/analisa/`; CODEOWNERS | `specs/**`, `docs/**`, `.github/CODEOWNERS`, `.kiro/steering/*` (path) | arnu12rahman |

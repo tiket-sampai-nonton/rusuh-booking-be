@@ -1,5 +1,5 @@
 {
-  "status": "COMPLETE",
+  "status": "IN_PROGRESS",
   "summary": "Queue Service business logic fully implemented: domain DTOs/mappers/errors, inbound ports+error mapping, Valkey store (5 Lua) + rate limiter, Postgres event_settings + entry_audit repos, Booking HTTP client w/ circuit breaker, RabbitMQ publisher + consumer, 5 usecases (join/status/my_entry/claim/leave), 5 HTTP handlers, 3 workers (promoter/sweeper/status-publisher), security adapters (PII/tokens/visitor-auth), and composition-root wiring (queue_module + server + worker).",
   "verification": {
     "go build ./...": "OK",
@@ -8,5 +8,22 @@
     "golangci-lint": "0 issues"
   },
   "skipped": "Unit tests for infrastructure/postgres and infrastructure/valkey adapters: per .kiro/steering/testing-review.md these are covered by integration tests (//go:build integration) against real PostgreSQL/Valkey (Lua), run via make test-integration. All other new code has table-driven unit tests with mocks.",
-  "updatedAt": "2026-10-20T23:05:00+07:00"
+  "updatedAt": "2026-10-20T23:05:00+07:00",
+  "previousStatus": "COMPLETE",
+  "reworkTasks": [
+    "1.R1",
+    "4.1",
+    "6.R1",
+    "8.R1",
+    "9.R1",
+    "11.R1",
+    "11.R2",
+    "11.R3",
+    "11.R4",
+    "12.R1",
+    "13.R1",
+    "14.R1",
+    "16.1"
+  ],
+  "mergeNote": "2026-10-21: tasks.md digabung dengan spec terbaru; sub-task R = perbaikan kode yang sudah ada. Lihat tasks.md."
 }

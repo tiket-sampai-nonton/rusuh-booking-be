@@ -5,4 +5,4 @@
 - `contract/` — contract test antar-service
 - `apidog/` — koleksi Apidog
 
-Lihat Test Plan `docs/test/06-TP-RBT-001.md`.
+Lihat Test Plan `docs/analisa/06-TP-RBT-001.md`.

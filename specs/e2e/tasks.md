@@ -6,6 +6,11 @@
 | Prerequisite | All 5 services implemented and passing unit/integration tests |
 | Test Fixtures | `tests/features/`, `tests/apidog/`, `tests/k6/` |
 
+> Catatan penggabungan (2026-10-21): file ini dari DEV-2 dan menjadi rincian platform Requirement 10
+> (`platform/tasks.md` task 10). Journey 2, 3, 4, dan 6 baru bisa lulus setelah rework yang memutus alur
+> selesai: booking 6.R1, 10.R1, 12.R1, 4.R1, Task 13; queue 8.R1, 11.R1. Journey 4 juga butuh
+> Payment Service (belum ada).
+
 ## Workflow
 
 ```

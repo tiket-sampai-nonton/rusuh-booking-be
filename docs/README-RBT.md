@@ -3,8 +3,8 @@
 | Field | Value |
 |-------|-------|
 | **Document ID** | README-RBT |
-| **Version** | 1.5 |
-| **Date** | 2026-10-19 |
+| **Version** | 1.6 |
+| **Date** | 2026-10-21 |
 | **Source** | PRD v4.6 Final Canonical (16 Oktober 2026), dipecah tanpa mengubah requirement, alur customer, kontrak API publik, maupun jaminan |
 
 **Struktur proyek kode wajib mengikuti standar proyek organisasi** (hexagon per domain dengan `port/inbound`/`port/outbound`, `domain/{entity,valueobject,dto,mapper}`, `application/usecase`, `infrastructure`, `delivery`, `_mock`). Detail di SDD §4.1, Engineering Handbook §0, dan ADR-016; struktur monorepo Lampiran F v4.6 tidak dipakai lagi.
@@ -19,14 +19,32 @@ PRD v4.6 menggabungkan PRD, SRS, HLD, LLD, keputusan arsitektur, rencana penguji
 
 | # | File | Document ID | Acuan | Isi |
 |---|------|-------------|-------|-----|
-| 00 | `00-README-RBT.md` | README-RBT | ISO/IEC/IEEE 15289 (set dokumen) | Peta dokumen, konvensi ID, tabel konversi v4.6, riwayat |
-| 01 | `01-PRD-RBT-001-v5.0.md` | PRD-RBT-001 v5.2 | Praktik industri; konsep BRS/StRS ISO/IEC/IEEE 29148, ISO 9241-210, ISO/IEC 25010 | Masalah, goals, metrik, persona, user story + acceptance criteria, business rules, asumsi, rilis, risiko, wireframe |
-| 02 | `02-SRS-RBT-001.md` | SRS-RBT-001 v1.1 | ISO/IEC/IEEE 29148:2018, ISO/IEC 25010:2023 | Requirement "shall" per capability, interface, quality, data, constraint, RTM |
-| 03 | `03-HLD-AD-RBT-001.md` | AD-RBT-001 v1.3 | ISO/IEC/IEEE 42010:2022 | Stakeholder, concern, viewpoint, 8 view, correspondence, risiko teknis |
-| 04 | `04-SDD-RBT-001.md` | SDD-RBT-001 v1.3 | IEEE 1016-2009; notasi UML (ISO/IEC 19505) | Struktur modul, kontrak, DDL, locking, state machine, algoritme, konfigurasi |
-| 05 | `05-ADR-RBT.md` | ADR-RBT v1.2 | Konsep decision & rationale ISO/IEC/IEEE 42010; format Nygard/MADR | ADR-001 … ADR-022 + matriks trade-off |
-| 06 | `06-TP-RBT-001.md` | TP-RBT-001 v1.2 | ISO/IEC/IEEE 29119-3:2021, 29119-4 | Strategi, release gate, katalog test, harness, evidence, technical defense |
-| 07 | `07-Engineering-Handbook-RBT.md` | EHB-RBT v1.3 | Praktik engineering | Repository, pipeline, Docker Compose, Git/CI/security/logging, aturan AI/Kiro |
+| 00 | `README-RBT.md` | README-RBT | ISO/IEC/IEEE 15289 (set dokumen) | Peta dokumen, konvensi ID, tabel konversi v4.6, riwayat |
+| 01 | `analisa/01-PRD-RBT-001-v5.0.md` | PRD-RBT-001 v5.2 | Praktik industri; konsep BRS/StRS ISO/IEC/IEEE 29148, ISO 9241-210, ISO/IEC 25010 | Masalah, goals, metrik, persona, user story + acceptance criteria, business rules, asumsi, rilis, risiko, wireframe |
+| 02 | `analisa/02-SRS-RBT-001.md` | SRS-RBT-001 v1.1 | ISO/IEC/IEEE 29148:2018, ISO/IEC 25010:2023 | Requirement "shall" per capability, interface, quality, data, constraint, RTM |
+| 03 | `analisa/03-HLD-AD-RBT-001.md` | AD-RBT-001 v1.3 | ISO/IEC/IEEE 42010:2022 | Stakeholder, concern, viewpoint, 8 view, correspondence, risiko teknis |
+| 04 | `analisa/04-SDD-RBT-001.md` | SDD-RBT-001 v1.3 | IEEE 1016-2009; notasi UML (ISO/IEC 19505) | Struktur modul, kontrak, DDL, locking, state machine, algoritme, konfigurasi |
+| 05 | `analisa/05-ADR-RBT.md` | ADR-RBT v1.2 | Konsep decision & rationale ISO/IEC/IEEE 42010; format Nygard/MADR | ADR-001 … ADR-022 + matriks trade-off |
+| 06 | `analisa/06-TP-RBT-001.md` | TP-RBT-001 v1.2 | ISO/IEC/IEEE 29119-3:2021, 29119-4 | Strategi, release gate, katalog test, harness, evidence, technical defense |
+| 07 | `analisa/07-Engineering-Handbook-RBT.md` | EHB-RBT v1.3 | Praktik engineering | Repository, pipeline, Docker Compose, Git/CI/security/logging, aturan AI/Kiro |
+| 04a–04e | `analisa/04a-SDD-QUEUE-001.md` … `analisa/04e-SDD-USER-001.md` | SDD per service | IEEE 1016-2009 | Ringkasan desain per service (Queue, Booking, Payment, Notification, User); bila berbeda, `04-SDD-RBT-001` yang berlaku |
+| 04f–04g | `analisa/04f-E2E-VERIFICATION.md`, `analisa/04g-E2E-FLOW-DIAGRAMS-MERMAID.md` | — | — | Matriks verifikasi end-to-end dan diagram alur |
+| 04 (indeks) | `analisa/04-SDD-INDEX.md` | — | — | Indeks SDD dan ringkasan komunikasi antar service |
+| 08–08c | `analisa/08-INTEGRATION-INDEX.md`, `08a-frontend-integration.md`, `08b-payment-gateway-integration.md`, `08c-inter-service-communication.md` | — | — | Panduan integrasi FE, Midtrans, dan antar service |
+| 09 | `analisa/09-Panduan-Lokal-dan-Implementasi.md` | — | — | Persiapan lokal, urutan coding, dan peta dokumen untuk developer |
+
+### Struktur folder `docs/` (v1.6)
+
+```
+docs/
+├── README-RBT.md     indeks ini
+├── analisa/          semua dokumen planning dalam satu folder datar (PRD, SRS, HLD, SDD, ADR, TP, handbook, integrasi)
+├── contracts/        kontrak normatif: openapi/*.yaml dan events/*.schema.json
+├── ai-log/           catatan setiap penggunaan AI (wajib, tidak boleh dihapus — SRS-C-06)
+└── evidence/         bukti uji dan catatan diskusi yang mengubah dokumen planning
+```
+
+Spesifikasi implementasi (requirements → design → tasks) ada di `specs/` di root repo.
 
 ---
 
@@ -607,3 +625,10 @@ Sumber: `Perbedaan-Desain-BE-Kita-vs-BE2.xlsx`. Perubahan requirement (akun opsi
 | D-47 | Sweeper adalah job worker Booking/Payment/Queue, bukan service | SDD §4.1.2, Handbook §3.0 | `delivery/worker.go` |
 | D-48 | Slot aktif dilepas saat booking `PAID` (sudah sesuai v4.6) | SRS-F-06-08, SDD §4.1.2 | — |
 | D-09, D-28, D-29, D-39, D-42..D-44 | Ditunda; dibahas ulang setelah Sprint 1 | — | — |
+
+## 9. Perubahan v1.6 (21 Oktober 2026)
+
+- Dokumen planning dipindah ke satu folder datar `docs/analisa/` (sebelumnya `prd/`, `srs/`, `hld/`, `sdd/`, `adr/`, `test/`, `handbook/`, `integration/`). SDD per service diberi awalan `04a`–`04e`, dokumen integrasi `08`–`08c`. Semua rujukan di repo sudah diperbarui.
+- `contracts/`, `ai-log/`, dan `evidence/` tetap terpisah. Setiap sesi AI dicatat di `ai-log/`; setiap diskusi yang mengubah dokumen planning dicatat di `evidence/`.
+- Pemilik: arnu12rahman (BE-1) — Notification, Payment, platform; nuzirwan (BE-2) — User, Queue, Booking (lihat `.github/CODEOWNERS`).
+

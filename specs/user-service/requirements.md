@@ -7,7 +7,7 @@
 | **Port** | 8085 |
 | **Schema / Role** | `users` / `svc_user` |
 | **Owner** | BE-1 |
-| **Sumber (urut prioritas)** | **kode `services/user`** (terimplementasi, evidence `docs/evidence/2026-10-19-boilerplate-v1.5.md`) → migrasi `0001_init` → kontrak `docs/contracts/openapi/user.yaml` → SRS §3.2.27 (SRS-F-27-xx), SRS-Q-SEC-10/11 → ADR-020 → `docs/sdd/SDD-USER-001.md` v1.2 |
+| **Sumber (urut prioritas)** | **kode `services/user`** (terimplementasi, evidence `docs/evidence/2026-10-19-boilerplate-v1.5.md`) → migrasi `0001_init` → kontrak `docs/contracts/openapi/user.yaml` → SRS §3.2.27 (SRS-F-27-xx), SRS-Q-SEC-10/11 → ADR-020 → `docs/analisa/04e-SDD-USER-001.md` v1.2 |
 | **Test Plan** | TC-USR-01..12, TC-MSG-05/06 |
 
 ## Introduction
@@ -27,9 +27,9 @@ arsitektur (ADR-020), requirement ditandai **[target]**.
 |------|--------|-------|
 | OTP request/verify, refresh rotasi + deteksi replay, logout, profil GET/PATCH, audit login, rate limit, PII crypto | ✅ | `application/usecase/{auth,profile}.go`, `infrastructure/{postgres,valkey,security,http}` |
 | Klaim identitas di access token (`email`, `nik_hash`, `has_nik`) — dulu "P0 / D1" | ✅ | `infrastructure/security/security.go` `IssueAccess(accountID, email, nikHash, now)`; `pkg/token.Claims` |
-| Pengiriman OTP lewat **event `otp.requested`** ke Notification (ADR-020, SDD-USER v1.2) | ❌ **target** — kode masih mengirim langsung via SMTP (`IMailer`, `infrastructure/smtp/mailer.go`) | `delivery/user_module.go`, `usecase/auth.go` |
+| Pengiriman OTP lewat **event `otp.requested`** ke Notification (ADR-020, SDD-USER v1.2) | ✅ (DEV-2, 2026-10-21) — adapter SMTP dihapus; sisa: `aggregateId` kosong, `occurredAt` = `expiresAt`, schema kontrak belum ada (OQ-4) | `infrastructure/rabbitmq/otp_publisher.go` |
 | Validasi struktur NIK setara `pkg/nik` (SDD-RBT §4.9) | ⚠️ parsial — VO `NewNIK` memeriksa provinsi 11–94, tanggal 1–31/bulan 1–12, urut ≠ 0000; tidak memeriksa kab/kec `00`, tanggal kalender, daftar provinsi | `domain/valueobject/nik.go` |
-| Breaker pada panggilan SMTP (SRS-F-19-03) | ❌ | tidak ada `pkg/resilience` di `smtp` adapter (OQ-9) |
+| Breaker pada panggilan SMTP (SRS-F-19-03) | tidak relevan — User tidak lagi memanggil SMTP (OQ-9 selesai) | — |
 | Metrik `rbt_user_*` | ❌ | — |
 
 ## Glossary
@@ -55,8 +55,8 @@ SRS-F-27-02, SRS-F-27-04, SRS-F-27-12 · TC-USR-02, TC-USR-04, TC-USR-11, TC-MSG
 4. IF permintaan per-email melebihi `OTP_MAX_PER_EMAIL_HOUR`/jam, THEN `429 RATE_LIMITED` + audit `OTP_RATE_LIMITED`. ✅
 5. IF permintaan per-IP melebihi `OTP_MAX_PER_IP_HOUR`/jam, THEN `429 RATE_LIMITED`. ✅
 6. IF email tidak valid, THEN `400 VALIDATION_ERROR` field `email`. ✅
-7. WHEN kode dibuat, THE SYSTEM SHALL mempublikasikan event `otp.requested.v1 { emailEnc, codeEnc, expiresAt, locale? }` (email & kode AES-256-GCM dengan `PII_ENC_KEY`) ke `rusuh.events` dengan publisher confirm; IF publish gagal, THEN OTP dihapus dan `503 DEPENDENCY_UNAVAILABLE`. **[target — ADR-020; schema belum ada: OQ-4]** *Perilaku saat ini [kode]: kirim SMTP langsung; gagal → OTP dihapus + `503 DEPENDENCY_UNAVAILABLE` (`ErrMailUnavailable`).*
-8. THE SYSTEM SHALL mencatat audit `OTP_SENT` saat berhasil; kode OTP dan email plaintext tidak pernah muncul di log, payload broker, atau audit. ✅ untuk log/audit; payload broker **[target]** *(TC-USR-11)*
+7. WHEN kode dibuat, THE SYSTEM SHALL mempublikasikan event `otp.requested.v1 { emailEnc, codeEnc, expiresAt, locale? }` (email & kode AES-256-GCM dengan `PII_ENC_KEY`) ke `rusuh.events` dengan publisher confirm; IF publish gagal, THEN OTP dihapus dan `503 DEPENDENCY_UNAVAILABLE`. ✅ *(schema kontrak `otp.requested.v1` belum ada: OQ-4)*
+8. THE SYSTEM SHALL mencatat audit `OTP_SENT` saat berhasil; kode OTP dan email plaintext tidak pernah muncul di log, payload broker, atau audit. ✅ *(TC-USR-11)*
 
 ## Requirement 2 — Verify OTP & Login
 
@@ -152,8 +152,8 @@ D-23, ADR-020
 
 ### Acceptance Criteria (EARS)
 
-1. WHEN `GET /health`, THE SYSTEM SHALL `200 UP` bila PostgreSQL & Valkey sehat, `503 DOWN` bila tidak. ✅ *(Setelah R1.7, RabbitMQ ikut diperiksa.)*
-2. THE SYSTEM SHALL **hanya** mempublikasikan `otp.requested.v1` **[target]** dan tidak mengonsumsi event apa pun. *(Spec lama menyatakan "tidak mempublikasikan event apa pun" — bertentangan dengan R1.7/ADR-020; diperbaiki (K10).)*
+1. WHEN `GET /health`, THE SYSTEM SHALL `200 UP` bila PostgreSQL & Valkey sehat, `503 DOWN` bila tidak. ✅
+2. THE SYSTEM SHALL **hanya** mempublikasikan `otp.requested` dan tidak mengonsumsi event apa pun. ✅ *(Spec lama menyatakan "tidak mempublikasikan event apa pun" — bertentangan dengan R1.7/ADR-020; diperbaiki (K10).)*
 3. WHEN dependency belum ter-wire (unit test), THE SYSTEM SHALL hanya memasang `/health`. ✅
 
 ## Requirement 9 — Build & Verify
@@ -190,20 +190,20 @@ Setiap delta diverifikasi dengan membaca kode. Format: *SDD menyatakan → kode 
 | D9 | OTP di-hash argon2 + salt | HMAC terikat `email_hash` (`OTP_HASH_KEY`) | `security.go` |
 | D10 | Refresh hash `SHA256(token)` | Sama (tanpa delta) | `security.go` |
 | D11 | Kolom `accounts`/`login_audit` versi SDD | + `email_masked`, `full_name`, `nik_masked`, `status`, `last_login_at`, `sessions.replaced_by`; `login_audit.outcome` enum | migrasi `0001_init` |
-| D12 | Error `ACCOUNT_DISABLED`, `DEPENDENCY_UNAVAILABLE` tidak ada | Ada: `ErrAccountDisabled` (403), `ErrMailUnavailable` (503) — spec lama menyebut `ErrPublishFailed` (belum ada; akan muncul bersama R1.7) | `port/inbound/errors.go` |
+| D12 | Error `ACCOUNT_DISABLED`, `DEPENDENCY_UNAVAILABLE` tidak ada | Ada: `ErrAccountDisabled` (403), `ErrPublishFailed` (503) | `port/inbound/errors.go` |
 | D13 | Riwayat pesanan di User Service ("proxy ke Booking" di HLD) | Tidak ada di User; `GET /api/v1/me/bookings` milik Booking (OQ-10) | `auth_handler.go` |
-| D14 | SDD-USER v1.2: SMTP adapter dihapus, diganti publisher `otp.requested` | **Belum**: `infrastructure/smtp/mailer.go` masih dipakai | `user_module.go` |
+| D14 | SDD-USER v1.2: SMTP adapter dihapus, diganti publisher `otp.requested` | **Selesai** (DEV-2); routing key tanpa `.v1` (platform task 13) | `infrastructure/rabbitmq/otp_publisher.go` |
 
 ### Implikasi Delta terhadap Test Plan
 - **D5** — assertion status TC-USR-03/05: 401/429 (bukan 400/403).
 - **D3/D4/D6** — TC-USR-06/07/08 memakai JSON body dan rute `/api/v1/me`.
-- **D14** — TC-MSG-05/06 dan TC-USR-11 (bagian broker) baru dapat dijalankan setelah user tasks 3.
+- **D14** — TC-MSG-05/06 dan TC-USR-11 sudah dapat dijalankan end-to-end.
 
 ## Traceability
 
 | Req | SRS | TC | Status |
 |-----|-----|----|--------|
-| 1 Request OTP | F-27-02/04/12 | TC-USR-02/04/11, TC-MSG-05 | ✅ kecuali 1.7–1.8 (event) |
+| 1 Request OTP | F-27-02/04/12 | TC-USR-02/04/11, TC-MSG-05 | ✅ (perbaikan envelope: tasks 1.R1) |
 | 2 Verify | F-27-03/05 | TC-USR-03/05 | ✅ |
 | 3 Refresh | F-27-06 | TC-USR-06 | ✅ |
 | 4 Logout | F-27-07 | TC-USR-07 | ✅ |

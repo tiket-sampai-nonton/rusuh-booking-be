@@ -3,7 +3,7 @@
 | Field | Value |
 |-------|-------|
 | Spec | queue-service |
-| Sumber kebenaran | Kode + kontrak aktual (`services/queue/`, `docs/contracts/openapi/queue.yaml`, event schema `docs/contracts/events/`), lalu `docs/sdd/SDD-QUEUE-001.md` (v1.1), PRD v5.4, SRS v1.3, HLD v1.6 |
+| Sumber kebenaran | Kode + kontrak aktual (`services/queue/`, `docs/contracts/openapi/queue.yaml`, event schema `docs/contracts/events/`), lalu `docs/analisa/04a-SDD-QUEUE-001.md` (v1.1), PRD v5.4, SRS v1.3, HLD v1.6 |
 | Prinsip grounding | **Kode & kontrak menang** untuk apa yang sudah ada; SDD dipakai sebagai referensi konseptual dan ditandai bila berbeda. |
 
 Queue Service mengelola *waiting room* war tiket: menahan lonjakan join (hingga 20.000/detik) dengan **Valkey** sebagai state store panas, menjaga **FIFO murni**, dan memasukkan (admit) pembeli ke Booking secara terkendali agar database transaksi terlindungi di belakang admission. Tiga prinsip arsitektur:
@@ -19,7 +19,7 @@ Queue Service mengelola *waiting room* war tiket: menahan lonjakan join (hingga 
 | Atribut | Nilai | Bukti |
 |---------|-------|-------|
 | Service | Queue Service | `services/queue` |
-| Document ID | SDD-QUEUE-001 v1.1 | `docs/sdd/SDD-QUEUE-001.md` |
+| Document ID | SDD-QUEUE-001 v1.1 | `docs/analisa/04a-SDD-QUEUE-001.md` |
 | Port | 8081 | `config/load.go` (`APP_PORT` default 8081), `.env.example` |
 | Schema PostgreSQL | `queue` | `POSTGRES_SCHEMA=queue` |
 | DB role | `svc_queue` | `POSTGRES_USER=svc_queue` |
@@ -298,6 +298,7 @@ Status kode per 2026-10-20: **boilerplate standar organisasi berfungsi**; logika
 2. THE Queue Service SHALL memvalidasi seluruh konfigurasi saat start dan gagal cepat, melaporkan semua error sekaligus. *(Implemented.)*
 3. THE Queue Service SHALL mengekspos metrik `rbt_queue_joins_total`, `rbt_queue_claims_total`, `rbt_queue_waiting_count`, `rbt_queue_active_count`, `rbt_queue_promotions_total`, `rbt_queue_unclaimed_total`. *(Not implemented.)*
 4. THE Queue Service SHALL **tidak** menuliskan NIK/email/token plaintext ke log. *(Enforced oleh security-privacy steering.)*
+5. WHEN penjualan event berakhir (`sale_closes_at` lewat atau `saleState = CLOSED`), THE Queue Service SHALL memberi TTL pada semua key `q:{e:<eventId>}:*` (yang memuat `emailEnc`, `visitorId`, `buyerNikHash`) sehingga state antrean di Valkey hilang setelah masa tenggang; `entry_audit` (hanya hash) dibersihkan setelah `PII_RETENTION_DAYS_AFTER_EVENT` (platform R13).
 
 ---
 

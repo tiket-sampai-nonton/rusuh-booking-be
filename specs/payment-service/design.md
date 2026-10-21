@@ -3,7 +3,7 @@
 | Field | Value |
 |-------|-------|
 | **Spec** | payment-service |
-| **Sumber desain** | SDD-RBT-001 §4.4 (DDL), §4.5.2–4.5.3, **§4.6.2 (breaker, retry ownership)**, **§4.6.3 (aturan transaksi Midtrans, pemetaan status, resolve)**, §4.7.2 (diagram webhook); `docs/sdd/SDD-PAYMENT-001.md`; ADR-007, ADR-010, ADR-011, ADR-019 |
+| **Sumber desain** | SDD-RBT-001 §4.4 (DDL), §4.5.2–4.5.3, **§4.6.2 (breaker, retry ownership)**, **§4.6.3 (aturan transaksi Midtrans, pemetaan status, resolve)**, §4.7.2 (diagram webhook); `docs/analisa/04c-SDD-PAYMENT-001.md`; ADR-007, ADR-010, ADR-011, ADR-019 |
 | **Kontrak** | `docs/contracts/openapi/payment.yaml`, `internal-payment.yaml`, `internal-booking.yaml` (dipanggil), `events/{payment.succeeded,payment.failed,booking.review}.v1.schema.json` |
 | **Arsitektur** | Hexagonal (ports & adapters) + **Event Sourcing** (ADR-019) |
 | **Port** | 8083 · **Schema/Role** `payment`/`svc_payment` |
@@ -151,17 +151,17 @@ yang sama; `ErrConcurrency` ⇒ baca ulang, ulangi.
 | `AttemptCancelled` | PENDING/UNKNOWN/CREATED → CANCELLED | ganti metode, resolve `CHECK_AND_CANCEL`, webhook `cancel` | — |
 | `AttemptExpired` | PENDING/UNKNOWN → EXPIRED | webhook `expire` / sweeper | — |
 | `RefundRequired` (`reason`) | SUCCEEDED → REFUND_REQUIRED | consumer `booking.review` | — |
-| `RefundCompleted` | REFUND_REQUIRED → REFUNDED | Ops menutup kasus | — |
 
 Nama mengikuti SDD-RBT §4.5.3 (`AttemptCreated`, `InstructionIssued`, `SettlementReceived`,
-`AttemptFailed`, `AttemptExpired`, `RefundRequired`); `AttemptUnknown`, `AttemptCancelled`,
-`RefundCompleted` ditambahkan karena migrasi memuat status `UNKNOWN`, `CANCELLED`, `REFUNDED` dan
-setiap perubahan status harus tercatat (append-only). Spec lama memakai `AttemptPending`/`AttemptSettled`
+`AttemptFailed`, `AttemptExpired`, `RefundRequired`); `AttemptUnknown` dan `AttemptCancelled`
+ditambahkan karena migrasi memuat status `UNKNOWN` dan `CANCELLED`. Penutupan refund oleh Ops cukup
+mengubah `refund_cases.status` (refund dilakukan manual di dashboard Midtrans), jadi tidak ada event
+`RefundCompleted` dan status attempt `REFUNDED` tidak dipakai — disederhanakan 2026-10-21. Spec lama memakai `AttemptPending`/`AttemptSettled`
 — diganti agar selaras SDD.
 
 ### 4.1 State Machine
 ```
-   ∅ ─AttemptCreated─▶ CREATED ─InstructionIssued─▶ PENDING ─SettlementReceived─▶ SUCCEEDED ─RefundRequired─▶ REFUND_REQUIRED ─▶ REFUNDED
+   ∅ ─AttemptCreated─▶ CREATED ─InstructionIssued─▶ PENDING ─SettlementReceived─▶ SUCCEEDED ─RefundRequired─▶ REFUND_REQUIRED
                           │                            │  ├─AttemptFailed────▶ FAILED
                           │ timeout ambigu             │  ├─AttemptCancelled─▶ CANCELLED ──(settle di sela cancel)──▶ SUCCEEDED
                           ▼                            │  └─AttemptExpired───▶ EXPIRED   ──(settle terlambat)───────▶ SUCCEEDED

@@ -87,6 +87,11 @@ delivery, adapter SMTP/FCM/template sudah ada dan `go test` lulus. Yang perlu di
     - _Depends on: platform 4.2_
     - _Requirements: 9.2_
 
+- [ ] 12. Retensi data pribadi (keputusan 2026-10-21)
+  - [ ] 12.1 Job worker: hapus `push_subscriptions` yang `expires_at` lewat; purge `deliveries` lama. Bertahap (`LIMIT`), idempoten, log hanya jumlah baris
+    - _Depends on: platform 13.1_
+    - _Requirements: 11.5_
+
 ## Notes
 - Nama queue sekarang gabungan (`notification.booking.events`, dst.) dan routing key tanpa `.v1`. Keduanya bekerja karena producer memakai nama yang sama; penyelarasan dikerjakan sekali di platform task 12.
 - Notification tidak menerbitkan event dan tidak menulis stok/uang/akun (invarian #6).

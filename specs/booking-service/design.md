@@ -3,7 +3,7 @@
 | Field | Value |
 |-------|-------|
 | **Spec** | booking-service |
-| **Sumber desain** | **SDD-RBT-001 §4.4 (DDL), §4.5.2–4.5.3 (outbox, event sourcing), §4.6.2 (routing), §4.7 (lock order & SQL C.1–C.10), §4.10 (konfigurasi)**; `docs/sdd/SDD-BOOKING-001.md` (ringkasan, App. C admin); ADR-002, ADR-006, ADR-007, ADR-013, ADR-018, ADR-019, ADR-020 |
+| **Sumber desain** | **SDD-RBT-001 §4.4 (DDL), §4.5.2–4.5.3 (outbox, event sourcing), §4.6.2 (routing), §4.7 (lock order & SQL C.1–C.10), §4.10 (konfigurasi)**; `docs/analisa/04b-SDD-BOOKING-001.md` (ringkasan, App. C admin); ADR-002, ADR-006, ADR-007, ADR-013, ADR-018, ADR-019, ADR-020 |
 | **Service** | `services/booking` (port 8082, schema `booking`, role `svc_booking`) |
 | **Arsitektur** | Hexagonal (ports & adapters) + event sourcing untuk agregat Booking |
 | **Kontrak API** | `docs/contracts/openapi/booking.yaml` (publik), `internal-booking.yaml` (internal), `internal-payment.yaml` (dipanggil) |

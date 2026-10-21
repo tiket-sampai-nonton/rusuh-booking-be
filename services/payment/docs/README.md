@@ -16,4 +16,4 @@ go run ./cmd api
 curl localhost:8083/health
 ```
 
-Desain lengkap: `docs/sdd/04-SDD-RBT-001.md`. Struktur folder mengikuti standar organisasi (ADR-016).
+Desain lengkap: `docs/analisa/04-SDD-RBT-001.md`. Struktur folder mengikuti standar organisasi (ADR-016).

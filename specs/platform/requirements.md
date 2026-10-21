@@ -67,7 +67,9 @@ Trace: SRS-F-22-02, SRS-IF-33, SRS-IF-34, SRS-Q-SEC-01, SRS-Q-SEC-05, SRS-Q-SEC-
 5. THE `pkg/httpx` SHALL menyediakan rate limiter berbasis Valkey (konsisten lintas instance) yang menjawab `429 RATE_LIMITED` dengan header `Retry-After`.
 6. THE `pkg/httpx` SHALL menyediakan penentu IP klien yang hanya mempercayai `X-Forwarded-For` bila konfigurasi `trustProxy` aktif (di belakang ALB).
 7. THE decoder JSON SHALL tetap strict (`DisallowUnknownFields`, `MaxBytesReader`) seperti `pkg/httpx/request.go` saat ini. *(Sudah ada [kode].)*
-8. THE error envelope SHALL selalu `{meta:{code,message,requestId,errorCode,details?},data:null}` dan tidak memuat SQL, stack trace, secret, atau payload provider. *(Sudah ada lewat `pkg/apperror` + `httpx.WriteError` [kode].)*
+8. THE error response SHALL hanya berisi `code` dan `message`: `{"meta":{"code":409,"message":"BOOKING_LOCKED: Pesanan sudah terkunci"},"data":null}`. `message` boleh diawali kode error (`KODE: pesan`) agar FE bisa membaca jenis error, atau berupa pesan umum untuk error internal (`"message":"internal error"`). Tidak ada `requestId`, `errorCode`, atau `details` di body; `requestId` dikirim lewat header `X-Request-ID`. Detail lengkap (kode error, detail validasi, error asli, dan payload request yang sudah diredaksi) ditulis ke log dengan `requestId` yang sama. Tidak pernah memuat SQL, stack trace, secret, atau payload provider. *(Keputusan tim 2026-10-21. Kompatibel dengan kontrak karena hanya `meta.code` yang wajib; FE web/mobile perlu diberi tahu karena SRS §3.1.4 dan kontrak menyebut field `errorCode`.)*
+9. THE response sukses SHALL hanya memuat field yang didefinisikan kontrak untuk layar itu (tanpa over-fetching).
+10. THE middleware CORS SHALL hanya aktif di `APP_ENV=local`; di cloud CORS ditangani edge. *(Sudah ada `httpx.CORS()` dari DEV-2 [kode].)*
 
 ## Requirement 3 — Transactional outbox relay bersama
 
@@ -95,7 +97,7 @@ Trace: SRS-Q-MNT-02, SRS-Q-MNT-03, SRS-Q-SEC-03, SRS-F-90-06 · TC-OBS-01, TC-OB
 1. THE platform SHALL menyediakan `pkg/telemetry` untuk mendaftarkan counter/gauge/histogram dan mengeksposnya di endpoint metrik terpisah dari `/health`. *(Library belum dipilih — OQ-5; task diblokir sampai ADR.)*
 2. THE platform SHALL menyediakan middleware metrik HTTP (`method`, `route` template, `status`) dan durasi request.
 3. THE metrik SHALL tidak memakai identifier berkardinalitas tinggi (NIK, booking ID, entry ID, email) sebagai label; label yang diizinkan: `service`, `route`, `status`, `event_id`, `reason`, `name`.
-4. THE `pkg/logger` SHALL meredaksi atribut ber-kunci sensitif (`nik`, `email`, `token`, `authorization`, `signature`, `password`, `code`, `secret`) sebelum ditulis.
+4. THE `pkg/logger` SHALL meredaksi atribut ber-kunci sensitif (`nik`, `buyerNik`, `email`, `emailConfirmation`, `token`, `authorization`, `signature`, `signature_key`, `password`, `code`, `pushToken`, `secret`) sebelum ditulis, termasuk di dalam payload request yang dilog saat error (R2.8).
 5. THE `GET /health` SHALL tetap satu endpoint per service (200 UP / 503 DOWN, `Cache-Control: no-store`) untuk ALB dan HEALTHCHECK container. *(Sudah ada di kelima service [kode].)*
 6. THE breaker SHALL melaporkan perubahan state sebagai metrik `breaker_state{name}` lewat `OnStateChange`.
 
@@ -192,6 +194,32 @@ Trace: SRS-C-04, SRS-Q-SEC-04, SRS-Q-SEC-06, SRS-IF-32, SRS-IF-34, SRS-Q-FLX-01,
 4. THE ASG Queue Service SHALL mendukung scale-out terjadwal sebelum penjualan dibuka; scale-out/in tidak boleh kehilangan sesi (tanpa sticky session).
 5. THE modul `budget` SHALL memasang alarm di bawah kredit US$200.
 6. THE backup dan restore PostgreSQL SHALL didemonstrasikan sebelum rilis.
+
+## Requirement 12 — Penyelarasan event lintas service
+
+**User Story:** Sebagai tim, saya ingin nama routing key dan queue konsumen sama di semua service, agar tidak ada event yang hilang karena salah nama.
+
+Trace: SDD-RBT §4.6.2, `pkg/rabbitmq.Subscription` · K8 · TC-API-02
+
+#### Acceptance Criteria
+
+1. THE routing key SHALL berversi (`<event>.v1`) di semua producer dan consumer, diganti dalam satu perubahan terkoordinasi. *(Saat ini semua service konsisten memakai nama tanpa `.v1` [kode], jadi alur tetap berjalan.)*
+2. THE nama routing key dan queue SHALL didefinisikan sekali sebagai konstanta bersama (mis. `pkg/rabbitmq/topics.go`), bukan string tersebar per service.
+3. THE payload setiap event SHALL lolos test kontrak terhadap `docs/contracts/events/*.schema.json` di CI; ketidakcocokan payload antar service (seperti `booking.journey.ended`) tertangkap sebelum merge.
+
+## Requirement 13 — Retensi data pribadi (UU PDP)
+
+**User Story:** Sebagai penyelenggara, saya ingin data pribadi hanya disimpan selama dibutuhkan dan selalu terenkripsi saat disimpan, agar sesuai prinsip UU PDP (UU 27/2022): minimal, terbatas waktu, dan aman.
+
+Trace: SRS §3.4 "Data Pribadi" (GR-15), SRS-D-02..07, SRS-F-11-10, SRS-Q-SEC-03/10 · SDD-RBT §4.10 `PII_RETENTION_DAYS_AFTER_EVENT` · OQ-11 (diputuskan 2026-10-21)
+
+#### Acceptance Criteria
+
+1. THE kebijakan retensi SHALL: data pribadi booking (email pembeli, nama & NIK terenkripsi pemegang) dibersihkan `PII_RETENTION_DAYS_AFTER_EVENT` hari (default 30) setelah event selesai; token push dihapus saat penjualan berakhir; baris outbox yang sudah terkirim dihapus setelah 7 hari; state antrean di Valkey kedaluwarsa setelah penjualan berakhir; log disimpan maksimal 30 hari.
+2. WHEN data dibersihkan, THE sistem SHALL menghapus ciphertext/plaintext dan mengganti nama dengan versi tersamar, tetapi mempertahankan hash HMAC dan data transaksi (nominal, status, waktu) untuk audit.
+3. THE data pribadi yang masih disimpan SHALL terenkripsi AES-256-GCM (+ hash HMAC untuk pencarian), kecuali nama pemegang yang ditampilkan di tiket dan dibersihkan sesuai AC 1.
+4. THE setiap service SHALL menjalankan pembersihan untuk schema miliknya sendiri sebagai job worker idempoten (aman dijalankan ulang), dengan metrik jumlah baris yang dibersihkan dan tanpa menulis data pribadi ke log.
+5. THE nilai retensi SHALL dikonfigurasi lewat env dan divalidasi saat start. *(Angka di atas disetujui tim; konfirmasi akhir ke klien tetap dicatat di OQ-11.)*
 
 ## Invarian platform
 

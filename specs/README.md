@@ -14,25 +14,38 @@ code-principles, invariants, security-privacy, testing-review) dan **tidak diula
 
 ## Indeks spec
 
-| Spec | Service / cakupan | Port | Schema | Owner | Status kode (audit 2026-10-21) |
-|------|-------------------|------|--------|-------|--------------------------------|
-| [platform](platform/) | `pkg/`, kontrak, CI, compose/edge/observability/terraform, `tests/`, `tools/` | — | — | BE-1 + BE-2 | `pkg/` inti ada; `nik`, `outbox`, `telemetry`, auth middleware, edge, observability, terraform, tests lintas service belum |
-| [queue-service](queue-service/) | Waiting room, FIFO, admission, claim | 8081 | `queue` | BE-1 | Boilerplate + migrasi; logika bisnis belum |
-| [booking-service](booking-service/) | Otoritas stok & uang, sesi, hold, settlement, tiket | 8082 | `booking` | BE-2 | Boilerplate + migrasi lengkap; logika bisnis belum |
-| [payment-service](payment-service/) | Midtrans/simulator, attempt, webhook, resolve, refund case | 8083 | `payment` | BE-2 | Boilerplate + migrasi; logika bisnis belum |
-| [notification-service](notification-service/) | Email (e-tiket, expired, review, OTP), push giliran | 8084 | `notification` | BE-1 | Boilerplate + migrasi; consumer belum |
-| [user-service](user-service/) | Akun opsional, OTP login, token, profil | 8085 | `users` | BE-1 | **Terimplementasi** (kecuali pengiriman OTP via event) |
+| Spec | Cakupan | Port | Owner | Status kode (2026-10-21, setelah merge kode DEV-2) |
+|------|---------|------|-------|-----------------------------------------------------|
+| [platform](platform/) | `pkg/`, kontrak, CI, compose/edge, `tests/`, `tools/` | — | **kamu** | `pkg/` inti + CORS lokal; `nik`, `outbox`, telemetry, kontrak OTP, edge belum |
+| [notification-service](notification-service/) | Email + push | 8084 | **kamu** (kode awal DEV-2) | Fitur lengkap; perbaiki klaim retry, breaker SMTP, adapter push log |
+| [payment-service](payment-service/) | Midtrans/simulator, attempt, webhook, resolve | 8083 | **kamu** | Belum ada kode bisnis |
+| [user-service](user-service/) | Akun opsional, OTP, token, profil | 8085 | DEV-2 | Lengkap (OTP lewat event); perbaikan kecil envelope |
+| [queue-service](queue-service/) | Waiting room, FIFO, admission | 8081 | DEV-2 | Fitur ada; ada defect direct admission & antrean tersumbat |
+| [booking-service](booking-service/) | Stok & uang, sesi, hold, settlement | 8082 | DEV-2 | Alur publik ada; ada defect stok, sweeper, payload event; API untuk Payment belum |
+| [e2e](e2e/) | Journey lintas service (dari DEV-2) | — | bersama | Menunggu rework di atas |
+
+`tasks.md` tiap service = gabungan task DEV-2 (nomor dipertahankan, cocok dengan `.progress.json` dan
+skill `implement-service`) + keputusan spec. Sub-task **R** = perbaikan kode yang sudah ada.
+
+**Rework yang memutus alur end-to-end (perlu dikerjakan DEV-2 lebih dulu):** booking 6.R1 (hold
+tidak mengurangi `allocated_units`), 10.R1 (alokasi sesi habis tidak dikembalikan, tanpa
+`journey.ended`), 12.R1 (payload `journey.ended` tidak bisa dibaca Queue), 4.R1 (`supply` dan
+`:release` belum ada), Task 13 (API untuk Payment); queue 8.R1 (direct admission tidak pernah
+berhasil), 11.R1 (entry kuota habis menyumbat antrean).
+
+**Keputusan gaya (2026-10-21):** error response hanya `code` + `message`, mis.
+`{"meta":{"code":409,"message":"BOOKING_LOCKED: Pesanan sudah terkunci"},"data":null}`; `requestId` di
+header; detail + payload request (diredaksi) hanya di log (platform R2.8, task 2.6). Respons sukses hanya
+memuat field kontrak.
 
 Urutan implementasi yang disarankan (dependensi antar-spec):
 
 ```
-platform (1–4: pkg/nik, httpx auth, outbox, telemetry)
-   ├─► booking-service (katalog → admission → hold → edit → lock → settlement/expiry)
-   │      ├─► queue-service   (butuh allocations:batch + supply dari Booking)
-   │      └─► payment-service (butuh payable + payment-lock dari Booking)
-   │               └─► booking-service expiry/resolve (butuh resolve dari Payment)
-   ├─► notification-service (butuh event booking.* / queue.turn.* + otp.requested)
-   └─► user-service (migrasi OTP ke event otp.requested, butuh kontrak platform)
+platform 2.6 (format error), 5.2 (schema OTP), 12 (routing key)   ← kamu
+notification 0a.R1, 8.R1, 0b.R1                                  ← kamu
+payment 0 → 12 (simulator) → 3 → 4 → 5 → 7 → 8 → 9              ← kamu, butuh booking Task 13 (DEV-2)
+booking 6.R1, 10.R1, 12.R1, 4.R1, 13 → queue 8.R1, 11.R1         ← DEV-2
+e2e journey                                                      ← bersama
 ```
 
 ## Prioritas sumber (dipakai saat dokumen saling bertentangan)
@@ -40,9 +53,9 @@ platform (1–4: pkg/nik, httpx auth, outbox, telemetry)
 1. **Migrasi terterapkan** (`services/*/deployments/migrations/*.up.sql`) — tidak boleh diubah (`structure.md`).
 2. **Kontrak normatif**: `docs/contracts/openapi/*.yaml`, `docs/contracts/events/*.schema.json`.
 3. **Kode yang sudah ada** (`pkg/`, `services/user/`) untuk perilaku yang sudah terimplementasi.
-4. **SRS-RBT-001** (`docs/srs/`) untuk *apa* yang wajib (requirement, invarian backend, error code).
-5. **SDD-RBT-001** (`docs/sdd/04-SDD-RBT-001.md`) §4.4–§4.10 untuk *bagaimana* (lock order, SQL, sweeper, routing).
-6. **SDD per service** (`docs/sdd/SDD-*-001.md`) — ringkasan; bila berbeda dari (5), (5) yang dipakai.
+4. **SRS-RBT-001** (`docs/analisa/`) untuk *apa* yang wajib (requirement, invarian backend, error code).
+5. **SDD-RBT-001** (`docs/analisa/04-SDD-RBT-001.md`) §4.4–§4.10 untuk *bagaimana* (lock order, SQL, sweeper, routing).
+6. **SDD per service** (`docs/analisa/SDD-*-001.md`) — ringkasan; bila berbeda dari (5), (5) yang dipakai.
 7. HLD, ADR, PRD, integration guide — konteks dan alasan.
 
 Bila dua sumber bertingkat sama berbeda (mis. SRS vs kontrak), spec **tidak memilih**; perbedaan
@@ -56,8 +69,8 @@ dicatat sebagai open question di bawah dan di spec terkait.
 - Di `tasks.md`: `_Requirements: 6.4, 6.5_`, `_Design: §9.1_`, `_Depends on: platform 2.1_`.
 - `- [x]` = sudah ada di kode (diverifikasi saat audit); `- [ ]` = belum; `- [ ]*` = test opsional
   untuk MVP (konvensi Kiro) — **test invarian tidak pernah opsional**.
-- SRS ID (`SRS-F-12-04`) dan TC ID (`TC-BKG-07`) merujuk `docs/srs/02-SRS-RBT-001.md` dan
-  `docs/test/06-TP-RBT-001.md`.
+- SRS ID (`SRS-F-12-04`) dan TC ID (`TC-BKG-07`) merujuk `docs/analisa/02-SRS-RBT-001.md` dan
+  `docs/analisa/06-TP-RBT-001.md`.
 - Label fakta: **[kode]** hasil inspeksi codebase · **[dok]** dari dokumentasi · **[asumsi]** belum
   terkonfirmasi · **[OQ-x]** butuh keputusan.
 
@@ -103,3 +116,30 @@ dicatat sebagai open question di bawah dan di spec terkait.
 | OQ-20 | Simulator aktif di `APP_ENV=local|ci` (`payment.yaml`) atau `ci|local-offline` (SRS-IF-24)? `local-offline` tidak ada di daftar `APP_ENV` SDD §6.1 | Kontrak vs SRS vs SDD | payment R10.3, platform R7.4 | Tambah `local-offline` ke validasi `APP_ENV` dan selaraskan kontrak + SRS |
 | OQ-21 | `order_id = RB-{publicRef}-{attemptNo}` (SDD-RBT §4.6.3), tetapi `Payable` (`internal-booking.yaml`) tidak memuat `publicRef` | SDD vs kontrak | payment R3.3, booking R14.1 | Tambah `publicRef` ke `Payable` (additive) |
 | OQ-11 | Retensi data pribadi (ciphertext NIK event + 30 hari via `PII_RETENTION_DAYS_AFTER_EVENT`, push token dihapus saat penjualan berakhir) tidak punya job yang dirancang | SRS §3.4 (PROPOSED), SDD §4.10 | booking, queue, notification | Rancang job purge setelah retensi dikonfirmasi Ops |
+| OQ-22 | Respons `GET /payments/{id}/status` dipolling tiap 3 detik dan mengembalikan seluruh `attempt` termasuk instruksi; cukupkah `{bookingStatus, attemptStatus, serverTime}`? | Over-fetching (masukan tim 2026-10-21) | payment R6.3, klien web/mobile | Usulkan ke FE; ubah kontrak bila setuju |
+
+## Status open question (jawaban DEV-2, diverifikasi ke kode 2026-10-21)
+
+Selesai:
+- **OQ-1** — ikut kontrak: `200 {result: CHECK_LIMIT_REACHED}`. SRS perlu diperbarui.
+- **OQ-3** — fitur pindah antrean ditunda.
+- **OQ-9** — tidak relevan lagi; User sudah tidak memanggil SMTP.
+- **OQ-18** — entry dengan `ALREADY_ACTIVE` tidak di-admit. Perlu queue 11.R1 supaya entry itu tidak menyumbat antrean.
+- **OQ-19** — pakai kode error yang ada di kontrak; bukan pemilik → `404`.
+
+Diputuskan, tetapi kodenya belum mengikuti:
+- **OQ-13** — DEV-2 memilih pemicu `held + paid = max`. Masalahnya, Queue tidak pernah menghapus NIK dari set blokir, jadi NIK tetap terblokir walau hold-nya expired. Perlu pilih salah satu (booking 12.R3):
+  - (a) terbitkan hanya saat `paid = max`;
+  - (b) tambah event pembuka blokir.
+- **OQ-17** — status `REVIEW` dan email review sudah ada, tetapi `Settle` belum menerima maupun membandingkan `amountMinor` (booking 9.R2).
+- **OQ-4** — publisher dan consumer `otp.requested` sudah ada. Yang belum:
+  - file schema kontrak dan `user-service` di enum `producer` (platform 5.2, owner: kamu);
+  - `aggregateId` yang masih kosong (user 1.R1).
+- **OQ-21** — `publicRef` ada di API publik, tetapi belum di `Payable` internal. Akan ditambah saat booking Task 13 dibuat.
+
+Masih terbuka:
+- **OQ-15** — jawaban DEV-2 ("`SESSION_EXPIRED` ada di `booking.expired`") menjawab event yang berbeda. Pertanyaannya tentang `outcome` di `booking.journey.ended`, yang memang belum memuat nilai itu. Saat ini kode tidak mengirim `journey.ended` sama sekali untuk sesi habis (booking 10.R1). Usul: pakai `EXPIRED`.
+- **OQ-11** — diputuskan tim: data pribadi booking dibersihkan 30 hari setelah event, token push dihapus saat penjualan berakhir, outbox terkirim dihapus setelah 7 hari, log disimpan 30 hari, email pembeli di Booking dienkripsi (platform R13, booking R19). Konfirmasi akhir ke klien tetap perlu.
+- **OQ-22** — usulan respons status Payment yang lebih ramping; menunggu FE.
+- **OQ-5** (library metrik), **OQ-6** (target uptime): menunggu keputusan.
+- **OQ-2, 7, 8, 10, 12, 14, 16, 20**: rekomendasi di tabel dipakai sampai ada keberatan.

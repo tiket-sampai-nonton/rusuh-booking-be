@@ -55,7 +55,8 @@ Sambil menunggu, pakai klien Booking palsu di test.
   - _Requirements: 5.1, 5.2, 5.3, 5.4, 5.5_
 
 - [ ] 6. Status `GET /api/v1/payments/{bookingId}/status` (read-only)
-  - _Requirements: 6.1, 6.2_
+  - Usulan respons ringkas ke FE dicatat di OQ-22; implementasi awal ikuti kontrak
+  - _Requirements: 6.1, 6.2, 6.3_
 
 - [ ] 7. Expiry sweeper & resolve
   - `POST /internal/v1/payments/{bookingId}/resolve` (`CHECK` / `CHECK_AND_CANCEL`), breaker OPEN → `UNKNOWN`; resolve tidak membuka refund case
@@ -91,6 +92,11 @@ Sambil menunggu, pakai klien Booking palsu di test.
   - Metrik dan alert setelah OQ-5
   - _Depends on: platform 4.2_
   - _Requirements: 11.3_
+
+- [ ] 14. Retensi data (keputusan 2026-10-21)
+  - [ ] 14.1 Job purge outbox: hapus baris terkirim > 7 hari
+    - _Depends on: platform 13.1_
+    - _Requirements: 5.6_
 
 ## Notes
 - Payment tidak memutuskan PAID/REVIEW; ia hanya melaporkan `settlementTime`.

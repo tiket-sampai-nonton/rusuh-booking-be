@@ -12,7 +12,7 @@
 | Dependency | PostgreSQL 16, RabbitMQ (exchange `rusuh.events`), SMTP (Mailpit lokal / SES demo), FCM (cloud) / log adapter (lokal, CI) |
 | Produces events | **tidak ada** — murni consumer; tidak otoritatif atas stok/uang/akun |
 | Owner | BE-1 |
-| Sumber (urut prioritas) | migrasi `0001_init` → kontrak `docs/contracts/openapi/notification.yaml`, `docs/contracts/events/*.schema.json` → SRS §3.1.3 (IF-22/23), §3.2.20–3.2.21, §3.2.25, §3.2.27 → SDD-RBT-001 §4.5.2, §4.6.2 → `docs/sdd/SDD-NOTIFICATION-001.md` v1.1 |
+| Sumber (urut prioritas) | migrasi `0001_init` → kontrak `docs/contracts/openapi/notification.yaml`, `docs/contracts/events/*.schema.json` → SRS §3.1.3 (IF-22/23), §3.2.20–3.2.21, §3.2.25, §3.2.27 → SDD-RBT-001 §4.5.2, §4.6.2 → `docs/analisa/04d-SDD-NOTIFICATION-001.md` v1.1 |
 
 ## Introduction
 
@@ -21,15 +21,11 @@ Notification Service mengonsumsi event domain dari Booking, Queue, dan User lalu
 **consumer idempoten tanpa tabel inbox**, **template-based email**, dan — paling penting —
 **kegagalan notifikasi tidak pernah membatalkan transaksi** (invarian #6).
 
-### Status Implementasi (audit kode 2026-10-21)
+### Status Implementasi (2026-10-21, setelah kode DEV-2 masuk)
 
-| Area | Status | Bukti |
-|------|--------|-------|
-| Struktur hexagonal, Cobra verb, config fail-fast (`APP_*`, `LOG_*`, `POSTGRES_*`, `RABBITMQ_*`), clients PG + RabbitMQ, `GET /health` | ✅ | `internal/*`, `cmd/*` |
-| Migrasi `deliveries` (dedup + status) + `push_subscriptions` | ✅ | `deployments/migrations/0001_init.up.sql` |
-| `SMTP_*`, `FCM_*`, `PII_*`, `PUSH_PROVIDER` di config | ❌ | tidak ada di `internal/config` / `.env.example` [kode] |
-| Consumer RabbitMQ, adapter SMTP/FCM/template, usecase kirim, endpoint push-subscriptions | ❌ | `worker.go` → `jobs()` mengembalikan `nil` |
-| `deliveries` untuk OTP | ❌ **tidak didukung skema**: `notification_type` CHECK tanpa `OTP_LOGIN`; CHECK mewajibkan `booking_id` atau `queue_entry_id` | butuh migrasi `0002` |
+Semua consumer, API push-subscription, repository delivery, adapter SMTP/FCM/template, dan config sudah ada.
+Perbaikan yang tersisa ada di `tasks.md` (0a.R1 klaim retry, 8.R1 breaker SMTP, 0b.R1 adapter push log).
+OTP tidak dicatat di `deliveries` (R12.7).
 
 ### Divergensi SDD prosa vs kode/kontrak (kode & kontrak menang)
 
@@ -178,8 +174,9 @@ Trace: D-24, SRS-Q-SEC-03, SRS-IF-23 · TC-SEC-03, TC-USR-11
 2. THE config SHALL diperluas untuk `SMTP_*`, `PUSH_PROVIDER ∈ {fcm, log}` (`log` di lokal/CI, SDD-RBT §4.10, SRS-IF-23), `FCM_*`, kunci enkripsi push token, kunci HMAC `recipient_hash`, `PII_ENC_KEY` (dekripsi OTP, sama dengan User) — semuanya divalidasi fail-fast.
 3. THE service SHALL tidak menulis kode OTP, token, alamat email, atau NIK plaintext ke log; hanya identifier (`messageId`, `bookingId`, `queueEntryId`).
 4. THE data yang diproses SHALL hanya PII yang memang ada di schema event (`buyerEmail`, `attendeeNikMasked`, `ticketLinkToken`); token push hanya disimpan terenkripsi.
+5. WHEN `push_subscriptions.expires_at` lewat (penjualan berakhir), THE job worker SHALL menghapus subscription itu; baris `deliveries` hanya menyimpan `recipient_hash` dan dibersihkan setelah `PII_RETENTION_DAYS_AFTER_EVENT` (platform R13).
 
-## Requirement 12 — Email OTP Login [target, blocked OQ-4]
+## Requirement 12 — Email OTP Login [implemented; kontrak OQ-4]
 
 **User Story:** Sebagai pembeli yang meminta OTP login, saya ingin menerima kode lewat email dengan cepat, agar dapat login sebelum kode kedaluwarsa.
 
@@ -193,7 +190,7 @@ Trace: SRS-F-27-02, SRS-F-27-12 · TC-MSG-05, TC-MSG-06, TC-USR-11 · ADR-020 ·
 4. WHEN SMTP gagal, THE service SHALL **tidak** me-retry (time-sensitive) dan meng-ack; pengguna dapat meminta OTP baru.
 5. THE kode OTP SHALL tidak pernah muncul di log, `deliveries.last_error`, atau metrik (TC-USR-11).
 6. THE email SHALL terkirim dalam 5 detik sejak publish dalam kondisi normal (TC-MSG-05).
-7. THE pencatatan delivery OTP SHALL memerlukan migrasi `0002` yang menambah `OTP_LOGIN` ke CHECK `notification_type` dan melonggarkan CHECK referensi (`booking_id`/`queue_entry_id`) untuk OTP; tanpa migrasi itu OTP tidak dicatat di `deliveries`.
+7. THE OTP SHALL tidak dicatat di `deliveries` (skema `0001` tidak mendukung `OTP_LOGIN`); bila pelacakan OTP dibutuhkan, tambah migrasi `0002` lebih dulu.
 
 ---
 

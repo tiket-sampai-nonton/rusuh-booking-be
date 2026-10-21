@@ -60,8 +60,7 @@
 | `ILoginAudit` | tulis `login_audit` | `postgres` |
 | `IOTPStore` | Start/Attempt/Clear OTP (TTL) | `valkey` |
 | `IRateLimiter` | fixed-window `Allow` | `valkey` |
-| `IMailer` ✅ (saat ini) | `SendOTP(ctx, to, code, ttl)` — kirim SMTP langsung | `smtp` |
-| `IOTPPublisher` ⏳ (target ADR-020, menggantikan `IMailer`) | `PublishOTP(ctx, emailEnc, codeEnc, expiresAt)` | `rabbitmq` |
+| `IOTPPublisher` ✅ (menggantikan `IMailer`, ADR-020) | `PublishOTP(ctx, emailEnc, codeEnc, expiresAt)` | `rabbitmq` |
 | `ITokenIssuer` | `IssueAccess(accountID, email, nikHash, now)` | `security` |
 | `ISecretGenerator` | `OTPCode`, `RefreshToken` | `security` |
 | `IPIIProtector` | Hash/Seal email & NIK, HashOTP, HashRefreshToken | `security` |
@@ -134,8 +133,7 @@
 5. code = Secrets.OTPCode() (6 digit, crypto/rand)
 6. started = OTP.Start(key, PII.HashOTP(emailHash, code), OTP_TTL, ResendCooldown)
    └ started=false ⇒ 429 OTP_RESEND_TOO_SOON (+ retryAfterSeconds)
-7. [saat ini ✅] Mailer.SendOTP(email, code, OTP_TTL); gagal ⇒ OTP.Clear(key) + 503 DEPENDENCY_UNAVAILABLE (ErrMailUnavailable)
-   [target ⏳] emailEnc = PII.SealEmail(email); codeEnc = PII.SealOTP(code);
+7. emailEnc = PII.SealEmail(email); codeEnc = PII.SealOTP(code);
                Publisher.PublishOTP(emailEnc, codeEnc, expiresAt) (publisher confirm);
                gagal ⇒ OTP.Clear(key) + 503 DEPENDENCY_UNAVAILABLE
 8. audit OTP_SENT; 202 {expiresInSeconds, resendAfterSeconds}
@@ -316,7 +314,7 @@ hanya di-`Warn`, tidak membatalkan alur). Email plaintext dan kode OTP **tidak p
 
 ### 5c. OTP Event Schema (`otp.requested`)
 
-**[target — ADR-020; belum ada di kode]** User Service mempublikasikan event `otp.requested` ke
+**✅ terimplementasi (DEV-2).** User Service mempublikasikan event `otp.requested` ke
 RabbitMQ untuk dikirim oleh Notification Service. Kode OTP dan email dienkripsi AES-256-GCM sebelum
 dipublish (SRS-F-27-12). Publish langsung dengan publisher confirm (bukan outbox — OTP bukan perubahan
 stok/uang, ADR-010); gagal → OTP dihapus + 503.
@@ -381,8 +379,7 @@ Pemetaan ke envelope lewat `pkg/httpx.WriteError` + `pkg/apperror`.
 | Token | `TOKEN_ISSUER`, `TOKEN_AUDIENCE`, `TOKEN_KEY_ID`, `TOKEN_PRIVATE_KEY_FILE` (PEM PKCS#8 Ed25519), `TOKEN_ACCESS_TTL` (1m–1h), `TOKEN_REFRESH_TTL` (1h–90d) | rentang ketat |
 | OTP | `OTP_TTL` (1m–15m), `OTP_RESEND_COOLDOWN` (≥10s, <TTL), `OTP_MAX_ATTEMPTS` (3–10), `OTP_MAX_PER_EMAIL_HOUR` (≥1), `OTP_MAX_PER_IP_HOUR` (≥per-email) | — |
 | PII | `PII_ENC_KEY`, `PII_HASH_KEY`, `OTP_HASH_KEY` (hex 32 byte, **harus berbeda**) | `crypto.ParseKey` |
-| SMTP ✅ (saat ini) | `SMTP_HOST/PORT/USERNAME/PASSWORD/FROM/TIMEOUT` | dihapus setelah migrasi ke event (D14) |
-| RabbitMQ ⏳ | `RABBITMQ_URL`, `RABBITMQ_EXCHANGE=rusuh.events`, `RABBITMQ_CONFIRM_TIMEOUT` | belum ada di config [kode]; untuk publish `otp.requested.v1` |
+| RabbitMQ ✅ | `RABBITMQ_URL`, `RABBITMQ_EXCHANGE=rusuh.events`, `RABBITMQ_CONFIRM_TIMEOUT` | publish `otp.requested` |
 
 Catatan: nama var berbeda dari SDD §8 (SDD pakai `DATABASE_URL`, `USER_TOKEN_*`,
 `ACCESS_TOKEN_TTL`, path untuk PII, `OTP_LENGTH`/`OTP_COOLDOWN`/`OTP_HOURLY_LIMIT_*`). Kunci

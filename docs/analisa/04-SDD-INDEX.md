@@ -4,21 +4,20 @@ Dokumentasi desain rinci per service untuk Rusuh Booking Tiket monorepo.
 
 ## Quick Links
 
-📋 **[E2E-VERIFICATION.md](./E2E-VERIFICATION.md)** — Complete end-to-end flow verification matrix (PRD → SRS → HLD → SDDs → Test Cases)
+📋 **[E2E-VERIFICATION.md](04f-E2E-VERIFICATION.md)** — Complete end-to-end flow verification matrix (PRD → SRS → HLD → SDDs → Test Cases)
 
-📊 **[E2E-FLOW-DIAGRAMS.md](./E2E-FLOW-DIAGRAMS.md)** — Visual diagrams for all user journeys (ASCII)
 
-📊 **[E2E-FLOW-DIAGRAMS-MERMAID.md](./E2E-FLOW-DIAGRAMS-MERMAID.md)** — Visual diagrams for all user journeys (Mermaid)
+📊 **[E2E-FLOW-DIAGRAMS-MERMAID.md](04g-E2E-FLOW-DIAGRAMS-MERMAID.md)** — Visual diagrams for all user journeys (Mermaid)
 
 ## Per-Service SDD Documents
 
 | Service | Document | Owner | Port | Schema |
 |---------|----------|-------|------|--------|
-| Queue | [SDD-QUEUE-001](SDD-QUEUE-001.md) | BE-1 | 8081 | `queue` |
-| Booking | [SDD-BOOKING-001](SDD-BOOKING-001.md) | BE-2 | 8082 | `booking` |
-| Payment | [SDD-PAYMENT-001](SDD-PAYMENT-001.md) | BE-2 | 8083 | `payment` |
-| Notification | [SDD-NOTIFICATION-001](SDD-NOTIFICATION-001.md) | BE-1 | 8084 | `notification` |
-| User | [SDD-USER-001](SDD-USER-001.md) | BE-1 | 8085 | `users` |
+| Queue | [SDD-QUEUE-001](04a-SDD-QUEUE-001.md) | BE-1 | 8081 | `queue` |
+| Booking | [SDD-BOOKING-001](04b-SDD-BOOKING-001.md) | BE-2 | 8082 | `booking` |
+| Payment | [SDD-PAYMENT-001](04c-SDD-PAYMENT-001.md) | BE-2 | 8083 | `payment` |
+| Notification | [SDD-NOTIFICATION-001](04d-SDD-NOTIFICATION-001.md) | BE-1 | 8084 | `notification` |
+| User | [SDD-USER-001](04e-SDD-USER-001.md) | BE-1 | 8085 | `users` |
 
 ## Architecture Overview
 
@@ -149,8 +148,8 @@ All services deployed in **AWS ap-southeast-3 (Jakarta)**.
 ## Related Documentation
 
 - **Monolithic SDD:** [04-SDD-RBT-001.md](04-SDD-RBT-001.md) — legacy full SDD
-- **HLD:** `docs/hld/03-HLD-AD-RBT-001.md`
-- **Integration Guide:** `docs/integration/`
+- **HLD:** `docs/analisa/03-HLD-AD-RBT-001.md`
+- **Integration Guide:** `docs/analisa/`
 - **OpenAPI Contracts:** `docs/contracts/openapi/`
 - **Event Schemas:** `docs/contracts/events/`
 
@@ -160,7 +159,7 @@ These SDD documents are designed to be used as Kiro specs for AI-assisted develo
 
 ```bash
 # Reference a service SDD in Kiro
-kiro chat --spec docs/sdd/SDD-BOOKING-001.md "implement the hold endpoint"
+kiro chat --spec docs/analisa/04b-SDD-BOOKING-001.md "implement the hold endpoint"
 ```
 
 Each SDD contains:

@@ -13,7 +13,7 @@
 | **Dependency** | PostgreSQL 16 (otoritas stok/uang), Valkey 8.1 (cache SSE, rate limit), RabbitMQ (event + outbox), Payment Service (resolve) |
 | **Verb CLI (Cobra)** | `api`, `worker`, `migrate up\|down\|status`, `healthcheck` |
 | **Arsitektur** | Hexagonal (ports & adapters) + event sourcing untuk agregat Booking (ADR-019) |
-| **Sumber (urut prioritas)** | migrasi `deployments/migrations/0001_init.up.sql`, `0002_event_store.up.sql` → kontrak `docs/contracts/openapi/{booking,internal-booking,internal-payment}.yaml`, `docs/contracts/events/*.schema.json` → SRS-RBT-001 §3.1.4, §3.2.2–3.2.26 → **SDD-RBT-001 §4.7 (lock order, SQL, sweeper, race table C.1–C.10)** → `docs/sdd/SDD-BOOKING-001.md` (ringkasan) |
+| **Sumber (urut prioritas)** | migrasi `deployments/migrations/0001_init.up.sql`, `0002_event_store.up.sql` → kontrak `docs/contracts/openapi/{booking,internal-booking,internal-payment}.yaml`, `docs/contracts/events/*.schema.json` → SRS-RBT-001 §3.1.4, §3.2.2–3.2.26 → **SDD-RBT-001 §4.7 (lock order, SQL, sweeper, race table C.1–C.10)** → `docs/analisa/04b-SDD-BOOKING-001.md` (ringkasan) |
 
 ## Introduction
 
@@ -25,7 +25,7 @@ booking direkam sebagai **event sourcing** append-only (ADR-019) dengan read mod
 sinkron dalam transaksi yang sama.
 
 Kriteria ditulis bergaya **EARS** (WHEN event, WHILE state, IF/THEN kondisi, WHERE fitur, SHALL
-kewajiban), tertelusur ke **SRS** (`SRS-F-xx-yy`) dan **Test Plan** (`TC-xx`, `docs/test/06-TP-RBT-001.md`).
+kewajiban), tertelusur ke **SRS** (`SRS-F-xx-yy`) dan **Test Plan** (`TC-xx`, `docs/analisa/06-TP-RBT-001.md`).
 Skema mengikuti **kode migrasi** yang lebih kaya dari prosa SDD-BOOKING-001 §6 — perbedaan ditandai **Δ**.
 
 ### Delta prosa SDD-BOOKING-001 → sumber yang dipakai (ditandai Δ)
@@ -458,6 +458,22 @@ lewat endpoint internal atau seed, agar event dapat disiapkan untuk penjualan.
 
 ---
 
+## Requirement 19 — Perlindungan & Retensi Data Pribadi
+
+**User story:** Sebagai penyelenggara, saya ingin email dan identitas pembeli/pemegang disimpan terenkripsi dan dibersihkan setelah tidak dibutuhkan, agar sesuai UU PDP.
+
+**Tertelusur ke:** SRS §3.4 (GR-15), SRS-D-02..04, SRS-F-11-10 · platform R13 · keputusan tim 2026-10-21
+
+### Kriteria Penerimaan (EARS)
+
+1. THE `buyer_email` di `admissions` dan `bookings` SHALL disimpan sebagai `buyer_email_enc` (AES-256-GCM) + `buyer_email_hash` (HMAC) + `buyer_email_masked` lewat migrasi baru; kolom plaintext dikosongkan setelah backfill dan dihapus di migrasi berikutnya. *(Saat ini plaintext [kode: `0001_init`].)*
+2. WHEN Booking menulis outbox yang membutuhkan email (`booking.paid/expired/review`), sistem SHALL mendekripsi email hanya saat menyusun payload; email tidak pernah ditulis ke log.
+3. WHEN `PII_RETENTION_DAYS_AFTER_EVENT` hari lewat sejak `events.starts_at`, job worker SHALL menghapus `buyer_email_enc`, `attendee_nik_enc`, dan mengganti `attendee_name` dengan versi tersamar, mempertahankan hash, nominal, status, dan waktu.
+4. WHEN baris `outbox_events` sudah `published_at` lebih dari `OUTBOX_RETENTION_DAYS` (7) hari, job worker SHALL menghapusnya (payload outbox memuat email pembeli).
+5. THE job pembersihan SHALL idempoten, berjalan bertahap (`LIMIT`), dan mencatat jumlah baris tanpa data pribadi.
+
+---
+
 ## Invarian yang Ditegakkan
 
 | # | Invarian | Ditegakkan oleh | Requirement | TC utama |
@@ -514,6 +530,7 @@ Coverage dihitung atas kode logika; `cmd/`, `internal/delivery/`, `internal/conf
 | 16 SSE | F-03-02, F-25 | TC-SSE-01..03 | — |
 | 17 Supply & release | F-05-09/11 | TC-QUE-10..12 | #2 |
 | 18 Admin event | F-26-08 | TC-CFG-02..04 | — |
+| 19 Data pribadi | §3.4, D-02..04, F-11-10 | TC-SEC-03 | — |
 
 ---
 

@@ -8,7 +8,7 @@
 | **Schema / Role** | `payment` / `svc_payment` |
 | **Owner** | BE-2 |
 | **Arsitektur** | Hexagonal + Event Sourcing agregat PaymentAttempt (ADR-019) |
-| **Sumber (urut prioritas)** | migrasi `0001_init`, `0002_event_store` → kontrak `docs/contracts/openapi/{payment,internal-payment,internal-booking}.yaml`, `docs/contracts/events/{payment.succeeded,payment.failed,booking.review}.v1.schema.json` → SRS §3.1.3, §3.2.13–3.2.19 → **SDD-RBT-001 §4.6.2–4.6.3** (breaker, aturan transaksi Midtrans, resolve) → `docs/sdd/SDD-PAYMENT-001.md` |
+| **Sumber (urut prioritas)** | migrasi `0001_init`, `0002_event_store` → kontrak `docs/contracts/openapi/{payment,internal-payment,internal-booking}.yaml`, `docs/contracts/events/{payment.succeeded,payment.failed,booking.review}.v1.schema.json` → SRS §3.1.3, §3.2.13–3.2.19 → **SDD-RBT-001 §4.6.2–4.6.3** (breaker, aturan transaksi Midtrans, resolve) → `docs/analisa/04c-SDD-PAYMENT-001.md` |
 
 ## Introduction
 
@@ -130,6 +130,7 @@ Trace: SRS-F-16-01, SRS-F-16-03, SRS-Q-REL-04 · TC-PAY-03, TC-PAY-06, TC-CAP-03
 3. THE service SHALL tidak menilai ketepatan waktu; `payment.succeeded` tetap diterbitkan untuk settlement terlambat sehingga Booking dapat membuat `REVIEW` (SRS-F-16-03, TC-PAY-06/07).
 4. THE outbox relay SHALL menerbitkan baris pending ke `rusuh.events` dengan publisher confirm (`pkg/outbox`, platform R3); broker down tidak menghilangkan event.
 5. THE payload event, outbox, dan log SHALL tidak memuat data kartu, `MIDTRANS_SERVER_KEY`, token, atau payload provider mentah (ditolak `pkg/eventstore` untuk event store).
+6. WHEN baris `outbox_events` sudah terkirim lebih dari `OUTBOX_RETENTION_DAYS` (7) hari, job worker SHALL menghapusnya (platform R13).
 
 ## Requirement 6 — Status Pembayaran
 
@@ -141,6 +142,7 @@ Trace: SRS-F-14-01, SRS-F-25-08 · TC-PAY-01
 
 1. WHEN `GET /api/v1/payments/{bookingId}/status` oleh pemilik, THE service SHALL mengembalikan `200 { bookingId, bookingStatus, attempt, serverTime }` dari read model (klien polling tiap 3 s).
 2. THE endpoint SHALL read-only; status tidak pernah berubah karena aksi klien.
+3. *(Usulan ke FE — OQ-22)* Karena dipolling tiap 3 detik, respons status cukup `{ bookingStatus, attemptStatus, serverTime }`; instruksi bayar sudah ada di halaman bayar. Sampai FE setuju, ikuti kontrak saat ini.
 
 ## Requirement 7 — Expiry Attempt & Resolve untuk Booking
 
@@ -169,7 +171,7 @@ Trace: SRS-F-17-05, SRS-F-90-03 · TC-PAY-07
 1. WHEN mengonsumsi `booking.review.v1 { bookingId, attemptHint?, buyerEmail, amountMinor }` (queue `payment.booking-review`), THE service SHALL membuka `refund_cases` untuk attempt `SUCCEEDED` booking itu dan menandai attempt `REFUND_REQUIRED`, idempoten via `refund_cases.attempt_id UNIQUE` + `ON CONFLICT DO NOTHING` (tanpa tabel inbox).
 2. THE `reason` SHALL `LATE_SETTLEMENT` bila `settlement_time` > deadline booking, `SETTLED_AFTER_CANCEL` bila booking sudah `CANCELLED`/`EXPIRED`, `DUPLICATE_PAYMENT` bila booking sudah `PAID` oleh attempt lain. *(Pemetaan alasan dari payload yang tersedia — `booking.review.v1` tidak membawa alasan; Payment menurunkannya dari datanya sendiri [asumsi desain, lihat design §8.2].)*
 3. IF payload rusak, THEN consumer SHALL `rabbitmq.Permanent(err)` → DLQ.
-4. THE refund case SHALL dapat dilihat Ops dan ditutup manual (`REFUNDED`/`CLOSED`, `resolved_by`); refund dilakukan di dashboard Midtrans, bukan oleh service (SRS-F-90-03).
+4. THE refund case SHALL dapat dilihat Ops dan ditutup manual dengan mengubah `refund_cases.status` (`REFUNDED`/`CLOSED`, `resolved_by`); refund dilakukan di dashboard Midtrans, bukan oleh service (SRS-F-90-03). Status attempt tetap `REFUND_REQUIRED`.
 
 ## Requirement 9 — Circuit Breaker & Degradasi
 

@@ -134,6 +134,15 @@ dan Payment) → sisanya.
     - **Property 12: Monotonic status**
     - _Requirements: 13.3, 13.4, 13.5_
 
+- [ ] 15. Perlindungan & retensi data pribadi (keputusan 2026-10-21)
+  - [ ] 15.1 Migrasi baru: `buyer_email_enc`, `buyer_email_hash`, `buyer_email_masked` di `admissions` & `bookings`; backfill; kosongkan plaintext (lepas `NOT NULL`). Kolom plaintext di-drop di migrasi berikutnya setelah rilis stabil
+    - _Requirements: 19.1, 19.2_
+  - [ ] 15.2 Job purge PII: `PII_RETENTION_DAYS_AFTER_EVENT` setelah event → hapus ciphertext email & NIK pemegang, nama → tersamar, hash dipertahankan
+    - _Requirements: 19.3, 19.5_
+    - _Depends on: platform 13.1_
+  - [ ] 15.3 Job purge outbox: hapus baris terkirim > 7 hari
+    - _Requirements: 19.4_
+
 ## Notes
 - Routing key tanpa `.v1` dipakai konsisten di semua service; penyelarasannya dikerjakan sekali di platform task 12 supaya tidak pecah sebagian.
 - Error response mengikuti format ringkas di platform task 2.6.

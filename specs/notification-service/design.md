@@ -1,6 +1,6 @@
 # Design — Notification Service
 
-Dokumen desain ini menerjemahkan `docs/sdd/SDD-NOTIFICATION-001.md` v1.1 (LLD) ke
+Dokumen desain ini menerjemahkan `docs/analisa/04d-SDD-NOTIFICATION-001.md` v1.1 (LLD) ke
 rancangan implementasi, **dibumikan ke kode nyata** di `services/notification/`,
 kontrak `docs/contracts/`, dan utilitas `pkg/`. Arsitektur: **event-driven
 worker** (consumer RabbitMQ) + **REST tipis** (push-subscription API), disusun
@@ -230,13 +230,9 @@ for _, s := range subs {
 | `booking.review.v1` | `notification.booking-review` | BOOKING_REVIEW | EMAIL | render `review` → kirim email |
 | `queue.turn.soon.v1` | `notification.turn-soon` | TURN_SOON | PUSH | lookup subscription → kirim push |
 | `queue.turn.arrived.v1` | `notification.turn-arrived` | TURN_ARRIVED | PUSH | cek deadline → lookup → kirim push |
-| `otp.requested.v1` | `notification.otp` | OTP_LOGIN *(butuh migrasi `0002`)* | EMAIL | decrypt emailEnc/codeEnc → render otp_login → kirim email |
+| `otp.requested.v1` | `notification.otp` | — (tidak dicatat) | EMAIL | decrypt emailEnc/codeEnc → render otp_login → kirim email |
 
-**Migrasi `0002_otp_delivery` (baru, additive):** `ALTER TABLE deliveries DROP CONSTRAINT <check
-notification_type>`, tambah ulang dengan `OTP_LOGIN`; ganti CHECK referensi menjadi
-`(booking_id IS NOT NULL) OR (queue_entry_id IS NOT NULL) OR (notification_type = 'OTP_LOGIN')`;
-CHECK channel tetap. `0001` tidak diubah. *(Nama constraint ditentukan dari katalog PostgreSQL saat
-implementasi karena CHECK di `0001` tidak bernama.)*
+**Keputusan (kode DEV-2):** OTP **tidak** dicatat di `deliveries` (CHECK `notification_type` tidak memuat `OTP_LOGIN`). Dedup OTP tidak diperlukan karena kode baru selalu dibuat per permintaan dan email OTP tidak di-retry. Migrasi `0002` hanya dibutuhkan bila nanti pelacakan OTP diminta.
 
 ### 4.3 Handler logic dengan idempotency (state guard + ON CONFLICT)
 
@@ -891,9 +887,9 @@ curl localhost:8084/health
 
 ## 18. Referensi
 
-- LLD: `docs/sdd/SDD-NOTIFICATION-001.md` (§1–§12, Appendix A–D).
+- LLD: `docs/analisa/04d-SDD-NOTIFICATION-001.md` (§1–§12, Appendix A–D).
 - OpenAPI: `docs/contracts/openapi/notification.yaml`.
 - Event: `docs/contracts/events/{booking.paid,booking.expired,booking.review,queue.turn.soon,queue.turn.arrived}.v1.schema.json`, `envelope.schema.json`.
-- SRS §3.2.20–§3.2.21, §3.2.25; Test Plan `docs/test/06-TP-RBT-001.md`.
+- SRS §3.2.20–§3.2.21, §3.2.25; Test Plan `docs/analisa/06-TP-RBT-001.md`.
 - Kode: `services/notification/`, `pkg/rabbitmq` (consumer, retry, envelope),
   `pkg/postgres`, `pkg/apperror`, `pkg/eventstore`.

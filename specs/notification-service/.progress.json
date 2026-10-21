@@ -1,6 +1,6 @@
 {
   "service": "notification",
-  "status": "COMPLETE",
+  "status": "IN_PROGRESS",
   "verifiedAt": "2026-10-21T00:40:00+07:00",
   "verification": {
     "go_build": "pass",
@@ -13,5 +13,20 @@
     "OTP consumer runs on a dedicated connection with MaxRetries=0 (no retry queue).",
     "PII AADs match User Service: users.accounts.email and otp.requested.code.",
     "FCM sender is self-contained (OAuth2 JWT-bearer); noopPush used when FCM_CREDENTIALS_PATH unset."
-  ]
+  ],
+  "previousStatus": "COMPLETE",
+  "reworkTasks": [
+    "0a.R1",
+    "0a.2",
+    "0b.R1",
+    "1.1",
+    "6.R1",
+    "7.1",
+    "7.2",
+    "8.R1",
+    "8.2",
+    "9.1",
+    "11.1"
+  ],
+  "mergeNote": "2026-10-21: tasks.md digabung dengan spec terbaru; sub-task R = perbaikan kode yang sudah ada. Lihat tasks.md."
 }

@@ -3,7 +3,7 @@
 | Field | Value |
 |-------|-------|
 | Spec | queue-service |
-| Sumber | Kode `services/queue/`, kontrak `docs/contracts/openapi/queue.yaml` + `docs/contracts/events/*`, `docs/sdd/SDD-QUEUE-001.md` (v1.1), HLD §4.4.1–4.4.2, ADR-003/016/019/020 |
+| Sumber | Kode `services/queue/`, kontrak `docs/contracts/openapi/queue.yaml` + `docs/contracts/events/*`, `docs/analisa/04a-SDD-QUEUE-001.md` (v1.1), HLD §4.4.1–4.4.2, ADR-003/016/019/020 |
 | Prinsip | **Kode/kontrak menang**; SDD referensi konseptual. Delta ditandai di `requirements.md` §2.1. |
 | State store | Valkey (antrean, atomik Lua, rate limit), PostgreSQL (audit + settings), RabbitMQ (event) |
 
@@ -804,8 +804,8 @@ Untuk setiap Status Document dan payload `queue.turn.*`, tidak ada NIK, email, a
 
 ## 14. Referensi
 
-- `docs/sdd/SDD-QUEUE-001.md` v1.1 (LLD, Appendix C Lua), HLD §4.4.1–4.4.2, ADR-003 (polling Status Document), ADR-016/019/020.
+- `docs/analisa/04a-SDD-QUEUE-001.md` v1.1 (LLD, Appendix C Lua), HLD §4.4.1–4.4.2, ADR-003 (polling Status Document), ADR-016/019/020.
 - Kontrak: `docs/contracts/openapi/queue.yaml` (normatif), `docs/contracts/openapi/internal-booking.yaml`, `docs/contracts/events/{envelope,queue.turn.soon,queue.turn.arrived,booking.journey.ended,booking.quota.exhausted,booking.sold_out}.*.schema.json`.
 - Migrasi: `services/queue/deployments/migrations/0001_init.up.sql`, `0002_account_ref.up.sql`.
-- Test Plan: `docs/test/06-TP-RBT-001.md` (TC-QUE-*, TC-GST-*, TC-USR-09*, TC-PERF-*).
+- Test Plan: `docs/analisa/06-TP-RBT-001.md` (TC-QUE-*, TC-GST-*, TC-USR-09*, TC-PERF-*).
 - Steering: `.kiro/steering/{structure,code-principles,tech,security-privacy,invariants,testing-review}.md`.

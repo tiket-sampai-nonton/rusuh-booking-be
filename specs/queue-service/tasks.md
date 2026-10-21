@@ -107,6 +107,11 @@ perbaikan payload di booking 12.R1).
     - _Requirements: 10.3, 10.4_
     - _Depends on: platform 4.2_
 
+- [ ] 17. Retensi data pribadi (keputusan 2026-10-21)
+  - [ ] 17.1 Saat penjualan berakhir: `EXPIRE` semua key `q:{e:<eventId>}:*`; purge `entry_audit` setelah masa retensi. Sekarang key antrean tidak punya TTL sama sekali
+    - _Depends on: platform 13.1_
+    - _Requirements: 10.5_
+
 ## Notes
 - Lua hanya untuk atomisitas antrean; aturan lain di Go.
 - Routing key dan format error mengikuti platform task 12 dan 2.6.
