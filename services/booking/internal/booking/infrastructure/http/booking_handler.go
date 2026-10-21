@@ -11,21 +11,35 @@ import (
 
 // BookingHandler serves hold, edit, and ticket endpoints.
 type BookingHandler struct {
-	hold    inbound.IHoldUsecase
-	edit    inbound.IEditUsecase
-	tickets inbound.ITicketUsecase
+	hold       inbound.IHoldUsecase
+	edit       inbound.IEditUsecase
+	tickets    inbound.ITicketUsecase
+	get        inbound.IGetBookingUsecase
+	cancelBook inbound.ICancelBookingUsecase
 }
 
 // NewBookingHandler wires the handler.
-func NewBookingHandler(hold inbound.IHoldUsecase, edit inbound.IEditUsecase, tickets inbound.ITicketUsecase) *BookingHandler {
-	return &BookingHandler{hold: hold, edit: edit, tickets: tickets}
+func NewBookingHandler(hold inbound.IHoldUsecase, edit inbound.IEditUsecase, tickets inbound.ITicketUsecase, get inbound.IGetBookingUsecase, cancelBook inbound.ICancelBookingUsecase) *BookingHandler {
+	return &BookingHandler{hold: hold, edit: edit, tickets: tickets, get: get, cancelBook: cancelBook}
 }
 
 // Register mounts the booking routes.
 func (h *BookingHandler) Register(mux *stdhttp.ServeMux) {
 	mux.HandleFunc("POST /api/v1/bookings", h.createBooking)
+	mux.HandleFunc("GET /api/v1/bookings/{bookingId}", h.getBooking)
 	mux.HandleFunc("PUT /api/v1/bookings/{bookingId}/items", h.replaceItems)
 	mux.HandleFunc("GET /api/v1/bookings/{bookingId}/tickets", h.getTickets)
+	mux.HandleFunc("POST /api/v1/bookings/{bookingId}/cancel", h.doCancelBooking)
+}
+
+func (h *BookingHandler) getBooking(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	resp, err := h.get.GetBooking(r.Context(), r.PathValue("bookingId"), VisitorID(r))
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	noStore(w)
+	httpx.WriteData(w, r, stdhttp.StatusOK, resp)
 }
 
 func (h *BookingHandler) createBooking(w stdhttp.ResponseWriter, r *stdhttp.Request) {
@@ -70,6 +84,16 @@ func (h *BookingHandler) replaceItems(w stdhttp.ResponseWriter, r *stdhttp.Reque
 
 func (h *BookingHandler) getTickets(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	resp, err := h.tickets.GetTickets(r.Context(), r.PathValue("bookingId"))
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	noStore(w)
+	httpx.WriteData(w, r, stdhttp.StatusOK, resp)
+}
+
+func (h *BookingHandler) doCancelBooking(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	resp, err := h.cancelBook.Cancel(r.Context(), r.PathValue("bookingId"), VisitorID(r))
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

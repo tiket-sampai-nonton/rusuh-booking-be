@@ -1,6 +1,6 @@
 {
   "service": "user",
-  "status": "IN_PROGRESS",
+  "status": "COMPLETE",
   "currentTask": 9,
   "completedTasks": [
     1,

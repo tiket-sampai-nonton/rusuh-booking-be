@@ -156,3 +156,73 @@ func TestStatusPublisher_SupplyErrorStillPublishes(t *testing.T) {
 	sp := worker.NewStatusPublisher(m.store, m.settings, m.booking, wnow, time.Second)
 	require.NoError(t, sp.Run(ctx))
 }
+
+func TestPromoter_PublishesTurnSoon_WhenNearFront(t *testing.T) {
+	m := newWorkerMocks(t)
+	ctx := context.Background()
+
+	evID := "evt-1"
+	entryID := "near-entry-1"
+	visitorID := "visitor-near"
+
+	// active_slot_capacity=5, NearFrontMultiplier=2 → notify position = 10
+	s := entity.EventSettings{
+		EventID: evID, ActiveSlotCapacity: 5, NearFrontMultiplier: 2,
+		PreTurnNotifyEnabled: true,
+	}
+	m.settings.EXPECT().ListEventIDs(ctx).Return([]string{evID}, nil)
+	m.settings.EXPECT().Get(ctx, evID).Return(s, true, nil)
+	// Slots full — no promotion path
+	m.store.EXPECT().ActiveCount(ctx, evID).Return(5, nil)
+	// Pre-turn notify: fetch top 10 waiting entries
+	m.store.EXPECT().TopWaiting(ctx, evID, 10).Return([]string{entryID}, nil)
+	m.store.EXPECT().GetEntry(ctx, evID, entryID).Return(
+		entity.Entry{ID: entryID, VisitorID: visitorID}, true, nil,
+	)
+	m.store.EXPECT().WasNotifiedSoon(ctx, evID, entryID).Return(false, nil)
+	m.pub.EXPECT().PublishTurnSoon(ctx, evID, entryID, visitorID).Return(nil)
+	m.store.EXPECT().MarkNotifiedSoon(ctx, evID, entryID).Return(nil)
+
+	p := worker.NewPromoter(m.store, m.settings, m.booking, m.pub, m.audit, wnow, nil, 200)
+	require.NoError(t, p.Run(ctx))
+}
+
+func TestPromoter_SkipsTurnSoon_WhenAlreadyNotified(t *testing.T) {
+	m := newWorkerMocks(t)
+	ctx := context.Background()
+
+	evID := "evt-1"
+	entryID := "near-entry-1"
+
+	s := entity.EventSettings{
+		EventID: evID, ActiveSlotCapacity: 5, NearFrontMultiplier: 2,
+		PreTurnNotifyEnabled: true,
+	}
+	m.settings.EXPECT().ListEventIDs(ctx).Return([]string{evID}, nil)
+	m.settings.EXPECT().Get(ctx, evID).Return(s, true, nil)
+	m.store.EXPECT().ActiveCount(ctx, evID).Return(5, nil)
+	m.store.EXPECT().TopWaiting(ctx, evID, 10).Return([]string{entryID}, nil)
+	m.store.EXPECT().WasNotifiedSoon(ctx, evID, entryID).Return(true, nil)
+	// GetEntry and PublishTurnSoon must NOT be called — already notified
+
+	p := worker.NewPromoter(m.store, m.settings, m.booking, m.pub, m.audit, wnow, nil, 200)
+	require.NoError(t, p.Run(ctx))
+}
+
+func TestPromoter_SkipsTurnSoon_WhenDisabled(t *testing.T) {
+	m := newWorkerMocks(t)
+	ctx := context.Background()
+
+	evID := "evt-1"
+	s := entity.EventSettings{
+		EventID: evID, ActiveSlotCapacity: 5, NearFrontMultiplier: 2,
+		PreTurnNotifyEnabled: false, // disabled
+	}
+	m.settings.EXPECT().ListEventIDs(ctx).Return([]string{evID}, nil)
+	m.settings.EXPECT().Get(ctx, evID).Return(s, true, nil)
+	m.store.EXPECT().ActiveCount(ctx, evID).Return(5, nil)
+	// TopWaiting must NOT be called when PreTurnNotifyEnabled=false
+
+	p := worker.NewPromoter(m.store, m.settings, m.booking, m.pub, m.audit, wnow, nil, 200)
+	require.NoError(t, p.Run(ctx))
+}

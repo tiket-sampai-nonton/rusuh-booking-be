@@ -20,6 +20,12 @@ type IEventRepo interface {
 	GetByID(ctx context.Context, eventID string) (entity.Event, error)
 }
 
+// IEventWriteRepo creates and configures events (admin operations).
+type IEventWriteRepo interface {
+	CreateEvent(ctx context.Context, id string, req dto.CreateEventRequest) error
+	UpdateConfig(ctx context.Context, eventID string, req dto.UpdateEventConfigRequest) error
+}
+
 // IAdmissionRepo manages admissions (allocations + sessions).
 type IAdmissionRepo interface {
 	FindByJTI(ctx context.Context, jti string) (entity.Admission, error)
@@ -109,4 +115,18 @@ type AdmissionClaims struct {
 // IAdmissionTokenVerifier verifies the one-time EdDSA admission token minted by the Queue Service.
 type IAdmissionTokenVerifier interface {
 	Verify(token string) (AdmissionClaims, error)
+}
+
+// CategoryAvailabilitySnap is a point-in-time availability reading for SSE.
+type CategoryAvailabilitySnap struct {
+	CategoryID string `json:"categoryId"`
+	Available  int    `json:"available"`
+}
+
+// IAvailabilityCache reads live category availability from Valkey (written by the stock projection
+// after each hold/settle/expire) and tracks SSE connection count per instance.
+type IAvailabilityCache interface {
+	GetAvailability(ctx context.Context, eventID string) ([]CategoryAvailabilitySnap, error)
+	IncrConn(ctx context.Context, instance string) (int, error)
+	DecrConn(ctx context.Context, instance string) error
 }

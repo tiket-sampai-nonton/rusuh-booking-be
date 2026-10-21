@@ -17,6 +17,7 @@ import (
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/infrastructure/paymentclient"
 	bookingpg "github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/infrastructure/postgres"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/infrastructure/security"
+	bookingvalkey "github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/infrastructure/valkey"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/config"
 )
 
@@ -47,6 +48,7 @@ func newBookingModule(cfg config.Config, clients *Clients, logger *slog.Logger) 
 
 	// Outbound adapters.
 	eventRepo := bookingpg.NewEventRepo(pool)
+	eventWriteRepo := bookingpg.NewEventWriteRepo(pool)
 	admissionRepo := bookingpg.NewAdmissionRepo(pool)
 	bookingRepo := bookingpg.NewBookingRepo(pool)
 	ticketRepo := bookingpg.NewTicketRepo(pool)
@@ -68,22 +70,40 @@ func newBookingModule(cfg config.Config, clients *Clients, logger *slog.Logger) 
 	// Usecases.
 	listEvents := usecase.NewListEvents(eventRepo, clk)
 	getDetail := usecase.NewGetEventDetail(eventRepo)
+	createEvent := usecase.NewCreateEvent(eventWriteRepo, idGen)
+	updateConfig := usecase.NewUpdateEventConfig(eventWriteRepo)
 	allocate := usecase.NewAllocateBatch(admissionRepo, idGen, clk)
+	supply := usecase.NewGetEventSupply(eventRepo)
 	sessions := usecase.NewSession(admissionRepo, eventRepo, admissionVerifier, clk)
 	attendee := usecase.NewCheckAttendee(admissionRepo, eventRepo, attendeeRepo, pii, clk)
+	cancelSess := usecase.NewCancelSession(admissionRepo)
 	hold := usecase.NewHold(admissionRepo, eventRepo, idemStore, uow, pii, idGen, clk)
 	edit := usecase.NewEdit(bookingRepo, admissionRepo, eventRepo, uow, pii, clk)
 	tickets := usecase.NewGetTickets(bookingRepo, ticketRepo)
 	history := usecase.NewListMyBookings(bookingRepo)
+	getBooking := usecase.NewGetBooking(bookingRepo, clk)
+	payable := usecase.NewGetPayable(bookingRepo, clk)
+	deadlineUC := usecase.NewExtendDeadline(uow)
+	lockUC := usecase.NewPaymentLock(uow, clk)
+	releaseAlloc := usecase.NewReleaseAllocation(admissionRepo)
 	expiry := usecase.NewExpire(bookingRepo, paymentClient, uow)
+	cancelBook := usecase.NewCancelBooking(bookingRepo, paymentClient, uow, clk)
 
 	// Handlers.
 	regs := []registrar{
 		bookinghttp.NewCatalogHandler(listEvents, getDetail),
-		bookinghttp.NewSessionHandler(sessions, attendee),
-		bookinghttp.NewBookingHandler(hold, edit, tickets),
+		bookinghttp.NewSessionHandler(sessions, attendee, cancelSess),
+		bookinghttp.NewBookingHandler(hold, edit, tickets, getBooking, cancelBook),
 		bookinghttp.NewMyBookingsHandler(history, bearerVerifier),
-		bookinghttp.NewInternalHandler(allocate, bearerVerifier),
+		bookinghttp.NewInternalHandler(allocate, bearerVerifier).WithSupply(supply).WithPayable(payable).WithDeadlineExtension(deadlineUC).WithPaymentLock(lockUC).WithReleaseAllocation(releaseAlloc),
+		bookinghttp.NewAdminHandler(createEvent, updateConfig, bearerVerifier),
+	}
+
+	// SSE availability + timer stream (requires Valkey; skipped when it is not wired).
+	if clients.VK != nil {
+		cache := bookingvalkey.NewAvailabilityCache(clients.VK.VK())
+		streamUC := usecase.NewStreamSession(admissionRepo, cache, clk, 3*time.Second, 1000)
+		regs = append(regs, bookinghttp.NewSSEHandler(streamUC))
 	}
 
 	return &module{

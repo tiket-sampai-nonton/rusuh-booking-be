@@ -29,4 +29,8 @@ type IQueueStore interface {
 	GetSale(ctx context.Context, eventID string) (SaleState, error)
 	SetStatusDoc(ctx context.Context, eventID string, doc []byte, ttl time.Duration) error
 	GetStatusDoc(ctx context.Context, eventID string) ([]byte, bool, error)
+	// WasNotifiedSoon reports whether a pre-turn notification was already sent for this entry.
+	WasNotifiedSoon(ctx context.Context, eventID, entryID string) (bool, error)
+	// MarkNotifiedSoon records that a pre-turn notification was sent (idempotent SETNX, TTL=10min).
+	MarkNotifiedSoon(ctx context.Context, eventID, entryID string) error
 }

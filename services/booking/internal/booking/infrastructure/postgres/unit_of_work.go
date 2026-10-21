@@ -421,6 +421,102 @@ func (u *UnitOfWork) expire(ctx context.Context, tx pgx.Tx, spec outbound.Expire
 	return true, enqueueOutbox(ctx, tx, "booking.journey.ended", spec.BookingID, ended)
 }
 
+// ExtendDeadline extends payment_expires_at once per booking.
+func (u *UnitOfWork) ExtendDeadline(ctx context.Context, spec outbound.DeadlineSpec) error {
+	return u.retry(ctx, func(tx pgx.Tx) error {
+		return u.extendDeadline(ctx, tx, spec)
+	})
+}
+
+func (u *UnitOfWork) extendDeadline(ctx context.Context, tx pgx.Tx, spec outbound.DeadlineSpec) error {
+	tag, err := tx.Exec(ctx, `
+		UPDATE booking.bookings
+		   SET payment_expires_at = payment_expires_at + ($2 || ' seconds')::interval,
+		       deadline_extended_at = now(),
+		       updated_at = now()
+		 WHERE id = $1::uuid
+		   AND deadline_extended_at IS NULL
+		   AND status IN ('PENDING_PAYMENT', 'VERIFYING')`,
+		spec.BookingID, spec.Seconds)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return inbound.ErrDeadlineAlreadyExtended
+	}
+	return nil
+}
+
+// PaymentLock transitions a payable booking to VERIFYING and stamps payment_started_at, locking the
+// order against edits before a payment attempt (v4.4). It is idempotent: a booking already VERIFYING
+// returns OK with no new event. Returns PAYMENT_EXPIRED when the window lapsed and BOOKING_NOT_PAYABLE
+// when the booking is in any non-payable state. Retries on event-store concurrency (max 3).
+func (u *UnitOfWork) PaymentLock(ctx context.Context, spec outbound.PaymentLockSpec) (outbound.PaymentLockResult, error) {
+	var res outbound.PaymentLockResult
+	err := u.retry(ctx, func(tx pgx.Tx) error {
+		r, err := u.paymentLock(ctx, tx, spec)
+		res = r
+		return err
+	})
+	return res, err
+}
+
+func (u *UnitOfWork) paymentLock(ctx context.Context, tx pgx.Tx, spec outbound.PaymentLockSpec) (outbound.PaymentLockResult, error) {
+	var status vo.BookingStatus
+	var version int
+	var amountMinor int64
+	var paymentExpiresAt time.Time
+	err := tx.QueryRow(ctx, `
+		SELECT status, version, amount_minor, payment_expires_at
+		  FROM booking.bookings WHERE id=$1::uuid FOR UPDATE`, spec.BookingID).
+		Scan(&status, &version, &amountMinor, &paymentExpiresAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return outbound.PaymentLockResult{}, inbound.ErrNotFound
+	}
+	if err != nil {
+		return outbound.PaymentLockResult{}, err
+	}
+
+	now := time.Now().UTC()
+	// Payment window lapsed: not lockable regardless of status.
+	if now.After(paymentExpiresAt) {
+		return outbound.PaymentLockResult{Outcome: "PAYMENT_EXPIRED", AmountMinor: amountMinor, PaymentExpiresAt: paymentExpiresAt}, nil
+	}
+	if !status.IsPayable() {
+		return outbound.PaymentLockResult{Outcome: "BOOKING_NOT_PAYABLE", AmountMinor: amountMinor, PaymentExpiresAt: paymentExpiresAt}, nil
+	}
+
+	// Already locked (VERIFYING): idempotent no-op, no new event.
+	if status == vo.BookingVerifying {
+		return outbound.PaymentLockResult{Outcome: "OK", Version: version, AmountMinor: amountMinor, PaymentExpiresAt: paymentExpiresAt}, nil
+	}
+
+	// First lock: PENDING_PAYMENT → VERIFYING. Append the aggregate event, then project the read model
+	// and stamp payment_started_at in the same transaction (event-sourcing invariant).
+	if _, err := u.store.Append(ctx, tx, spec.BookingID, version, eventstore.NewEvent{
+		Type: domevent.TypeBookingLocked, SchemaVersion: 1,
+		Payload:  domevent.BookingLocked{BookingID: spec.BookingID, Reason: "PAYMENT_STARTED"},
+		Metadata: meta(spec.CorrelationID),
+	}); err != nil {
+		return outbound.PaymentLockResult{}, err
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE booking.bookings
+		   SET status = 'VERIFYING',
+		       payment_started_at = COALESCE(payment_started_at, $2),
+		       version = $3,
+		       updated_at = $2
+		 WHERE id = $1::uuid`, spec.BookingID, now, version+1); err != nil {
+		return outbound.PaymentLockResult{}, err
+	}
+	return outbound.PaymentLockResult{
+		Outcome:          "OK",
+		Version:          version + 1,
+		AmountMinor:      amountMinor,
+		PaymentExpiresAt: paymentExpiresAt,
+	}, nil
+}
+
 // retry runs fn in a transaction, retrying on event-store concurrency up to maxRetries.
 func (u *UnitOfWork) retry(ctx context.Context, fn func(pgx.Tx) error) error {
 	var err error
