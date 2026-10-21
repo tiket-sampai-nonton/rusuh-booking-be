@@ -1409,6 +1409,9 @@ Response `201`:
 | Endpoint | Request | Response |
 |---|---|---|
 | `POST /internal/v1/allocations:batch` (Booking) | `{ eventId, entries: [{ queueEntryId, seq, visitorId, buyerNikHash, buyerNikMasked, buyerEmail }] }` | `{ results: [{ queueEntryId, outcome: GRANTED, allocationId, units, claimDeadline } \| { queueEntryId, outcome: NO_SUPPLY_NOW \| SOLD_OUT \| BUYER_QUOTA_EXHAUSTED \| ALREADY_ACTIVE }] }` |
+
+Queue menangani setiap outcome: `GRANTED` → promote ke active; `NO_SUPPLY_NOW` → tetap waiting; `QUOTA_EXHAUSTED` → tambah ke quota_exhausted set + entry REJECTED; `SOLD_OUT` → tutup antrean; `ALREADY_ACTIVE` → akhiri entry + log alert (seharusnya tidak terjadi karena constraint Queue).
+
 | `POST /internal/v1/allocations/{id}:release` (Booking) | `{ reason: QUEUE_ENTRY_GONE }` | `{ released: true }` |
 | `GET /internal/v1/events/{id}/supply` (Booking) | — | `{ free, allocated, held, sold, total, maxPerOrder, saleState, soldOut, version, categories: [{ code, name, capacity, available }] }` |
 | `GET /internal/v1/bookings/{id}/payable` (Booking) | — | `{ bookingId, status, amountMinor, paymentExpiresAt, visitorId, buyerEmail, version, canEdit }` |

@@ -27,3 +27,10 @@ Peserta: arnu12rahman (BE-1), nuzirwan (BE-2, lewat jawaban tertulis), dibantu C
 - Notification: klaim delivery `ON CONFLICT DO NOTHING` membuat retry tidak pernah mengirim ulang; SMTP belum dibungkus breaker.
 
 Rincian: `specs/*/tasks.md` (sub-task R) dan `specs/README.md` bagian "Status open question".
+
+## Tambahan — merge `checkpoint #1` DEV-2 (21 Oktober 2026)
+
+- DEV-2 menambah schema `otp.requested.v1`, `publicRef` di `Payable`, penerbitan `quota.exhausted` (saat `paid = max`) dan `sold_out`, serta penanganan `ALREADY_ACTIVE` di promotor Queue. Semua sesuai keputusan OQ-4, OQ-13, OQ-18, OQ-21.
+- Usulan DEV-2 "Task 14" (status `REVIEW` pada attempt Payment) **tidak diambil**: migrasi `0001` tidak memuat status itu dan tidak boleh diubah. Nominal webhook tidak cocok → callback ditolak/dicatat tanpa mengubah state; `REVIEW` hanya status booking.
+- Defect baru di kode DEV-2: query sold-out di `settle` membaca kolom `total_units` yang tidak ada (`total_capacity`). Dalam transaksi PostgreSQL, ini membuat transaksi aborted sehingga semua settlement gagal (booking 9.R3).
+- Pengikatan admission token ke visitor kini hanya di usecase (token tidak lagi membawa visitor); aman selama pengecekan `admission.VisitorID` dipertahankan.

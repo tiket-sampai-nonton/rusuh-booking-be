@@ -69,6 +69,8 @@ func Load() (Config, error) {
 		Issuer:         r.String("TOKEN_ISSUER", "rbt-queue"),
 		Audience:       r.String("TOKEN_AUDIENCE", "rbt"),
 		KeyID:          r.String("TOKEN_KEY_ID", "queue-1"),
+		UserIssuer:     r.String("USER_TOKEN_ISSUER", "rbt-user"),
+		UserKeyID:      r.String("USER_TOKEN_KEY_ID", "user-1"),
 		PrivateKeyFile: r.String("TOKEN_PRIVATE_KEY_FILE", ""),
 		PublicKeyFile:  r.String("TOKEN_PUBLIC_KEY_FILE", ""),
 		AdmissionTTL:   r.Duration("TOKEN_ADMISSION_TTL", 60*time.Second),

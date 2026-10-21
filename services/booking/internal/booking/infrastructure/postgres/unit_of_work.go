@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"time"
@@ -311,8 +312,22 @@ func (u *UnitOfWork) settle(ctx context.Context, tx pgx.Tx, spec outbound.Settle
 	if _, err := tx.Exec(ctx, `UPDATE booking.event_supply SET held_units=held_units-$2, sold_units=sold_units+$2, version=version+1, updated_at=now() WHERE event_id=$1::uuid`, eventID, n); err != nil {
 		return false, err
 	}
+	// Publish sold_out if event supply is exhausted (SRS-F-10-01).
+	var soldUnits, totalUnits int
+	if err := tx.QueryRow(ctx, `SELECT sold_units, total_units FROM booking.event_supply WHERE event_id=$1::uuid`,
+		eventID).Scan(&soldUnits, &totalUnits); err == nil && soldUnits >= totalUnits {
+		soldOut := map[string]any{"eventId": eventID}
+		_ = enqueueOutbox(ctx, tx, "booking.sold_out", spec.BookingID, soldOut)
+	}
 	if _, err := tx.Exec(ctx, `UPDATE booking.buyer_quotas SET held_quantity=held_quantity-$3, paid_quantity=paid_quantity+$3, updated_at=now() WHERE event_id=$1::uuid AND buyer_nik_hash=$2`, eventID, buyerHash, n); err != nil {
 		return false, err
+	}
+	// Publish quota.exhausted if buyer reached max quota (OQ-13).
+	var paidQty, maxQty int
+	if err := tx.QueryRow(ctx, `SELECT paid_quantity, max_quantity FROM booking.buyer_quotas WHERE event_id=$1::uuid AND buyer_nik_hash=$2`,
+		eventID, buyerHash).Scan(&paidQty, &maxQty); err == nil && paidQty >= maxQty {
+		quotaExhausted := map[string]any{"eventId": eventID, "buyerNikHash": hex.EncodeToString(buyerHash)}
+		_ = enqueueOutbox(ctx, tx, "booking.quota.exhausted", spec.BookingID, quotaExhausted)
 	}
 
 	paid := map[string]any{"bookingId": spec.BookingID, "publicRef": publicRef, "buyerEmail": email}

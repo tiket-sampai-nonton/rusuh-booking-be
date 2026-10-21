@@ -77,7 +77,7 @@ Setiap task selesai bila `make ci` hijau.
 - [ ] 5. Lengkapi dan gerbangi kontrak
   - [ ] 5.1 CI job `contracts`: validasi 7 OpenAPI 3.1 (kin-openapi) dan JSON Schema 2020-12, dipicu perubahan `docs/contracts/`
     - _Requirements: 5.1_
-  - [ ] 5.2 Tambah `docs/contracts/events/otp.requested.v1.schema.json` dan `user-service` ke enum `producer` envelope (additive) — **perlu persetujuan pemilik kontrak (OQ-4)**
+  - [ ] 5.2 Schema `otp.requested.v1.schema.json` sudah ada (DEV-2, checkpoint #1) ✅. Tersisa: tambah `user-service` ke enum `producer` di `envelope.schema.json` (additive) — tanpa ini envelope OTP dari User gagal validasi kontrak — **perlu persetujuan pemilik kontrak (OQ-4)**
     - _Requirements: 5.3_
   - [ ] 5.3 Breaking-change check terhadap `main` (path/field/enum dihapus atau dipersempit → gagal)
     - **Property 7: Additive contracts**

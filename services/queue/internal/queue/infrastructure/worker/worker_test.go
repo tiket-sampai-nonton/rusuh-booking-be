@@ -56,7 +56,7 @@ func TestPromoter_PromotesReservedAndPublishes(t *testing.T) {
 	m.store.EXPECT().Promote(ctx, "ev1", gomock.Any(), 10, gomock.Any()).Return([]string{"e1"}, nil)
 	m.pub.EXPECT().PublishTurnArrived(ctx, "ev1", "e1", "v1", gomock.Any()).Return(nil)
 
-	p := worker.NewPromoter(m.store, m.settings, m.booking, m.pub, m.audit, wnow, 200)
+	p := worker.NewPromoter(m.store, m.settings, m.booking, m.pub, m.audit, wnow, nil, 200)
 	require.NoError(t, p.Run(ctx))
 }
 
@@ -67,7 +67,7 @@ func TestPromoter_NoFreeSlotsSkips(t *testing.T) {
 	m.settings.EXPECT().Get(ctx, "ev1").Return(entity.EventSettings{ActiveSlotCapacity: 5}, true, nil)
 	m.store.EXPECT().ActiveCount(ctx, "ev1").Return(5, nil)
 
-	p := worker.NewPromoter(m.store, m.settings, m.booking, m.pub, m.audit, wnow, 200)
+	p := worker.NewPromoter(m.store, m.settings, m.booking, m.pub, m.audit, wnow, nil, 200)
 	require.NoError(t, p.Run(ctx))
 }
 
@@ -86,7 +86,7 @@ func TestPromoter_QuotaExhaustedAddsSet(t *testing.T) {
 	m.store.EXPECT().AddQuotaExhausted(ctx, "ev1", "aa").Return(nil)
 	// no GRANTED → no Promote
 
-	p := worker.NewPromoter(m.store, m.settings, m.booking, m.pub, m.audit, wnow, 200)
+	p := worker.NewPromoter(m.store, m.settings, m.booking, m.pub, m.audit, wnow, nil, 200)
 	require.NoError(t, p.Run(ctx))
 }
 

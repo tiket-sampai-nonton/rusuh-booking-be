@@ -582,7 +582,7 @@ curl localhost:8083/health
 {
   "payment_type": "gopay",
   "transaction_details": {
-    "order_id": "RBT-{bookingId}-{attemptNum}",
+    "order_id": "RB-{publicRef}-{attemptNo}",
     "gross_amount": 1500000
   },
   "gopay": {
@@ -609,7 +609,7 @@ curl localhost:8083/health
 {
   "payment_type": "bank_transfer",
   "transaction_details": {
-    "order_id": "RBT-{bookingId}-{attemptNum}",
+    "order_id": "RB-{publicRef}-{attemptNo}",
     "gross_amount": 1500000
   },
   "bank_transfer": {

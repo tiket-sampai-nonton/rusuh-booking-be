@@ -15,6 +15,8 @@ type Token struct {
 	Issuer         string
 	Audience       string
 	KeyID          string
+	UserIssuer     string // Issuer of User Service tokens (for verifying buyer bearer tokens)
+	UserKeyID      string // Key ID of User Service tokens (default: "user-1")
 	PrivateKeyFile string
 	PublicKeyFile  string // User Service public key for verifying buyer bearer tokens
 	AdmissionTTL   time.Duration

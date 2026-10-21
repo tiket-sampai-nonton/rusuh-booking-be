@@ -81,6 +81,10 @@ dan Payment) → sisanya.
   - Ada: consumer, `settle.go`, `unit_of_work.Settle` (idempoten lewat status != PAID + `ON CONFLICT` tiket)
   - [ ] 9.R1 Teruskan `settlementTime` dan `amountMinor` dari event. Sekarang `settlement_time` diisi waktu proses
     - _Requirements: 9.1, 9.2_
+  - [ ] 9.R3 **Defect (checkpoint #1):** query sold-out di `settle` membaca `total_units`, padahal kolomnya `total_capacity`. Error query di dalam transaksi PostgreSQL membuat transaksi `aborted`, jadi statement berikutnya (`buyer_quotas`) gagal dan **setiap settlement gagal**. Perbaiki ke `total_capacity`, jangan telan error (`_ =`), dan jangan menjalankan query yang boleh gagal di dalam transaksi yang sama. Aturan sold out resmi: `free + allocated + held = 0` (R3.5); pengecekan setelah settlement hanya pelengkap
+    - _Requirements: 9.1, 3.5, 12.3_
+  - [x] 9.R4 `booking.quota.exhausted` terbit saat `paid_quantity >= max_quantity` setelah settlement (OQ-13 diputuskan: pilihan (a), sudah ada di kode)
+    - _Requirements: 12.5_
   - [ ] 9.R2 Cek ketepatan waktu: `settlementTime > payment_expires_at` → REVIEW (lepas hold); booking EXPIRED/CANCELLED → REVIEW; nominal tidak cocok → REVIEW + alert (OQ-17)
     - **Property 7: Timeliness by settlement time**
     - _Requirements: 9.3, 9.4_
@@ -113,7 +117,7 @@ dan Payment) → sisanya.
     - _Requirements: 12.3, 12.7_
   - [ ] 12.R2 Test kontrak semua payload terhadap `docs/contracts/events/*.schema.json`
     - _Requirements: 12.7_
-  - [ ] 12.R3 `booking.quota.exhausted`: pemicu sekarang `held + paid = max`, tetapi Queue tidak pernah menghapus NIK dari set, jadi NIK tetap terblokir walau hold expired. Pilih: terbitkan saat `paid = max`, atau tambah event pembuka blokir (OQ-13)
+  - [x] 12.R3 `booking.quota.exhausted` terbit saat `paid = max` (lihat 9.R4); NIK terblokir permanen itu benar karena kuota sudah terpakai
     - _Requirements: 12.5_
   - _Requirements: 12.1, 12.2, 12.6_
 
@@ -144,5 +148,6 @@ dan Payment) → sisanya.
     - _Requirements: 19.4_
 
 ## Notes
+- Admission token: `AdmissionVerifier` tidak lagi mengisi `VisitorID` dari token (checkpoint #1); pengikatan ke visitor tetap ditegakkan di usecase lewat `admission.VisitorID` dari DB (`session.go`). Aman selama pengecekan itu dipertahankan; tambahkan test TC-SEC-01.
 - Routing key tanpa `.v1` dipakai konsisten di semua service; penyelarasannya dikerjakan sekali di platform task 12 supaya tidak pecah sebagian.
 - Error response mengikuti format ringkas di platform task 2.6.

@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "otp.requested.v1.schema.json",
+  "title": "Payload otp.requested.v1",
+  "description": "OTP login email event. Email dan kode dienkripsi AES-256-GCM; tidak ada plaintext di broker (SRS-F-27-12).",
+  "type": "object",
+  "properties": {
+    "emailEnc": {
+      "type": "string",
+      "description": "Email terenkripsi AES-256-GCM, base64url encoded"
+    },
+    "codeEnc": {
+      "type": "string",
+      "description": "Kode OTP 6 digit terenkripsi AES-256-GCM, base64url encoded"
+    },
+    "expiresAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Waktu kedaluwarsa OTP (RFC3339)"
+    },
+    "locale": {
+      "type": "string",
+      "description": "Locale untuk template email (default: id)",
+      "default": "id"
+    }
+  },
+  "required": [
+    "emailEnc",
+    "codeEnc",
+    "expiresAt"
+  ],
+  "additionalProperties": false
+}

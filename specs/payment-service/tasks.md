@@ -38,13 +38,14 @@ Sambil menunggu, pakai klien Booking palsu di test.
 
 - [ ] 3. Buat attempt (charge) + event sourcing
   - Urutan: idempotency → `payment-lock` → tutup attempt lama bila ganti metode → simpan attempt `CREATED` → charge (di luar transaksi) → `PENDING` atau `UNKNOWN`
-  - Expiry di gateway tidak boleh melewati `paymentExpiresAt`; order ID `RB-{publicRef}-{attemptNo}` (OQ-21)
+  - Expiry di gateway tidak boleh melewati `paymentExpiresAt`; order ID `RB-{publicRef}-{attemptNo}`. `publicRef` kini wajib di `Payable` (kontrak `internal-booking.yaml` sudah diperbarui oleh DEV-2, OQ-21 selesai di sisi kontrak): `GetPayable()` mengembalikan `PublicRef`; kosong → gagalkan pembuatan attempt dengan error jelas. Booking harus mengisinya di `payable` (booking Task 13)
   - _Depends on: 12, 0.4_
   - **Property 2: No charge before lock**, **Property 5: Gateway expiry within booking deadline**, **Property 6: No duplicate order on ambiguous timeout**
   - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.7, 3.8, 3.9, 3.10, 3.11_
 
 - [ ] 4. Webhook + verifikasi signature
   - Signature SHA-512 constant-time; cek order, nominal, lingkungan; simpan callback sebelum balas 200; duplikat → 200 tanpa efek; status final tidak mundur
+  - Nominal tidak cocok (`gross_amount` ≠ `amount_minor` attempt): callback dicatat `REJECTED`/`ERROR`, state tidak berubah, `payment.succeeded` tidak diterbitkan, log + alert Ops. **Tidak** menambah status `REVIEW` pada attempt: migrasi `0001` tidak memuatnya dan tidak boleh diubah. `REVIEW` hanya status booking (booking 9.R2; usulan DEV-2 "Task 14" diselesaikan di sini, 2026-10-21)
   - **Property 3: Signature is the only proof**, **Property 4: Webhook idempotency & monotonic status**
   - _Requirements: 4.1, 4.2, 4.3, 4.4, 4.5, 4.6, 4.7_
 

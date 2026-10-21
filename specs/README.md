@@ -127,15 +127,15 @@ Selesai:
 - **OQ-18** — entry dengan `ALREADY_ACTIVE` tidak di-admit. Perlu queue 11.R1 supaya entry itu tidak menyumbat antrean.
 - **OQ-19** — pakai kode error yang ada di kontrak; bukan pemilik → `404`.
 
+Selesai:
+- **OQ-13** — diputuskan: terbitkan `quota.exhausted` saat `paid = max`. Kode DEV-2 sudah begitu (booking 9.R4). Catatan: kode yang sama punya defect `total_units` (booking 9.R3).
+
 Diputuskan, tetapi kodenya belum mengikuti:
-- **OQ-13** — DEV-2 memilih pemicu `held + paid = max`. Masalahnya, Queue tidak pernah menghapus NIK dari set blokir, jadi NIK tetap terblokir walau hold-nya expired. Perlu pilih salah satu (booking 12.R3):
-  - (a) terbitkan hanya saat `paid = max`;
-  - (b) tambah event pembuka blokir.
 - **OQ-17** — status `REVIEW` dan email review sudah ada, tetapi `Settle` belum menerima maupun membandingkan `amountMinor` (booking 9.R2).
-- **OQ-4** — publisher dan consumer `otp.requested` sudah ada. Yang belum:
-  - file schema kontrak dan `user-service` di enum `producer` (platform 5.2, owner: kamu);
+- **OQ-4** — publisher, consumer, dan file schema `otp.requested.v1` sudah ada. Yang belum:
+  - `user-service` di enum `producer` envelope (platform 5.2, owner: kamu);
   - `aggregateId` yang masih kosong (user 1.R1).
-- **OQ-21** — `publicRef` ada di API publik, tetapi belum di `Payable` internal. Akan ditambah saat booking Task 13 dibuat.
+- **OQ-21** — `publicRef` kini wajib di `Payable` pada kontrak (DEV-2). Tersisa: Booking mengisinya saat `payable` dibuat (booking Task 13) dan Payment memakainya untuk `order_id` (payment Task 3).
 
 Masih terbuka:
 - **OQ-15** — jawaban DEV-2 ("`SESSION_EXPIRED` ada di `booking.expired`") menjawab event yang berbeda. Pertanyaannya tentang `outcome` di `booking.journey.ended`, yang memang belum memuat nilai itu. Saat ini kode tidak mengirim `journey.ended` sama sekali untuk sesi habis (booking 10.R1). Usul: pakai `EXPIRED`.

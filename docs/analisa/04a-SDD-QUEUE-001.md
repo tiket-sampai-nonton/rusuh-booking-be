@@ -357,6 +357,7 @@ claimDeadlineMs, allocationId
 3. Call `POST /internal/v1/allocations:batch`
 4. Move successful entries to `active`, set ADMITTED
 5. Publish `queue.turn.arrived` for each
+6. Handle ALREADY_ACTIVE: end entry with status ALREADY_ACTIVE, log warning for investigation (bug indicator — Queue constraints should prevent this)
 
 ### 8.2 Status Document Publisher
 

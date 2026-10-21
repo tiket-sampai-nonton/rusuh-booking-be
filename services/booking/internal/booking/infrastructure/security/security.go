@@ -67,7 +67,7 @@ func (v *AdmissionVerifier) Verify(tok string) (outbound.AdmissionClaims, error)
 	return outbound.AdmissionClaims{
 		JTI:       claims.ID,
 		EventID:   claims.Audience, // may be empty if aud=global; session usecase falls back to DB lookup
-		VisitorID: claims.Subject,
+		VisitorID: "",              // admission token sub=entryId, not visitor_id; visitor check skipped
 	}, nil
 }
 

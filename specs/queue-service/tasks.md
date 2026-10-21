@@ -64,7 +64,7 @@ perbaikan payload di booking 12.R1).
 
 - [ ] 11. Promotor + claim + claim sweeper
   - Ada: `promoter.go`, `sweeper.go`, claim handler
-  - [ ] 11.R1 **Defect:** entry yang dibalas `BUYER_QUOTA_EXHAUSTED` atau `ALREADY_ACTIVE` tetap `WAITING` di depan, jadi promotor mengirim entry yang sama setiap tick dan menyumbat antrean. Akhiri entry (`ENDED` + `reason`) dan bersihkan constraint key (OQ-18 diputuskan: jangan di-admit)
+  - [ ] 11.R1 **Defect (sebagian selesai di checkpoint #1):** `ALREADY_ACTIVE` kini mengakhiri entry dan dicatat sebagai peringatan (`promoter.go`) ✅. Masih tersisa: `BUYER_QUOTA_EXHAUSTED` hanya menambah NIK ke set blokir tetapi entry tetap `WAITING` di depan, jadi promotor mengirim entry yang sama setiap tick dan menyumbat antrean. Akhiri entry (`ENDED` + `reason`) dan bersihkan constraint key. Pastikan `end_entry.lua` memperlakukan outcome `ALREADY_ACTIVE` sebagai `ENDED`
     - _Requirements: 6.4, 6.13_
   - [ ] 11.R2 Sweeper tidak boleh menerbitkan `booking.journey.ended`, karena itu event milik Booking. Cukup tandai `MISSED` dan lepas slot; Booking melepas alokasinya sendiri (K7)
     - _Requirements: 6.10_
