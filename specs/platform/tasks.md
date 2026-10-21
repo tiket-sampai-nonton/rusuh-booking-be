@@ -43,7 +43,7 @@ Setiap task selesai bila `make ci` hijau.
   - [ ] 2.6 Format error standar: `pkg/apperror` mengirim hanya `{meta:{code, message}}` dengan `message = "KODE: pesan"` (atau pesan umum untuk 5xx); `requestId` di header `X-Request-ID`; `httpx.WriteError` menulis kode error, detail, error asli, dan payload request (diredaksi lewat 4.4) ke log. Satu perubahan di `pkg/` berlaku untuk lima service; beri tahu tim web/mobile
     - _Requirements: 2.8, 2.9_
     - _Depends on: 4.4_
-  - [x] 2.7 `httpx.CORS()` untuk lokal (DEV-2); pastikan hanya dipasang saat `APP_ENV=local`
+  - [ ] 2.7 **Temuan:** `httpx.CORS()` (DEV-2) dipasang tanpa syarat di `delivery/server.go` kelima service, jadi `Access-Control-Allow-Origin: *` aktif di semua lingkungan, padahal komentarnya "never enable in prod". Pasang hanya bila `APP_ENV=local`
     - _Requirements: 2.10_
   - Catatan: visitor auth sekarang ditulis ulang di tiap service (`security/visitor_auth.go`). Setelah 2.1 selesai, service bisa pindah ke versi `pkg/httpx`; tidak wajib sebelum demo
   - _Depends on: 6.1 (kunci Queue & service lokal untuk test integrasi)_
@@ -65,7 +65,7 @@ Setiap task selesai bila `make ci` hijau.
 - [ ] 4. Implement telemetry & redaksi log
   - [x] 4.1 Keputusan library: Prometheus client (`client_golang`) — dipilih karena paling sederhana dijelaskan dan langsung cocok dengan Prometheus/Grafana lokal; tracing penuh (OpenTelemetry) ditunda, korelasi cukup lewat `trace_id` di log. Tercatat sebagai ADR-023 di `docs/analisa/05-ADR-RBT.md`
     - _Requirements: 4.1_
-  - [ ] 4.2 `pkg/telemetry`: registry Prometheus, handler `GET /metrics`, middleware HTTP (`rbt_http_requests_total`, `rbt_http_request_duration_seconds`, route template), adaptor `OnStateChange` breaker → `breaker_state{name}`; pasang di composition root kelima service. Setelah selesai, dashboard "RBT — HTTP & Runtime" otomatis terisi
+  - [ ] 4.2 `pkg/telemetry`: registry Prometheus, handler `GET /metrics`, middleware HTTP (`rbt_http_requests_total`, `rbt_http_request_duration_seconds`, route template), adaptor `OnStateChange` breaker → `breaker_state{name}`; pasang `/metrics` + middleware di `delivery/server.go` kelima service (sama dengan 4.5). Setelah selesai, dashboard "RBT — HTTP & Runtime" otomatis terisi
     - _Requirements: 4.1, 4.2, 4.6_
   - [ ] 4.3 Lint/test yang menolak label berkardinalitas tinggi (allowlist label)
     - _Requirements: 4.3_
@@ -73,6 +73,7 @@ Setiap task selesai bila `make ci` hijau.
     - **Property 6: PII never logged**
     - _Requirements: 4.4_
   - [ ] 4.5 Middleware access log di `pkg/httpx` (field R4.7; lewati `/health`, `/metrics`) + `trace_id` dari `X-Amzn-Trace-Id` / `traceparent` dan diteruskan ke klien HTTP internal; log memuat `env`
+    - Pemasangan: satu baris di `internal/delivery/server.go` tiap service (`httpx.Chain(mux, …)`) dan field `env` di `cmd/root.go` (`logger.New`) — ini bagian task ini, tidak ada task logging terpisah per service. Menyentuh service nuzirwan (perubahan kecil, koordinasikan)
     - _Requirements: 4.7, 4.8_
     - _Depends on: 4.4_
   - [ ] 4.6 `LOG_FORMAT=gcp` di `pkg/logger.ReplaceAttr` (`level→severity`, `msg→message`, `time→timestamp`, `trace_id→logging.googleapis.com/trace`); validasi `LOG_FORMAT` menerima `json|gcp|text`; test keluaran
