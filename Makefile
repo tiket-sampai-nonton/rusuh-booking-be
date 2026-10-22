@@ -2,7 +2,8 @@ SERVICES := queue booking payment notification user
 MODULES  := pkg $(addprefix services/,$(SERVICES))
 LINT_CFG := $(CURDIR)/.golangci.yml
 COVERAGE_MIN ?= 80
-KEY      := deployments/compose/keys/user-token.pem
+KEYDIR   := deployments/compose/keys
+KEYS     := $(addprefix $(KEYDIR)/,$(addsuffix -token.pem,user queue payment booking))
 
 # Integration test memakai infrastruktur Compose (make infra).
 export TEST_POSTGRES_DSN    ?= postgres://rbt:rbt-local-only@localhost:5432/rbt?sslmode=disable
@@ -14,18 +15,18 @@ export TEST_POSTGRES_DATABASE ?= rbt
 export TEST_VALKEY_SERVER   ?= [{"host":"localhost","port":6379}]
 export TEST_RABBITMQ_URL    ?= amqp://guest:guest@localhost:5672/
 
-.PHONY: help keys infra obs up down logs ps build test test-integration cover lint fmt tidy mock isolation migrate-% run-% ci
+.PHONY: help keys infra obs up down logs ps build test test-integration cover lint fmt tidy mock isolation migrate-% run-% worker-% ci
 
 help: ## Daftar target
 	@grep -E '^[a-zA-Z_%-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-18s %s\n", $$1, $$2}'
 
-keys: $(KEY) ## Buat kunci Ed25519 lokal untuk token User Service (tidak di-commit)
+keys: $(KEYS) ## Buat kunci Ed25519 lokal (user, queue, payment, booking); tidak di-commit
+	@chmod 0644 $(KEYS)
 
-$(KEY):
-	@mkdir -p $(dir $(KEY))
-	openssl genpkey -algorithm ed25519 -out $(KEY)
-	openssl pkey -in $(KEY) -pubout -out $(dir $(KEY))user-token.pub.pem
-	@chmod 0644 $(KEY)
+$(KEYDIR)/%-token.pem:
+	@mkdir -p $(KEYDIR)
+	openssl genpkey -algorithm ed25519 -out $@
+	openssl pkey -in $@ -pubout -out $(KEYDIR)/$*-token.pub.pem
 
 infra: ## Jalankan PostgreSQL, Valkey, RabbitMQ, Mailpit saja
 	docker compose up -d postgres valkey rabbitmq mailpit
@@ -78,5 +79,8 @@ migrate-%: ## Migrasi satu service ke DB Compose, mis. make migrate-booking (pak
 
 run-%: ## Jalankan API satu service lokal, mis. make run-booking (pakai .env service)
 	cd services/$* && go run ./cmd api
+
+worker-%: ## Jalankan worker satu service lokal di APP_PORT+100 agar tidak bentrok dengan api, mis. make worker-booking
+	cd services/$* && APP_PORT=$$(( $$(sed -n 's/^APP_PORT=//p' .env | head -1) + 100 )) go run ./cmd worker
 
 ci: build lint cover isolation ## Pemeriksaan CI lokal (build, lint, test + coverage, isolation)

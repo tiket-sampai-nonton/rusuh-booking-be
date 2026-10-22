@@ -13,7 +13,7 @@ Setiap task selesai bila `make ci` hijau.
 
 - [x] 0. Fondasi yang sudah ada (audit 2026-10-21)
   - `pkg/{apperror,clock,crypto,dotenv,eventstore,httpx(server,RequestID,Recover,strict JSON),logger,migrate,postgres,rabbitmq,resilience,token,valkey}` dengan test; evidence `docs/evidence/2026-10-19-boilerplate-v1.5.md`
-  - CI `ci.yml` (build, lint+depguard, coverage ≥80%, isolation, scan), compose infra + 5 service, `make keys` untuk User
+  - CI `ci.yml` (build, lint+depguard, coverage ≥80%, isolation, scan), compose infra + 5 service, `make keys` untuk User, Queue, Payment, Booking
   - _Requirements: 2.7, 2.8, 4.5, 6.2, 7.1, 8.1_
 
 - [x] 1. Implement `pkg/nik` validator struktur NIK
@@ -97,7 +97,7 @@ Setiap task selesai bila `make ci` hijau.
     - _Depends on: service spec endpoint selesai_
 
 - [ ] 6. Kunci & secret
-  - [ ] 6.1 Perluas `make keys`: kunci Ed25519 untuk Queue (visitor/queue/admission), Payment (page token), Booking (ticket link), dan service token per pemanggil; mount ke compose; tetap di `.gitignore`
+  - [x] 6.1 Perluas `make keys`: kunci Ed25519 untuk Queue (visitor/queue/admission), Payment (page token), Booking (ticket link), dan service token per pemanggil; mount ke compose; tetap di `.gitignore`. Selesai 2026-10-22: `make keys` idempoten membuat `{user,queue,payment,booking}-token(.pub).pem` (0644 untuk container nonroot); folder dimount `/run/keys` ke Queue, Notification, User. Kunci Payment/Booking dibuat tetapi belum dipakai kode (belum ada konsumen); service token per pemanggil ditunda sampai ada pemanggilnya
     - _Requirements: 6.1, 6.3_
   - [ ] 6.4 Seragamkan nama variabel kunci: `TOKEN_PUBLIC_KEY_FILE` (Queue, Notification) vs `TOKEN_PUBLIC_KEY_PATH` (Booking), `PII_HMAC_KEY` (Queue) vs `PII_HASH_KEY` (lainnya); satu nama untuk satu arti, koordinasikan dengan nuzirwan
     - _Requirements: 6.3_
@@ -117,7 +117,7 @@ Setiap task selesai bila `make ci` hijau.
     - _Requirements: 7.4_
   - [x] 7.5 Observability lokal (`make obs`): `deployments/observability/{prometheus,loki,alloy,grafana}`, profile `observability` di compose, target `make obs`, folder `logs/` di-ignore. Terverifikasi 2026-10-21: keempat komponen sehat; log file dan container RabbitMQ masuk Loki; pencarian `| json | requestId=…` berjalan; datasource + 2 dashboard ter-provision. Cara pakai: catatan lokal pemilik platform (tidak di-commit)
     - _Requirements: 7.6, 4.10_
-  - [ ] 7.6 Perbaiki temuan uji lokal 2026-10-21: (a) `make up` — hanya User yang punya kunci di compose, jadi Queue/Booking/Notification berhenti saat start (config fail-fast); isi env kunci/PII untuk semuanya dan lengkapi `.env.example`; (b) worker Notification dan Payment ikut membuka HTTP di `APP_PORT` sehingga bentrok dengan `api` saat dijalankan dari source dengan `.env` yang sama; beri `APP_PORT` terpisah atau jangan buka HTTP di worker
+  - [x] 7.6 Perbaiki temuan uji lokal 2026-10-21: (a) `make up` — hanya User yang punya kunci di compose, jadi Queue/Booking/Notification berhenti saat start (config fail-fast); isi env kunci/PII untuk semuanya dan lengkapi `.env.example`; (b) worker Notification dan Payment ikut membuka HTTP di `APP_PORT` sehingga bentrok dengan `api` saat dijalankan dari source dengan `.env` yang sama; beri `APP_PORT` terpisah atau jangan buka HTTP di worker. Selesai 2026-10-22: compose memberi Queue/Notification env kunci, PII (anchor `x-pii`, `PII_HMAC_KEY` Queue = `PII_HASH_KEY` User), `BOOKING_SERVICE_URL`; `.env.example` Queue/Notification dilengkapi; target `make worker-<svc>` menjalankan worker di `APP_PORT`+100 (api + worker dari source berjalan bersamaan, diuji notification 8084/8184; di Docker tidak bentrok karena container terpisah). Hasil `make up`: queue, payment, notification, user healthy; booking restart-loop karena panic route ServeMux milik DEV-2 (booking 4.R3), bukan konfigurasi
     - _Requirements: 7.1, 6.1_
     - _Depends on: 6.1_
   - [ ] 7.4 `make smoke`: alur bahagia lewat edge
