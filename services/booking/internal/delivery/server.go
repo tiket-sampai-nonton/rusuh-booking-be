@@ -9,6 +9,7 @@ import (
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/clock"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/httpx"
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/telemetry"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/application/usecase"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/infrastructure/healthcheck"
@@ -45,5 +46,8 @@ func NewHandler(cfg config.Config, clients *Clients, logger *slog.Logger) (http.
 	}
 	mod.Register(mux)
 
-	return httpx.Chain(mux, httpx.CORS(), httpx.RequestID(), httpx.Recover(logger)), nil
+	mux.Handle("GET /metrics", telemetry.Handler())
+
+	// AccessLog dan telemetry.HTTP membaca r.Pattern, jadi harus di dalam RequestID dan langsung membungkus mux.
+	return httpx.Chain(mux, httpx.CORS(), httpx.RequestID(), httpx.AccessLog(logger), telemetry.HTTP(config.ServiceName), httpx.Recover(logger)), nil
 }

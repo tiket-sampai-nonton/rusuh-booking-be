@@ -31,7 +31,8 @@ func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 	if ae.HTTPStatus >= http.StatusInternalServerError {
 		level = slog.LevelError
 	}
-	attrs := []any{"requestId", RequestIDFrom(r.Context()), "status", ae.HTTPStatus, "errorCode", string(ae.Code), "error", err}
+	// requestId dan trace_id ikut dari context (logger.ContextWith di RequestID).
+	attrs := []any{"status", ae.HTTPStatus, "errorCode", string(ae.Code), "error", err}
 	if len(ae.Details) > 0 {
 		attrs = append(attrs, "details", ae.Details)
 	}

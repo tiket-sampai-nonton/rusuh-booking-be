@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/httpx"
 	inbound "github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/port/inbound"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/port/outbound"
 )
@@ -44,6 +45,7 @@ func (c *Client) Resolve(ctx context.Context, bookingID string) (outbound.Resolv
 		req.Header.Set("Authorization", "Bearer "+c.serviceToken)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	httpx.Propagate(ctx, req)
 
 	resp, err := c.http.Do(req)
 	if err != nil {

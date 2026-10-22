@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -78,5 +79,18 @@ func TestServeShutsDownOnCancel(t *testing.T) {
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("server did not shut down")
+	}
+}
+
+func TestRequestID_RejectsUnsafeIncomingValue(t *testing.T) {
+	h := Chain(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}), RequestID())
+	for _, bad := range []string{`a"b`, "spasi di sini", "{\"x\":1}", "tab\tid", "é", strings.Repeat("a", 129)} {
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.Header.Set(HeaderRequestID, bad)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if got := rec.Header().Get(HeaderRequestID); got == bad || len(got) != 32 {
+			t.Fatalf("id %q seharusnya diganti id baru, dapat %q", bad, got)
+		}
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -99,4 +100,14 @@ func TestWriteError_RetryAfterHeader(t *testing.T) {
 
 	rec := writeErr(t, apperror.New(apperror.CodeValidationFailed, http.StatusBadRequest, "x").WithDetails(map[string]string{"retryAfter": "30"}))
 	assert.Empty(t, rec.Header().Get("Retry-After"), "hanya untuk 429")
+}
+
+// Handler JSON slog tidak membuang key ganda; requestId dan trace_id harus muncul tepat sekali per baris.
+func TestWriteError_NoDuplicateKeys(t *testing.T) {
+	buf := captureLog(t)
+	writeErr(t, apperror.Internal(assert.AnError))
+
+	line := buf.String()
+	assert.Equal(t, 1, strings.Count(line, `"requestId"`), line)
+	assert.Equal(t, 1, strings.Count(line, `"trace_id"`), line)
 }
