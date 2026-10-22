@@ -60,9 +60,16 @@ func Load() (Config, error) {
 		Port:     r.Int("SMTP_PORT", 1025),
 		User:     r.String("SMTP_USER", ""),
 		Password: r.String("SMTP_PASSWORD", ""),
-		From:     r.String("SMTP_FROM", "no-reply@rusuh.example"),
 		Timeout:  r.Duration("SMTP_TIMEOUT", 10*time.Second),
 	}
+	// EMAIL_FROM menggantikan SMTP_FROM; SMTP_FROM tetap dibaca sebagai cadangan. Default pengirim
+	// hanya untuk mailpit: resend wajib memakai EMAIL_FROM eksplisit (domain terverifikasi).
+	provider := r.String("EMAIL_PROVIDER", EmailMailpit)
+	from := r.String("EMAIL_FROM", r.String("SMTP_FROM", ""))
+	if from == "" && provider == EmailMailpit {
+		from = "no-reply@rusuh.example"
+	}
+	cfg.Email = Email{Provider: provider, From: from, ResendAPIKey: r.String("RESEND_API_KEY", "")}
 	cfg.FCM = FCM{
 		ProjectID:       r.String("FCM_PROJECT_ID", ""),
 		CredentialsPath: r.String("FCM_CREDENTIALS_PATH", ""),

@@ -9,7 +9,7 @@
 | Port | 8084 |
 | Schema / Role | `notification` / `svc_notification` |
 | Verb | `api`, `worker`, `migrate up\|down\|status`, `healthcheck` (D-14) |
-| Dependency | PostgreSQL 16, RabbitMQ (exchange `rusuh.events`), SMTP (Mailpit lokal / SES demo), FCM (cloud) / log adapter (lokal, CI) |
+| Dependency | PostgreSQL 16, RabbitMQ (exchange `rusuh.events`), Mailpit (lokal, CI) / Resend (demo), FCM (cloud) / log adapter (lokal, CI) |
 | Produces events | **tidak ada** — murni consumer; tidak otoritatif atas stok/uang/akun |
 | Owner | BE-1 |
 | Sumber (urut prioritas) | migrasi `0001_init` → kontrak `docs/contracts/openapi/notification.yaml`, `docs/contracts/events/*.schema.json` → SRS §3.1.3 (IF-22/23), §3.2.20–3.2.21, §3.2.25, §3.2.27 → SDD-RBT-001 §4.5.2, §4.6.2 → `docs/analisa/04d-SDD-NOTIFICATION-001.md` v1.1 |
@@ -194,6 +194,26 @@ Trace: SRS-F-27-02, SRS-F-27-12 · TC-MSG-05, TC-MSG-06, TC-USR-11 · ADR-020 ·
 
 ---
 
+## Requirement 13 — Penyedia email dapat dipilih (Mailpit / Resend)
+
+**User Story:** Sebagai developer, saya ingin memilih penyedia email lewat satu env, agar lokal dan CI memakai Mailpit (tidak ada email keluar) dan demo memakai Resend untuk mengirim email sungguhan.
+
+Trace: SRS-IF-22, SRS-F-21-03, SRS-Q-REL-01, SRS-Q-SEC-03 · TC-MSG-01, TC-TKT-02, TC-MSG-05 · keputusan tim 2026-10-21 (SRS-IF-22 diperbarui: SES diganti Resend)
+
+### Acceptance Criteria (EARS)
+
+1. THE service SHALL memilih penyedia dari `EMAIL_PROVIDER ∈ {mailpit, resend}` (default `mailpit`); nilai lain membuat start gagal (fail-fast).
+2. WHERE `EMAIL_PROVIDER = mailpit`, THE service SHALL mengirim lewat SMTP (`SMTP_HOST`, `SMTP_PORT`) ke Mailpit dan tidak melakukan panggilan HTTP keluar ke penyedia email mana pun.
+3. WHERE `EMAIL_PROVIDER = resend`, THE service SHALL mengirim lewat `POST https://api.resend.com/emails` dengan header `Authorization: Bearer <RESEND_API_KEY>`, body `{from, to, subject, text}`; `EMAIL_FROM` (domain terverifikasi di Resend) dan `RESEND_API_KEY` wajib terisi, bila tidak start gagal.
+4. THE `id` dari respons Resend SHALL disimpan sebagai `deliveries.provider_message_id`.
+5. THE request ke Resend SHALL membawa header `Idempotency-Key` = `source_message_id` + jenis notifikasi, sehingga pengiriman ulang dalam 24 jam tidak menghasilkan email ganda di sisi penyedia.
+6. THE klasifikasi error Resend SHALL: `429`, `5xx`, timeout, dan gangguan jaringan = sementara (retry berjenjang); `400`, `401`, `403` (domain belum terverifikasi atau hanya boleh ke alamat sendiri), `422` = permanen (`rabbitmq.Permanent`, delivery `DEAD`, tanpa retry).
+7. THE `RESEND_API_KEY` SHALL tidak pernah muncul di log, `last_error`, payload event, atau pesan error; alamat penerima tidak dilog.
+8. WHEN service start dengan `EMAIL_PROVIDER = resend`, THE service SHALL mencatat satu peringatan bahwa email nyata akan dikirim (tanpa memuat key), agar tidak tertukar dengan mode Mailpit.
+9. THE pengiriman lewat kedua penyedia SHALL melewati breaker dan bulkhead yang sama (R9.5); `429` tidak membuka breaker lebih cepat dari kegagalan lain.
+10. THE CI dan test otomatis SHALL selalu memakai `mailpit` atau fake; test tidak pernah memanggil Resend nyata.
+11. THE penggunaan Resend SHALL dibatasi untuk demo karena akun gratis hanya 100 email/hari dan 3.000/bulan; bila kuota habis, respons `429` diperlakukan sementara dan pesan masuk DLQ setelah retry berjenjang (redrive manual setelah kuota direset tengah malam UTC).
+
 ## Invarian #6 — notifikasi tidak pernah membatalkan transaksi
 
 - Notification **tidak** memegang `IUnitOfWork` lintas service, **tidak** menulis stok/uang/akun, dan **tidak** mempublikasikan event balik.
@@ -225,3 +245,4 @@ make build && make test && make test-integration && make lint && make cover && m
 | 10 Health | D-23 | server_test.go | **implemented** |
 | 11 Config & privasi | D-24, Q-SEC-03, IF-23 | TC-SEC-03, TC-USR-11 | partial |
 | 12 OTP | F-27-02/12 | TC-MSG-05/06, TC-USR-11 | target, blocked OQ-4 |
+| 13 Penyedia email | IF-22, F-21-03, Q-REL-01 | TC-MSG-01, TC-MSG-05 | target |

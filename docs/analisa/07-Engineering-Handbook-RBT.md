@@ -405,7 +405,7 @@ Skenario seed `demo`: satu event dengan 10 tiket (VIP 4, Festival 6) dan kapasit
 - Query parameterized; allowlist sort/filter.
 - IDOR: ownership diperiksa per booking/sesi/tiket berdasarkan `visitorId` dari token; UUID bukan kontrol akses.
 - Token bertanda tangan EdDSA dengan `aud`, `exp`, `jti`; klaim sekali pakai atomik.
-- Tidak menerima URL callback arbitrer; egress allowlist ke Midtrans, SES, ECR, SSM.
+- Tidak menerima URL callback arbitrer; egress allowlist ke Midtrans, Resend, ECR, SSM.
 - AES-256-GCM untuk NIK pemegang dengan key terpisah dan versioned; HMAC-SHA256 dengan key terpisah untuk lookup; rotasi HMAC dengan dual lookup.
 - NIK, email, dan token tidak pernah ada di log, URL, label metrik, DLQ, prompt AI, screenshot, atau fixture nyata.
 - Webhook: signature constant-time, order, amount, environment, transisi legal.

@@ -142,7 +142,7 @@ flowchart LR
     O([Ops]) -->|REVIEW, refund manual, konfigurasi, DLQ| SYS
     A([Assessor]) -->|local clean-room, demo| SYS
     SYS <-->|charge, status, cancel / webhook| MT[Midtrans Sandbox]
-    SYS -->|email| SMTP[SMTP: Mailpit / SES]
+    SYS -->|email| SMTP[Mailpit / Resend]
     SYS -->|push| FCM[FCM / APNs]
 ```
 
@@ -998,7 +998,7 @@ Queue Service di-autoscale terpisah karena menanggung lonjakan join. Security gr
 | local-assessor | nginx edge (Compose) | Midtrans Sandbox via tunnel; simulator bila offline | Mailpit | Penilaian mandiri |
 | development | Compose | Midtrans Sandbox via tunnel | Mailpit | Integrasi |
 | CI | Compose sekali pakai | Simulator | Mailpit | Test otomatis |
-| staging/demo | CloudFront + WAF + ALB + 2 ASG | Midtrans Sandbox (wajib) | SES sandbox | Load test, security, demo |
+| staging/demo | CloudFront + WAF + ALB + 2 ASG | Midtrans Sandbox (wajib) | Resend (domain terverifikasi) | Load test, security, demo |
 
 #### AWS PoC
 
@@ -1039,7 +1039,7 @@ VPC/subnet/SG (tanpa NAT), CloudFront + WAF, ALB + target group per service, lau
 | PostgreSQL (RDS Multi-AZ) | db.r7g.large | db.r7g.large | db.r7g.xlarge |
 | RabbitMQ (Amazon MQ) | single-instance | single-instance | cluster 3 node |
 | Edge | CloudFront + WAF + ALB | sama | sama |
-| Email | Amazon SES | sama | sama |
+| Email | Resend (HTTP API) | sama | sama |
 
 Throughput per instance Queue Service (PROPOSED 3.000 join/s per c7g.large) **diukur pada load test PoC** dan dipakai untuk mengonfirmasi jumlah instance. Scale-out dilakukan terjadwal 30 menit sebelum jam penjualan.
 
@@ -1353,7 +1353,7 @@ Harga build (2 sprint, 5 orang), operasi per event, dan maintenance bulanan disu
 | Internal API | REST/JSON + service token (JWT) | — | gRPC hanya bila ada di radar |
 | Token | JWT EdDSA (visitor, admission, ticket link) | — | Kunci di SSM |
 | Payment | Midtrans Sandbox (Core API) | Mitra eksternal | Lampiran N [v4.6 → SDD §4.6.3] |
-| Email | SMTP: Mailpit (lokal), SES sandbox (demo) | — | — |
+| Email | Mailpit (lokal, CI), Resend (demo) | — | — |
 | Push notification | Firebase Cloud Messaging (Android; iOS via APNs) | Perlu cek radar | Adapter log untuk lokal/CI; iOS butuh akun Apple Developer (OI-06) |
 | Observability | OpenTelemetry → Prometheus + Grafana; Jaeger lokal; X-Ray opsional | Perlu cek radar | §16 [v4.6 → HLD §4.7] |
 | Edge | CloudFront + WAF + ALB | Perlu cek radar | Lampiran O [v4.6 → HLD Appendix B] |
@@ -1583,7 +1583,7 @@ Urutan behavior di tabel adalah urutan prioritas: pola join (`/api/v1/events/*/q
 | `sg-state` | 5432, 6379, 5672 | `sg-queue`, `sg-core` |
 | Semua | 22 | **Tidak ada** — admin via SSM |
 
-Egress dibatasi: HTTPS ke Midtrans, ECR, SSM, SES, S3.
+Egress dibatasi: HTTPS ke Midtrans, Resend (api.resend.com), ECR, SSM, S3.
 
 ### Middleware Go (`pkg/httpx`)
 

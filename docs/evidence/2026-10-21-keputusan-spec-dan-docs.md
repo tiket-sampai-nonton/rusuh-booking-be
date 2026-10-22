@@ -42,3 +42,11 @@ Keputusan: ADR-023 (OQ-5 ditutup). Log JSON ke stdout + access log + `trace_id`;
 Temuan: service belum punya access log (hanya error 5xx dan panic), jadi Loki hanya berisi sedikit log sampai platform 4.5 dibuat.
 
 Verifikasi `make obs` (dijalankan): keempat komponen sehat; file log JSON masuk Loki dengan label `container`/`level`/`source`; pencarian `| json | requestId="…"` mengembalikan baris yang benar; log container RabbitMQ terbaca; Grafana memuat datasource Prometheus + Loki dan dua dashboard; query Grafana→Loki lewat proxy berstatus 200. Loki 3.5.0 menghasilkan error kosmetik "negative structured metadata bytes"; hilang setelah naik ke 3.5.7. Metrik belum bisa diuji karena `/metrics` belum dibuat (platform 4.2).
+
+## Tambahan — penyedia email Resend (22 Oktober 2026)
+
+Keputusan: email demo/nyata memakai Resend (HTTP API) dan lokal/CI tetap Mailpit, dipilih lewat `EMAIL_PROVIDER=mailpit|resend` (notification R13, task 0c). Nama env dipilih `EMAIL_PROVIDER` (bukan boolean `send_mail`) agar eksplisit dan dapat diperluas; default `mailpit` supaya tidak ada email keluar tanpa disengaja. Menyimpang dari SRS-IF-22 (SES sandbox) — SRS perlu diperbarui (K13).
+
+Diverifikasi ke dokumentasi Resend: `POST https://api.resend.com/emails`, auth Bearer, `Idempotency-Key` (24 jam), balasan `{"id"}`; 403 bila domain belum terverifikasi atau mengirim ke alamat lain tanpa domain terverifikasi; 429 `rate_limit_exceeded`; batas rate default dan kuota harian gratis tidak tercantum di halaman yang dibaca. Belum diuji mengirim email nyata.
+
+Pembaruan 22 Oktober: SES dihapus dari SRS-IF-22, HLD, handbook, diagram E2E, dan SDD Notification; diganti Resend. Akun Resend gratis: 100 email/hari, 3.000/bulan, sehingga pengembangan dan test memakai Mailpit dan Resend hanya untuk demo (notification R13.11).

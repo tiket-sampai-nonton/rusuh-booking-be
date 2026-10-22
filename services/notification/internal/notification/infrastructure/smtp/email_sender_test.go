@@ -92,7 +92,7 @@ func TestSender_SendEmail(t *testing.T) {
 	host, port := f.addr()
 	s := smtp.New(smtp.Config{Host: host, Port: port, From: "no-reply@rusuh.example", Timeout: 2 * time.Second})
 
-	id, err := s.SendEmail(context.Background(), "buyer@example.id", "[RBT] Hi", "hello world")
+	id, err := s.SendEmail(context.Background(), "buyer@example.id", "[RBT] Hi", "hello world", "key-1")
 	require.NoError(t, err)
 	assert.NotEmpty(t, id)
 
@@ -108,6 +108,6 @@ func TestSender_SendEmail(t *testing.T) {
 func TestSender_DialErrorIsReturned(t *testing.T) {
 	// Nothing listening on this port → transient dial error (retryable).
 	s := smtp.New(smtp.Config{Host: "127.0.0.1", Port: 1, From: "x@y.id", Timeout: time.Second})
-	_, err := s.SendEmail(context.Background(), "a@b.id", "s", "b")
+	_, err := s.SendEmail(context.Background(), "a@b.id", "s", "b", "key-1")
 	require.Error(t, err)
 }

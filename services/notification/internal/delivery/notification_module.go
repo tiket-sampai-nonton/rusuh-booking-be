@@ -19,6 +19,7 @@ import (
 	notificationhttp "github.com/tiket-sampai-nonton/rusuh-booking-be/services/notification/internal/notification/infrastructure/http"
 	notificationpg "github.com/tiket-sampai-nonton/rusuh-booking-be/services/notification/internal/notification/infrastructure/postgres"
 	notificationmq "github.com/tiket-sampai-nonton/rusuh-booking-be/services/notification/internal/notification/infrastructure/rabbitmq"
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/notification/internal/notification/infrastructure/resend"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/notification/internal/notification/infrastructure/security"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/notification/internal/notification/infrastructure/smtp"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/notification/internal/notification/infrastructure/template"
@@ -64,10 +65,10 @@ func newNotificationModule(cfg config.Config, clients *Clients, logger *slog.Log
 		return nil, err
 	}
 
-	var email outbound.IEmailSender = smtp.New(smtp.Config{
-		Host: cfg.SMTP.Host, Port: cfg.SMTP.Port, User: cfg.SMTP.User,
-		Password: cfg.SMTP.Password, From: cfg.SMTP.From, Timeout: cfg.SMTP.Timeout,
-	})
+	email, err := newEmailSender(cfg, logger)
+	if err != nil {
+		return nil, err
+	}
 
 	var push outbound.IPushSender
 	if cfg.FCM.CredentialsPath != "" {
@@ -102,6 +103,23 @@ func newNotificationModule(cfg config.Config, clients *Clients, logger *slog.Log
 		turnConsumer:        notificationmq.NewTurnConsumer(turnSoon, turnArrived, logger),
 		otpConsumer:         notificationmq.NewOTPConsumer(otp, logger),
 	}, nil
+}
+
+// newEmailSender picks the email adapter from EMAIL_PROVIDER: mailpit (SMTP; local and CI, nothing
+// leaves the machine) or resend (real email, demo). The provider was already validated in config.
+func newEmailSender(cfg config.Config, logger *slog.Logger) (outbound.IEmailSender, error) {
+	switch cfg.Email.Provider {
+	case config.EmailMailpit:
+		return smtp.New(smtp.Config{
+			Host: cfg.SMTP.Host, Port: cfg.SMTP.Port, User: cfg.SMTP.User,
+			Password: cfg.SMTP.Password, From: cfg.Email.From, Timeout: cfg.SMTP.Timeout,
+		}), nil
+	case config.EmailResend:
+		logger.Warn("EMAIL_PROVIDER=resend: email nyata akan dikirim lewat Resend (kuota akun gratis 100/hari)", "from", cfg.Email.From)
+		return resend.New(resend.Config{APIKey: cfg.Email.ResendAPIKey, From: cfg.Email.From}), nil
+	default:
+		return nil, fmt.Errorf("notification: EMAIL_PROVIDER %q tidak dikenal", cfg.Email.Provider)
+	}
 }
 
 // visitorAuthenticator builds the X-Visitor-Token verifier from the public key file. When no key is

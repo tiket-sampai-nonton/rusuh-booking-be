@@ -680,7 +680,7 @@ Booking ──booking.paid.v1──► rusuh.events ──► notification.booki
                                                       │
                              tmpl.Render("eticket") ──┤ (gagal → MarkDead + Permanent → DLQ)
                                                       │
-                                   SMTP Send (SES) ───┤
+                                   Kirim email (Mailpit/Resend) ───┤
                         ├─ error transien ─► BumpAttempt + return err ─► retry queue (5s→30s→2m) ─► DLQ
                         └─ sukses ─► MarkSent(SENT, provider_message_id) ─► ack
 ```
@@ -760,7 +760,12 @@ pernah membocorkan SQL/stack trace/secret (`[[api-design]]`, `[[security-and-aut
 
 ## 13. Adapter outbound
 
-- **SMTP (`infrastructure/smtp`)** — `net/smtp` PlainAuth ke SES
+- **Pemilihan penyedia email (R13)**: `IEmailSender` tetap satu port; composition root (`notification_module.go`) memilih adapter dari `EMAIL_PROVIDER`:
+  - `mailpit` → `infrastructure/smtp` (lokal, CI; tidak ada email keluar);
+  - `resend` → `infrastructure/resend` (demo/nyata).
+  Sesuai prinsip "perilaku baru lewat adapter baru"; usecase tidak berubah.
+- **Resend (`infrastructure/resend`)** — `net/http` saja (tanpa SDK): `POST https://api.resend.com/emails`, `Authorization: Bearer`, `Content-Type: application/json`, body `{"from","to":["…"],"subject","text"}`, header `Idempotency-Key`. Sukses `200` → `{"id":"…"}` dikembalikan sebagai message id. Pemetaan error: `429`/`5xx`/timeout → error biasa (retry); `400/401/403/422` → `rabbitmq.Permanent` (kode dan alasan singkat ke log, tanpa key dan tanpa alamat penerima). Domain `from` harus terverifikasi di Resend; tanpa itu hanya bisa kirim ke alamat pemilik akun (403).
+- **SMTP (`infrastructure/smtp`)** — `net/smtp` (STARTTLS, PlainAuth bila ada kredensial) ke Mailpit
   (`SMTP_HOST/PORT/USERNAME/PASSWORD/FROM/TIMEOUT`, nama SDD-RBT §6.1); lokal via Mailpit (SMTP 1025, UI 8025).
   Dibungkus `pkg/resilience` breaker `smtp` (timeout 3 s, ambang 5, cooldown 30 s, probe 1, bulkhead 10 —
   PROPOSED SDD-RBT §4.6.2). Implementasi `IEmailSender`.
@@ -790,6 +795,8 @@ Dari `internal/config/load.go` (fail-fast; semua error dilaporkan sekaligus):
 | `RABBITMQ_MAX_RETRIES` | 3 | |
 | `RABBITMQ_RETRY_DELAYS` | 5s,30s,2m | retry berjenjang |
 | `RABBITMQ_CONFIRM_TIMEOUT` | 5s | publisher confirm |
+
+**Penyedia email (R13):** `EMAIL_PROVIDER=mailpit|resend` (default `mailpit`), `EMAIL_FROM` (menggantikan `SMTP_FROM`; `SMTP_FROM` dipakai sebagai cadangan bila `EMAIL_FROM` kosong), `RESEND_API_KEY`. Saat `mailpit`: `SMTP_HOST`, `SMTP_PORT` dipakai dan `RESEND_API_KEY` boleh kosong. Saat `resend`: `RESEND_API_KEY` dan `EMAIL_FROM` wajib dan `SMTP_*` diabaikan.
 
 **Target (belum di config [kode] — spec lama keliru menandai `PII_ENC_KEY` sebagai implemented):**
 `SMTP_HOST/PORT/USERNAME/PASSWORD/FROM/TIMEOUT`; `PUSH_PROVIDER=fcm|log` (default `log` lokal/CI);
@@ -868,6 +875,10 @@ Untuk setiap kegagalan Notification (SMTP/FCM/DB), status booking/payment/akun t
 ### Property 6: No secret in logs
 Untuk setiap log record, tidak ada kode OTP, token push, alamat email, atau NIK plaintext.
 **Validates: Requirements 11.3, 12.5**
+
+### Property 7: Provider isolation
+Untuk setiap `EMAIL_PROVIDER = mailpit`, tidak ada request HTTP keluar ke Resend; untuk `resend`, `RESEND_API_KEY` tidak pernah muncul di log atau `last_error`.
+**Validates: Requirements 13.2, 13.7, 13.10**
 
 ---
 
