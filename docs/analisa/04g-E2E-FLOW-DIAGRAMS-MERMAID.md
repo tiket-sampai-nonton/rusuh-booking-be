@@ -22,7 +22,7 @@ flowchart LR
     
     subgraph External
         M[Midtrans]
-        S[SMTP/SES]
+        S[Mailpit/Resend]
         F[FCM Push]
     end
     
@@ -553,7 +553,7 @@ flowchart TD
     
     subgraph External
         MT[Midtrans]
-        SMTP[SMTP/SES]
+        SMTP[Mailpit/Resend]
         FCM[FCM]
     end
     
@@ -636,7 +636,7 @@ sequenceDiagram
     participant U as User Service
     participant MQ as RabbitMQ
     participant N as Notification Service
-    participant E as Email (SES)
+    participant E as Email (Mailpit/Resend)
     
     Note over C,E: REQUEST OTP
     C->>U: POST /auth/otp-request<br/>{email: "user@example.com"}

@@ -198,7 +198,7 @@ Tidak ada antarmuka hardware khusus. Scan tiket di gerbang berada di luar scope.
 |----|-----------------|---------|-------------|-----|-----|------|
 | SRS-IF-20 | Midtrans Sandbox (Core API) | Charge, status, cancel, notifikasi pembayaran | The Payment Service shall create charges, query status, and cancel transactions at Midtrans Sandbox, and shall accept Midtrans HTTP notifications only after verifying signature, order, and amount. | M | T | TC-PAY-01, TC-PAY-05 |
 | SRS-IF-21 | Midtrans Sandbox | Expiry transaksi | The transaction expiry sent to the gateway shall equal the booking's `paymentExpiresAt`. | M | T | TC-PAY-02 |
-| SRS-IF-22 | Penyedia email (SMTP) | E-tiket, expired, pembayaran terlambat | The Notification Service shall send email through SMTP (Mailpit locally, SES sandbox on demo). | M | T | TC-TKT-02 |
+| SRS-IF-22 | Penyedia email (Mailpit / Resend) | E-tiket, expired, pembayaran terlambat, OTP | The Notification Service shall send email through SMTP to Mailpit locally and in CI, and through the Resend HTTP API on demo, selected by `EMAIL_PROVIDER` (v1.6, 2026-10-22; replaces SES sandbox). | M | T | TC-TKT-02 |
 | SRS-IF-23 | Penyedia push (FCM; iOS via APNs) | Notifikasi giliran | The Notification Service shall send turn notifications through the push provider and shall use a log adapter in local and CI environments. | M | D | TC-QUE-13 |
 | SRS-IF-24 | Payment simulator | Uji offline | A payment simulator shall be available only when `APP_ENV` is `ci` or `local-offline`, and results produced by it shall be labelled SIMULATED. | M | I | [TP] |
 

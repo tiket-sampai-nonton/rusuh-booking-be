@@ -23,7 +23,7 @@
 
 ## 1. Overview
 
-Notification Service mengelola pengiriman email dan push notification. Service ini consume domain events dan mengirim notifikasi ke pembeli melalui SMTP (SES) dan FCM.
+Notification Service mengelola pengiriman email dan push notification. Service ini consume domain events dan mengirim notifikasi ke pembeli melalui email (Mailpit atau Resend, dipilih lewat EMAIL_PROVIDER) dan FCM.
 
 **Prinsip utama:**
 - At-least-once delivery — retry sampai berhasil atau masuk DLQ
@@ -338,12 +338,12 @@ DATABASE_URL=postgres://svc_notification:xxx@localhost:5432/rusuh?search_path=no
 # RabbitMQ
 RABBITMQ_URL=amqp://guest:guest@localhost:5672/
 
-# SMTP (SES)
-SMTP_HOST=email-smtp.ap-southeast-3.amazonaws.com
-SMTP_PORT=587
-SMTP_USER=AKIAXXXXXXXX
-SMTP_PASSWORD=xxxxxx
-SMTP_FROM=noreply@rusuh.example
+# Penyedia email (v1.6): mailpit (lokal, CI) atau resend (demo)
+EMAIL_PROVIDER=mailpit
+EMAIL_FROM=noreply@rusuh.example      # resend: wajib domain yang terverifikasi di Resend
+RESEND_API_KEY=                        # hanya untuk resend; jangan commit
+SMTP_HOST=localhost                    # mailpit
+SMTP_PORT=1025
 
 # FCM
 FCM_PROJECT_ID=rusuh-booking
@@ -406,7 +406,7 @@ curl localhost:8084/health
 - SRS §3.2.20-§3.2.21: Notification requirements
 - SRS §3.2.25: Turn notification
 - FCM Docs: https://firebase.google.com/docs/cloud-messaging
-- SES Docs: https://docs.aws.amazon.com/ses/
+- Resend API: https://resend.com/docs/api-reference/emails/send-email
 
 ---
 
@@ -658,36 +658,21 @@ func (c *Consumer) HandleTurnArrived(ctx context.Context, msg *Event) error {
 
 ## Appendix D: SMTP Configuration
 
-### D.1 SES Setup
+### D.1 Penyedia email: Mailpit dan Resend
 
-```go
-type SMTPConfig struct {
-    Host     string // email-smtp.ap-southeast-3.amazonaws.com
-    Port     int    // 587 (TLS)
-    User     string // SMTP credentials from SES
-    Password string
-    From     string // noreply@rusuh.example (verified domain)
-}
+`EMAIL_PROVIDER=mailpit` memakai SMTP ke Mailpit (lokal, CI). `EMAIL_PROVIDER=resend` memakai
+`POST https://api.resend.com/emails` dengan `Authorization: Bearer <RESEND_API_KEY>` dan body
+`{"from","to":["…"],"subject","text"}`; balasan `{"id":"…"}` disimpan sebagai `provider_message_id`.
+Header `Idempotency-Key` mencegah email ganda di sisi penyedia selama 24 jam. Detail: `specs/notification-service` R13.
 
-func (s *SMTPSender) Send(ctx context.Context, to, subject, body string) error {
-    auth := smtp.PlainAuth("", s.config.User, s.config.Password, s.config.Host)
-    
-    msg := []byte(fmt.Sprintf(
-        "From: %s\r\nTo: %s\r\nSubject: %s\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\n%s",
-        s.config.From, to, subject, body,
-    ))
-    
-    addr := fmt.Sprintf("%s:%d", s.config.Host, s.config.Port)
-    return smtp.SendMail(addr, auth, s.config.From, []string{to}, msg)
-}
-```
+### D.2 Batas pengiriman (akun Resend gratis)
 
-### D.2 Sending Limits
+| Batas | Nilai | Catatan |
+|-------|-------|---------|
+| Kuota harian | 100 email | Direset tengah malam UTC; terhitung kirim dan terima |
+| Kuota bulanan | 3.000 email | Paket gratis |
+| Domain | harus terverifikasi | Tanpa domain terverifikasi hanya dapat mengirim ke alamat pemilik akun (403) |
+| Rate per detik | belum diverifikasi | Cek di dashboard / dokumentasi rate limit Resend |
 
-| Limit | Value | Notes |
-|-------|-------|-------|
-| SES sandbox | 200/day | Request production access |
-| SES production | 50,000/day | Can request increase |
-| Rate | 14/second | Soft limit |
-| Bounce rate | < 5% | Or account suspension |
-| Complaint rate | < 0.1% | Or account suspension |
+Konsekuensi: pengembangan dan test otomatis memakai Mailpit; Resend hanya untuk demo. Bila kuota habis, pengiriman gagal
+sementara (429) dan pesan masuk DLQ setelah retry; redrive setelah kuota direset.

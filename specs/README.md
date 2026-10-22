@@ -90,6 +90,7 @@ dicatat sebagai open question di bawah dan di spec terkait.
 | K10 | user | R1.7 publish `otp.requested`, R8.2 "tidak publish event", kode kirim SMTP langsung | Target = event `otp.requested` (ADR-020, SDD-USER v1.2); kode saat ini = SMTP `IMailer` → task migrasi (user tasks 3) |
 | K11 | booking | Hold hanya menaikkan `held_units` | Hold memindahkan `allocated_units → held_units` (SDD C.3); edit menyesuaikan keduanya (C.8) |
 | K12 | notification | Trace push giliran ke TC-QUE-04 | Push giliran = TC-QUE-13 (TP §6) |
+| K13 | notification | SRS-IF-22: email lewat SMTP, SES sandbox untuk demo | Demo memakai **Resend** (HTTP API, akun gratis 100 email/hari dan 3.000/bulan); lokal/CI tetap Mailpit, dipilih lewat `EMAIL_PROVIDER` (notification R13). SRS-IF-22, HLD, handbook, dan SDD Notification sudah diperbarui 2026-10-22 |
 
 ## Open questions (butuh keputusan; spec tidak mengarang jawaban)
 

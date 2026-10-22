@@ -26,6 +26,18 @@ delivery, adapter SMTP/FCM/template sudah ada dan `go test` lulus. Yang perlu di
     - _Requirements: 11.2_
   - _Requirements: 11.1_
 
+- [ ] 0c. Penyedia email dapat dipilih: Mailpit atau Resend (keputusan 2026-10-21)
+  - [ ] 0c.1 Config: `EMAIL_PROVIDER` (default `mailpit`), `EMAIL_FROM`, `RESEND_API_KEY`; validasi fail-fast (resend wajib key dan from); peringatan saat start bila resend; `.env.example` sudah memuat variabelnya
+    - _Requirements: 13.1, 13.3, 13.8, 13.11_
+    - _Design: §13, §14_
+  - [ ] 0c.2 Adapter `infrastructure/resend` (net/http, tanpa SDK): kirim, `Idempotency-Key`, simpan `id` sebagai `provider_message_id`, klasifikasi error (429/5xx/jaringan sementara; 400/401/403/422 permanen), key tidak pernah dilog
+    - **Property 7: Provider isolation**
+    - _Requirements: 13.3, 13.4, 13.5, 13.6, 13.7_
+  - [ ] 0c.3 Pilih adapter di `notification_module.go`; test dengan `httptest` (sukses, 429, 403, 422, timeout) dan test bahwa mode mailpit tidak memanggil HTTP
+    - _Requirements: 13.2, 13.9, 13.10_
+    - _Depends on: 8.R1 (breaker membungkus sender yang dipilih)_
+  - Uji manual: `EMAIL_PROVIDER=resend` dengan alamat milikmu sendiri sebagai penerima (domain terverifikasi memungkinkan alamat lain); kembalikan ke `mailpit` setelahnya
+
 - [x] 1. Email e-tiket (`booking.paid`)
   - [ ] 1.1 Test isi email: kode tiket, nama, NIK tersamar, tautan tiket (TC-TKT-02)
     - _Requirements: 1.4_
