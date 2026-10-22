@@ -109,12 +109,12 @@ func newQueueModule(cfg config.Config, clients *Clients, logger *slog.Logger) (*
 	statusUC := usecase.NewGetStatus(store)
 	myEntryUC := usecase.NewGetMyEntry(store)
 	claimUC := usecase.NewClaimTurn(store, tokens, clk, cfg.Booking.BaseURL+"/book")
-	leaveUC := usecase.NewLeaveQueue(store, clk)
+	leaveUC := usecase.NewLeaveQueue(store, booking, clk)
 
 	trustProxy := cfg.App.Env != "local"
 	secure := cfg.App.Env != "local"
 	handlers := []registrar{
-		queuehttp.NewJoinHandler(joinUC, trustProxy, secure),
+		queuehttp.NewJoinHandler(joinUC, trustProxy, secure).WithAuth(visitorAuth),
 		queuehttp.NewStatusHandler(statusUC),
 		queuehttp.NewMyEntryHandler(myEntryUC, visitorAuth),
 		queuehttp.NewClaimHandler(claimUC, visitorAuth),
@@ -122,7 +122,7 @@ func newQueueModule(cfg config.Config, clients *Clients, logger *slog.Logger) (*
 	}
 
 	promoter := worker.NewPromoter(store, settingsRepo, booking, publisher, auditRepo, clk, logger, cfg.WorkerTuning.PromoteBatchMax)
-	sweeper := worker.NewSweeper(store, settingsRepo, publisher, clk)
+	sweeper := worker.NewSweeper(store, settingsRepo, clk)
 	statusPub := worker.NewStatusPublisher(store, settingsRepo, booking, clk, cfg.WorkerTuning.StatusInterval)
 	jobs := []Job{
 		{Name: "promoter", Run: promoter.Run},

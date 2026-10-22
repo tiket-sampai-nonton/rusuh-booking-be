@@ -41,11 +41,18 @@ func newWorkerMocks(t *testing.T) workerMocks {
 	}
 }
 
+// expectLease sets up the acquire+release expectations for tests that proceed past the lease check.
+func expectLease(m workerMocks, ctx context.Context, eventID string) {
+	m.store.EXPECT().AcquirePromoterLease(ctx, eventID, int64(10_000)).Return(true, nil)
+	m.store.EXPECT().ReleasePromoterLease(ctx, eventID).Return(nil)
+}
+
 func TestPromoter_PromotesReservedAndPublishes(t *testing.T) {
 	m := newWorkerMocks(t)
 	ctx := context.Background()
 
 	m.settings.EXPECT().ListEventIDs(ctx).Return([]string{"ev1"}, nil)
+	expectLease(m, ctx, "ev1")
 	m.settings.EXPECT().Get(ctx, "ev1").Return(entity.EventSettings{ActiveSlotCapacity: 10}, true, nil)
 	m.store.EXPECT().ActiveCount(ctx, "ev1").Return(0, nil)
 	m.store.EXPECT().TopWaiting(ctx, "ev1", 10).Return([]string{"e1"}, nil)
@@ -60,10 +67,23 @@ func TestPromoter_PromotesReservedAndPublishes(t *testing.T) {
 	require.NoError(t, p.Run(ctx))
 }
 
+func TestPromoter_SkipsEventWhenLeaseHeld(t *testing.T) {
+	m := newWorkerMocks(t)
+	ctx := context.Background()
+	m.settings.EXPECT().ListEventIDs(ctx).Return([]string{"ev1"}, nil)
+	// Lease already held by another instance — return false (spec 11.R3).
+	m.store.EXPECT().AcquirePromoterLease(ctx, "ev1", int64(10_000)).Return(false, nil)
+	// ActiveCount, TopWaiting, ReserveBatch, Promote must NOT be called.
+
+	p := worker.NewPromoter(m.store, m.settings, m.booking, m.pub, m.audit, wnow, nil, 200)
+	require.NoError(t, p.Run(ctx))
+}
+
 func TestPromoter_NoFreeSlotsSkips(t *testing.T) {
 	m := newWorkerMocks(t)
 	ctx := context.Background()
 	m.settings.EXPECT().ListEventIDs(ctx).Return([]string{"ev1"}, nil)
+	expectLease(m, ctx, "ev1")
 	m.settings.EXPECT().Get(ctx, "ev1").Return(entity.EventSettings{ActiveSlotCapacity: 5}, true, nil)
 	m.store.EXPECT().ActiveCount(ctx, "ev1").Return(5, nil)
 
@@ -75,6 +95,7 @@ func TestPromoter_QuotaExhaustedAddsSet(t *testing.T) {
 	m := newWorkerMocks(t)
 	ctx := context.Background()
 	m.settings.EXPECT().ListEventIDs(ctx).Return([]string{"ev1"}, nil)
+	expectLease(m, ctx, "ev1")
 	m.settings.EXPECT().Get(ctx, "ev1").Return(entity.EventSettings{ActiveSlotCapacity: 10}, true, nil)
 	m.store.EXPECT().ActiveCount(ctx, "ev1").Return(0, nil)
 	m.store.EXPECT().TopWaiting(ctx, "ev1", 10).Return([]string{"e1"}, nil)
@@ -92,15 +113,57 @@ func TestPromoter_QuotaExhaustedAddsSet(t *testing.T) {
 	require.NoError(t, p.Run(ctx))
 }
 
-func TestSweeper_MarksMissedAndPublishes(t *testing.T) {
+func TestPromoter_NoSupplyNowSkipsPromotion(t *testing.T) {
+	m := newWorkerMocks(t)
+	ctx := context.Background()
+	m.settings.EXPECT().ListEventIDs(ctx).Return([]string{"ev1"}, nil)
+	expectLease(m, ctx, "ev1")
+	m.settings.EXPECT().Get(ctx, "ev1").Return(entity.EventSettings{ActiveSlotCapacity: 10}, true, nil)
+	m.store.EXPECT().ActiveCount(ctx, "ev1").Return(0, nil)
+	m.store.EXPECT().TopWaiting(ctx, "ev1", 10).Return([]string{"e1", "e2"}, nil)
+	m.store.EXPECT().GetEntry(ctx, "ev1", "e1").Return(entity.Entry{ID: "e1", VisitorID: "v1", BuyerNikHash: []byte{0xaa}}, true, nil)
+	m.store.EXPECT().GetEntry(ctx, "ev1", "e2").Return(entity.Entry{ID: "e2", VisitorID: "v2", BuyerNikHash: []byte{0xbb}}, true, nil)
+	m.booking.EXPECT().ReserveBatch(ctx, gomock.Any()).Return(outbound.AllocationBatchResponse{
+		Allocations: []outbound.AllocationResult{
+			{QueueEntryID: "e1", AllocationID: "a1", Status: "GRANTED", ClaimDeadline: "2026-10-20T10:01:00Z"},
+			{QueueEntryID: "e2", Status: "NO_SUPPLY_NOW"},
+		},
+	}, nil)
+	// Promote must NOT be called — NO_SUPPLY_NOW discards all candidates (spec 11.R4, FIFO).
+
+	p := worker.NewPromoter(m.store, m.settings, m.booking, m.pub, m.audit, wnow, nil, 200)
+	require.NoError(t, p.Run(ctx))
+}
+
+func TestPromoter_AlreadyActiveEndsEntry(t *testing.T) {
+	m := newWorkerMocks(t)
+	ctx := context.Background()
+	m.settings.EXPECT().ListEventIDs(ctx).Return([]string{"ev1"}, nil)
+	expectLease(m, ctx, "ev1")
+	m.settings.EXPECT().Get(ctx, "ev1").Return(entity.EventSettings{ActiveSlotCapacity: 10}, true, nil)
+	m.store.EXPECT().ActiveCount(ctx, "ev1").Return(0, nil)
+	m.store.EXPECT().TopWaiting(ctx, "ev1", 10).Return([]string{"e1"}, nil)
+	m.store.EXPECT().GetEntry(ctx, "ev1", "e1").Return(entity.Entry{ID: "e1", VisitorID: "v1", BuyerNikHash: []byte{0xaa}}, true, nil)
+	m.booking.EXPECT().ReserveBatch(ctx, gomock.Any()).Return(outbound.AllocationBatchResponse{
+		Allocations: []outbound.AllocationResult{{QueueEntryID: "e1", Status: "ALREADY_ACTIVE"}},
+	}, nil)
+	// EndEntry called with ALREADY_ACTIVE outcome (spec 11.R1, OQ-18).
+	m.store.EXPECT().EndEntry(ctx, "ev1", "e1", "ALREADY_ACTIVE", gomock.Any()).Return("ENDED", nil)
+	// Promote must NOT be called — no GRANTED entries.
+
+	p := worker.NewPromoter(m.store, m.settings, m.booking, m.pub, m.audit, wnow, nil, 200)
+	require.NoError(t, p.Run(ctx))
+}
+
+func TestSweeper_MarksMissedOnly(t *testing.T) {
 	m := newWorkerMocks(t)
 	ctx := context.Background()
 	m.settings.EXPECT().ListEventIDs(ctx).Return([]string{"ev1"}, nil)
 	m.store.EXPECT().ExpiredActive(ctx, "ev1", gomock.Any()).Return([]string{"e1"}, nil)
 	m.store.EXPECT().MarkMissedAndClean(ctx, "ev1", "e1", gomock.Any()).Return(true, nil)
-	m.pub.EXPECT().PublishJourneyEnded(ctx, "ev1", "e1", "UNCLAIMED").Return(nil)
+	// pub must NOT be called — Booking's own sweeper publishes booking.journey.ended (spec 11.R2, K7).
 
-	s := worker.NewSweeper(m.store, m.settings, m.pub, wnow)
+	s := worker.NewSweeper(m.store, m.settings, wnow)
 	require.NoError(t, s.Run(ctx))
 }
 
@@ -111,7 +174,7 @@ func TestSweeper_AlreadyMissedNoPublish(t *testing.T) {
 	m.store.EXPECT().ExpiredActive(ctx, "ev1", gomock.Any()).Return([]string{"e1"}, nil)
 	m.store.EXPECT().MarkMissedAndClean(ctx, "ev1", "e1", gomock.Any()).Return(false, nil) // not ADMITTED anymore
 
-	s := worker.NewSweeper(m.store, m.settings, m.pub, wnow)
+	s := worker.NewSweeper(m.store, m.settings, wnow)
 	require.NoError(t, s.Run(ctx))
 }
 
@@ -173,6 +236,7 @@ func TestPromoter_PublishesTurnSoon_WhenNearFront(t *testing.T) {
 		PreTurnNotifyEnabled: true,
 	}
 	m.settings.EXPECT().ListEventIDs(ctx).Return([]string{evID}, nil)
+	expectLease(m, ctx, evID)
 	m.settings.EXPECT().Get(ctx, evID).Return(s, true, nil)
 	// Slots full — no promotion path
 	m.store.EXPECT().ActiveCount(ctx, evID).Return(5, nil)
@@ -201,6 +265,7 @@ func TestPromoter_SkipsTurnSoon_WhenAlreadyNotified(t *testing.T) {
 		PreTurnNotifyEnabled: true,
 	}
 	m.settings.EXPECT().ListEventIDs(ctx).Return([]string{evID}, nil)
+	expectLease(m, ctx, evID)
 	m.settings.EXPECT().Get(ctx, evID).Return(s, true, nil)
 	m.store.EXPECT().ActiveCount(ctx, evID).Return(5, nil)
 	m.store.EXPECT().TopWaiting(ctx, evID, 10).Return([]string{entryID}, nil)
@@ -221,6 +286,7 @@ func TestPromoter_SkipsTurnSoon_WhenDisabled(t *testing.T) {
 		PreTurnNotifyEnabled: false, // disabled
 	}
 	m.settings.EXPECT().ListEventIDs(ctx).Return([]string{evID}, nil)
+	expectLease(m, ctx, evID)
 	m.settings.EXPECT().Get(ctx, evID).Return(s, true, nil)
 	m.store.EXPECT().ActiveCount(ctx, evID).Return(5, nil)
 	// TopWaiting must NOT be called when PreTurnNotifyEnabled=false

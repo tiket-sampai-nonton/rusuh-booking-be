@@ -56,7 +56,9 @@ func newJoin(t *testing.T) (*usecase.JoinQueue, joinMocks) {
 }
 
 func validBody() dto.JoinRequest {
-	return dto.JoinRequest{BuyerNik: "3201234567890123", Email: "a@b.id", EmailConfirmation: "a@b.id", ConsentNik: true}
+	// 3201 = Jawa Barat/Bogor (province 32, kab 01, kec 01)
+	// 010190 = DD=01, MM=01, YY=90 (→ 1990-Jan-01); serial = 0001
+	return dto.JoinRequest{BuyerNik: "3201010101900001", Email: "a@b.id", EmailConfirmation: "a@b.id", ConsentNik: true}
 }
 
 func TestJoin_GuestWaiting(t *testing.T) {
@@ -64,7 +66,7 @@ func TestJoin_GuestWaiting(t *testing.T) {
 	ctx := context.Background()
 
 	m.pii.EXPECT().HashEmail(gomock.Any()).Return([]byte{0x01}).AnyTimes()
-	m.pii.EXPECT().HashNIK("3201234567890123").Return([]byte{0xaa})
+	m.pii.EXPECT().HashNIK("3201010101900001").Return([]byte{0xaa})
 	m.pii.EXPECT().SealEmail(gomock.Any()).Return([]byte("enc"), nil)
 	m.limiter.EXPECT().Allow(ctx, gomock.Any(), 5, time.Minute).Return(true, nil)
 	m.limiter.EXPECT().Allow(ctx, gomock.Any(), 60, time.Minute).Return(true, nil)
@@ -166,6 +168,30 @@ func TestJoin_NikInvalidFormat(t *testing.T) {
 	body.BuyerNik = "123"
 	_, err := uc.Join(context.Background(), inbound.JoinInput{EventID: "ev1", Body: body})
 	assert.ErrorIs(t, err, entity.ErrNikInvalid)
+}
+
+func TestJoin_NikInvalidStructure(t *testing.T) {
+	// These NIKs are 16 digits (pass the fast regex check) but fail pkg/nik structural validation.
+	tests := []struct {
+		name string
+		nik  string
+	}{
+		// Province code 00 is invalid (not in Kemendagri list).
+		{"invalid province", "0000010101900001"},
+		// kab/kota code 00 is invalid (Kemendagri rule).
+		{"invalid kab", "3100010101900001"},
+		// Serial 0000 is invalid.
+		{"serial zero", "3201010101010000"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			uc, _ := newJoin(t)
+			body := validBody()
+			body.BuyerNik = tt.nik
+			_, err := uc.Join(context.Background(), inbound.JoinInput{EventID: "ev1", Body: body})
+			assert.ErrorIs(t, err, entity.ErrNikInvalid, "NIK %q should be rejected", tt.nik)
+		})
+	}
 }
 
 func TestJoin_RateLimited(t *testing.T) {

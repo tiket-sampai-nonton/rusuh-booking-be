@@ -11,13 +11,17 @@ import (
 type IBookingClient interface {
 	ReserveBatch(ctx context.Context, req AllocationBatchRequest) (AllocationBatchResponse, error)
 	Supply(ctx context.Context, eventID string) (SupplySnapshot, error)
+	// ReleaseAllocation releases an admitted allocation as saga compensation when a buyer leaves
+	// (spec 14.R1, ADR-018, req 7.2). Best-effort: Booking's own sweeper handles the fallback.
+	ReleaseAllocation(ctx context.Context, allocationID string, reason string) error
 }
 
-// IEventPublisher publishes queue.turn.* events and the UNCLAIMED journey-ended signal.
+// IEventPublisher publishes queue.turn.* events.
 type IEventPublisher interface {
 	PublishTurnSoon(ctx context.Context, eventID, queueEntryID, visitorID string) error
 	PublishTurnArrived(ctx context.Context, eventID, queueEntryID, visitorID string, claimDeadline time.Time) error
 	// PublishJourneyEnded tells Booking to release a reservation when a turn is missed (design §7.3).
+	// NOTE: This is kept for now as Queue consumes booking.journey.ended; it is NOT called by the Sweeper (spec 11.R2).
 	PublishJourneyEnded(ctx context.Context, eventID, queueEntryID, outcome string) error
 }
 

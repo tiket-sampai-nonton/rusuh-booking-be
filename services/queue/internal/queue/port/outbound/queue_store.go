@@ -33,4 +33,10 @@ type IQueueStore interface {
 	WasNotifiedSoon(ctx context.Context, eventID, entryID string) (bool, error)
 	// MarkNotifiedSoon records that a pre-turn notification was sent (idempotent SETNX, TTL=10min).
 	MarkNotifiedSoon(ctx context.Context, eventID, entryID string) error
+	// AcquirePromoterLease tries to acquire a per-event distributed lock (SET NX PX) so only one
+	// worker instance promotes a given event per tick (spec 11.R3, req 6.12, Property 7).
+	// Returns true if the lease was acquired, false if another instance holds it.
+	AcquirePromoterLease(ctx context.Context, eventID string, ttlMs int64) (bool, error)
+	// ReleasePromoterLease releases a previously acquired promoter lease.
+	ReleasePromoterLease(ctx context.Context, eventID string) error
 }

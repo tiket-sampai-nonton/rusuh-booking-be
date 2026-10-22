@@ -80,3 +80,6 @@ run-%: ## Jalankan API satu service lokal, mis. make run-booking (pakai .env ser
 	cd services/$* && go run ./cmd api
 
 ci: build lint cover isolation ## Pemeriksaan CI lokal (build, lint, test + coverage, isolation)
+
+e2e: ## Jalankan e2e BDD test terhadap service yang berjalan (butuh make up)
+	cd tests && go test -v -tags e2e -count=1 -timeout 300s ./features/...

@@ -13,6 +13,7 @@ import (
 // JoinHandler serves POST /api/v1/events/{eventId}/queue-entries (design §2.1).
 type JoinHandler struct {
 	uc         inbound.IJoinUsecase
+	auth       VisitorAuthenticator // decodes rb_visitor JWT to get the visitor UUID
 	trustProxy bool
 	secure     bool // Secure flag on the visitor cookie (false in local http)
 }
@@ -20,6 +21,12 @@ type JoinHandler struct {
 // NewJoinHandler creates the handler. trustProxy=true behind the ALB (X-Forwarded-For).
 func NewJoinHandler(uc inbound.IJoinUsecase, trustProxy, secure bool) *JoinHandler {
 	return &JoinHandler{uc: uc, trustProxy: trustProxy, secure: secure}
+}
+
+// WithAuth sets the visitor authenticator (call this to enable JWT decoding on join).
+func (h *JoinHandler) WithAuth(auth VisitorAuthenticator) *JoinHandler {
+	h.auth = auth
+	return h
 }
 
 // Register mounts the route.
@@ -34,11 +41,20 @@ func (h *JoinHandler) join(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		return
 	}
 	bearer, _ := httpx.BearerToken(r)
+	// Resolve visitor ID: if a visitor JWT cookie is present and auth is set, decode it to get
+	// the UUID subject (so the constraint key q:{e}:visitor:<uuid> is consistent with the first join).
+	// Without this, the raw JWT is used as the visitor ID, breaking the one-active-per-visitor constraint.
+	vid := visitorID(r)
+	if vid != "" && h.auth != nil {
+		if decoded, ok := h.auth.Resolve(r); ok {
+			vid = decoded
+		}
+	}
 	in := inbound.JoinInput{
 		EventID:   r.PathValue("eventId"),
 		Body:      body,
 		Bearer:    bearer,
-		VisitorID: visitorID(r),
+		VisitorID: vid,
 		IsMobile:  isMobile(r),
 		ClientIP:  httpx.ClientIP(r, h.trustProxy),
 	}
