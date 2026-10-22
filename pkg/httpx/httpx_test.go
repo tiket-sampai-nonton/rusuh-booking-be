@@ -51,8 +51,11 @@ func TestRecoverWritesEnvelope(t *testing.T) {
 	if err := json.NewDecoder(rec.Body).Decode(&env); err != nil {
 		t.Fatal(err)
 	}
-	if env.Meta.ErrorCode != apperror.CodeInternal || env.Meta.RequestID == "" || env.Meta.Code != 500 {
+	if env.Meta.Code != 500 || env.Meta.Message != "INTERNAL_ERROR: terjadi kesalahan internal" || env.Meta.RequestID != "" {
 		t.Fatalf("envelope = %+v", env)
+	}
+	if rec.Header().Get(HeaderRequestID) == "" {
+		t.Fatal("requestId harus ada di header X-Request-ID, bukan di body")
 	}
 }
 

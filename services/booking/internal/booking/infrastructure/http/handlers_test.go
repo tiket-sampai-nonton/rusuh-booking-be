@@ -139,11 +139,11 @@ func TestBookingHandler_HoldError(t *testing.T) {
 
 	var env struct {
 		Meta struct {
-			ErrorCode string `json:"errorCode"`
+			Message string `json:"message"`
 		} `json:"meta"`
 	}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &env))
-	assert.Equal(t, "CATEGORY_UNAVAILABLE", env.Meta.ErrorCode)
+	assert.True(t, strings.HasPrefix(env.Meta.Message, "CATEGORY_UNAVAILABLE: "), env.Meta.Message)
 }
 
 func TestBookingHandler_GetTicketsNotPayable(t *testing.T) {

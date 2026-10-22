@@ -70,24 +70,33 @@ func From(err error) *Error {
 	return Internal(err)
 }
 
-// Envelope is the JSON error body returned by every service (SRS §3.1.4 Error Envelope):
+// Envelope is the JSON body of every response. Error body hanya memuat code dan message
+// (platform R2.8): kode error ada di awalan message, requestId di header X-Request-ID, sedangkan detail
+// dan penyebab asli hanya ditulis ke log.
 //
-//	{"meta":{"code":409,"message":"…","requestId":"…","errorCode":"…","details":{…}},"data":null}
+//	{"meta":{"code":409,"message":"BOOKING_LOCKED: Pesanan sudah terkunci"},"data":null}
 type Envelope struct {
 	Meta Meta `json:"meta"`
 	Data any  `json:"data"`
 }
 
-// Meta is the meta part of every response envelope.
+// Meta is the meta part of every response envelope. RequestID hanya dipakai respons sukses.
 type Meta struct {
-	Code      int               `json:"code"`
-	Message   string            `json:"message,omitempty"`
-	RequestID string            `json:"requestId,omitempty"`
-	ErrorCode Code              `json:"errorCode,omitempty"`
-	Details   map[string]string `json:"details,omitempty"`
+	Code      int    `json:"code"`
+	Message   string `json:"message,omitempty"`
+	RequestID string `json:"requestId,omitempty"`
+}
+
+// ClientMessage returns the message sent to clients: "KODE: pesan". Error internal selalu memakai pesan
+// umum agar pesan developer dan penyebab asli tidak keluar.
+func (e *Error) ClientMessage() string {
+	if e.Code == CodeInternal {
+		return string(CodeInternal) + ": terjadi kesalahan internal"
+	}
+	return string(e.Code) + ": " + e.Message
 }
 
 // ToEnvelope builds the JSON envelope for the error.
-func (e *Error) ToEnvelope(requestID string) Envelope {
-	return Envelope{Meta: Meta{Code: e.HTTPStatus, Message: e.Message, RequestID: requestID, ErrorCode: e.Code, Details: e.Details}}
+func (e *Error) ToEnvelope() Envelope {
+	return Envelope{Meta: Meta{Code: e.HTTPStatus, Message: e.ClientMessage()}}
 }

@@ -40,9 +40,12 @@ Setiap task selesai bila `make ci` hijau.
   - [ ] 2.5 Unit test: cookie vs header menghasilkan identitas sama; token kedaluwarsa; issuer tak dikenal; `aud` salah
     - **Property 4: Internal API closed**, **Property 5: Same auth for web and mobile**
     - _Requirements: 2.1, 2.3_
-  - [ ] 2.6 Format error standar: `pkg/apperror` mengirim hanya `{meta:{code, message}}` dengan `message = "KODE: pesan"` (atau pesan umum untuk 5xx); `requestId` di header `X-Request-ID`; `httpx.WriteError` menulis kode error, detail, error asli, dan payload request (diredaksi lewat 4.4) ke log. Satu perubahan di `pkg/` berlaku untuk lima service; beri tahu tim web/mobile
+  - [x] 2.6 Format error standar: `pkg/apperror` mengirim hanya `{meta:{code, message}}` dengan `message = "KODE: pesan"` (atau pesan umum untuk 5xx); `requestId` di header `X-Request-ID`; `httpx.WriteError` menulis kode error, detail, error asli, dan payload request (diredaksi lewat 4.4) ke log. Satu perubahan di `pkg/` berlaku untuk lima service; beri tahu tim web/mobile. Selesai 2026-10-22 (format meta saja): `apperror.Meta` hanya `code`+`message` (+`requestId` pada respons sukses), `ClientMessage()` = `KODE: pesan`, error internal selalu `INTERNAL_ERROR: terjadi kesalahan internal`; `WriteError` melog `requestId/status/errorCode/details/error` (level Error untuk 5xx, Info untuk 4xx) dan mengirim `Retry-After` untuk 429 dari `Details[retryAfterSeconds|retryAfter]`; kontrak OpenAPI: `errorCode`/`details` ditandai `deprecated`; 2 tes DEV-2 (booking, user) kini membaca kode dari awalan message. Belum: log payload request yang diredaksi (perlu menyimpan body di `DecodeJSON`) -> sub-task 2.6a
     - _Requirements: 2.8, 2.9_
     - _Depends on: 4.4_
+  - [ ] 2.6a Log payload request (diredaksi lewat `logger.Redact`, maks 4 KiB) pada `WriteError`: `RequestID()` menaruh pemegang di context, `DecodeJSON` menyalin bytes yang dibaca; hanya dipakai di jalur error
+    - _Requirements: 2.8_
+    - _Depends on: 2.6_
   - [ ] 2.7 **Temuan:** `httpx.CORS()` (DEV-2) dipasang tanpa syarat di `delivery/server.go` kelima service, jadi `Access-Control-Allow-Origin: *` aktif di semua lingkungan, padahal komentarnya "never enable in prod". Pasang hanya bila `APP_ENV=local`
     - _Requirements: 2.10_
   - Catatan: visitor auth sekarang ditulis ulang di tiap service (`security/visitor_auth.go`). Setelah 2.1 selesai, service bisa pindah ke versi `pkg/httpx`; tidak wajib sebelum demo

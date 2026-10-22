@@ -54,7 +54,8 @@ func errCode(t *testing.T, rec *httptest.ResponseRecorder) apperror.Code {
 	t.Helper()
 	var env apperror.Envelope
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &env))
-	return env.Meta.ErrorCode
+	code, _, _ := strings.Cut(env.Meta.Message, ": ")
+	return apperror.Code(code)
 }
 
 func TestRequestOTP(t *testing.T) {
