@@ -69,7 +69,7 @@ Setiap task selesai bila `make ci` hijau.
     - _Requirements: 4.1, 4.2, 4.6_
   - [ ] 4.3 Lint/test yang menolak label berkardinalitas tinggi (allowlist label)
     - _Requirements: 4.3_
-  - [ ] 4.4 `pkg/logger` `ReplaceAttr` redaksi kunci sensitif (termasuk group bersarang) + test NIK/email tidak muncul
+  - [x] 4.4 `pkg/logger` `ReplaceAttr` redaksi kunci sensitif (termasuk group bersarang) + test NIK/email tidak muncul. Selesai 2026-10-22: `pkg/logger/redact.go` (`replaceAttr` dipasang di `logger.New`; kunci R4.4 dicocokkan tanpa membedakan huruf/`_`/`-`, akhiran token/secret/password/email/nik ikut, `code` hanya persis) dan `logger.Redact()` untuk payload `map[string]any`/`[]any` yang dipakai 2.6; test ~80 kasus (kunci x json/text x datar/group/With/WithGroup/map) gagal bila `ReplaceAttr` dicabut. Belum: scrub nilai string (email di teks error) dan struct mentah di `slog.Any` tidak ditelusuri, aturannya log skalar/map saja
     - **Property 6: PII never logged**
     - _Requirements: 4.4_
   - [ ] 4.5 Middleware access log di `pkg/httpx` (field R4.7; lewati `/health`, `/metrics`) + `trace_id` dari `X-Amzn-Trace-Id` / `traceparent` dan diteruskan ke klien HTTP internal; log memuat `env`
