@@ -85,9 +85,9 @@ Setiap task selesai bila `make ci` hijau.
     - _Requirements: 4.10_
 
 - [ ] 5. Lengkapi dan gerbangi kontrak
-  - [ ] 5.1 CI job `contracts`: validasi 7 OpenAPI 3.1 (kin-openapi) dan JSON Schema 2020-12, dipicu perubahan `docs/contracts/`
+  - [x] 5.1 CI job `contracts`: validasi 7 OpenAPI 3.1 (kin-openapi) dan JSON Schema 2020-12, dipicu perubahan `docs/contracts/`. Selesai 2026-10-22: modul `tools/contracts` (kin-openapi v0.152.0 + jsonschema/v6, format assertion aktif) memeriksa 7 OpenAPI wajib 3.1.x dan 12 schema event wajib `$schema` 2020-12; `make contracts` (juga bagian `make ci`); job `contracts` di `ci.yml` jalan hanya bila `docs/contracts/` atau `tools/contracts/` berubah (`detect-changes.sh` output `contracts`, diuji di repo git sementara); dependabot mencakup `/tools/contracts`. Pertama kali dijalankan, validator langsung menemukan ketujuh kontrak tidak valid YAML akibat deskripsi `Meta.message` task 2.6 (kutip) -> diperbaiki
     - _Requirements: 5.1_
-  - [ ] 5.2 Schema `otp.requested.v1.schema.json` sudah ada (DEV-2, checkpoint #1) ✅. Tersisa: tambah `user-service` ke enum `producer` di `envelope.schema.json` (additive) — tanpa ini envelope OTP dari User gagal validasi kontrak — **perlu persetujuan pemilik kontrak (OQ-4)**
+  - [x] 5.2 Schema `otp.requested.v1.schema.json` sudah ada (DEV-2, checkpoint #1) ✅. Tersisa: tambah `user-service` ke enum `producer` di `envelope.schema.json` (additive) — tanpa ini envelope OTP dari User gagal validasi kontrak — **perlu persetujuan pemilik kontrak (OQ-4)**. Selesai sisi kontrak 2026-10-22: schema OTP dan enum `user-service` valid, tes `tools/contracts` memverifikasi envelope OTP lulus dan `producer:"user"` ditolak. TEMUAN: `otp_publisher.go` masih memakai `producerName = "user"` sehingga envelope nyata gagal kontrak -> ditangani user 1.R3 (kode nuzirwan, tidak disentuh di task ini)
     - Catatan: `user-service` sudah ditambahkan ke enum `producer` di `envelope.schema.json` ✅
     - _Requirements: 5.3_
   - [ ] 5.3 Breaking-change check terhadap `main` (path/field/enum dihapus atau dipersempit → gagal)

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Menentukan modul/service yang perlu diproses CI.
 # Env: EVENT (push|pull_request|workflow_dispatch), PR_BASE, PUSH_BEFORE.
-# Output (ke $GITHUB_OUTPUT, atau stdout bila dijalankan lokal): modules, services, any, any_services.
+# Output (ke $GITHUB_OUTPUT, atau stdout bila dijalankan lokal): modules, services, any, any_services, contracts.
 set -euo pipefail
 
 SERVICES=(queue booking payment notification user)
@@ -55,6 +55,12 @@ for s in ${selected[@]+"${selected[@]}"}; do
 done
 modules+="]"
 
+# Job `contracts` hanya perlu jalan bila kontrak atau validatornya berubah (atau bila semua modul diproses).
+contracts=false
+if [ "$all" = 1 ] || printf '%s\n' "$files" | grep -Eq '^(docs/contracts/|tools/contracts/)'; then
+  contracts=true
+fi
+
 any=false
 [ "$modules" != "[]" ] && any=true
 any_services=false
@@ -65,6 +71,7 @@ any_services=false
   echo "services=$services"
   echo "any=$any"
   echo "any_services=$any_services"
+  echo "contracts=$contracts"
 } >> "$OUT"
 
 echo "all=$all modules=$modules" >&2

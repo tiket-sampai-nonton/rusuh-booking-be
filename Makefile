@@ -15,7 +15,7 @@ export TEST_POSTGRES_DATABASE ?= rbt
 export TEST_VALKEY_SERVER   ?= [{"host":"localhost","port":6379}]
 export TEST_RABBITMQ_URL    ?= amqp://guest:guest@localhost:5672/
 
-.PHONY: help keys infra obs up down logs ps build test test-integration cover lint fmt tidy mock isolation migrate-% run-% worker-% ci
+.PHONY: help keys infra obs up down logs ps build test test-integration cover lint fmt tidy mock isolation contracts migrate-% run-% worker-% ci
 
 help: ## Daftar target
 	@grep -E '^[a-zA-Z_%-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-18s %s\n", $$1, $$2}'
@@ -74,6 +74,9 @@ mock: ## Generate mock (go tool mockgen) ke _mock/ tiap service
 isolation: ## Build tiap service tanpa go.work (bukti bisa dipindah ke repo sendiri)
 	@for s in $(SERVICES); do echo "==> isolation $$s"; (cd services/$$s && GOWORK=off go build ./...) || exit 1; done
 
+contracts: ## Validasi kontrak OpenAPI 3.1 dan JSON Schema 2020-12 di docs/contracts (tools/contracts)
+	cd tools/contracts && GOWORK=off go run . ../../docs/contracts
+
 migrate-%: ## Migrasi satu service ke DB Compose, mis. make migrate-booking (pakai .env service)
 	cd services/$* && go run ./cmd migrate up
 
@@ -83,4 +86,4 @@ run-%: ## Jalankan API satu service lokal, mis. make run-booking (pakai .env ser
 worker-%: ## Jalankan worker satu service lokal di APP_PORT+100 agar tidak bentrok dengan api, mis. make worker-booking
 	cd services/$* && APP_PORT=$$(( $$(sed -n 's/^APP_PORT=//p' .env | head -1) + 100 )) go run ./cmd worker
 
-ci: build lint cover isolation ## Pemeriksaan CI lokal (build, lint, test + coverage, isolation)
+ci: build lint cover isolation contracts ## Pemeriksaan CI lokal (build, lint, test + coverage, isolation, kontrak)

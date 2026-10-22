@@ -80,7 +80,7 @@ components:
           type: integer
         message:
           type: string
-          description: Pada error berformat "KODE: pesan" (KODE dari daftar SRS §3.1.4 Error Codes); error internal memakai pesan umum.
+          description: 'Pada error berformat "KODE: pesan" (KODE dari daftar SRS §3.1.4 Error Codes); error internal memakai pesan umum.'
         requestId:
           type: string
           description: Hanya pada respons sukses. Pada error, requestId dikirim di header X-Request-ID.

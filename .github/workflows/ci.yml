@@ -45,6 +45,7 @@ jobs:
       services: ${{ steps.detect.outputs.services }}
       any: ${{ steps.detect.outputs.any }}
       any_services: ${{ steps.detect.outputs.any_services }}
+      contracts: ${{ steps.detect.outputs.contracts }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -55,6 +56,34 @@ jobs:
           PR_BASE: ${{ github.event.pull_request.base.sha }}
           PUSH_BEFORE: ${{ github.event.before }}
         run: bash tools/detect-changes.sh
+
+  # ------------------------------------------------------------------ stage: contracts
+  # Berdiri sendiri: hanya jalan bila docs/contracts/ atau tools/contracts/ berubah. Memvalidasi 7 OpenAPI 3.1
+  # (kin-openapi) dan semua schema event JSON Schema 2020-12 (platform R5.1).
+  contracts:
+    needs: changes
+    if: needs.changes.outputs.contracts == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GOWORK: "off"
+    defaults:
+      run:
+        working-directory: tools/contracts
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: tools/contracts/go.mod
+          cache-dependency-path: tools/contracts/go.sum
+      - name: go.mod dan go.sum rapi
+        run: |
+          go mod tidy
+          git diff --exit-code go.mod go.sum
+      - name: Validasi kontrak (OpenAPI 3.1, JSON Schema 2020-12)
+        run: go run . ../../docs/contracts
+      - name: Tes validator
+        run: go test -count=1 ./...
 
   # ------------------------------------------------------------------ stage: code-quality
   code-quality:
@@ -435,6 +464,7 @@ jobs:
     if: always()
     needs:
       - changes
+      - contracts
       - code-quality
       - secret-detection
       - verify-code-quality
