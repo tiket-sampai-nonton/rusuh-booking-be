@@ -51,9 +51,9 @@ func (u *NotifyBookingReview) NotifyBookingReview(ctx context.Context, sourceMes
 		return rabbitmq.Permanent(fmt.Errorf("render review: %w", rerr))
 	}
 
-	providerID, serr := u.email.SendEmail(ctx, p.BuyerEmail, "[RBT] Pembayaran Perlu Ditinjau", body)
+	providerID, serr := u.email.SendEmail(ctx, p.BuyerEmail, "[RBT] Pembayaran Perlu Ditinjau", body, idempotencyKey(sourceMessageID, entity.TypeBookingReview))
 	if serr != nil {
-		_ = u.repo.BumpAttempt(ctx, sourceMessageID, entity.TypeBookingReview, serr.Error(), u.clock.Now().Add(retryDelay))
+		recordSendFailure(ctx, u.repo, sourceMessageID, entity.TypeBookingReview, u.clock.Now(), serr)
 		return fmt.Errorf("send review email: %w", serr)
 	}
 	return u.repo.MarkSent(ctx, sourceMessageID, entity.TypeBookingReview, providerID)

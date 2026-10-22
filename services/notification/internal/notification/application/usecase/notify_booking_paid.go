@@ -65,10 +65,10 @@ func (u *NotifyBookingPaid) NotifyBookingPaid(ctx context.Context, sourceMessage
 	}
 
 	subject := fmt.Sprintf("[RBT] E-Tiket Anda — %s", p.Event.Name)
-	providerID, serr := u.email.SendEmail(ctx, p.BuyerEmail, subject, body)
+	providerID, serr := u.email.SendEmail(ctx, p.BuyerEmail, subject, body, idempotencyKey(sourceMessageID, entity.TypeBookingPaid))
 	if serr != nil {
-		_ = u.repo.BumpAttempt(ctx, sourceMessageID, entity.TypeBookingPaid, serr.Error(), u.clock.Now().Add(retryDelay))
-		return fmt.Errorf("send eticket email: %w", serr) // transient → retry
+		recordSendFailure(ctx, u.repo, sourceMessageID, entity.TypeBookingPaid, u.clock.Now(), serr)
+		return fmt.Errorf("send eticket email: %w", serr) // transient → retry; permanent stays permanent (DLQ)
 	}
 	return u.repo.MarkSent(ctx, sourceMessageID, entity.TypeBookingPaid, providerID)
 }

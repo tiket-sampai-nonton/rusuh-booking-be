@@ -33,14 +33,27 @@ type Worker struct {
 	Interval time.Duration
 }
 
-// SMTP holds the email sender settings (SES / Mailpit).
+// Email provider names (EMAIL_PROVIDER).
+const (
+	EmailMailpit = "mailpit"
+	EmailResend  = "resend"
+)
+
+// SMTP holds the Mailpit/SMTP settings, used when Email.Provider is mailpit.
 type SMTP struct {
 	Host     string
 	Port     int
 	User     string
 	Password string
-	From     string
 	Timeout  time.Duration
+}
+
+// Email selects the email provider and holds the settings shared by providers.
+// ResendAPIKey is a secret: never log it or put it in an error.
+type Email struct {
+	Provider     string // mailpit (local, CI) | resend (demo)
+	From         string
+	ResendAPIKey string
 }
 
 // FCM holds the push sender settings (FCM HTTP v1).
@@ -78,6 +91,7 @@ type Config struct {
 	Postgres     postgres.Config
 	RabbitMQ     rabbitmq.Config
 	SMTP         SMTP
+	Email        Email
 	FCM          FCM
 	PII          PII
 	Token        Token
@@ -101,10 +115,31 @@ func (c Config) Validate() error {
 	errs = append(errs, c.Log.Validate())
 	errs = append(errs, c.Postgres.Validate())
 	errs = append(errs, c.RabbitMQ.Validate())
+	errs = append(errs, c.Email.validate())
 	// SMTP/FCM/PII/Token are only needed by the worker; they are parsed and validated in the module
 	// wiring (newNotificationModule) so the api verb and /health unit tests boot without them.
 	if err := errors.Join(errs...); err != nil {
 		return fmt.Errorf("config tidak valid: %w", err)
 	}
 	return nil
+}
+
+// validate fails fast on an unknown provider, or on resend without its key and sender. Messages name
+// the variable only; the key value is never included.
+func (e Email) validate() error {
+	switch e.Provider {
+	case EmailMailpit:
+		return nil
+	case EmailResend:
+		var errs []error
+		if e.ResendAPIKey == "" {
+			errs = append(errs, errors.New("RESEND_API_KEY wajib diisi bila EMAIL_PROVIDER=resend"))
+		}
+		if e.From == "" {
+			errs = append(errs, errors.New("EMAIL_FROM wajib diisi bila EMAIL_PROVIDER=resend (domain terverifikasi di Resend)"))
+		}
+		return errors.Join(errs...)
+	default:
+		return fmt.Errorf("EMAIL_PROVIDER %q tidak dikenal (%s | %s)", e.Provider, EmailMailpit, EmailResend)
+	}
 }

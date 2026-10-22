@@ -39,7 +39,8 @@ func New(cfg Config) *Sender {
 }
 
 // SendEmail builds an RFC822 text/plain message and delivers it, returning the Message-ID header.
-func (s *Sender) SendEmail(ctx context.Context, to, subject, body string) (string, error) {
+// The idempotency key is ignored: SMTP has no provider-side dedup (the deliveries table does that).
+func (s *Sender) SendEmail(ctx context.Context, to, subject, body, _ string) (string, error) {
 	messageID := fmt.Sprintf("<%s@notification.rusuh>", rabbitmq.NewID())
 	msg := s.build(messageID, to, subject, body)
 
