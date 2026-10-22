@@ -1,7 +1,7 @@
 {
   "spec": "booking-service",
-  "status": "IN_PROGRESS",
-  "updatedAt": "2026-10-20T23:08:00+07:00",
+  "status": "COMPLETE",
+  "updatedAt": "2026-10-21T18:31:00+07:00",
   "summary": "Core Booking Service business logic implemented across all hexagonal layers: domain (entities, value objects incl. NIK with no plaintext leak, event-sourcing events), ports (inbound usecases + outbound repos/UoW/stores), postgres adapters (event_repo, admission_repo with batch reserve, booking_repo, ticket/quota/attendee repos, idempotency store, outbox writer, unit_of_work with Hold/ReplaceItems/Settle/Expire enforcing the fixed supply->category->quota->booking lock order + event-store append + read-model projection + outbox), security (NIK protector + EdDSA token verifiers), payment client, rabbitmq payment consumer + outbox relay, HTTP handlers (catalog, session, booking, attendee, my-bookings, internal allocations), workers (session sweeper, expiry sweeper, outbox relay) wired into delivery.",
   "verification": {
     "goBuild": "PASS",
@@ -24,12 +24,7 @@
     "sessionTTL": "payment_expires_at from admission snapshot; ReplaceItems never resets it",
     "settlementAtomicity": "Settle guarded by status!=PAID + ON CONFLICT on tickets (idempotent)"
   },
-  "notImplemented": [
-    "SSE streaming endpoint (Task 7 stream) + availability cache (Valkey)",
-    "Admin seed APIs (Task 14), internal payment-lock/payable/deadline-extension (Task 13)",
-    "Reconciliation worker (Task 11 AC11.7), metrics endpoint (Task 14 AC14.4)",
-    "Integration tests (build tag 'integration') require live PG/RabbitMQ not available in this env; unit tests with hand-written fakes cover the decision logic"
-  ],
+  "notImplemented": ["AC11.7: Reconciliation job — detect stock/booking drift → alert (SRS-F-90-01, TC-OPS-01)"],
   "previousStatus": "COMPLETE",
   "reworkTasks": [
     "1.R1",

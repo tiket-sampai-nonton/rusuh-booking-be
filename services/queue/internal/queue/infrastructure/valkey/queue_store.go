@@ -359,6 +359,22 @@ func (s *QueueStore) MarkMissedAndClean(ctx context.Context, eventID, entryID st
 	return tag == "OK", nil
 }
 
+// WasNotifiedSoon reports whether a pre-turn notification was already sent for this entry.
+func (s *QueueStore) WasNotifiedSoon(ctx context.Context, eventID, entryID string) (bool, error) {
+	key := s.keyer.Key(s.tag(eventID) + ":notified_soon:" + entryID)
+	exists, err := s.c.Do(ctx, s.c.B().Exists().Key(key).Build()).AsInt64()
+	if err != nil {
+		return false, fmt.Errorf("valkey: was_notified_soon: %w", err)
+	}
+	return exists > 0, nil
+}
+
+// MarkNotifiedSoon records that a pre-turn notification was sent (idempotent SETNX, TTL=600s).
+func (s *QueueStore) MarkNotifiedSoon(ctx context.Context, eventID, entryID string) error {
+	key := s.keyer.Key(s.tag(eventID) + ":notified_soon:" + entryID)
+	return s.c.Do(ctx, s.c.B().Set().Key(key).Value("1").Nx().Ex(600).Build()).Error()
+}
+
 // AddQuotaExhausted records a NIK hash in the quota_exhausted set (idempotent SADD).
 func (s *QueueStore) AddQuotaExhausted(ctx context.Context, eventID, nikHash string) error {
 	return s.c.Do(ctx, s.c.B().Sadd().Key(s.kQuota(eventID)).Member(nikHash).Build()).Error()

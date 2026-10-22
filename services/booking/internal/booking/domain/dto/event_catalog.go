@@ -48,3 +48,33 @@ type EventDetail struct {
 	AllowMixedCategories  bool           `json:"allowMixedCategories"`
 	Categories            []CategoryView `json:"categories"`
 }
+
+// CreateCategoryRequest is one ticket category in a CreateEventRequest.
+type CreateCategoryRequest struct {
+	Code       string `json:"code"`
+	Name       string `json:"name"`
+	PriceMinor int64  `json:"priceMinor"`
+	Capacity   int    `json:"capacity"`
+}
+
+// CreateEventRequest is the body of POST /internal/v1/admin/events.
+type CreateEventRequest struct {
+	Name                  string                  `json:"name"`
+	Slug                  string                  `json:"slug"`
+	Venue                 string                  `json:"venue"`
+	StartsAt              time.Time               `json:"startsAt"`
+	SalesStartsAt         time.Time               `json:"salesStartsAt"`
+	SalesEndsAt           time.Time               `json:"salesEndsAt"`
+	MaxTicketsPerOrder    int                     `json:"maxTicketsPerOrder"`
+	MaxTicketsPerBuyerNIK int                     `json:"maxTicketsPerBuyerNik"`
+	AllowMixedCategories  bool                    `json:"allowMixedCategories"`
+	Categories            []CreateCategoryRequest `json:"categories"`
+}
+
+// UpdateEventConfigRequest is the body of PATCH /internal/v1/admin/events/{eventId}.
+type UpdateEventConfigRequest struct {
+	SelectionTTLSeconds *int  `json:"selectionTtlSeconds,omitempty"`
+	PaymentTTLSeconds   *int  `json:"paymentTtlSeconds,omitempty"`
+	EditEnabled         *bool `json:"editEnabled,omitempty"`
+	MaxEdits            *int  `json:"maxEdits,omitempty"`
+}

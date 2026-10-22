@@ -83,3 +83,57 @@ func TestSession_CreateTokenInvalid(t *testing.T) {
 type assertErr struct{}
 
 func (assertErr) Error() string { return "invalid" }
+
+func TestSession_GetSession_OK(t *testing.T) {
+	adm := activeAdmission(true)
+	adm.ExpiresAt = time.Now().Add(time.Hour)
+	uc := usecase.NewSession(&fakeAdmissionRepo{admission: adm}, &fakeEventRepo{detail: detailWith(true, 3)}, &fakeTokenVerifier{}, fixedClock{t: time.Now()})
+	sess, err := uc.GetSession(context.Background(), sessionID, visitor)
+	require.NoError(t, err)
+	assert.Equal(t, sessionID, sess.SessionID)
+}
+
+func TestSession_GetSession_InvalidID(t *testing.T) {
+	uc := usecase.NewSession(&fakeAdmissionRepo{}, &fakeEventRepo{}, &fakeTokenVerifier{}, fixedClock{t: time.Now()})
+	_, err := uc.GetSession(context.Background(), "not-uuid", visitor)
+	assert.Error(t, err)
+}
+
+func TestSession_GetSession_Expired(t *testing.T) {
+	adm := activeAdmission(true)
+	adm.ExpiresAt = time.Now().Add(-time.Minute)
+	uc := usecase.NewSession(&fakeAdmissionRepo{admission: adm}, &fakeEventRepo{detail: detailWith(true, 3)}, &fakeTokenVerifier{}, fixedClock{t: time.Now()})
+	_, err := uc.GetSession(context.Background(), sessionID, visitor)
+	assert.ErrorIs(t, err, inbound.ErrSessionExpired)
+}
+
+func TestSession_GetCurrentSession_InvalidEventID(t *testing.T) {
+	uc := usecase.NewSession(&fakeAdmissionRepo{}, &fakeEventRepo{}, &fakeTokenVerifier{}, fixedClock{t: time.Now()})
+	_, err := uc.GetCurrentSession(context.Background(), "bad-id", visitor)
+	assert.Error(t, err)
+}
+
+func TestSession_GetCurrentSession_NotFound(t *testing.T) {
+	uc := usecase.NewSession(&fakeAdmissionRepo{getErr: inbound.ErrNotFound}, &fakeEventRepo{}, &fakeTokenVerifier{}, fixedClock{t: time.Now()})
+	_, err := uc.GetCurrentSession(context.Background(), eventID, visitor)
+	assert.ErrorIs(t, err, inbound.ErrNotFound)
+}
+
+func TestGetTickets_Success(t *testing.T) {
+	bk := entity.Booking{ID: sessionID, Status: "PAID"}
+	tickets := []entity.Ticket{
+		{ID: "t1", BookingID: sessionID, PublicCode: "TICKET-001"},
+	}
+	uc := usecase.NewGetTickets(&fakeBookingRepo{booking: bk}, &fakeTicketRepo{tickets: tickets})
+	result, err := uc.GetTickets(context.Background(), sessionID)
+	require.NoError(t, err)
+	assert.Equal(t, sessionID, result.BookingID)
+	assert.Len(t, result.Tickets, 1)
+}
+
+func TestGetTickets_NotPaid(t *testing.T) {
+	bk := entity.Booking{ID: sessionID, Status: "PENDING_PAYMENT"}
+	uc := usecase.NewGetTickets(&fakeBookingRepo{booking: bk}, &fakeTicketRepo{})
+	_, err := uc.GetTickets(context.Background(), sessionID)
+	assert.ErrorIs(t, err, inbound.ErrNotPayable)
+}

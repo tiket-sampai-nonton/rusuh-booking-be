@@ -240,6 +240,20 @@ func (mr *MockIQueueStoreMockRecorder) MarkMissedAndClean(ctx, eventID, entryID,
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MarkMissedAndClean", reflect.TypeOf((*MockIQueueStore)(nil).MarkMissedAndClean), ctx, eventID, entryID, nowMs)
 }
 
+// MarkNotifiedSoon mocks base method.
+func (m *MockIQueueStore) MarkNotifiedSoon(ctx context.Context, eventID, entryID string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "MarkNotifiedSoon", ctx, eventID, entryID)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// MarkNotifiedSoon indicates an expected call of MarkNotifiedSoon.
+func (mr *MockIQueueStoreMockRecorder) MarkNotifiedSoon(ctx, eventID, entryID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MarkNotifiedSoon", reflect.TypeOf((*MockIQueueStore)(nil).MarkNotifiedSoon), ctx, eventID, entryID)
+}
+
 // Promote mocks base method.
 func (m *MockIQueueStore) Promote(ctx context.Context, eventID string, cands []outbound.PromoteCandidate, capacity int, nowMs int64) ([]string, error) {
 	m.ctrl.T.Helper()
@@ -296,4 +310,19 @@ func (m *MockIQueueStore) TopWaiting(ctx context.Context, eventID string, n int)
 func (mr *MockIQueueStoreMockRecorder) TopWaiting(ctx, eventID, n any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "TopWaiting", reflect.TypeOf((*MockIQueueStore)(nil).TopWaiting), ctx, eventID, n)
+}
+
+// WasNotifiedSoon mocks base method.
+func (m *MockIQueueStore) WasNotifiedSoon(ctx context.Context, eventID, entryID string) (bool, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "WasNotifiedSoon", ctx, eventID, entryID)
+	ret0, _ := ret[0].(bool)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// WasNotifiedSoon indicates an expected call of WasNotifiedSoon.
+func (mr *MockIQueueStoreMockRecorder) WasNotifiedSoon(ctx, eventID, entryID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "WasNotifiedSoon", reflect.TypeOf((*MockIQueueStore)(nil).WasNotifiedSoon), ctx, eventID, entryID)
 }

@@ -96,7 +96,7 @@ func TestJoin_DirectAdmission(t *testing.T) {
 	m.audit.EXPECT().Append(ctx, gomock.Any()).Return(nil).Times(2) // JOINED + ADMITTED
 	m.store.EXPECT().ActiveCount(ctx, "ev1").Return(0, nil)
 	m.booking.EXPECT().ReserveBatch(ctx, gomock.Any()).Return(outbound.AllocationBatchResponse{
-		Allocations: []outbound.AllocationResult{{QueueEntryID: "x", AllocationID: "al1", Status: "RESERVED", ClaimDeadline: "2026-10-20T10:01:00Z"}},
+		Allocations: []outbound.AllocationResult{{QueueEntryID: "x", AllocationID: "al1", Status: "GRANTED", ClaimDeadline: "2026-10-20T10:01:00Z"}},
 	}, nil)
 	m.store.EXPECT().Promote(ctx, "ev1", gomock.Any(), 10, gomock.Any()).Return([]string{"x"}, nil)
 	m.tokens.EXPECT().IssueQueue(gomock.Any(), gomock.Any(), gomock.Any()).Return("qt", nil)

@@ -2,6 +2,7 @@ package rabbitmq
 
 import (
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +11,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	pkgrabbitmq "github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/rabbitmq"
 )
 
 // OTPPublisher unit tests exercise the payload shape, routing key, producer name,
@@ -83,4 +86,25 @@ func TestOTPPublisher_PublishError_Propagated(t *testing.T) {
 	wrapped := fmt.Errorf("otp publisher: publish: %w", wantErr)
 	assert.ErrorContains(t, wrapped, "otp publisher: publish:")
 	assert.ErrorIs(t, wrapped, wantErr)
+}
+
+// TestOTPPublisher_EnvelopeFields verifies the envelope metadata PublishOTP builds:
+// aggregateId is the hex of emailHash, and occurredAt is `now` (not expiresAt).
+func TestOTPPublisher_EnvelopeFields(t *testing.T) {
+	emailHash := []byte{0xde, 0xad, 0xbe, 0xef}
+	now := time.Date(2026, 10, 20, 10, 0, 0, 0, time.UTC)
+	expiresAt := now.Add(5 * time.Minute)
+
+	payload := otpPayload{
+		EmailEnc:  "enc",
+		CodeEnc:   "enc",
+		ExpiresAt: expiresAt.UTC().Format(time.RFC3339),
+	}
+
+	env, err := pkgrabbitmq.NewEnvelope(routingKeyOTP, producerName, hex.EncodeToString(emailHash), "", payload, now)
+	require.NoError(t, err)
+
+	assert.Equal(t, "deadbeef", env.AggregateID, "aggregateId must be hex of emailHash")
+	assert.Equal(t, now.UTC(), env.OccurredAt.UTC(), "occurredAt must be now, not expiresAt")
+	assert.NotEqual(t, expiresAt.UTC(), env.OccurredAt.UTC(), "occurredAt must NOT be expiresAt")
 }

@@ -34,7 +34,8 @@
       "enum": [
         "queue-service",
         "booking-service",
-        "payment-service"
+        "payment-service",
+        "user-service"
       ]
     },
     "aggregateId": {

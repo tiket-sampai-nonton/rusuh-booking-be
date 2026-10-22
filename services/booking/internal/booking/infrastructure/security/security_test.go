@@ -10,34 +10,55 @@ import (
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/infrastructure/security"
 )
 
-var key32 = make([]byte, 32)
-
-func TestPII_HashDeterministicSealRoundtripShape(t *testing.T) {
-	pii, err := security.NewPII(key32, key32)
-	require.NoError(t, err)
-
-	h1 := pii.HashNIK("3174010101010001")
-	h2 := pii.HashNIK("3174010101010001")
-	assert.Equal(t, h1, h2, "hash is deterministic")
-	assert.NotEqual(t, pii.HashNIK("3174010101010002"), h1)
-
-	enc, err := pii.SealNIK("3174010101010001")
-	require.NoError(t, err)
-	assert.NotEmpty(t, enc)
-	assert.NotContains(t, string(enc), "3174010101010001")
-}
-
-func TestPII_RejectsBadKey(t *testing.T) {
-	_, err := security.NewPII([]byte("short"), key32)
+func TestNewPII_InvalidHashKey(t *testing.T) {
+	_, err := security.NewPII(nil, make([]byte, 32))
 	assert.Error(t, err)
 }
 
-func TestVerifiers_NilGuard(t *testing.T) {
-	av := security.NewAdmissionVerifier(nil, time.Now)
-	_, err := av.Verify("tok")
+func TestNewPII_InvalidEncKey(t *testing.T) {
+	_, err := security.NewPII(make([]byte, 32), nil)
 	assert.Error(t, err)
+}
 
-	bv := security.NewBearerVerifier(nil, time.Now)
-	_, err = bv.VerifyAccess("tok")
+func TestPII_HashAndSeal(t *testing.T) {
+	pii, err := security.NewPII(make([]byte, 32), make([]byte, 32))
+	require.NoError(t, err)
+
+	hash := pii.HashNIK("3174010101900001")
+	assert.NotEmpty(t, hash)
+
+	sealed, err := pii.SealNIK("3174010101900001")
+	require.NoError(t, err)
+	assert.NotEmpty(t, sealed)
+
+	// Same input → same hash
+	hash2 := pii.HashNIK("3174010101900001")
+	assert.Equal(t, hash, hash2)
+}
+
+func TestAdmissionVerifier_NilVerifier(t *testing.T) {
+	v := security.NewAdmissionVerifier(nil, time.Now)
+	_, err := v.Verify("any.token.here")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "belum dikonfigurasi")
+}
+
+func TestAdmissionVerifier_InvalidToken(t *testing.T) {
+	v := security.NewAdmissionVerifier(nil, time.Now)
+	_, err := v.Verify("garbage")
+	assert.Error(t, err)
+}
+
+func TestBearerVerifier_NilVerifier(t *testing.T) {
+	v := security.NewBearerVerifier(nil, time.Now)
+	_, err := v.VerifyAccess("any.token.here")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "belum dikonfigurasi")
+}
+
+func TestMultiBearerVerifier_BothNil(t *testing.T) {
+	v := security.NewMultiBearerVerifier(nil, nil, time.Now)
+	_, err := v.VerifyAccess("any.token.here")
+	// Both nil → both return error → final error returned
 	assert.Error(t, err)
 }

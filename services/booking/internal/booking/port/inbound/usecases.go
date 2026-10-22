@@ -4,6 +4,7 @@ package inbound
 
 import (
 	"context"
+	"io"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/domain/dto"
 )
@@ -18,6 +19,16 @@ type IEventCatalogUsecase interface {
 // IEventDetailUsecase returns one event with live availability.
 type IEventDetailUsecase interface {
 	GetEventDetail(ctx context.Context, eventID string) (dto.EventDetail, error)
+}
+
+// ICreateEventUsecase creates a new event with categories and supply.
+type ICreateEventUsecase interface {
+	Create(ctx context.Context, req dto.CreateEventRequest) (string, error)
+}
+
+// IUpdateEventConfigUsecase updates mutable event configuration.
+type IUpdateEventConfigUsecase interface {
+	Update(ctx context.Context, eventID string, req dto.UpdateEventConfigRequest) error
 }
 
 // IAllocationUsecase reserves admissions for a batch of queue entries (internal, called by Queue).
@@ -35,6 +46,11 @@ type ISessionUsecase interface {
 // IAttendeeCheckUsecase probes an attendee NIK during selection.
 type IAttendeeCheckUsecase interface {
 	CheckAttendee(ctx context.Context, sessionID string, req dto.AttendeeCheckRequest) (dto.AttendeeCheck, error)
+}
+
+// IStreamSessionUsecase pushes live availability + timer events over SSE.
+type IStreamSessionUsecase interface {
+	Stream(ctx context.Context, sessionID, visitorID string, w io.Writer, flush func()) error
 }
 
 // HoldCommand carries the hold request plus the ambient request identity.
@@ -66,6 +82,16 @@ type IEditUsecase interface {
 // ITicketUsecase returns e-tickets for a paid booking.
 type ITicketUsecase interface {
 	GetTickets(ctx context.Context, bookingID string) (dto.TicketList, error)
+}
+
+// IGetBookingUsecase returns a booking by ID (caller must own the visitor token).
+type IGetBookingUsecase interface {
+	GetBooking(ctx context.Context, bookingID, visitorID string) (dto.Booking, error)
+}
+
+// ICancelBookingUsecase cancels an unpaid booking (SHOULD priority). Settles if payment raced.
+type ICancelBookingUsecase interface {
+	Cancel(ctx context.Context, bookingID, visitorID string) (dto.Booking, error)
 }
 
 // IBookingHistoryUsecase lists a logged-in buyer's bookings.
@@ -100,4 +126,35 @@ type ISessionSweeper interface {
 // IExpirySweeper scans for expired bookings and resolves them (sweeper).
 type IExpirySweeper interface {
 	SweepExpiries(ctx context.Context) error
+}
+
+// ISupplyUsecase returns the stock snapshot for an event (internal, called by Queue Service).
+type ISupplyUsecase interface {
+	GetSupply(ctx context.Context, eventID string) (dto.SupplySnapshot, error)
+}
+
+// IGetPayableUsecase returns the payment billing view of a booking (called by Payment Service).
+type IGetPayableUsecase interface {
+	GetPayable(ctx context.Context, bookingID string) (dto.Payable, error)
+}
+
+// IPaymentLockUsecase locks a booking before a payment attempt (called by Payment Service).
+type IPaymentLockUsecase interface {
+	Lock(ctx context.Context, bookingID, attemptKey string) (dto.PaymentLockResponse, error)
+}
+
+// IDeadlineExtensionUsecase extends the payment deadline once when the gateway is degraded.
+type IDeadlineExtensionUsecase interface {
+	Extend(ctx context.Context, bookingID, reason string, seconds int) error
+}
+
+// ICancelSessionUsecase releases an admission allocation when buyer leaves without buying.
+type ICancelSessionUsecase interface {
+	CancelSession(ctx context.Context, sessionID, visitorID string) error
+}
+
+// IReleaseAllocationUsecase releases an orphaned allocation (saga compensation, ADR-018).
+// Called by Queue when an admitted entry is abandoned without claiming.
+type IReleaseAllocationUsecase interface {
+	Release(ctx context.Context, allocationID string) (dto.ReleaseResponse, error)
 }

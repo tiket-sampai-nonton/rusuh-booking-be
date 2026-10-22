@@ -45,7 +45,7 @@ perbaikan payload di booking 12.R1).
 
 - [ ] 8. Join + direct admission
   - Ada: `join.go`, handler join
-  - [ ] 8.R1 **Defect:** direct admission mengecek `Status == "RESERVED"`, padahal Booking membalas `outcome = "GRANTED"`. Akibatnya direct admission tidak pernah terjadi dan semua orang masuk `WAITING`. Hentikan juga pengiriman `units` (Booking yang menghitung)
+  - [x] 8.R1 **Defect:** direct admission mengecek `Status == "RESERVED"`, padahal Booking membalas `outcome = "GRANTED"`. Akibatnya direct admission tidak pernah terjadi dan semua orang masuk `WAITING`. Hentikan juga pengiriman `units` (Booking yang menghitung)
     - **Property 3: No admission without reservation**
     - _Requirements: 2.5_
   - **Property 6: Fail closed**
@@ -64,7 +64,7 @@ perbaikan payload di booking 12.R1).
 
 - [ ] 11. Promotor + claim + claim sweeper
   - Ada: `promoter.go`, `sweeper.go`, claim handler
-  - [ ] 11.R1 **Defect (sebagian selesai di checkpoint #1):** `ALREADY_ACTIVE` kini mengakhiri entry dan dicatat sebagai peringatan (`promoter.go`) ✅. Masih tersisa: `BUYER_QUOTA_EXHAUSTED` hanya menambah NIK ke set blokir tetapi entry tetap `WAITING` di depan, jadi promotor mengirim entry yang sama setiap tick dan menyumbat antrean. Akhiri entry (`ENDED` + `reason`) dan bersihkan constraint key. Pastikan `end_entry.lua` memperlakukan outcome `ALREADY_ACTIVE` sebagai `ENDED`
+  - [x] 11.R1 **Defect (selesai):** `ALREADY_ACTIVE` kini mengakhiri entry dan dicatat sebagai peringatan (`promoter.go`) ✅. `BUYER_QUOTA_EXHAUSTED` kini juga mengakhiri entry (`ENDED` + `reason`) dan membersihkan constraint key, sehingga promotor tidak lagi mengirim ulang entry yang sama setiap tick ✅. `end_entry.lua` memperlakukan outcome `ALREADY_ACTIVE` sebagai `ENDED` (dikerjakan Agent C)
     - _Requirements: 6.4, 6.13_
   - [ ] 11.R2 Sweeper tidak boleh menerbitkan `booking.journey.ended`, karena itu event milik Booking. Cukup tandai `MISSED` dan lepas slot; Booking melepas alokasinya sendiri (K7)
     - _Requirements: 6.10_
@@ -78,7 +78,7 @@ perbaikan payload di booking 12.R1).
 
 - [ ] 12. Publish event giliran
   - Ada: `event_publisher.go` (`queue.turn.soon`, `queue.turn.arrived`)
-  - [ ] 12.R1 `PublishTurnSoon` belum dipanggil di mana pun. Panggil sekali per entry saat posisi ≤ `preTurnNotifyPosition` (mis. dari Status Publisher)
+  - [x] 12.R1 `PublishTurnSoon` belum dipanggil di mana pun. Panggil sekali per entry saat posisi ≤ `preTurnNotifyPosition` (mis. dari Status Publisher)
     - _Requirements: 6.11, 9.1_
   - _Requirements: 9.2, 9.3, 9.4, 9.5_
 

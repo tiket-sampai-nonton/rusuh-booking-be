@@ -61,6 +61,10 @@ func (p *Promoter) runEvent(ctx context.Context, eventID string) error {
 	}
 	free := settings.ActiveSlotCapacity - active
 	if free <= 0 {
+		// No slots to fill, but still check pre-turn notifications.
+		if settings.PreTurnNotifyEnabled && settings.NearFrontMultiplier > 0 {
+			p.notifyPreTurn(ctx, eventID, settings.ActiveSlotCapacity*settings.NearFrontMultiplier)
+		}
 		return nil
 	}
 	if free > p.batchMax {
@@ -109,6 +113,10 @@ func (p *Promoter) runEvent(ctx context.Context, eventID string) error {
 			if ent, found, gerr := p.store.GetEntry(ctx, eventID, a.QueueEntryID); gerr == nil && found {
 				_ = p.store.AddQuotaExhausted(ctx, eventID, ent.BuyerNikHashHex())
 			}
+			// End the entry so it doesn't permanently block the queue head (spec 11.R1).
+			if _, err := p.store.EndEntry(ctx, eventID, a.QueueEntryID, "BUYER_QUOTA_EXHAUSTED", now.UnixMilli()); err != nil {
+				p.logger.Warn("failed to end BUYER_QUOTA_EXHAUSTED entry", "error", err)
+			}
 		case "SOLD_OUT":
 			_ = p.store.SetSale(ctx, eventID, "CLOSED", true)
 		case "ALREADY_ACTIVE":
@@ -135,5 +143,33 @@ func (p *Promoter) runEvent(ctx context.Context, eventID string) error {
 	for _, entryID := range promoted {
 		_ = p.pub.PublishTurnArrived(ctx, eventID, entryID, visitorByEntry[entryID], time.UnixMilli(deadlineByEntry[entryID]).UTC())
 	}
+	// Always check near-front entries for pre-turn notifications (TC-QUE-13).
+	if settings.PreTurnNotifyEnabled && settings.NearFrontMultiplier > 0 {
+		p.notifyPreTurn(ctx, eventID, settings.ActiveSlotCapacity*settings.NearFrontMultiplier)
+	}
 	return nil
+}
+
+// notifyPreTurn publishes queue.turn.soon for waiting entries near the front (TC-QUE-13, SRS-F-25).
+func (p *Promoter) notifyPreTurn(ctx context.Context, eventID string, notifyPosition int) {
+	if notifyPosition <= 0 {
+		return
+	}
+	nearFront, err := p.store.TopWaiting(ctx, eventID, notifyPosition)
+	if err != nil || len(nearFront) == 0 {
+		return
+	}
+	for _, entryID := range nearFront {
+		notified, err := p.store.WasNotifiedSoon(ctx, eventID, entryID)
+		if err != nil || notified {
+			continue
+		}
+		ent, found, err := p.store.GetEntry(ctx, eventID, entryID)
+		if err != nil || !found {
+			continue
+		}
+		if pubErr := p.pub.PublishTurnSoon(ctx, eventID, entryID, ent.VisitorID); pubErr == nil {
+			_ = p.store.MarkNotifiedSoon(ctx, eventID, entryID)
+		}
+	}
 }

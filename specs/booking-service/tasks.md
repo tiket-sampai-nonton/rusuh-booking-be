@@ -34,7 +34,7 @@ dan Payment) → sisanya.
 
 - [ ] 4. Admission & alokasi (Jangan PHP)
   - Ada: `allocate_batch.go`, `admission_repo.go` (`ALREADY_ACTIVE`, idempoten per `queueEntryId`), `POST /internal/v1/allocations:batch`, create/get/current session
-  - [ ] 4.R1 Endpoint yang dipanggil Queue belum ada: `GET /internal/v1/events/{eventId}/supply` (Status Publisher Queue gagal tanpa ini) dan `POST /internal/v1/allocations/{allocationId}:release`
+  - [x] 4.R1 Endpoint yang dipanggil Queue belum ada: `GET /internal/v1/events/{eventId}/supply` (Status Publisher Queue gagal tanpa ini) dan `POST /internal/v1/allocations/{allocationId}:release`
     - _Requirements: 17.1, 17.2, 17.3_
   - [ ] 4.R2 Saat `free + allocated + held = 0`: tandai event `SOLD_OUT` dan tulis outbox `booking.sold_out`
     - _Requirements: 3.5_
@@ -46,7 +46,7 @@ dan Payment) → sisanya.
 
 - [ ] 6. Hold atomik
   - Ada: `hold.go`, `unit_of_work.Hold`, idempotency store, test hold
-  - [ ] 6.R1 **Defect:** hold menambah `held_units` tanpa mengurangi `allocated_units`, jadi unit terhitung dua kali dan CHECK supply menolak hold yang sah saat stok sudah teralokasi penuh. Ubah jadi `allocated -= n, held += n`
+  - [x] 6.R1 **Defect:** hold menambah `held_units` tanpa mengurangi `allocated_units`, jadi unit terhitung dua kali dan CHECK supply menolak hold yang sah saat stok sudah teralokasi penuh. Ubah jadi `allocated -= n, held += n`
     - **Property 1: No oversell**, **Property 2: Jangan PHP**
     - _Requirements: 6.1, 3.6_
   - [ ] 6.R2 Urutan lock jadi `admissions → event_supply → buyer_quotas → category_inventories (ASC)`. Sekarang admission tidak dikunci dan urutannya supply → category → quota
@@ -61,9 +61,9 @@ dan Payment) → sisanya.
 
 - [ ] 7. Sesi, timer & SSE
   - Ada: create/current/get session dengan `expiresAt`/`serverTime`
-  - [ ] 7.1 SSE `GET /booking-sessions/{id}/stream` + cache ketersediaan Valkey (belum ada). Nama event menunggu OQ-2
+  - [x] 7.1 SSE `GET /booking-sessions/{id}/stream` + cache ketersediaan Valkey (belum ada). Nama event menunggu OQ-2
     - _Requirements: 16.1, 16.2, 16.3, 16.4, 16.5, 16.6_
-  - [ ] 7.2 `POST /booking-sessions/{id}/cancel` (keluar tanpa membeli)
+  - [x] 7.2 `POST /booking-sessions/{id}/cancel` (keluar tanpa membeli)
     - _Requirements: 15.1_
   - **Property 9: Server-authoritative timers**
   - _Requirements: 7.1, 7.2_
@@ -73,7 +73,7 @@ dan Payment) → sisanya.
   - [ ] 8.R1 Kunci admission dulu; tolak bila admission bukan `EDITABLE`, lewat grace, atau batas edit habis. Sesuaikan juga `allocated`/`held` di `event_supply` saat jumlah item berubah
     - **Property 4: Edit atomicity**
     - _Requirements: 8.1, 8.3, 8.4, 8.6, 8.7_
-  - [ ] 8.R2 `GET /api/v1/bookings/{id}` belum ada (dipakai halaman bayar untuk polling status)
+  - [x] 8.R2 `GET /api/v1/bookings/{id}` belum ada (dipakai halaman bayar untuk polling status)
     - _Requirements: 10.4, 8.10_
   - _Requirements: 8.2, 8.5, 8.8, 8.9_
 
@@ -81,7 +81,7 @@ dan Payment) → sisanya.
   - Ada: consumer, `settle.go`, `unit_of_work.Settle` (idempoten lewat status != PAID + `ON CONFLICT` tiket)
   - [ ] 9.R1 Teruskan `settlementTime` dan `amountMinor` dari event. Sekarang `settlement_time` diisi waktu proses
     - _Requirements: 9.1, 9.2_
-  - [ ] 9.R3 **Defect (checkpoint #1):** query sold-out di `settle` membaca `total_units`, padahal kolomnya `total_capacity`. Error query di dalam transaksi PostgreSQL membuat transaksi `aborted`, jadi statement berikutnya (`buyer_quotas`) gagal dan **setiap settlement gagal**. Perbaiki ke `total_capacity`, jangan telan error (`_ =`), dan jangan menjalankan query yang boleh gagal di dalam transaksi yang sama. Aturan sold out resmi: `free + allocated + held = 0` (R3.5); pengecekan setelah settlement hanya pelengkap
+  - [x] 9.R3 **Defect (checkpoint #1):** query sold-out di `settle` membaca `total_units`, padahal kolomnya `total_capacity`. Error query di dalam transaksi PostgreSQL membuat transaksi `aborted`, jadi statement berikutnya (`buyer_quotas`) gagal dan **setiap settlement gagal**. Perbaiki ke `total_capacity`, jangan telan error (`_ =`), dan jangan menjalankan query yang boleh gagal di dalam transaksi yang sama. Aturan sold out resmi: `free + allocated + held = 0` (R3.5); pengecekan setelah settlement hanya pelengkap
     - _Requirements: 9.1, 3.5, 12.3_
   - [x] 9.R4 `booking.quota.exhausted` terbit saat `paid_quantity >= max_quantity` setelah settlement (OQ-13 diputuskan: pilihan (a), sudah ada di kode)
     - _Requirements: 12.5_
@@ -93,7 +93,7 @@ dan Payment) → sisanya.
 
 - [ ] 10. Worker sweeper sesi & expiry + resolve
   - Ada: `sweepers.go`, `expire.go`, `admission_repo.ExpireSession`, payment client
-  - [ ] 10.R1 **Defect sweeper sesi:** `ACTIVE`/`EDITABLE` tidak mengembalikan `allocated_units` (stok bocor permanen) dan tidak menulis `booking.journey.ended` (slot Queue tidak pernah lepas). Terapkan design §7.1: `ACTIVE` → EXPIRED + lepas alokasi; `EDITABLE` → `CONVERTED(SELECTION_EXPIRED)` + lepas sisa unit, booking tetap bisa dibayar
+  - [x] 10.R1 **Defect sweeper sesi:** `ACTIVE`/`EDITABLE` tidak mengembalikan `allocated_units` (stok bocor permanen) dan tidak menulis `booking.journey.ended` (slot Queue tidak pernah lepas). Terapkan design §7.1: `ACTIVE` → EXPIRED + lepas alokasi; `EDITABLE` → `CONVERTED(SELECTION_EXPIRED)` + lepas sisa unit, booking tetap bisa dibayar
     - **Property 11: Journey end exactly once**
     - _Requirements: 7.3, 7.6, 12.4_
   - [ ] 10.R2 Expiry: PENDING_PAYMENT lewat deadline → `VERIFYING` dulu, lalu resolve `CHECK_AND_CANCEL`. `SUCCEEDED` tepat waktu → PAID (sekarang REVIEW); `UNKNOWN` → tunggu sampai `VERIFY_GRACE_SECONDS`
@@ -113,7 +113,7 @@ dan Payment) → sisanya.
 
 - [ ] 12. Outbox + relay
   - Ada: `outbox_writer.go`, relay di worker
-  - [ ] 12.R1 **Defect integrasi:** payload `booking.journey.ended` sekarang `{bookingId, outcome}`. Queue (dan schema) butuh `{eventId, queueEntryId, outcome}`, jadi pesan ditolak dan slot antrean tidak pernah dibebaskan
+  - [x] 12.R1 **Defect integrasi:** payload `booking.journey.ended` sekarang `{bookingId, outcome}`. Queue (dan schema) butuh `{eventId, queueEntryId, outcome}`, jadi pesan ditolak dan slot antrean tidak pernah dibebaskan
     - _Requirements: 12.3, 12.7_
   - [ ] 12.R2 Test kontrak semua payload terhadap `docs/contracts/events/*.schema.json`
     - _Requirements: 12.7_
@@ -121,18 +121,18 @@ dan Payment) → sisanya.
     - _Requirements: 12.5_
   - _Requirements: 12.1, 12.2, 12.6_
 
-- [ ] 13. API internal untuk Payment — payable, payment-lock, deadline-extension (belum ada; **memblokir Payment**)
+- [x] 13. API internal untuk Payment — payable, payment-lock, deadline-extension (belum ada; **memblokir Payment**)
   - `payment-lock` tidak mengubah status booking: isi `payment_started_at`, kunci admission `CONVERTED(PAYMENT_STARTED)`, lepas sisa unit (design §9.4)
   - Sertakan `publicRef` di `Payable` untuk nomor order Midtrans (OQ-21)
   - **Property 5: Lock serialization**
   - _Requirements: 14.1, 14.2, 14.3, 14.4, 14.5, 14.6, 8.6_
 
 - [ ] 14. Admin seed API + verifikasi akhir
-  - [ ] 14.1 `POST/PATCH /internal/v1/admin/events` (+ upload gambar, OQ-16)
+  - [x] 14.1 `POST/PATCH /internal/v1/admin/events` (+ upload gambar, OQ-16)
     - _Requirements: 18.1, 18.2, 18.3, 18.4, 18.5, 4.7_
-  - [ ] 14.2 Tiket & riwayat: ticket link token di `booking.paid`, akses via query `t`
+  - [x] 14.2 Tiket & riwayat: ticket link token di `booking.paid`, akses via query `t`
     - _Requirements: 10.2, 10.3, 10.5, 10.6, 10.7_
-  - [ ] 14.3 Batal pesanan (resolve dulu, SHOULD)
+  - [x] 14.3 Batal pesanan (resolve dulu, SHOULD)
     - _Requirements: 15.2, 15.3, 15.4, 15.5_
   - [ ] 14.4 Metrik (setelah OQ-5) dan log tanpa NIK/email/token
     - **Property 12: Monotonic status**

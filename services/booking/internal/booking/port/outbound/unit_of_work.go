@@ -69,6 +69,29 @@ type ExpireSpec struct {
 	CorrelationID string
 }
 
+// DeadlineSpec is the input for IUnitOfWork.ExtendDeadline.
+type DeadlineSpec struct {
+	BookingID     string
+	Reason        string
+	Seconds       int
+	CorrelationID string
+}
+
+// PaymentLockSpec is the input for IUnitOfWork.PaymentLock.
+type PaymentLockSpec struct {
+	BookingID     string
+	AttemptKey    string
+	CorrelationID string
+}
+
+// PaymentLockResult is the outcome of the payment-lock operation.
+type PaymentLockResult struct {
+	Outcome          string // OK | BOOKING_NOT_PAYABLE | PAYMENT_EXPIRED
+	Version          int
+	AmountMinor      int64
+	PaymentExpiresAt time.Time
+}
+
 // IUnitOfWork performs the stock/money commands in one PostgreSQL transaction each, hiding the fixed
 // lock ordering (supply → category → quota → booking), the event-store append, the read-model
 // projection, and the outbox write. Each method retries internally on event-store concurrency.
@@ -77,6 +100,8 @@ type IUnitOfWork interface {
 	ReplaceItems(ctx context.Context, spec ReplaceSpec) (int, error)
 	Settle(ctx context.Context, spec SettleSpec) (bool, error) // settled=false when already PAID (idempotent no-op)
 	Expire(ctx context.Context, spec ExpireSpec) (bool, error) // acted=false when the booking was already terminal
+	ExtendDeadline(ctx context.Context, spec DeadlineSpec) error
+	PaymentLock(ctx context.Context, spec PaymentLockSpec) (PaymentLockResult, error)
 }
 
 // IdempotencyRecord is a stored idempotent request.

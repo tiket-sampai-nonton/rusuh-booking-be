@@ -107,7 +107,7 @@ func (u *Auth) RequestOTP(ctx context.Context, req dto.RequestOTPRequest, client
 		return dto.RequestOTPResponse{}, apperror.Internal(fmt.Errorf("seal otp: %w", err))
 	}
 	expiresAt := u.d.Clock.Now().Add(u.s.OTPTTL)
-	if err := u.d.Publisher.PublishOTP(ctx, emailEnc, codeEnc, expiresAt); err != nil {
+	if err := u.d.Publisher.PublishOTP(ctx, emailEnc, codeEnc, emailHash, u.d.Clock.Now(), expiresAt); err != nil {
 		if cerr := u.d.OTP.Clear(ctx, key); cerr != nil {
 			u.d.Logger.Warn("gagal menghapus otp setelah publish gagal", "error", cerr)
 		}

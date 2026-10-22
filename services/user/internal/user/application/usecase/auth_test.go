@@ -62,7 +62,6 @@ func newAuth(t *testing.T) (*Auth, mocks) {
 	m.pii.EXPECT().HashOTP(emailH, "123456").Return(codeH).AnyTimes()
 	m.pii.EXPECT().HashOTP(emailH, "654321").Return([]byte("other")).AnyTimes()
 	m.pii.EXPECT().HashRefreshToken(gomock.Any()).DoAndReturn(func(raw string) []byte { return []byte("h:" + raw) }).AnyTimes()
-	m.audit.EXPECT().Record(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	u := NewAuth(AuthDeps{Accounts: m.accounts, Sessions: m.sessions, Audit: m.audit, OTP: m.otp, Limiter: m.limiter,
 		Publisher: m.publisher, Tokens: m.tokens, Secrets: m.secrets, PII: m.pii, Clock: clock.Fixed{T: now},
 		Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}, settings)
@@ -83,8 +82,9 @@ func TestRequestOTP_Success(t *testing.T) {
 	m.otp.EXPECT().Start(gomock.Any(), emailKey, codeH, 5*time.Minute, time.Minute).Return(true, nil)
 	m.pii.EXPECT().SealEmail("arnu@gmail.com").Return([]byte("email-enc"), nil)
 	m.pii.EXPECT().SealOTP("123456").Return([]byte("code-enc"), nil)
-	m.publisher.EXPECT().PublishOTP(gomock.Any(), []byte("email-enc"), []byte("code-enc"), now.Add(5*time.Minute)).Return(nil)
+	m.publisher.EXPECT().PublishOTP(gomock.Any(), []byte("email-enc"), []byte("code-enc"), gomock.Any(), gomock.Any(), now.Add(5*time.Minute)).Return(nil)
 
+	m.audit.EXPECT().Record(gomock.Any(), entity.LoginEvent{EmailHash: emailH, Outcome: entity.AuditOTPSent, ClientIP: client.IP}).Return(nil)
 	resp, err := u.RequestOTP(context.Background(), dto.RequestOTPRequest{Email: " Arnu@Gmail.com "}, client)
 	require.NoError(t, err)
 	assert.Equal(t, dto.RequestOTPResponse{ExpiresInSeconds: 300, ResendAfterSeconds: 60}, resp)
@@ -103,6 +103,7 @@ func TestRequestOTP_Failures(t *testing.T) {
 	t.Run("email rate limited", func(t *testing.T) {
 		u, m := newAuth(t)
 		m.limiter.EXPECT().Allow(gomock.Any(), "otp:email:"+emailKey, 5, time.Hour).Return(false, nil)
+		m.audit.EXPECT().Record(gomock.Any(), entity.LoginEvent{EmailHash: emailH, Outcome: entity.AuditOTPRateLimited, ClientIP: client.IP}).Return(nil)
 		_, err := u.RequestOTP(ctx, req, client)
 		assert.Equal(t, apperror.CodeRateLimited, code(err))
 	})
@@ -110,6 +111,7 @@ func TestRequestOTP_Failures(t *testing.T) {
 		u, m := newAuth(t)
 		m.limiter.EXPECT().Allow(gomock.Any(), "otp:email:"+emailKey, 5, time.Hour).Return(true, nil)
 		m.limiter.EXPECT().Allow(gomock.Any(), "otp:ip:203.0.113.9", 20, time.Hour).Return(false, nil)
+		m.audit.EXPECT().Record(gomock.Any(), entity.LoginEvent{EmailHash: emailH, Outcome: entity.AuditOTPRateLimited, ClientIP: client.IP}).Return(nil)
 		_, err := u.RequestOTP(ctx, req, client)
 		assert.Equal(t, apperror.CodeRateLimited, code(err))
 	})
@@ -150,7 +152,7 @@ func TestRequestOTP_Failures(t *testing.T) {
 		m.otp.EXPECT().Start(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(true, nil)
 		m.pii.EXPECT().SealEmail(gomock.Any()).Return([]byte("e-enc"), nil)
 		m.pii.EXPECT().SealOTP(gomock.Any()).Return([]byte("c-enc"), nil)
-		m.publisher.EXPECT().PublishOTP(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(errors.New("broker down"))
+		m.publisher.EXPECT().PublishOTP(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(errors.New("broker down"))
 		m.otp.EXPECT().Clear(gomock.Any(), emailKey).Return(errors.New("also down"))
 		_, err := u.RequestOTP(ctx, req, client)
 		assert.Equal(t, apperror.CodeDependencyUnavailable, code(err))
@@ -178,6 +180,7 @@ func TestVerifyOTP_ExistingAccount(t *testing.T) {
 	m.accounts.EXPECT().TouchLogin(gomock.Any(), "acc-1", now).Return(nil)
 	expectSession(m, "", "arnu@gmail.com")
 
+	m.audit.EXPECT().Record(gomock.Any(), entity.LoginEvent{AccountID: "acc-1", EmailHash: emailH, Outcome: entity.AuditLoginOK, ClientIP: client.IP}).Return(nil)
 	resp, err := u.VerifyOTP(context.Background(), dto.VerifyOTPRequest{Email: "arnu@gmail.com", Code: "123456"}, client)
 	require.NoError(t, err)
 	assert.Equal(t, "access-jwt", resp.AccessToken)
@@ -195,6 +198,7 @@ func TestVerifyOTP_FirstLoginCreatesAccount(t *testing.T) {
 	m.accounts.EXPECT().TouchLogin(gomock.Any(), "acc-1", now).Return(nil)
 	expectSession(m, "", "arnu@gmail.com")
 
+	m.audit.EXPECT().Record(gomock.Any(), entity.LoginEvent{AccountID: "acc-1", EmailHash: emailH, Outcome: entity.AuditLoginOK, ClientIP: client.IP}).Return(nil)
 	_, err := u.VerifyOTP(context.Background(), dto.VerifyOTPRequest{Email: "arnu@gmail.com", Code: "123456"}, client)
 	require.NoError(t, err)
 }
@@ -215,13 +219,16 @@ func TestVerifyOTP_Failures(t *testing.T) {
 		}, apperror.CodeInternal},
 		{"expired", good, func(m mocks) {
 			m.otp.EXPECT().Attempt(gomock.Any(), emailKey).Return(entity.OTPChallenge{}, false, nil)
+			m.audit.EXPECT().Record(gomock.Any(), entity.LoginEvent{EmailHash: emailH, Outcome: entity.AuditOTPExpired, ClientIP: client.IP}).Return(nil)
 		}, inbound.CodeOTPExpired},
 		{"locked after too many attempts", good, func(m mocks) {
 			m.otp.EXPECT().Attempt(gomock.Any(), emailKey).Return(entity.OTPChallenge{CodeHash: codeH, Attempts: 6}, true, nil)
 			m.otp.EXPECT().Clear(gomock.Any(), emailKey).Return(nil)
+			m.audit.EXPECT().Record(gomock.Any(), entity.LoginEvent{EmailHash: emailH, Outcome: entity.AuditOTPLocked, ClientIP: client.IP}).Return(nil)
 		}, inbound.CodeOTPLocked},
 		{"wrong code", dto.VerifyOTPRequest{Email: "arnu@gmail.com", Code: "654321"}, func(m mocks) {
 			m.otp.EXPECT().Attempt(gomock.Any(), emailKey).Return(entity.OTPChallenge{CodeHash: codeH, Attempts: 5}, true, nil)
+			m.audit.EXPECT().Record(gomock.Any(), entity.LoginEvent{EmailHash: emailH, Outcome: entity.AuditOTPInvalid, ClientIP: client.IP}).Return(nil)
 		}, inbound.CodeOTPInvalid},
 		{"clear error", good, func(m mocks) {
 			m.otp.EXPECT().Attempt(gomock.Any(), emailKey).Return(entity.OTPChallenge{CodeHash: codeH, Attempts: 1}, true, nil)
@@ -270,6 +277,7 @@ func TestVerifyOTP_Failures(t *testing.T) {
 func TestVerifyOTP_WrongCodeReportsAttemptsLeft(t *testing.T) {
 	u, m := newAuth(t)
 	m.otp.EXPECT().Attempt(gomock.Any(), emailKey).Return(entity.OTPChallenge{CodeHash: codeH, Attempts: 2}, true, nil)
+	m.audit.EXPECT().Record(gomock.Any(), entity.LoginEvent{EmailHash: emailH, Outcome: entity.AuditOTPInvalid, ClientIP: client.IP}).Return(nil)
 	_, err := u.VerifyOTP(context.Background(), dto.VerifyOTPRequest{Email: "arnu@gmail.com", Code: "654321"}, client)
 	assert.Equal(t, "3", apperror.From(err).Details["attemptsLeft"])
 }
@@ -328,6 +336,7 @@ func TestRefresh(t *testing.T) {
 		m.accounts.EXPECT().GetEmailEncByID(gomock.Any(), "acc-1").Return([]byte("enc-email"), nil)
 		m.pii.EXPECT().UnsealEmail([]byte("enc-email")).Return("arnu@gmail.com", nil)
 		expectSession(m, "s-1", "arnu@gmail.com")
+		m.audit.EXPECT().Record(gomock.Any(), entity.LoginEvent{AccountID: "acc-1", Outcome: entity.AuditRefreshOK, ClientIP: client.IP}).Return(nil)
 		resp, err := u.Refresh(ctx, req, client)
 		require.NoError(t, err)
 		assert.Equal(t, "refresh-raw", resp.RefreshToken)
@@ -338,6 +347,7 @@ func TestRefresh(t *testing.T) {
 		revoked.RevokedAt = &now
 		m.sessions.EXPECT().FindByTokenHash(gomock.Any(), gomock.Any()).Return(revoked, true, nil)
 		m.sessions.EXPECT().RevokeAllForAccount(gomock.Any(), "acc-1", now).Return(nil)
+		m.audit.EXPECT().Record(gomock.Any(), entity.LoginEvent{AccountID: "acc-1", Outcome: entity.AuditRefreshReused, ClientIP: client.IP}).Return(nil)
 		_, err := u.Refresh(ctx, req, client)
 		assert.Equal(t, inbound.CodeSessionInvalid, code(err))
 	})
@@ -421,6 +431,7 @@ func TestLogout(t *testing.T) {
 		u, m := newAuth(t)
 		m.sessions.EXPECT().FindByTokenHash(gomock.Any(), []byte("h:tok")).Return(active, true, nil)
 		m.sessions.EXPECT().Revoke(gomock.Any(), "s-1", now).Return(nil)
+		m.audit.EXPECT().Record(gomock.Any(), entity.LoginEvent{AccountID: "acc-1", Outcome: entity.AuditLogout, ClientIP: client.IP}).Return(nil)
 		assert.NoError(t, u.Logout(ctx, req, client))
 	})
 	t.Run("unknown or revoked is idempotent", func(t *testing.T) {

@@ -13,11 +13,12 @@ import (
 type SessionHandler struct {
 	sessions inbound.ISessionUsecase
 	attendee inbound.IAttendeeCheckUsecase
+	cancel   inbound.ICancelSessionUsecase
 }
 
 // NewSessionHandler wires the handler.
-func NewSessionHandler(sessions inbound.ISessionUsecase, attendee inbound.IAttendeeCheckUsecase) *SessionHandler {
-	return &SessionHandler{sessions: sessions, attendee: attendee}
+func NewSessionHandler(sessions inbound.ISessionUsecase, attendee inbound.IAttendeeCheckUsecase, cancel inbound.ICancelSessionUsecase) *SessionHandler {
+	return &SessionHandler{sessions: sessions, attendee: attendee, cancel: cancel}
 }
 
 // Register mounts the session routes.
@@ -26,6 +27,7 @@ func (h *SessionHandler) Register(mux *stdhttp.ServeMux) {
 	mux.HandleFunc("GET /api/v1/booking-sessions/current", h.currentSession)
 	mux.HandleFunc("GET /api/v1/booking-sessions/{sessionId}", h.getSession)
 	mux.HandleFunc("POST /api/v1/booking-sessions/{sessionId}/attendee-checks", h.checkAttendee)
+	mux.HandleFunc("POST /api/v1/booking-sessions/{sessionId}/cancel", h.cancelSession)
 }
 
 func (h *SessionHandler) createSession(w stdhttp.ResponseWriter, r *stdhttp.Request) {
@@ -66,6 +68,14 @@ func (h *SessionHandler) getSession(w stdhttp.ResponseWriter, r *stdhttp.Request
 	}
 	noStore(w)
 	httpx.WriteData(w, r, stdhttp.StatusOK, resp)
+}
+
+func (h *SessionHandler) cancelSession(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	if err := h.cancel.CancelSession(r.Context(), r.PathValue("sessionId"), VisitorID(r)); err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	w.WriteHeader(stdhttp.StatusNoContent)
 }
 
 func (h *SessionHandler) checkAttendee(w stdhttp.ResponseWriter, r *stdhttp.Request) {

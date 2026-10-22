@@ -62,6 +62,24 @@ func (f fakeTickets) GetTickets(context.Context, string) (dto.TicketList, error)
 	return f.resp, f.err
 }
 
+type fakeGet struct {
+	resp dto.Booking
+	err  error
+}
+
+func (f fakeGet) GetBooking(context.Context, string, string) (dto.Booking, error) {
+	return f.resp, f.err
+}
+
+type fakeCancel struct {
+	resp dto.Booking
+	err  error
+}
+
+func (f fakeCancel) Cancel(context.Context, string, string) (dto.Booking, error) {
+	return f.resp, f.err
+}
+
 func serve(t *testing.T, reg interface{ Register(*http.ServeMux) }, method, target string, body string, headers map[string]string) *httptest.ResponseRecorder {
 	t.Helper()
 	mux := http.NewServeMux()
@@ -105,7 +123,7 @@ func TestCatalogHandler_DetailNotFound(t *testing.T) {
 
 func TestBookingHandler_CreatePassesIdempotencyKey(t *testing.T) {
 	hold := &fakeHold{resp: dto.Booking{BookingID: "bk-1"}}
-	h := bookinghttp.NewBookingHandler(hold, fakeEdit{}, fakeTickets{})
+	h := bookinghttp.NewBookingHandler(hold, fakeEdit{}, fakeTickets{}, fakeGet{}, fakeCancel{})
 	w := serve(t, h, http.MethodPost, "/api/v1/bookings",
 		`{"sessionId":"s","items":[]}`,
 		map[string]string{"Idempotency-Key": "abc", "X-Visitor-Token": "v-1"})
@@ -115,7 +133,7 @@ func TestBookingHandler_CreatePassesIdempotencyKey(t *testing.T) {
 }
 
 func TestBookingHandler_HoldError(t *testing.T) {
-	h := bookinghttp.NewBookingHandler(&fakeHold{err: inbound.ErrCategoryUnavailable}, fakeEdit{}, fakeTickets{})
+	h := bookinghttp.NewBookingHandler(&fakeHold{err: inbound.ErrCategoryUnavailable}, fakeEdit{}, fakeTickets{}, fakeGet{}, fakeCancel{})
 	w := serve(t, h, http.MethodPost, "/api/v1/bookings", `{"sessionId":"s","items":[]}`, map[string]string{"Idempotency-Key": "abc"})
 	assert.Equal(t, http.StatusConflict, w.Code)
 
@@ -129,7 +147,57 @@ func TestBookingHandler_HoldError(t *testing.T) {
 }
 
 func TestBookingHandler_GetTicketsNotPayable(t *testing.T) {
-	h := bookinghttp.NewBookingHandler(&fakeHold{}, fakeEdit{}, fakeTickets{err: inbound.ErrNotPayable})
+	h := bookinghttp.NewBookingHandler(&fakeHold{}, fakeEdit{}, fakeTickets{err: inbound.ErrNotPayable}, fakeGet{}, fakeCancel{})
 	w := serve(t, h, http.MethodGet, "/api/v1/bookings/66666666-6666-6666-6666-666666666666/tickets", "", nil)
+	assert.Equal(t, http.StatusConflict, w.Code)
+}
+
+func TestBookingHandler_GetBookingOK(t *testing.T) {
+	h := bookinghttp.NewBookingHandler(&fakeHold{}, fakeEdit{}, fakeTickets{},
+		fakeGet{resp: dto.Booking{BookingID: "bk-1", PublicRef: "RB-1"}}, fakeCancel{})
+	w := serve(t, h, http.MethodGet, "/api/v1/bookings/bk-1", "", map[string]string{"X-Visitor-Token": "v-1"})
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "no-store", w.Header().Get("Cache-Control"))
+
+	var env struct {
+		Data dto.Booking `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &env))
+	assert.Equal(t, "bk-1", env.Data.BookingID)
+	assert.Equal(t, "RB-1", env.Data.PublicRef)
+}
+
+func TestBookingHandler_GetBookingVisitorMismatch(t *testing.T) {
+	h := bookinghttp.NewBookingHandler(&fakeHold{}, fakeEdit{}, fakeTickets{},
+		fakeGet{err: inbound.ErrVisitorMismatch}, fakeCancel{})
+	w := serve(t, h, http.MethodGet, "/api/v1/bookings/bk-1", "", map[string]string{"X-Visitor-Token": "other"})
+	assert.Equal(t, http.StatusForbidden, w.Code)
+}
+
+func TestBookingHandler_GetBookingNotFound(t *testing.T) {
+	h := bookinghttp.NewBookingHandler(&fakeHold{}, fakeEdit{}, fakeTickets{},
+		fakeGet{err: inbound.ErrNotFound}, fakeCancel{})
+	w := serve(t, h, http.MethodGet, "/api/v1/bookings/bk-1", "", map[string]string{"X-Visitor-Token": "v-1"})
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+func TestBookingHandler_CancelOK(t *testing.T) {
+	h := bookinghttp.NewBookingHandler(&fakeHold{}, fakeEdit{}, fakeTickets{}, fakeGet{},
+		fakeCancel{resp: dto.Booking{BookingID: "bk-1", Status: "CANCELLED"}})
+	w := serve(t, h, http.MethodPost, "/api/v1/bookings/bk-1/cancel", "", map[string]string{"X-Visitor-Token": "v-1"})
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "no-store", w.Header().Get("Cache-Control"))
+
+	var env struct {
+		Data dto.Booking `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &env))
+	assert.Equal(t, "CANCELLED", env.Data.Status)
+}
+
+func TestBookingHandler_CancelLocked(t *testing.T) {
+	h := bookinghttp.NewBookingHandler(&fakeHold{}, fakeEdit{}, fakeTickets{}, fakeGet{},
+		fakeCancel{err: inbound.ErrBookingLocked})
+	w := serve(t, h, http.MethodPost, "/api/v1/bookings/bk-1/cancel", "", map[string]string{"X-Visitor-Token": "v-1"})
 	assert.Equal(t, http.StatusConflict, w.Code)
 }

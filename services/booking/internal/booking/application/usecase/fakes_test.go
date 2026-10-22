@@ -69,16 +69,21 @@ func (f *fakeEventRepo) GetByID(context.Context, string) (entity.Event, error) {
 	return f.event, f.err
 }
 
+// boolPtr returns a pointer to a bool value (used in tests with releaseResult).
+func boolPtr(b bool) *bool { return &b }
+
 // fakeAdmissionRepo returns a fixed admission and records calls.
 type fakeAdmissionRepo struct {
-	admission  entity.Admission
-	getErr     error
-	activated  entity.Admission
-	activErr   error
-	reserve    []outbound.ReserveOutcome
-	reserveErr error
-	due        []entity.Admission
-	expired    []string
+	admission     entity.Admission
+	getErr        error
+	activated     entity.Admission
+	activErr      error
+	reserve       []outbound.ReserveOutcome
+	reserveErr    error
+	due           []entity.Admission
+	expired       []string
+	released      []string
+	releaseResult *bool // nil = default true
 }
 
 func (f *fakeAdmissionRepo) FindByJTI(context.Context, string) (entity.Admission, error) {
@@ -99,7 +104,16 @@ func (f *fakeAdmissionRepo) Activate(context.Context, string, time.Time) (entity
 func (f *fakeAdmissionRepo) ReserveBatch(context.Context, string, []outbound.ReserveEntry, time.Time) ([]outbound.ReserveOutcome, error) {
 	return f.reserve, f.reserveErr
 }
-func (f *fakeAdmissionRepo) Release(context.Context, string) (bool, error) { return true, nil }
+func (f *fakeAdmissionRepo) Release(_ context.Context, id string) (bool, error) {
+	if f.getErr != nil {
+		return false, f.getErr
+	}
+	f.released = append(f.released, id)
+	if f.releaseResult != nil {
+		return *f.releaseResult, nil
+	}
+	return true, nil
+}
 func (f *fakeAdmissionRepo) DueSessions(context.Context, time.Time, int) ([]entity.Admission, error) {
 	return f.due, nil
 }
@@ -138,6 +152,11 @@ type fakeUoW struct {
 	expireActed bool
 	expireErr   error
 	expireSpec  outbound.ExpireSpec
+	extendErr   error
+	extendCalls int
+	lockResult  outbound.PaymentLockResult
+	lockErr     error
+	lockCalls   int
 }
 
 func (f *fakeUoW) Hold(_ context.Context, spec outbound.HoldSpec) (outbound.HoldResult, error) {
@@ -154,6 +173,14 @@ func (f *fakeUoW) Settle(_ context.Context, spec outbound.SettleSpec) (bool, err
 func (f *fakeUoW) Expire(_ context.Context, spec outbound.ExpireSpec) (bool, error) {
 	f.expireSpec = spec
 	return f.expireActed, f.expireErr
+}
+func (f *fakeUoW) ExtendDeadline(_ context.Context, _ outbound.DeadlineSpec) error {
+	f.extendCalls++
+	return f.extendErr
+}
+func (f *fakeUoW) PaymentLock(_ context.Context, _ outbound.PaymentLockSpec) (outbound.PaymentLockResult, error) {
+	f.lockCalls++
+	return f.lockResult, f.lockErr
 }
 
 // fakeBookingRepo returns a fixed booking.
@@ -225,3 +252,32 @@ func (f *fakeTokenVerifier) Verify(string) (outbound.AdmissionClaims, error) {
 type fixedClock struct{ t time.Time }
 
 func (c fixedClock) Now() time.Time { return c.t }
+
+// fakeAvailCache is a controllable IAvailabilityCache for SSE tests.
+type fakeAvailCache struct {
+	snaps   []outbound.CategoryAvailabilitySnap
+	snapErr error
+	connN   int
+	connErr error
+}
+
+func (f *fakeAvailCache) GetAvailability(_ context.Context, _ string) ([]outbound.CategoryAvailabilitySnap, error) {
+	return f.snaps, f.snapErr
+}
+func (f *fakeAvailCache) IncrConn(_ context.Context, _ string) (int, error) {
+	return f.connN, f.connErr
+}
+func (f *fakeAvailCache) DecrConn(_ context.Context, _ string) error { return nil }
+
+// fakeEventWriteRepo records admin event writes and returns canned errors.
+type fakeEventWriteRepo struct {
+	createErr error
+	updateErr error
+}
+
+func (f *fakeEventWriteRepo) CreateEvent(_ context.Context, _ string, _ dto.CreateEventRequest) error {
+	return f.createErr
+}
+func (f *fakeEventWriteRepo) UpdateConfig(_ context.Context, _ string, _ dto.UpdateEventConfigRequest) error {
+	return f.updateErr
+}

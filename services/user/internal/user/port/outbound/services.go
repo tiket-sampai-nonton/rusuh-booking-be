@@ -26,7 +26,7 @@ type IRateLimiter interface {
 // IOTPPublisher publishes otp.requested events to the broker so Notification Service
 // sends the email. Email dan code dienkripsi AES-256-GCM sebelum dipublish (SRS-F-27-12).
 type IOTPPublisher interface {
-	PublishOTP(ctx context.Context, emailEnc, codeEnc []byte, expiresAt time.Time) error
+	PublishOTP(ctx context.Context, emailEnc, codeEnc []byte, emailHash []byte, now time.Time, expiresAt time.Time) error
 }
 
 // ITokenIssuer signs access tokens.
