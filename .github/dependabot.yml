@@ -24,6 +24,10 @@ updates:
     directory: "/services/notification"
     schedule:
       interval: weekly
+  - package-ecosystem: gomod
+    directory: "/tools/contracts"
+    schedule:
+      interval: weekly
   - package-ecosystem: github-actions
     directory: "/"
     schedule:

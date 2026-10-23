@@ -17,6 +17,9 @@ User→SMTP) tidak relevan lagi.
     - _Depends on: platform 5.2_
     - **Property 5: PII never in plaintext**
     - _Requirements: 1.8_
+  - [ ] 1.R3 Producer envelope OTP: `otp_publisher.go` memakai `producerName = "user"` (dan tesnya menegaskan `"user"`), padahal `envelope.schema.json` hanya menerima `user-service` (seperti `queue-service`/`booking-service`). Ubah konstanta dan tes menjadi `user-service`; `make contracts` mengonfirmasi bentuk envelope
+    - _Requirements: 1.8_
+    - _Ditemukan: platform 5.2 (2026-10-22)_
   - **Property 1: Anti-enumeration**
   - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 1.6_
 

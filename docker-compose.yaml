@@ -14,6 +14,16 @@ x-go-env: &go-env
   VALKEY_SERVER: '[{"host":"valkey","port":6379}]'
   RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
 
+# Kunci PII khusus lokal (bukan rahasia). PII_HASH_KEY User = PII_HMAC_KEY Queue agar nik_hash cocok;
+# PII_ENC_KEY harus sama di producer dan consumer yang mendekripsi email_enc (User -> Notification).
+x-pii: &pii-env
+  PII_ENC_KEY: 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f
+  PII_HASH_KEY: 101112131415161718191a1b1c1d1e1f000102030405060708090a0b0c0d0e0f
+  PII_HMAC_KEY: 101112131415161718191a1b1c1d1e1f000102030405060708090a0b0c0d0e0f # sama dengan PII_HASH_KEY
+
+x-keys-volume: &keys-volume
+  - ./deployments/compose/keys:/run/keys:ro
+
 x-depends-infra: &depends-infra
   postgres:
     condition: service_healthy
@@ -69,12 +79,16 @@ services:
     image: rusuh-booking-queue:local
     command: ["migrate", "up"]
     environment: &queue-env
-      <<: *go-env
+      <<: [*go-env, *pii-env]
       APP_PORT: "8081"
       POSTGRES_USER: svc_queue
       POSTGRES_PASSWORD: queue-local-only
       POSTGRES_SCHEMA: queue
+      TOKEN_PRIVATE_KEY_FILE: /run/keys/queue-token.pem
+      TOKEN_PUBLIC_KEY_FILE: /run/keys/user-token.pub.pem
+      BOOKING_SERVICE_URL: http://booking-api:8082
     depends_on: { postgres: { condition: service_healthy } }
+    volumes: *keys-volume
     restart: "no"
 
   booking-migrate:
@@ -108,12 +122,19 @@ services:
     image: rusuh-booking-notification:local
     command: ["migrate", "up"]
     environment: &notification-env
-      <<: *go-env
+      <<: [*go-env, *pii-env]
       APP_PORT: "8084"
       POSTGRES_USER: svc_notification
       POSTGRES_PASSWORD: notification-local-only
       POSTGRES_SCHEMA: notification
+      TOKEN_PUBLIC_KEY_FILE: /run/keys/queue-token.pub.pem
+      TOKEN_KEY_ID: queue-1
+      TOKEN_ISSUER: rbt-queue
+      TOKEN_AUDIENCE: rbt
+      SMTP_HOST: mailpit
+      SMTP_PORT: "1025"
     depends_on: { postgres: { condition: service_healthy } }
+    volumes: *keys-volume
     restart: "no"
 
   user-migrate:
@@ -121,20 +142,16 @@ services:
     image: rusuh-booking-user:local
     command: ["migrate", "up"]
     environment: &user-env
-      <<: *go-env
+      <<: [*go-env, *pii-env]
       APP_PORT: "8085"
       POSTGRES_USER: svc_user
       POSTGRES_PASSWORD: user-local-only
       POSTGRES_SCHEMA: users
       TOKEN_PRIVATE_KEY_FILE: /run/keys/user-token.pem
-      # Kunci 32 byte hex khusus lokal. PII_HASH_KEY harus sama di Queue/Booking agar nik_hash cocok.
-      PII_ENC_KEY: 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f
-      PII_HASH_KEY: 101112131415161718191a1b1c1d1e1f000102030405060708090a0b0c0d0e0f
       OTP_HASH_KEY: 202122232425262728292a2b2c2d2e2f000102030405060708090a0b0c0d0e0f
       SMTP_HOST: mailpit
       SMTP_PORT: "1025"
-    volumes: &user-keys
-      - ./deployments/compose/keys:/run/keys:ro
+    volumes: *keys-volume
     depends_on: { postgres: { condition: service_healthy } }
     restart: "no"
 
@@ -143,6 +160,7 @@ services:
     image: rusuh-booking-queue:local
     command: ["api"]
     environment: *queue-env
+    volumes: *keys-volume
     ports: ["8081:8081"]
     depends_on:
       <<: *depends-infra
@@ -153,6 +171,7 @@ services:
     image: rusuh-booking-queue:local
     command: ["worker"]
     environment: *queue-env
+    volumes: *keys-volume
     depends_on:
       <<: *depends-infra
       queue-migrate: { condition: service_completed_successfully }
@@ -200,6 +219,7 @@ services:
     image: rusuh-booking-notification:local
     command: ["api"]
     environment: *notification-env
+    volumes: *keys-volume
     ports: ["8084:8084"]
     depends_on:
       <<: *depends-infra
@@ -210,6 +230,7 @@ services:
     image: rusuh-booking-notification:local
     command: ["worker"]
     environment: *notification-env
+    volumes: *keys-volume
     depends_on:
       <<: *depends-infra
       notification-migrate: { condition: service_completed_successfully }
@@ -219,7 +240,7 @@ services:
     image: rusuh-booking-user:local
     command: ["api"]
     environment: *user-env
-    volumes: *user-keys
+    volumes: *keys-volume
     ports: ["8085:8085"]
     depends_on:
       <<: *depends-infra

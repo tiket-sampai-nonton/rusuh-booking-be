@@ -12,6 +12,7 @@ import (
 type Config struct {
 	Level  string // debug | info | warn | error
 	Format string // json | text
+	Env    string // APP_ENV; bila diisi, ditulis sebagai field env pada setiap baris
 }
 
 // Validate rejects unknown levels and formats so a typo fails at start-up, not in production.
@@ -33,14 +34,18 @@ func New(w io.Writer, cfg Config, service, verb string) (*slog.Logger, error) {
 	if err != nil {
 		return nil, err
 	}
-	opts := &slog.HandlerOptions{Level: level}
+	opts := &slog.HandlerOptions{Level: level, ReplaceAttr: replaceAttr}
 	var h slog.Handler
 	if strings.EqualFold(cfg.Format, "text") {
 		h = slog.NewTextHandler(w, opts)
 	} else {
 		h = slog.NewJSONHandler(w, opts)
 	}
-	return slog.New(h).With("service", service, "verb", verb), nil
+	l := slog.New(ctxHandler{h}).With("service", service, "verb", verb)
+	if cfg.Env != "" {
+		l = l.With("env", cfg.Env)
+	}
+	return l, nil
 }
 
 func parseLevel(s string) (slog.Level, error) {

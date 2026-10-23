@@ -127,7 +127,7 @@ Trace: SRS-Q-SEC-05, SRS-Q-SEC-06, SRS-Q-SEC-10, SRS-C-06 · ADR-011 · HLD tabe
 
 #### Acceptance Criteria
 
-1. THE `make keys` SHALL membuat pasangan kunci Ed25519 lokal per penerbit token (User; Queue untuk visitor/queue/admission; Payment untuk payment page; Booking untuk ticket link; setiap service pemanggil internal untuk service token) di luar git. *(Saat ini hanya kunci User [kode: Makefile `keys`].)*
+1. THE `make keys` SHALL membuat pasangan kunci Ed25519 lokal per penerbit token (User; Queue untuk visitor/queue/admission; Payment untuk payment page; Booking untuk ticket link; setiap service pemanggil internal untuk service token) di luar git.
 2. THE verifier SHALL menerima beberapa kunci publik per `kid` sehingga rotasi kunci tidak memutus token yang masih berlaku. *(`pkg/token.NewVerifier(keys map[string]ed25519.PublicKey, …)` sudah mendukung [kode].)*
 3. THE kunci HMAC NIK (`PII_HASH_KEY`) SHALL identik di Queue, Booking, dan User agar `nik_hash` cocok lintas service.
 4. THE secret (kunci privat, `MIDTRANS_SERVER_KEY`, password DB/broker) SHALL dibaca dari env/SSM; `.env` dan state infrastruktur tidak di-commit; CI stage `secret-detection` tetap aktif.

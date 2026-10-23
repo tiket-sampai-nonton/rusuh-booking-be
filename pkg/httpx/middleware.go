@@ -7,6 +7,9 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"regexp"
+
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/logger"
 )
 
 // HeaderRequestID is propagated across services and returned to clients.
@@ -25,16 +28,25 @@ func Chain(h http.Handler, mws ...Middleware) http.Handler {
 	return h
 }
 
-// RequestID reuses an incoming X-Request-ID or generates one, and stores it in the context.
+// requestIDRe membatasi X-Request-ID dari klien (ditulis ke log dan diteruskan ke service lain).
+var requestIDRe = regexp.MustCompile(`^[A-Za-z0-9._-]{1,128}$`)
+
+// RequestID reuses an incoming X-Request-ID or generates one, and stores it (with the trace id) in the context
+// and in the logging context, so records logged with that context carry requestId and trace_id.
+// Middleware yang membaca r.Pattern (AccessLog, telemetry) harus dipasang di dalam RequestID.
 func RequestID() Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			id := r.Header.Get(HeaderRequestID)
-			if id == "" || len(id) > 128 {
+			if !requestIDRe.MatchString(id) {
 				id = newID()
 			}
 			w.Header().Set(HeaderRequestID, id)
-			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), ctxKey{}, id)))
+			tr := traceFromHeaders(r.Header)
+			ctx := context.WithValue(r.Context(), ctxKey{}, id)
+			ctx = context.WithValue(ctx, traceKey{}, tr)
+			ctx = logger.ContextWith(ctx, "requestId", id, "trace_id", tr.id)
+			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
 }
@@ -51,7 +63,7 @@ func Recover(logger *slog.Logger) Middleware {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			defer func() {
 				if rec := recover(); rec != nil {
-					logger.Error("panic recovered", "panic", rec, "requestId", RequestIDFrom(r.Context()))
+					logger.ErrorContext(r.Context(), "panic recovered", "panic", rec)
 					WriteError(w, r, fmt.Errorf("panic: %v", rec))
 				}
 			}()

@@ -23,14 +23,23 @@ func TestFromUnknownErrorIsInternal(t *testing.T) {
 	assert.Equal(t, CodeInternal, got.Code)
 	assert.Equal(t, http.StatusInternalServerError, got.HTTPStatus)
 	assert.ErrorIs(t, got, cause, "cause disimpan untuk log")
-	assert.NotEqual(t, cause.Error(), got.ToEnvelope("").Meta.Message, "cause internal tidak bocor ke klien")
+	assert.NotContains(t, got.ToEnvelope().Meta.Message, "db down", "cause internal tidak bocor ke klien")
 }
 
-func TestEnvelope_MatchesSRSShape(t *testing.T) {
-	e := New(CodeValidationFailed, http.StatusBadRequest, "input tidak valid").WithDetails(map[string]string{"nik": "harus 16 digit"})
-	b, err := json.Marshal(e.ToEnvelope("req-1"))
+// Format error standar (platform R2.8): hanya code dan message; kode error ada di awalan message.
+func TestEnvelope_OnlyCodeAndMessage(t *testing.T) {
+	e := New(CodeValidationFailed, http.StatusBadRequest, "nik harus 16 digit").WithDetails(map[string]string{"nik": "harus 16 digit"})
+	b, err := json.Marshal(e.ToEnvelope())
 	require.NoError(t, err)
-	assert.JSONEq(t, `{"meta":{"code":400,"message":"input tidak valid","requestId":"req-1","errorCode":"VALIDATION_ERROR","details":{"nik":"harus 16 digit"}},"data":null}`, string(b))
+	assert.JSONEq(t, `{"meta":{"code":400,"message":"VALIDATION_ERROR: nik harus 16 digit"},"data":null}`, string(b))
+}
+
+func TestClientMessage(t *testing.T) {
+	assert.Equal(t, "NOT_FOUND: tidak ada", New(CodeNotFound, http.StatusNotFound, "tidak ada").ClientMessage())
+
+	internal := Wrap(errors.New("pq: password=hunter2"), CodeInternal, http.StatusInternalServerError, "detail developer")
+	assert.Equal(t, "INTERNAL_ERROR: terjadi kesalahan internal", internal.ClientMessage())
+	assert.Equal(t, "INTERNAL_ERROR: terjadi kesalahan internal", From(errors.New("boom")).ClientMessage())
 }
 
 func TestWithDetailsDoesNotMutateOriginal(t *testing.T) {

@@ -14,6 +14,7 @@ import (
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/resilience"
 
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/httpx"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/domain/entity"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/port/outbound"
 )
@@ -80,6 +81,7 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 			httpReq.Header.Set("Content-Type", "application/json")
 		}
 		httpReq.Header.Set("Accept", "application/json")
+		httpx.Propagate(ctx, httpReq)
 		if c.serviceToken != "" {
 			httpReq.Header.Set("Authorization", "Bearer "+c.serviceToken)
 		}

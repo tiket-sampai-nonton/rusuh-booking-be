@@ -23,11 +23,28 @@ func WriteData(w http.ResponseWriter, r *http.Request, status int, v any) {
 	WriteJSON(w, status, apperror.Envelope{Meta: apperror.Meta{Code: status, RequestID: RequestIDFrom(r.Context())}, Data: v})
 }
 
-// WriteError writes err using the standard error envelope.
+// WriteError writes err using the standard error envelope (body hanya code + message). Detail, kode error,
+// dan penyebab asli ditulis ke log dengan requestId yang sama; 429 membawa Retry-After bila diketahui.
 func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 	ae := apperror.From(err)
+	level := slog.LevelInfo
 	if ae.HTTPStatus >= http.StatusInternalServerError {
-		slog.Default().Error("request failed", "error", err, "requestId", RequestIDFrom(r.Context()))
+		level = slog.LevelError
 	}
-	WriteJSON(w, ae.HTTPStatus, ae.ToEnvelope(RequestIDFrom(r.Context())))
+	// requestId dan trace_id ikut dari context (logger.ContextWith di RequestID).
+	attrs := []any{"status", ae.HTTPStatus, "errorCode", string(ae.Code), "error", err}
+	if len(ae.Details) > 0 {
+		attrs = append(attrs, "details", ae.Details)
+	}
+	slog.Default().Log(r.Context(), level, "request failed", attrs...)
+
+	if ae.HTTPStatus == http.StatusTooManyRequests {
+		for _, k := range []string{"retryAfterSeconds", "retryAfter"} {
+			if v, ok := ae.Details[k]; ok {
+				w.Header().Set("Retry-After", v)
+				break
+			}
+		}
+	}
+	WriteJSON(w, ae.HTTPStatus, ae.ToEnvelope())
 }

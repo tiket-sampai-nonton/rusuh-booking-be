@@ -15,6 +15,7 @@ import (
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/resilience"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/token"
 
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/telemetry"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/config"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/application/usecase"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/infrastructure/bookingclient"
@@ -80,6 +81,7 @@ func newQueueModule(cfg config.Config, clients *Clients, logger *slog.Logger) (*
 
 	breaker, err := resilience.NewBreaker(resilience.BreakerConfig{
 		Name: "booking", FailureThreshold: 5, Cooldown: 10 * time.Second, HalfOpenProbes: 2, Timeout: cfg.Booking.Timeout,
+		OnStateChange: telemetry.BreakerObserver(),
 	}, clk.Now)
 	if err != nil {
 		return nil, err

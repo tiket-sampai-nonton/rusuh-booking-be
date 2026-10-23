@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/httpx"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/resilience"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/domain/entity"
@@ -85,4 +86,26 @@ func TestReserveBatch_BreakerOpensAfterFailures(t *testing.T) {
 	// breaker should now be open — next call fails fast, still mapped to dependency error
 	_, err := c.Supply(context.Background(), "ev1")
 	assert.ErrorIs(t, err, entity.ErrDependencyUnavailable)
+}
+
+// X-Request-ID dan trace id permintaan masuk diteruskan ke Booking.
+func TestSupply_PropagatesRequestAndTrace(t *testing.T) {
+	var gotReqID, gotTrace string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotReqID, gotTrace = r.Header.Get("X-Request-ID"), r.Header.Get("X-Amzn-Trace-Id")
+		_, _ = w.Write([]byte(`{"meta":{"code":200},"data":{"eventId":"ev1"}}`))
+	}))
+	defer srv.Close()
+	c := bookingclient.NewClient(srv.URL, time.Second, newBreaker(t), "")
+
+	in := httptest.NewRequest(http.MethodGet, "/", nil)
+	in.Header.Set("X-Request-ID", "req-7")
+	in.Header.Set("X-Amzn-Trace-Id", "Root=1-5759e988-bd862e3fe1be46a994272793")
+	httpx.Chain(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		_, err := c.Supply(r.Context(), "ev1")
+		require.NoError(t, err)
+	}), httpx.RequestID()).ServeHTTP(httptest.NewRecorder(), in)
+
+	assert.Equal(t, "req-7", gotReqID)
+	assert.Equal(t, "Root=1-5759e988-bd862e3fe1be46a994272793", gotTrace)
 }
