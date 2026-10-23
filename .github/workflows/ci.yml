@@ -137,7 +137,7 @@ jobs:
           mkdir -p "$GITHUB_WORKSPACE/reports"
           docker run --rm -i hadolint/hadolint:v2.12.0 hadolint --format json - \
             < deployments/Dockerfile > "$GITHUB_WORKSPACE/reports/hadolint.json" || true
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: quality-${{ matrix.module.name }}
@@ -160,7 +160,7 @@ jobs:
             --source /repo --redact --no-banner --exit-code 0 \
             --report-format json --report-path /repo/reports/gitleaks.json
           [ -f reports/gitleaks.json ] || echo '[]' > reports/gitleaks.json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: quality-secrets
@@ -228,7 +228,7 @@ jobs:
           cache-dependency-path: ${{ matrix.module.path }}/go.sum
       - name: Unit + integration test dan ambang coverage
         run: bash tools/check-coverage.sh "${{ matrix.module.path }}" "$COVERAGE_MIN"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: coverage-${{ matrix.module.name }}
           path: coverage/${{ matrix.module.name }}.out
@@ -306,7 +306,7 @@ jobs:
           docker image inspect --format '{{.Os}}/{{.Architecture}}' rusuh-booking-${{ matrix.service.name }}:${{ github.sha }}
           docker save -o image-${{ matrix.service.name }}.tar \
             rusuh-booking-${{ matrix.service.name }}:${{ github.sha }}
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: image-${{ matrix.service.name }}
           path: image-${{ matrix.service.name }}.tar
@@ -338,13 +338,13 @@ jobs:
           docker run --rm -v "$PWD:/work" aquasec/trivy:0.58.1 image \
             --input /work/image-${{ matrix.service.name }}.tar --no-progress \
             --format cyclonedx --output /work/sbom/sbom-${{ matrix.service.name }}.cdx.json
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: scan-${{ matrix.service.name }}
           path: reports
           retention-days: 7
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: sbom-${{ matrix.service.name }}
           path: sbom/sbom-${{ matrix.service.name }}.cdx.json
