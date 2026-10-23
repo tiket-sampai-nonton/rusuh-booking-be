@@ -254,7 +254,7 @@ jobs:
           echo "- code-rank: DILEWATI (SONAR_ENABLED belum true)" >> "$GITHUB_STEP_SUMMARY"
       - name: SonarCloud scan
         if: vars.SONAR_ENABLED == 'true'
-        uses: SonarSource/sonarqube-scan-action@v5
+        uses: SonarSource/sonarqube-scan-action@v8
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         with:
