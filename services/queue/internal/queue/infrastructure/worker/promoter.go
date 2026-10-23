@@ -51,6 +51,16 @@ func (p *Promoter) Run(ctx context.Context) error {
 }
 
 func (p *Promoter) runEvent(ctx context.Context, eventID string) error {
+	// Acquire a per-event distributed lease so only one worker instance promotes at a time (spec 11.R3).
+	acquired, err := p.store.AcquirePromoterLease(ctx, eventID, 10_000)
+	if err != nil {
+		return err
+	}
+	if !acquired {
+		return nil // another instance is promoting this event this tick
+	}
+	defer func() { _ = p.store.ReleasePromoterLease(ctx, eventID) }()
+
 	settings, ok, err := p.settings.Get(ctx, eventID)
 	if err != nil || !ok {
 		return err
@@ -99,6 +109,7 @@ func (p *Promoter) runEvent(ctx context.Context, eventID string) error {
 	}
 
 	var promoteCands []outbound.PromoteCandidate
+	noSupply := false
 	for _, a := range resp.Allocations {
 		switch a.Status {
 		case "GRANTED": // Booking confirmed allocation — promote entry to ADMITTED
@@ -119,6 +130,10 @@ func (p *Promoter) runEvent(ctx context.Context, eventID string) error {
 			}
 		case "SOLD_OUT":
 			_ = p.store.SetSale(ctx, eventID, "CLOSED", true)
+		case "NO_SUPPLY_NOW":
+			// Supply exhausted this tick — stop admitting to preserve FIFO (spec 11.R4, req 6.3/6.6).
+			// All candidates in this batch wait; Promoter retries next tick.
+			noSupply = true
 		case "ALREADY_ACTIVE":
 			// Bug indicator: Queue constraints should prevent this. End entry and log for investigation (OQ-18).
 			if _, err := p.store.EndEntry(ctx, eventID, a.QueueEntryID, "ALREADY_ACTIVE", now.UnixMilli()); err != nil {
@@ -127,6 +142,11 @@ func (p *Promoter) runEvent(ctx context.Context, eventID string) error {
 			p.logger.Warn("ALREADY_ACTIVE dari Booking — kemungkinan bug constraint antrean",
 				"eventId", eventID, "queueEntryId", a.QueueEntryID)
 		}
+	}
+	if noSupply {
+		// Discard any GRANTEDs collected alongside NO_SUPPLY_NOW — FIFO requires all-or-nothing
+		// when supply is uncertain this tick.
+		promoteCands = nil
 	}
 	if len(promoteCands) == 0 {
 		return nil

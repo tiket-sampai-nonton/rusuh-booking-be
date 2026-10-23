@@ -42,6 +42,20 @@ func (m *MockIBookingClient) EXPECT() *MockIBookingClientMockRecorder {
 	return m.recorder
 }
 
+// ReleaseAllocation mocks base method.
+func (m *MockIBookingClient) ReleaseAllocation(ctx context.Context, allocationID, reason string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ReleaseAllocation", ctx, allocationID, reason)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// ReleaseAllocation indicates an expected call of ReleaseAllocation.
+func (mr *MockIBookingClientMockRecorder) ReleaseAllocation(ctx, allocationID, reason any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ReleaseAllocation", reflect.TypeOf((*MockIBookingClient)(nil).ReleaseAllocation), ctx, allocationID, reason)
+}
+
 // ReserveBatch mocks base method.
 func (m *MockIBookingClient) ReserveBatch(ctx context.Context, req outbound.AllocationBatchRequest) (outbound.AllocationBatchResponse, error) {
 	m.ctrl.T.Helper()

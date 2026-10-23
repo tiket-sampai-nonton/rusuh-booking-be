@@ -14,13 +14,12 @@ const (
 	StatusClosed    Status = "CLOSED"
 	StatusCompleted Status = "COMPLETED"
 	StatusEnded     Status = "ENDED"
-	StatusRejected  Status = "REJECTED"
 )
 
 // IsTerminal reports whether the status has no outgoing transition.
 func (s Status) IsTerminal() bool {
 	switch s {
-	case StatusMissed, StatusLeft, StatusSoldOut, StatusClosed, StatusCompleted, StatusEnded, StatusRejected:
+	case StatusMissed, StatusLeft, StatusSoldOut, StatusClosed, StatusCompleted, StatusEnded:
 		return true
 	default:
 		return false
@@ -35,7 +34,7 @@ func (s Status) CanTransitionTo(to Status) bool {
 	switch s {
 	case StatusWaiting:
 		switch to {
-		case StatusAdmitted, StatusLeft, StatusSoldOut, StatusClosed, StatusRejected:
+		case StatusAdmitted, StatusLeft, StatusSoldOut, StatusClosed:
 			return true
 		}
 	case StatusAdmitted:

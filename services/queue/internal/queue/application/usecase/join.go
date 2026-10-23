@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/clock"
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/nik"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/domain/dto"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/domain/entity"
@@ -58,7 +59,7 @@ func (u *JoinQueue) Join(ctx context.Context, in inbound.JoinInput) (dto.QueueEn
 		return dto.QueueEntry{}, err
 	}
 
-	nikHashHex, accountID, err := u.resolveIdentity(in)
+	nikHashHex, accountID, err := u.resolveIdentity(in, now)
 	if err != nil {
 		return dto.QueueEntry{}, err
 	}
@@ -140,7 +141,7 @@ func validateJoinBody(b dto.JoinRequest) error {
 }
 
 // resolveIdentity returns (nikHashHex, accountID) per the three auth states (design §2.1).
-func (u *JoinQueue) resolveIdentity(in inbound.JoinInput) (string, string, error) {
+func (u *JoinQueue) resolveIdentity(in inbound.JoinInput, now time.Time) (string, string, error) {
 	if in.Bearer != "" {
 		id, err := u.d.UserVerifier.Verify(in.Bearer)
 		if err == nil {
@@ -148,7 +149,7 @@ func (u *JoinQueue) resolveIdentity(in inbound.JoinInput) (string, string, error
 				return id.NIKHash, id.AccountID, nil // logged-in with stored NIK: body.buyerNik ignored
 			}
 			// logged-in without NIK: body.buyerNik required
-			if err := validateBuyerNik(in.Body.BuyerNik); err != nil {
+			if err := validateBuyerNik(in.Body.BuyerNik, now); err != nil {
 				return "", id.AccountID, err
 			}
 			return hex.EncodeToString(u.d.PII.HashNIK(in.Body.BuyerNik)), id.AccountID, nil
@@ -156,17 +157,25 @@ func (u *JoinQueue) resolveIdentity(in inbound.JoinInput) (string, string, error
 		// invalid bearer → treat as guest
 	}
 	// guest: body.buyerNik required
-	if err := validateBuyerNik(in.Body.BuyerNik); err != nil {
+	if err := validateBuyerNik(in.Body.BuyerNik, now); err != nil {
 		return "", "", err
 	}
 	return hex.EncodeToString(u.d.PII.HashNIK(in.Body.BuyerNik)), "", nil
 }
 
-func validateBuyerNik(nik string) error {
-	if nik == "" {
+func validateBuyerNik(nikStr string, now time.Time) error {
+	if nikStr == "" {
 		return entity.ErrNikRequired
 	}
-	return valueobject.ValidateNIKFormat(nik)
+	// Fast structural pre-check (domain layer, stdlib-only).
+	if err := valueobject.ValidateNIKFormat(nikStr); err != nil {
+		return err
+	}
+	// Full Kemendagri structural validation: province, kab/kec, birth date, serial (spec 6.R1, platform R1).
+	if err := nik.Validate(nikStr, now); err != nil {
+		return entity.ErrNikInvalid
+	}
+	return nil
 }
 
 func (u *JoinQueue) rateLimit(ctx context.Context, in inbound.JoinInput) error {

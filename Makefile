@@ -83,6 +83,9 @@ migrate-%: ## Migrasi satu service ke DB Compose, mis. make migrate-booking (pak
 run-%: ## Jalankan API satu service lokal, mis. make run-booking (pakai .env service)
 	cd services/$* && go run ./cmd api
 
+e2e: ## Jalankan e2e BDD test terhadap service yang berjalan (butuh make up)
+	cd tests && go test -v -tags e2e -count=1 -timeout 300s ./features/...
+  
 worker-%: ## Jalankan worker satu service lokal di APP_PORT+100 agar tidak bentrok dengan api, mis. make worker-booking
 	cd services/$* && APP_PORT=$$(( $$(sed -n 's/^APP_PORT=//p' .env | head -1) + 100 )) go run ./cmd worker
 

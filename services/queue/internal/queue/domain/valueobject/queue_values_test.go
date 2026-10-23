@@ -20,7 +20,6 @@ func TestStatus_CanTransitionTo(t *testing.T) {
 		{"waiting->admitted", valueobject.StatusWaiting, valueobject.StatusAdmitted, true},
 		{"waiting->left", valueobject.StatusWaiting, valueobject.StatusLeft, true},
 		{"waiting->soldout", valueobject.StatusWaiting, valueobject.StatusSoldOut, true},
-		{"waiting->rejected", valueobject.StatusWaiting, valueobject.StatusRejected, true},
 		{"waiting->claimed illegal", valueobject.StatusWaiting, valueobject.StatusClaimed, false},
 		{"admitted->claimed", valueobject.StatusAdmitted, valueobject.StatusClaimed, true},
 		{"admitted->missed", valueobject.StatusAdmitted, valueobject.StatusMissed, true},
@@ -42,7 +41,7 @@ func TestStatus_CanTransitionTo(t *testing.T) {
 func TestStatus_IsTerminal(t *testing.T) {
 	terminal := []valueobject.Status{
 		valueobject.StatusMissed, valueobject.StatusLeft, valueobject.StatusSoldOut,
-		valueobject.StatusClosed, valueobject.StatusCompleted, valueobject.StatusEnded, valueobject.StatusRejected,
+		valueobject.StatusClosed, valueobject.StatusCompleted, valueobject.StatusEnded,
 	}
 	for _, s := range terminal {
 		assert.True(t, s.IsTerminal(), string(s))

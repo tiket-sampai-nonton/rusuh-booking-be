@@ -440,3 +440,25 @@ func parseMs(v string) int64 {
 	n, _ := strconv.ParseInt(v, 10, 64)
 	return n
 }
+
+// AcquirePromoterLease tries to set a distributed lock for the promoter on a given event.
+// Uses SET NX PX so only one worker instance holds the lease at a time (spec 11.R3, req 6.12).
+// Returns true if the lease was acquired.
+func (s *QueueStore) AcquirePromoterLease(ctx context.Context, eventID string, ttlMs int64) (bool, error) {
+	key := s.keyer.Key(s.tag(eventID) + ":promoter:lock")
+	ttl := time.Duration(ttlMs) * time.Millisecond
+	res, err := s.c.Do(ctx, s.c.B().Set().Key(key).Value("1").Nx().Px(ttl).Build()).ToString()
+	if vk.IsValkeyNil(err) {
+		return false, nil // another instance holds the lease
+	}
+	if err != nil {
+		return false, fmt.Errorf("valkey: acquire_promoter_lease: %w", err)
+	}
+	return res == "OK", nil
+}
+
+// ReleasePromoterLease releases a previously acquired promoter lease.
+func (s *QueueStore) ReleasePromoterLease(ctx context.Context, eventID string) error {
+	key := s.keyer.Key(s.tag(eventID) + ":promoter:lock")
+	return s.c.Do(ctx, s.c.B().Del().Key(key).Build()).Error()
+}

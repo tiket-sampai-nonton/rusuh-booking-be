@@ -57,6 +57,12 @@ func (c *Client) Supply(ctx context.Context, eventID string) (outbound.SupplySna
 	return resp, nil
 }
 
+// ReleaseAllocation releases an admitted allocation as saga compensation (spec 14.R1, ADR-018).
+func (c *Client) ReleaseAllocation(ctx context.Context, allocationID string, reason string) error {
+	body := map[string]string{"reason": reason}
+	return c.do(ctx, http.MethodPost, "/internal/v1/allocations/"+allocationID+":release", body, nil)
+}
+
 func (c *Client) do(ctx context.Context, method, path string, body, out any) error {
 	call := func(ctx context.Context) error {
 		var rdr io.Reader

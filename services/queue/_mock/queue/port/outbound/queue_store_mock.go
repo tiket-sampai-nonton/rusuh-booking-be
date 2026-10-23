@@ -43,6 +43,21 @@ func (m *MockIQueueStore) EXPECT() *MockIQueueStoreMockRecorder {
 	return m.recorder
 }
 
+// AcquirePromoterLease mocks base method.
+func (m *MockIQueueStore) AcquirePromoterLease(ctx context.Context, eventID string, ttlMs int64) (bool, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "AcquirePromoterLease", ctx, eventID, ttlMs)
+	ret0, _ := ret[0].(bool)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// AcquirePromoterLease indicates an expected call of AcquirePromoterLease.
+func (mr *MockIQueueStoreMockRecorder) AcquirePromoterLease(ctx, eventID, ttlMs any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AcquirePromoterLease", reflect.TypeOf((*MockIQueueStore)(nil).AcquirePromoterLease), ctx, eventID, ttlMs)
+}
+
 // ActiveCount mocks base method.
 func (m *MockIQueueStore) ActiveCount(ctx context.Context, eventID string) (int, error) {
 	m.ctrl.T.Helper()
@@ -267,6 +282,20 @@ func (m *MockIQueueStore) Promote(ctx context.Context, eventID string, cands []o
 func (mr *MockIQueueStoreMockRecorder) Promote(ctx, eventID, cands, capacity, nowMs any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Promote", reflect.TypeOf((*MockIQueueStore)(nil).Promote), ctx, eventID, cands, capacity, nowMs)
+}
+
+// ReleasePromoterLease mocks base method.
+func (m *MockIQueueStore) ReleasePromoterLease(ctx context.Context, eventID string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ReleasePromoterLease", ctx, eventID)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// ReleasePromoterLease indicates an expected call of ReleasePromoterLease.
+func (mr *MockIQueueStoreMockRecorder) ReleasePromoterLease(ctx, eventID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ReleasePromoterLease", reflect.TypeOf((*MockIQueueStore)(nil).ReleasePromoterLease), ctx, eventID)
 }
 
 // SetSale mocks base method.
