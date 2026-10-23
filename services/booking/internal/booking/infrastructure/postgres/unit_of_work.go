@@ -52,21 +52,34 @@ func (u *UnitOfWork) Hold(ctx context.Context, spec outbound.HoldSpec) (outbound
 func (u *UnitOfWork) hold(ctx context.Context, tx pgx.Tx, spec outbound.HoldSpec) (outbound.HoldResult, error) {
 	n := len(spec.Lines)
 
-	// (1) SUPPLY first — serialises concurrent holds per event.
+	// Design §9.0 + §9.2 Step 2: lock admission first — serialises concurrent holds on same session.
+	var admStatus string
+	var admExpiresAt time.Time
+	var cfgGrace int
+	if err := tx.QueryRow(ctx, `
+		SELECT status, expires_at, cfg_submit_grace_seconds
+		FROM booking.admissions WHERE id=$1::uuid AND visitor_id=$2::uuid FOR UPDATE`,
+		spec.AdmissionID, spec.VisitorID).Scan(&admStatus, &admExpiresAt, &cfgGrace); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return outbound.HoldResult{}, inbound.ErrSessionExpired
+		}
+		return outbound.HoldResult{}, err
+	}
+	if admStatus != "ACTIVE" && admStatus != "EDITABLE" {
+		return outbound.HoldResult{}, inbound.ErrSessionExpired
+	}
+	grace := time.Duration(cfgGrace) * time.Second
+	if time.Now().UTC().After(admExpiresAt.Add(grace)) {
+		return outbound.HoldResult{}, inbound.ErrSessionExpired
+	}
+	// inGrace: request arrived after TTL but within the grace window.
+	inGrace := time.Now().UTC().After(admExpiresAt)
+
+	// (3) SUPPLY — serialises concurrent holds per event (still before category/quota per design §9.0).
 	if _, err := tx.Exec(ctx, `SELECT 1 FROM booking.event_supply WHERE event_id=$1::uuid FOR UPDATE`, spec.EventID); err != nil {
 		return outbound.HoldResult{}, err
 	}
-	// (2) CATEGORY rows in deterministic id order.
-	byCat := map[string]int{}
-	for _, l := range spec.Lines {
-		byCat[l.CategoryID]++
-	}
-	for cat := range byCat {
-		if _, err := tx.Exec(ctx, `SELECT 1 FROM booking.category_inventories WHERE category_id=$1::uuid FOR UPDATE`, cat); err != nil {
-			return outbound.HoldResult{}, err
-		}
-	}
-	// (3) QUOTA — upsert then lock the buyer row.
+	// (4) QUOTA — upsert then lock the buyer row.
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO booking.buyer_quotas (event_id, buyer_nik_hash) VALUES ($1::uuid, $2)
 		ON CONFLICT (event_id, buyer_nik_hash) DO NOTHING`, spec.EventID, spec.BuyerNIKHash); err != nil {
@@ -76,8 +89,18 @@ func (u *UnitOfWork) hold(ctx context.Context, tx pgx.Tx, spec outbound.HoldSpec
 		spec.EventID, spec.BuyerNIKHash); err != nil {
 		return outbound.HoldResult{}, err
 	}
+	// (5) CATEGORY rows in deterministic id order (ASC per design §9.0).
+	byCat := map[string]int{}
+	for _, l := range spec.Lines {
+		byCat[l.CategoryID]++
+	}
+	for cat := range byCat {
+		if _, err := tx.Exec(ctx, `SELECT 1 FROM booking.category_inventories WHERE category_id=$1::uuid FOR UPDATE`, cat); err != nil {
+			return outbound.HoldResult{}, err
+		}
+	}
 
-	// (4) append event store (optimistic).
+	// (6) append event store (optimistic).
 	payload := domevent.BookingHeld{
 		BookingID: spec.BookingID, EventID: spec.EventID, AdmissionID: spec.AdmissionID,
 		AmountMinor: spec.AmountMinor, ItemQuantity: n, Items: itemSnapshots(spec.Lines),
@@ -88,7 +111,7 @@ func (u *UnitOfWork) hold(ctx context.Context, tx pgx.Tx, spec outbound.HoldSpec
 		return outbound.HoldResult{}, err
 	}
 
-	// (5) project read model (booking LAST).
+	// (7) project read model (booking LAST).
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO booking.bookings (id, public_ref, event_id, admission_id, visitor_id, buyer_nik_hash,
 			buyer_email, status, amount_minor, item_quantity, payment_expires_at, version, account_id)
@@ -108,7 +131,7 @@ func (u *UnitOfWork) hold(ctx context.Context, tx pgx.Tx, spec outbound.HoldSpec
 		}
 	}
 
-	// (6) bump counters — anti-oversell CHECKs validated here.
+	// (8) bump counters — anti-oversell CHECKs validated here.
 	for cat, cn := range byCat {
 		if _, err := tx.Exec(ctx, `UPDATE booking.category_inventories SET held_quantity=held_quantity+$2, updated_at=now() WHERE category_id=$1::uuid`, cat, cn); err != nil {
 			return outbound.HoldResult{}, mapHoldErr(err)
@@ -119,6 +142,43 @@ func (u *UnitOfWork) hold(ctx context.Context, tx pgx.Tx, spec outbound.HoldSpec
 	}
 	if _, err := tx.Exec(ctx, `UPDATE booking.buyer_quotas SET held_quantity=held_quantity+$3, updated_at=now() WHERE event_id=$1::uuid AND buyer_nik_hash=$2`, spec.EventID, spec.BuyerNIKHash, n); err != nil {
 		return outbound.HoldResult{}, mapHoldErr(err)
+	}
+
+	// (9) Design §9.2 Step 11: transition admission to EDITABLE or CONVERTED.
+	// Lock immediately if edit is disabled OR request arrived in grace window.
+	if !spec.CfgEditEnabled || inGrace {
+		lockReason := "EDIT_DISABLED"
+		if inGrace {
+			lockReason = "SELECTION_EXPIRED"
+		}
+		if _, err := tx.Exec(ctx, `
+			UPDATE booking.admissions
+			   SET status='CONVERTED', lock_reason=$2, locked_at=now(), ended_at=now(), end_reason='CONVERTED'
+			 WHERE id=$1::uuid`, spec.AdmissionID, lockReason); err != nil {
+			return outbound.HoldResult{}, err
+		}
+		// Release unused reservation units (units - n) back to allocated.
+		releaseUnits := spec.AdmissionUnits - n
+		if releaseUnits > 0 {
+			if _, err := tx.Exec(ctx, `
+				UPDATE booking.event_supply SET allocated_units=allocated_units+$2, version=version+1, updated_at=now()
+				 WHERE event_id=$1::uuid`, spec.EventID, releaseUnits); err != nil {
+				return outbound.HoldResult{}, err
+			}
+		}
+		// Append BookingLocked event for audit trail.
+		if _, err := u.store.Append(ctx, tx, spec.BookingID, 1, eventstore.NewEvent{
+			Type: domevent.TypeBookingLocked, SchemaVersion: 1,
+			Payload:  domevent.BookingLocked{BookingID: spec.BookingID, Reason: lockReason},
+			Metadata: meta(spec.CorrelationID),
+		}); err != nil {
+			return outbound.HoldResult{}, err
+		}
+	} else {
+		// Normal case: admission → EDITABLE (buyer may still edit before paying).
+		if _, err := tx.Exec(ctx, `UPDATE booking.admissions SET status='EDITABLE' WHERE id=$1::uuid`, spec.AdmissionID); err != nil {
+			return outbound.HoldResult{}, err
+		}
 	}
 
 	return outbound.HoldResult{
@@ -139,6 +199,33 @@ func (u *UnitOfWork) ReplaceItems(ctx context.Context, spec outbound.ReplaceSpec
 }
 
 func (u *UnitOfWork) replace(ctx context.Context, tx pgx.Tx, spec outbound.ReplaceSpec) (int, error) {
+	// Design §9.3 Step 2: lock admission first — must be EDITABLE, within grace, under edit limit.
+	var admStatus string
+	var admExpiresAt time.Time
+	var editCount, cfgMaxEdits, cfgGrace int
+	if err := tx.QueryRow(ctx, `
+		SELECT status, expires_at, edit_count, cfg_max_edits, cfg_submit_grace_seconds
+		FROM booking.admissions WHERE id=$1::uuid FOR UPDATE`, spec.AdmissionID).
+		Scan(&admStatus, &admExpiresAt, &editCount, &cfgMaxEdits, &cfgGrace); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return 0, inbound.ErrNotFound
+		}
+		return 0, err
+	}
+	if admStatus == "CONVERTED" {
+		return 0, inbound.ErrBookingLocked
+	}
+	if admStatus != "EDITABLE" {
+		return 0, inbound.ErrSessionExpired
+	}
+	grace := time.Duration(cfgGrace) * time.Second
+	if time.Now().UTC().After(admExpiresAt.Add(grace)) {
+		return 0, inbound.ErrSessionExpired
+	}
+	if editCount >= cfgMaxEdits {
+		return 0, inbound.ErrEditLimit
+	}
+
 	var version int
 	var paymentStarted *time.Time
 	err := tx.QueryRow(ctx, `SELECT version, payment_started_at FROM booking.bookings WHERE id=$1::uuid FOR UPDATE`, spec.BookingID).
@@ -210,7 +297,8 @@ func (u *UnitOfWork) replace(ctx context.Context, tx pgx.Tx, spec outbound.Repla
 	}
 	supplyDelta := len(spec.Lines) - sum(oldByCat)
 	if supplyDelta != 0 {
-		if _, err := tx.Exec(ctx, `UPDATE booking.event_supply SET held_units=held_units+$2, version=version+1, updated_at=now() WHERE event_id=$1::uuid`, spec.EventID, supplyDelta); err != nil {
+		// Design §9.3 step 6: held += (n_new - n_old); allocated += (n_old - n_new).
+		if _, err := tx.Exec(ctx, `UPDATE booking.event_supply SET held_units=held_units+$2, allocated_units=allocated_units+$3, version=version+1, updated_at=now() WHERE event_id=$1::uuid`, spec.EventID, supplyDelta, -supplyDelta); err != nil {
 			return 0, mapHoldErr(err)
 		}
 		if _, err := tx.Exec(ctx, `UPDATE booking.buyer_quotas SET held_quantity=held_quantity+$3, updated_at=now() WHERE event_id=$1::uuid AND buyer_nik_hash=$2`, spec.EventID, spec.BuyerNIKHash, supplyDelta); err != nil {
@@ -241,9 +329,10 @@ func (u *UnitOfWork) Settle(ctx context.Context, spec outbound.SettleSpec) (bool
 }
 
 func (u *UnitOfWork) settle(ctx context.Context, tx pgx.Tx, spec outbound.SettleSpec) (bool, error) {
-	// Step 1: plain read to discover eventID and admissionID (no lock yet).
+	// Step 1: plain read — discover eventID and admissionID (no lock yet, §9.0).
 	var eventID, admissionID string
-	if err := tx.QueryRow(ctx, `SELECT event_id::text, admission_id::text FROM booking.bookings WHERE id=$1::uuid`,
+	if err := tx.QueryRow(ctx, `
+		SELECT event_id::text, admission_id::text FROM booking.bookings WHERE id=$1::uuid`,
 		spec.BookingID).Scan(&eventID, &admissionID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return false, inbound.ErrNotFound
@@ -251,8 +340,11 @@ func (u *UnitOfWork) settle(ctx context.Context, tx pgx.Tx, spec outbound.Settle
 		return false, err
 	}
 
-	// Step 2: lock event_supply first — matches hold()'s order (supply → booking).
-	if _, err := tx.Exec(ctx, `SELECT 1 FROM booking.event_supply WHERE event_id=$1::uuid FOR UPDATE`, eventID); err != nil {
+	// Step 2: lock admission first (§9.0: admissions before bookings).
+	var admStatus string
+	if err := tx.QueryRow(ctx, `
+		SELECT status FROM booking.admissions WHERE id=$1::uuid FOR UPDATE`, admissionID).
+		Scan(&admStatus); err != nil {
 		return false, err
 	}
 
@@ -262,35 +354,117 @@ func (u *UnitOfWork) settle(ctx context.Context, tx pgx.Tx, spec outbound.Settle
 	var buyerHash []byte
 	var amount int64
 	var publicRef, email string
-	if err := tx.QueryRow(ctx, `SELECT status, version, buyer_nik_hash, amount_minor, public_ref, buyer_email
-		FROM booking.bookings WHERE id=$1::uuid FOR UPDATE`, spec.BookingID).
-		Scan(&status, &version, &buyerHash, &amount, &publicRef, &email); err != nil {
+	var paymentExpiresAt time.Time
+	if err := tx.QueryRow(ctx, `
+		SELECT status, version, buyer_nik_hash, amount_minor, public_ref, buyer_email, payment_expires_at
+		  FROM booking.bookings WHERE id=$1::uuid FOR UPDATE`, spec.BookingID).
+		Scan(&status, &version, &buyerHash, &amount, &publicRef, &email, &paymentExpiresAt); err != nil {
 		return false, err
 	}
-	switch {
-	case status == vo.BookingPaid, status == vo.BookingReview:
-		return false, nil // idempotent no-op
-	case !status.IsPayable():
-		// EXPIRED or CANCELLED: the stock was released, so the money cannot become a ticket. Ops reviews it (AC9.4).
-		return false, u.reviewLatePayment(ctx, tx, spec, version, amount, email)
+	if status == vo.BookingPaid || status == vo.BookingReview {
+		return false, nil // idempotent no-op (design §9.5: PAID/REVIEW → no-op, ack)
 	}
 
-	// Step 4: fetch queue_entry_id for journey.ended payload.
+	// Step 4: fetch queue_entry_id (admission already locked — plain read safe).
 	var queueEntryID string
-	if err := tx.QueryRow(ctx, `SELECT queue_entry_id::text FROM booking.admissions WHERE id=$1::uuid`,
-		admissionID).Scan(&queueEntryID); err != nil {
+	if err := tx.QueryRow(ctx, `
+		SELECT queue_entry_id::text FROM booking.admissions WHERE id=$1::uuid`, admissionID).
+		Scan(&queueEntryID); err != nil {
 		return false, err
 	}
 
 	now := time.Now().UTC()
+
+	// Design §9.5: EXPIRED/CANCELLED → late payment arrived → REVIEW (no stock change needed).
+	if status == vo.BookingExpired || status == vo.BookingCancelled {
+		if _, err := u.store.Append(ctx, tx, spec.BookingID, version, eventstore.NewEvent{
+			Type: domevent.TypeBookingReview, SchemaVersion: 1,
+			Payload:  domevent.BookingReview{BookingID: spec.BookingID, AmountMinor: amount},
+			Metadata: meta(spec.CorrelationID),
+		}); err != nil {
+			return false, err
+		}
+		if _, err := tx.Exec(ctx, `
+			UPDATE booking.bookings SET status='REVIEW', version=$2, updated_at=now()
+			 WHERE id=$1::uuid`, spec.BookingID, version+1); err != nil {
+			return false, err
+		}
+		review := map[string]any{"bookingId": spec.BookingID, "buyerEmail": email, "amountMinor": amount}
+		return true, enqueueOutbox(ctx, tx, "booking.review", spec.BookingID, review)
+	}
+
+	// Step 5: lock event_supply (§9.0: after booking, before quota/categories).
+	if _, err := tx.Exec(ctx, `
+		SELECT 1 FROM booking.event_supply WHERE event_id=$1::uuid FOR UPDATE`, eventID); err != nil {
+		return false, err
+	}
+
+	// Design §9.5, Property 7: settlementTime > payment_expires_at → REVIEW (late payment, release held stock).
+	// spec.SettlementTime is zero when the consumer couldn't parse it; treat zero as "now" (timely) for safety.
+	effectiveSettlement := spec.SettlementTime
+	if effectiveSettlement.IsZero() {
+		effectiveSettlement = now
+	}
+	if effectiveSettlement.After(paymentExpiresAt) {
+		// Late settlement: release held stock and mark REVIEW — no tickets issued.
+		byCatLate, err := heldByCategory(ctx, tx, spec.BookingID)
+		if err != nil {
+			return false, err
+		}
+		if _, err := u.store.Append(ctx, tx, spec.BookingID, version, eventstore.NewEvent{
+			Type: domevent.TypeBookingReview, SchemaVersion: 1,
+			Payload:  domevent.BookingReview{BookingID: spec.BookingID, AmountMinor: amount},
+			Metadata: meta(spec.CorrelationID),
+		}); err != nil {
+			return false, err
+		}
+		if _, err := tx.Exec(ctx, `
+			UPDATE booking.booking_items SET item_status='RELEASED'
+			 WHERE booking_id=$1::uuid AND item_status='HELD'`, spec.BookingID); err != nil {
+			return false, err
+		}
+		if _, err := tx.Exec(ctx, `
+			UPDATE booking.bookings SET status='REVIEW', settlement_time=$2, version=$3, updated_at=now()
+			 WHERE id=$1::uuid`, spec.BookingID, effectiveSettlement, version+1); err != nil {
+			return false, err
+		}
+		nLate := sum(byCatLate)
+		for cat, cn := range byCatLate {
+			if _, err := tx.Exec(ctx, `
+				UPDATE booking.category_inventories SET held_quantity=held_quantity-$2, updated_at=now()
+				 WHERE category_id=$1::uuid`, cat, cn); err != nil {
+				return false, err
+			}
+		}
+		if _, err := tx.Exec(ctx, `
+			UPDATE booking.event_supply SET held_units=held_units-$2, version=version+1, updated_at=now()
+			 WHERE event_id=$1::uuid`, eventID, nLate); err != nil {
+			return false, err
+		}
+		if _, err := tx.Exec(ctx, `
+			UPDATE booking.buyer_quotas SET held_quantity=held_quantity-$3, updated_at=now()
+			 WHERE event_id=$1::uuid AND buyer_nik_hash=$2`, eventID, buyerHash, nLate); err != nil {
+			return false, err
+		}
+		review := map[string]any{"bookingId": spec.BookingID, "buyerEmail": email, "amountMinor": amount}
+		ended := map[string]any{"eventId": eventID, "queueEntryId": queueEntryID, "outcome": "EXPIRED"}
+		if err := enqueueOutbox(ctx, tx, "booking.review", spec.BookingID, review); err != nil {
+			return false, err
+		}
+		return true, enqueueOutbox(ctx, tx, "booking.journey.ended", spec.BookingID, ended)
+	}
+
+	// Happy path: timely payment → PAID + tickets.
 	if _, err := u.store.Append(ctx, tx, spec.BookingID, version, eventstore.NewEvent{
 		Type: domevent.TypeBookingPaid, SchemaVersion: 1,
-		Payload: domevent.BookingPaid{BookingID: spec.BookingID, AmountMinor: amount, Method: spec.Method}, Metadata: meta(spec.CorrelationID),
+		Payload:  domevent.BookingPaid{BookingID: spec.BookingID, AmountMinor: amount, Method: spec.Method},
+		Metadata: meta(spec.CorrelationID),
 	}); err != nil {
 		return false, err
 	}
-	if _, err := tx.Exec(ctx, `UPDATE booking.bookings SET status='PAID', paid_at=$2, settlement_time=$2, version=$3, updated_at=$2 WHERE id=$1::uuid`,
-		spec.BookingID, now, version+1); err != nil {
+	if _, err := tx.Exec(ctx, `
+		UPDATE booking.bookings SET status='PAID', paid_at=$2, settlement_time=$3, version=$4, updated_at=$2
+		 WHERE id=$1::uuid`, spec.BookingID, now, spec.SettlementTime, version+1); err != nil {
 		return false, err
 	}
 
@@ -298,11 +472,14 @@ func (u *UnitOfWork) settle(ctx context.Context, tx pgx.Tx, spec outbound.Settle
 	if err != nil {
 		return false, err
 	}
-	if _, err := tx.Exec(ctx, `UPDATE booking.booking_items SET item_status='PAID' WHERE booking_id=$1::uuid AND item_status='HELD'`, spec.BookingID); err != nil {
+	if _, err := tx.Exec(ctx, `
+		UPDATE booking.booking_items SET item_status='PAID'
+		 WHERE booking_id=$1::uuid AND item_status='HELD'`, spec.BookingID); err != nil {
 		return false, err
 	}
 	// Issue one ticket per paid item (ON CONFLICT keeps it idempotent).
-	rows, err := tx.Query(ctx, `SELECT id::text FROM booking.booking_items WHERE booking_id=$1::uuid AND item_status='PAID'`, spec.BookingID)
+	rows, err := tx.Query(ctx, `
+		SELECT id::text FROM booking.booking_items WHERE booking_id=$1::uuid AND item_status='PAID'`, spec.BookingID)
 	if err != nil {
 		return false, err
 	}
@@ -327,34 +504,87 @@ func (u *UnitOfWork) settle(ctx context.Context, tx pgx.Tx, spec outbound.Settle
 
 	n := sum(byCat)
 	for cat, cn := range byCat {
-		if _, err := tx.Exec(ctx, `UPDATE booking.category_inventories SET held_quantity=held_quantity-$2, sold_quantity=sold_quantity+$2, updated_at=now() WHERE category_id=$1::uuid`, cat, cn); err != nil {
+		if _, err := tx.Exec(ctx, `
+			UPDATE booking.category_inventories SET held_quantity=held_quantity-$2, sold_quantity=sold_quantity+$2, updated_at=now()
+			 WHERE category_id=$1::uuid`, cat, cn); err != nil {
 			return false, err
 		}
 	}
-	if _, err := tx.Exec(ctx, `UPDATE booking.event_supply SET held_units=held_units-$2, sold_units=sold_units+$2, version=version+1, updated_at=now() WHERE event_id=$1::uuid`, eventID, n); err != nil {
+	if _, err := tx.Exec(ctx, `
+		UPDATE booking.event_supply SET held_units=held_units-$2, sold_units=sold_units+$2, version=version+1, updated_at=now()
+		 WHERE event_id=$1::uuid`, eventID, n); err != nil {
 		return false, err
 	}
-	// Publish sold_out if event supply is exhausted (SRS-F-10-01).
-	var soldUnits, totalCap int
-	if err := tx.QueryRow(ctx, `SELECT sold_units, total_capacity FROM booking.event_supply WHERE event_id=$1::uuid`,
-		eventID).Scan(&soldUnits, &totalCap); err == nil && soldUnits >= totalCap {
+	// Publish sold_out if event supply is exhausted — R3.5: free+allocated+held=0 ⟺ allocated+held+sold=total.
+	var allocUnits, heldUnits2, soldUnits2, totalCap int
+	if err := tx.QueryRow(ctx, `
+		SELECT allocated_units, held_units, sold_units, total_capacity FROM booking.event_supply WHERE event_id=$1::uuid`,
+		eventID).Scan(&allocUnits, &heldUnits2, &soldUnits2, &totalCap); err == nil &&
+		allocUnits+heldUnits2+soldUnits2 >= totalCap {
 		soldOut := map[string]any{"eventId": eventID}
 		_ = enqueueOutbox(ctx, tx, "booking.sold_out", spec.BookingID, soldOut)
 	}
-	if _, err := tx.Exec(ctx, `UPDATE booking.buyer_quotas SET held_quantity=held_quantity-$3, paid_quantity=paid_quantity+$3, updated_at=now() WHERE event_id=$1::uuid AND buyer_nik_hash=$2`, eventID, buyerHash, n); err != nil {
+	if _, err := tx.Exec(ctx, `
+		UPDATE booking.buyer_quotas SET held_quantity=held_quantity-$3, paid_quantity=paid_quantity+$3, updated_at=now()
+		 WHERE event_id=$1::uuid AND buyer_nik_hash=$2`, eventID, buyerHash, n); err != nil {
 		return false, err
 	}
 	// Publish quota.exhausted if buyer reached max quota (OQ-13).
 	var paidQty, maxQty int
-	if err := tx.QueryRow(ctx, `SELECT paid_quantity, max_quantity FROM booking.buyer_quotas WHERE event_id=$1::uuid AND buyer_nik_hash=$2`,
+	if err := tx.QueryRow(ctx, `
+		SELECT paid_quantity, max_quantity FROM booking.buyer_quotas WHERE event_id=$1::uuid AND buyer_nik_hash=$2`,
 		eventID, buyerHash).Scan(&paidQty, &maxQty); err == nil && paidQty >= maxQty {
 		quotaExhausted := map[string]any{"eventId": eventID, "buyerNikHash": hex.EncodeToString(buyerHash)}
 		_ = enqueueOutbox(ctx, tx, "booking.quota.exhausted", spec.BookingID, quotaExhausted)
 	}
 
-	paid, err := paidPayload(ctx, tx, spec.BookingID, eventID, publicRef, email)
-	if err != nil {
-		return false, err
+	// §9.5: convert admission EDITABLE→CONVERTED(BOOKING_ENDED) if still open.
+	// (paymentLock §9.4 normally converts it first; this handles the race where payment.succeeded
+	// arrives before payment-lock was called.)
+	if admStatus == "EDITABLE" {
+		if _, err := tx.Exec(ctx, `
+			UPDATE booking.admissions
+			   SET status='CONVERTED', lock_reason='BOOKING_ENDED',
+			       locked_at=now(), ended_at=now(), end_reason='CONVERTED'
+			 WHERE id=$1::uuid AND status='EDITABLE'`, admissionID); err != nil {
+			return false, err
+		}
+	}
+
+	// Build full booking.paid payload per schema (docs/contracts/events/booking.paid.v1.schema.json).
+	type ticketLine struct {
+		TicketCode        string `json:"ticketCode"`
+		AttendeeName      string `json:"attendeeName"`
+		AttendeeNIKMasked string `json:"attendeeNikMasked"`
+		CategoryCode      string `json:"categoryCode"`
+	}
+	var ticketLines []ticketLine
+	ticketRows, terr := tx.Query(ctx, `
+		SELECT t.public_code, bi.attendee_name, bi.attendee_nik_masked, tc.code
+		  FROM booking.tickets t
+		  JOIN booking.booking_items bi ON bi.id = t.booking_item_id
+		  JOIN booking.ticket_categories tc ON tc.id = bi.category_id
+		 WHERE t.booking_id = $1::uuid`, spec.BookingID)
+	if terr == nil {
+		defer ticketRows.Close()
+		for ticketRows.Next() {
+			var tl ticketLine
+			_ = ticketRows.Scan(&tl.TicketCode, &tl.AttendeeName, &tl.AttendeeNIKMasked, &tl.CategoryCode)
+			ticketLines = append(ticketLines, tl)
+		}
+		ticketRows.Close()
+	}
+	ticketLinkToken := ""
+	if spec.TicketLinkTokenFn != nil {
+		ticketLinkToken = spec.TicketLinkTokenFn(spec.BookingID)
+	}
+
+	paid := map[string]any{
+		"bookingId":       spec.BookingID,
+		"publicRef":       publicRef,
+		"buyerEmail":      email,
+		"tickets":         ticketLines,
+		"ticketLinkToken": ticketLinkToken,
 	}
 	ended := map[string]any{"eventId": eventID, "queueEntryId": queueEntryID, "outcome": "PAID"}
 	if err := enqueueOutbox(ctx, tx, "booking.paid", spec.BookingID, paid); err != nil {
@@ -364,58 +594,6 @@ func (u *UnitOfWork) settle(ctx context.Context, tx pgx.Tx, spec outbound.Settle
 		return false, err
 	}
 	return true, nil
-}
-
-// reviewLatePayment records a payment that arrived for a booking that already ended: status REVIEW, no tickets, no
-// stock change. booking.review tells the buyer (email) and Ops; the refund itself is manual.
-func (u *UnitOfWork) reviewLatePayment(ctx context.Context, tx pgx.Tx, spec outbound.SettleSpec, version int, amount int64, email string) error {
-	if _, err := u.store.Append(ctx, tx, spec.BookingID, version, eventstore.NewEvent{
-		Type: domevent.TypeBookingReview, SchemaVersion: 1,
-		Payload: domevent.BookingReview{BookingID: spec.BookingID, AmountMinor: amount}, Metadata: meta(spec.CorrelationID),
-	}); err != nil {
-		return err
-	}
-	if _, err := tx.Exec(ctx, `UPDATE booking.bookings SET status='REVIEW', version=$2, updated_at=now() WHERE id=$1::uuid`, spec.BookingID, version+1); err != nil {
-		return err
-	}
-	return enqueueOutbox(ctx, tx, "booking.review", spec.BookingID, map[string]any{"bookingId": spec.BookingID, "buyerEmail": email, "amountMinor": amount})
-}
-
-// paidPayload builds booking.paid.v1 (docs/contracts/events): the e-ticket email needs the event, one line per
-// ticket, and the attendee's masked NIK. ticketLinkToken is optional in the contract and not issued yet.
-func paidPayload(ctx context.Context, tx pgx.Tx, bookingID, eventID, publicRef, email string) (map[string]any, error) {
-	var name, venue string
-	var startsAt time.Time
-	if err := tx.QueryRow(ctx, `SELECT name, venue, starts_at FROM booking.events WHERE id=$1::uuid`, eventID).Scan(&name, &venue, &startsAt); err != nil {
-		return nil, err
-	}
-	rows, err := tx.Query(ctx, `
-		SELECT t.public_code, bi.attendee_name, COALESCE(bi.attendee_nik_masked, ''), tc.code
-		  FROM booking.tickets t
-		  JOIN booking.booking_items bi ON bi.id = t.booking_item_id
-		  JOIN booking.ticket_categories tc ON tc.id = bi.category_id
-		 WHERE t.booking_id = $1::uuid
-		 ORDER BY t.issued_at, t.public_code`, bookingID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	tickets := []map[string]string{}
-	for rows.Next() {
-		var code, attendee, masked, category string
-		if err := rows.Scan(&code, &attendee, &masked, &category); err != nil {
-			return nil, err
-		}
-		tickets = append(tickets, map[string]string{"ticketCode": code, "attendeeName": attendee, "attendeeNikMasked": masked, "categoryCode": category})
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return map[string]any{
-		"bookingId": bookingID, "publicRef": publicRef, "buyerEmail": email,
-		"event":   map[string]string{"eventId": eventID, "name": name, "startsAt": startsAt.UTC().Format(time.RFC3339), "venue": venue},
-		"tickets": tickets,
-	}, nil
 }
 
 // Expire releases a booking's held stock (EXPIRED) or marks it REVIEW (payment found, stock held).
@@ -430,9 +608,10 @@ func (u *UnitOfWork) Expire(ctx context.Context, spec outbound.ExpireSpec) (bool
 }
 
 func (u *UnitOfWork) expire(ctx context.Context, tx pgx.Tx, spec outbound.ExpireSpec) (bool, error) {
-	// Step 1: plain read to discover eventID and admissionID (no lock yet).
+	// Step 1: plain read — discover eventID and admissionID (no lock yet, §9.0).
 	var eventID, admissionID string
-	if err := tx.QueryRow(ctx, `SELECT event_id::text, admission_id::text FROM booking.bookings WHERE id=$1::uuid`,
+	if err := tx.QueryRow(ctx, `
+		SELECT event_id::text, admission_id::text FROM booking.bookings WHERE id=$1::uuid`,
 		spec.BookingID).Scan(&eventID, &admissionID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return false, inbound.ErrNotFound
@@ -440,8 +619,11 @@ func (u *UnitOfWork) expire(ctx context.Context, tx pgx.Tx, spec outbound.Expire
 		return false, err
 	}
 
-	// Step 2: lock event_supply first — matches hold()'s order (supply → booking).
-	if _, err := tx.Exec(ctx, `SELECT 1 FROM booking.event_supply WHERE event_id=$1::uuid FOR UPDATE`, eventID); err != nil {
+	// Step 2: lock admission first (§9.0: admissions before bookings).
+	var admStatus string
+	if err := tx.QueryRow(ctx, `
+		SELECT status FROM booking.admissions WHERE id=$1::uuid FOR UPDATE`, admissionID).
+		Scan(&admStatus); err != nil {
 		return false, err
 	}
 
@@ -451,39 +633,63 @@ func (u *UnitOfWork) expire(ctx context.Context, tx pgx.Tx, spec outbound.Expire
 	var publicRef, email string
 	var buyerHash []byte
 	var amount int64
-	if err := tx.QueryRow(ctx, `SELECT status, version, public_ref, buyer_email, buyer_nik_hash, amount_minor
-		FROM booking.bookings WHERE id=$1::uuid FOR UPDATE`, spec.BookingID).
+	if err := tx.QueryRow(ctx, `
+		SELECT status, version, public_ref, buyer_email, buyer_nik_hash, amount_minor
+		  FROM booking.bookings WHERE id=$1::uuid FOR UPDATE`, spec.BookingID).
 		Scan(&status, &version, &publicRef, &email, &buyerHash, &amount); err != nil {
 		return false, err
 	}
 	if !status.IsPayable() {
-		return false, nil // already terminal
+		return false, nil // already terminal — idempotent
 	}
 
-	// Step 4: fetch queue_entry_id for journey.ended payload.
+	// Step 4: lock event_supply (§9.0: after booking, before quota/categories).
+	if _, err := tx.Exec(ctx, `
+		SELECT 1 FROM booking.event_supply WHERE event_id=$1::uuid FOR UPDATE`, eventID); err != nil {
+		return false, err
+	}
+
+	// Step 5: fetch queue_entry_id for journey.ended payload (admission already locked — plain read safe).
 	var queueEntryID string
-	if err := tx.QueryRow(ctx, `SELECT queue_entry_id::text FROM booking.admissions WHERE id=$1::uuid`,
-		admissionID).Scan(&queueEntryID); err != nil {
+	if err := tx.QueryRow(ctx, `
+		SELECT queue_entry_id::text FROM booking.admissions WHERE id=$1::uuid`, admissionID).
+		Scan(&queueEntryID); err != nil {
 		return false, err
 	}
 
 	if spec.Review {
+		// REVIEW path: late payment / cancel — mark REVIEW, no stock release.
 		if _, err := u.store.Append(ctx, tx, spec.BookingID, version, eventstore.NewEvent{
 			Type: domevent.TypeBookingReview, SchemaVersion: 1,
-			Payload: domevent.BookingReview{BookingID: spec.BookingID, AmountMinor: amount}, Metadata: meta(spec.CorrelationID),
+			Payload:  domevent.BookingReview{BookingID: spec.BookingID, AmountMinor: amount},
+			Metadata: meta(spec.CorrelationID),
 		}); err != nil {
 			return false, err
 		}
-		if _, err := tx.Exec(ctx, `UPDATE booking.bookings SET status='REVIEW', version=$2, updated_at=now() WHERE id=$1::uuid`, spec.BookingID, version+1); err != nil {
+		if _, err := tx.Exec(ctx, `
+			UPDATE booking.bookings SET status='REVIEW', version=$2, updated_at=now()
+			 WHERE id=$1::uuid`, spec.BookingID, version+1); err != nil {
 			return false, err
+		}
+		// §7.2 / §9.6: convert EDITABLE admission on any terminal booking path.
+		if admStatus == "EDITABLE" {
+			if _, err := tx.Exec(ctx, `
+				UPDATE booking.admissions
+				   SET status='CONVERTED', lock_reason='BOOKING_ENDED',
+				       locked_at=now(), ended_at=now(), end_reason='CONVERTED'
+				 WHERE id=$1::uuid AND status='EDITABLE'`, admissionID); err != nil {
+				return false, err
+			}
 		}
 		review := map[string]any{"bookingId": spec.BookingID, "buyerEmail": email, "amountMinor": amount}
 		return true, enqueueOutbox(ctx, tx, "booking.review", spec.BookingID, review)
 	}
 
+	// EXPIRED path (NOT_PAID / NO_ATTEMPT / grace exhausted).
 	if _, err := u.store.Append(ctx, tx, spec.BookingID, version, eventstore.NewEvent{
 		Type: domevent.TypeBookingExpired, SchemaVersion: 1,
-		Payload: domevent.BookingExpired{BookingID: spec.BookingID, Reason: spec.Reason}, Metadata: meta(spec.CorrelationID),
+		Payload:  domevent.BookingExpired{BookingID: spec.BookingID, Reason: spec.Reason},
+		Metadata: meta(spec.CorrelationID),
 	}); err != nil {
 		return false, err
 	}
@@ -491,23 +697,43 @@ func (u *UnitOfWork) expire(ctx context.Context, tx pgx.Tx, spec outbound.Expire
 	if err != nil {
 		return false, err
 	}
-	if _, err := tx.Exec(ctx, `UPDATE booking.booking_items SET item_status='RELEASED' WHERE booking_id=$1::uuid AND item_status='HELD'`, spec.BookingID); err != nil {
+	if _, err := tx.Exec(ctx, `
+		UPDATE booking.booking_items SET item_status='RELEASED'
+		 WHERE booking_id=$1::uuid AND item_status='HELD'`, spec.BookingID); err != nil {
 		return false, err
 	}
-	if _, err := tx.Exec(ctx, `UPDATE booking.bookings SET status='EXPIRED', ended_at=now(), version=$2, updated_at=now() WHERE id=$1::uuid`, spec.BookingID, version+1); err != nil {
+	if _, err := tx.Exec(ctx, `
+		UPDATE booking.bookings SET status='EXPIRED', ended_at=now(), version=$2, updated_at=now()
+		 WHERE id=$1::uuid`, spec.BookingID, version+1); err != nil {
 		return false, err
 	}
 	n := sum(byCat)
 	for cat, cn := range byCat {
-		if _, err := tx.Exec(ctx, `UPDATE booking.category_inventories SET held_quantity=held_quantity-$2, updated_at=now() WHERE category_id=$1::uuid`, cat, cn); err != nil {
+		if _, err := tx.Exec(ctx, `
+			UPDATE booking.category_inventories SET held_quantity=held_quantity-$2, updated_at=now()
+			 WHERE category_id=$1::uuid`, cat, cn); err != nil {
 			return false, err
 		}
 	}
-	if _, err := tx.Exec(ctx, `UPDATE booking.event_supply SET held_units=held_units-$2, version=version+1, updated_at=now() WHERE event_id=$1::uuid`, eventID, n); err != nil {
+	if _, err := tx.Exec(ctx, `
+		UPDATE booking.event_supply SET held_units=held_units-$2, version=version+1, updated_at=now()
+		 WHERE event_id=$1::uuid`, eventID, n); err != nil {
 		return false, err
 	}
-	if _, err := tx.Exec(ctx, `UPDATE booking.buyer_quotas SET held_quantity=held_quantity-$3, updated_at=now() WHERE event_id=$1::uuid AND buyer_nik_hash=$2`, eventID, buyerHash, n); err != nil {
+	if _, err := tx.Exec(ctx, `
+		UPDATE booking.buyer_quotas SET held_quantity=held_quantity-$3, updated_at=now()
+		 WHERE event_id=$1::uuid AND buyer_nik_hash=$2`, eventID, buyerHash, n); err != nil {
 		return false, err
+	}
+	// §7.2 NOT_PAID/NO_ATTEMPT: convert admission EDITABLE→CONVERTED(BOOKING_ENDED).
+	if admStatus == "EDITABLE" {
+		if _, err := tx.Exec(ctx, `
+			UPDATE booking.admissions
+			   SET status='CONVERTED', lock_reason='BOOKING_ENDED',
+			       locked_at=now(), ended_at=now(), end_reason='CONVERTED'
+			 WHERE id=$1::uuid AND status='EDITABLE'`, admissionID); err != nil {
+			return false, err
+		}
 	}
 	expired := map[string]any{"bookingId": spec.BookingID, "publicRef": publicRef, "buyerEmail": email, "reason": spec.Reason}
 	ended := map[string]any{"eventId": eventID, "queueEntryId": queueEntryID, "outcome": "EXPIRED"}
@@ -558,18 +784,38 @@ func (u *UnitOfWork) PaymentLock(ctx context.Context, spec outbound.PaymentLockS
 }
 
 func (u *UnitOfWork) paymentLock(ctx context.Context, tx pgx.Tx, spec outbound.PaymentLockSpec) (outbound.PaymentLockResult, error) {
+	// Step 1: plain read — discover eventID, admissionID, item_quantity (no lock yet, §9.0).
+	var eventID, admissionID string
+	var itemQuantity int
+	if err := tx.QueryRow(ctx, `
+		SELECT event_id::text, admission_id::text, item_quantity
+		  FROM booking.bookings WHERE id=$1::uuid`, spec.BookingID).
+		Scan(&eventID, &admissionID, &itemQuantity); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return outbound.PaymentLockResult{}, inbound.ErrNotFound
+		}
+		return outbound.PaymentLockResult{}, err
+	}
+
+	// Step 2: lock admission first (§9.0: admissions before bookings).
+	// Read status + units to decide whether to release surplus allocated units (§9.4).
+	var admStatus string
+	var admUnits int
+	if err := tx.QueryRow(ctx, `
+		SELECT status, units FROM booking.admissions WHERE id=$1::uuid FOR UPDATE`, admissionID).
+		Scan(&admStatus, &admUnits); err != nil {
+		return outbound.PaymentLockResult{}, err
+	}
+
+	// Step 3: lock booking row and read full state.
 	var status vo.BookingStatus
 	var version int
 	var amountMinor int64
 	var paymentExpiresAt time.Time
-	err := tx.QueryRow(ctx, `
+	if err := tx.QueryRow(ctx, `
 		SELECT status, version, amount_minor, payment_expires_at
 		  FROM booking.bookings WHERE id=$1::uuid FOR UPDATE`, spec.BookingID).
-		Scan(&status, &version, &amountMinor, &paymentExpiresAt)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return outbound.PaymentLockResult{}, inbound.ErrNotFound
-	}
-	if err != nil {
+		Scan(&status, &version, &amountMinor, &paymentExpiresAt); err != nil {
 		return outbound.PaymentLockResult{}, err
 	}
 
@@ -581,37 +827,98 @@ func (u *UnitOfWork) paymentLock(ctx context.Context, tx pgx.Tx, spec outbound.P
 	if !status.IsPayable() {
 		return outbound.PaymentLockResult{Outcome: "BOOKING_NOT_PAYABLE", AmountMinor: amountMinor, PaymentExpiresAt: paymentExpiresAt}, nil
 	}
-
-	// Already locked (VERIFYING): idempotent no-op, no new event.
+	// Idempotent: already locked by a previous call.
 	if status == vo.BookingVerifying {
 		return outbound.PaymentLockResult{Outcome: "OK", Version: version, AmountMinor: amountMinor, PaymentExpiresAt: paymentExpiresAt}, nil
 	}
 
-	// First lock: PENDING_PAYMENT → VERIFYING. Append the aggregate event, then project the read model
-	// and stamp payment_started_at in the same transaction (event-sourcing invariant).
-	if _, err := u.store.Append(ctx, tx, spec.BookingID, version, eventstore.NewEvent{
-		Type: domevent.TypeBookingLocked, SchemaVersion: 1,
-		Payload:  domevent.BookingLocked{BookingID: spec.BookingID, Reason: "PAYMENT_STARTED"},
-		Metadata: meta(spec.CorrelationID),
-	}); err != nil {
-		return outbound.PaymentLockResult{}, err
-	}
+	// Step 4: stamp payment_started_at (booking status stays PENDING_PAYMENT per K1/Δ1).
 	if _, err := tx.Exec(ctx, `
 		UPDATE booking.bookings
-		   SET status = 'VERIFYING',
-		       payment_started_at = COALESCE(payment_started_at, $2),
-		       verification_until = payment_expires_at, -- CHECK: VERIFYING needs verification_until (audit F3)
+		   SET payment_started_at = COALESCE(payment_started_at, $2),
 		       version = $3,
 		       updated_at = $2
 		 WHERE id = $1::uuid`, spec.BookingID, now, version+1); err != nil {
 		return outbound.PaymentLockResult{}, err
 	}
+
+	// Step 5 (§9.4): if admission is still EDITABLE, release surplus allocated units and convert it.
+	// admission.units is the originally reserved count; item_quantity is what the buyer chose.
+	// surplus (units − item_quantity) was held in allocated_units; release it back to free stock.
+	if admStatus == "EDITABLE" {
+		if surplus := admUnits - itemQuantity; surplus > 0 {
+			if _, err := tx.Exec(ctx, `
+				UPDATE booking.event_supply
+				   SET allocated_units = allocated_units - $2, version = version + 1, updated_at = now()
+				 WHERE event_id = $1::uuid`, eventID, surplus); err != nil {
+				return outbound.PaymentLockResult{}, err
+			}
+		}
+		if _, err := tx.Exec(ctx, `
+			UPDATE booking.admissions
+			   SET status = 'CONVERTED', lock_reason = 'PAYMENT_STARTED',
+			       locked_at = now(), ended_at = now(), end_reason = 'CONVERTED'
+			 WHERE id = $1::uuid AND status = 'EDITABLE'`, admissionID); err != nil {
+			return outbound.PaymentLockResult{}, err
+		}
+	}
+
+	// Step 6: append BookingLocked event (audit trail for payment_started_at and admission conversion).
+	if _, err := u.store.Append(ctx, tx, spec.BookingID, version, eventstore.NewEvent{
+		Type:          domevent.TypeBookingLocked,
+		SchemaVersion: 1,
+		Payload:       domevent.BookingLocked{BookingID: spec.BookingID, Reason: "PAYMENT_STARTED"},
+		Metadata:      meta(spec.CorrelationID),
+	}); err != nil {
+		return outbound.PaymentLockResult{}, err
+	}
+
 	return outbound.PaymentLockResult{
 		Outcome:          "OK",
 		Version:          version + 1,
 		AmountMinor:      amountMinor,
 		PaymentExpiresAt: paymentExpiresAt,
 	}, nil
+}
+
+// StartVerifying is Phase A of the expiry sweeper: PENDING_PAYMENT past deadline → VERIFYING (design §7.2).
+func (u *UnitOfWork) StartVerifying(ctx context.Context, bookingID string, verifyGraceSeconds int) (bool, error) {
+	var acted bool
+	err := u.retry(ctx, func(tx pgx.Tx) error {
+		var status vo.BookingStatus
+		var version int
+		var paymentExpiresAt time.Time
+		err := tx.QueryRow(ctx, `SELECT status, version, payment_expires_at FROM booking.bookings WHERE id=$1::uuid FOR UPDATE`, bookingID).
+			Scan(&status, &version, &paymentExpiresAt)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return inbound.ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
+		if status != vo.BookingPendingPayment {
+			return nil // already VERIFYING or terminal — idempotent no-op
+		}
+		if time.Now().UTC().Before(paymentExpiresAt) {
+			return nil // not yet past deadline
+		}
+		grace := time.Duration(verifyGraceSeconds) * time.Second
+		verificationUntil := time.Now().UTC().Add(grace)
+		if _, err := u.store.Append(ctx, tx, bookingID, version, eventstore.NewEvent{
+			Type: domevent.TypePaymentVerifying, SchemaVersion: 1,
+			Payload:  domevent.PaymentVerifying{BookingID: bookingID},
+			Metadata: meta(bookingID),
+		}); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `UPDATE booking.bookings SET status='VERIFYING', version=$2, verification_until=$3, updated_at=now() WHERE id=$1::uuid`,
+			bookingID, version+1, verificationUntil); err != nil {
+			return err
+		}
+		acted = true
+		return nil
+	})
+	return acted, err
 }
 
 // retry runs fn in a transaction, retrying on event-store concurrency up to maxRetries.

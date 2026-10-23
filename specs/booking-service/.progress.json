@@ -1,12 +1,12 @@
 {
   "spec": "booking-service",
   "status": "IN_PROGRESS",
-  "updatedAt": "2026-10-23T07:00:00+07:00",
-  "summary": "All rework tasks from tasks.md completed except 1.R1 (pkg/nik — depends on platform 1), 11.2 (reconciliation — depends on platform 9.1), 14.4 (metrics — depends on platform 4.2), 15.x (PII retention — depends on platform 13.1). All core business logic correctness fixes done: lock order (6.R2), EDITABLE transition (6.R3), edit guard (8.R1), settlement timeliness (9.R2), sold-out condition (9.R3), settlement time propagation (9.R1), VERIFYING two-phase expiry (10.R2), VERIFY_GRACE_SECONDS config (10.R3), session sweeper EDITABLE case (7.1 gap), booking.paid full payload (12.R2), migration 0003 city+image (2.R1), integration tests TC-BKG-07 + event sourcing (6.R4, 11.1), contract payload tests (12.R2).",
+  "updatedAt": "2026-10-23T12:00:00+07:00",
+  "summary": "All rework tasks from tasks.md completed plus 4 design alignment gaps fixed (§7.2, §9.0, §9.1, §9.4, §9.5). Gap fixes: paymentLock now locks admissions FOR UPDATE first and converts EDITABLE→CONVERTED(PAYMENT_STARTED) with allocated surplus released; expire() now locks admissions→booking→supply per §9.0 and converts EDITABLE→CONVERTED(BOOKING_ENDED); settle() now follows same lock order and converts EDITABLE admission on PAID path; expire.go Phase B SUCCEEDED now calls Settle() directly instead of delegating to consumer (sweeper as safety net); reserveOne() now locks supply FOR UPDATE, checks buyer quota with FOR UPDATE (BUYER_QUOTA_EXHAUSTED), and writes booking.sold_out + marks events.status=SOLD_OUT when free stock reaches zero. Platform-blocked tasks remain: 1.R1, 11.2, 14.4, 15.x.",
   "verification": {
     "goBuild": "PASS — go build ./services/booking/...",
     "testRace": "PASS — go test -race -count=1 ./services/booking/... (all 17 packages pass)",
-    "lint": "4 pre-existing issues only (stream_session.go errcheck x2, internal_handler.go gofmt, sse_handler_test.go gofmt) — 0 new issues from this work",
+    "lint": "4 pre-existing issues only (stream_session.go errcheck x2, internal_handler.go gofmt, sse_handler_test.go gofmt) — 0 new issues",
     "mock": "PASS — make mock"
   },
   "reworkTasksCompleted": [
@@ -16,6 +16,13 @@
     "11.1", "12.R1", "12.R2", "12.R3",
     "13", "14.1", "14.2", "14.3", "7.1", "7.2"
   ],
+  "designGapsFixed": [
+    "§9.4 paymentLock: admissions FOR UPDATE before bookings, CONVERTED(PAYMENT_STARTED), allocated surplus released",
+    "§9.0+§7.2 expire: lock order admissions→booking→supply, CONVERTED(BOOKING_ENDED) on NOT_PAID/NO_ATTEMPT and REVIEW paths",
+    "§9.0+§9.5 settle: lock order admissions→booking→supply, CONVERTED(BOOKING_ENDED) on PAID happy path",
+    "§7.2 Phase B SUCCEEDED: expire.go calls Settle() directly — sweeper is the safety net for lost webhooks",
+    "§9.1 reserveOne: supply FOR UPDATE, quota FOR UPDATE pre-check, BUYER_QUOTA_EXHAUSTED, booking.sold_out outbox + events.status=SOLD_OUT on allocation exhaustion"
+  ],
   "reworkTasksRemaining": [
     "1.R1 (depends on platform 1 — pkg/nik full Kemendagri validation)",
     "11.2 (reconciliation query — depends on platform 9.1)",
@@ -23,6 +30,5 @@
     "15.1 (buyer_email_enc migration — PII retention)",
     "15.2 (PII purge job — depends on platform 13.1)",
     "15.3 (outbox purge job)"
-  ],
-  "previousStatus": "COMPLETE"
+  ]
 }

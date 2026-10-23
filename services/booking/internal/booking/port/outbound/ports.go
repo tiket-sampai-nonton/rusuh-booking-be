@@ -95,36 +95,16 @@ type IAttendeeChecker interface {
 	RecordCheck(ctx context.Context, admissionID string, nikHash []byte) (counted bool, err error)
 }
 
-// ResolveMode is what Booking asks of Payment (internal-payment.yaml ResolveRequest.mode).
-type ResolveMode string
-
-// Resolve modes. CHECK only reads; CHECK_AND_CANCEL also closes an unpaid order at the gateway, so a payment can no
-// longer arrive after Booking has released the stock.
-const (
-	ResolveCheck          ResolveMode = "CHECK"
-	ResolveCheckAndCancel ResolveMode = "CHECK_AND_CANCEL"
-)
-
-// ResolveOutcome is Payment's answer (internal-payment.yaml ResolveResponse.outcome).
-type ResolveOutcome string
-
-// Resolve outcomes. Unknown means Payment could not tell (gateway down): the stock must stay held.
-const (
-	OutcomeSucceeded ResolveOutcome = "SUCCEEDED"
-	OutcomeNotPaid   ResolveOutcome = "NOT_PAID"
-	OutcomeNoAttempt ResolveOutcome = "NO_ATTEMPT"
-	OutcomeUnknown   ResolveOutcome = "UNKNOWN"
-)
-
-// IPaymentClient asks the Payment Service what happened to a booking's payment (expiry sweeper, buyer cancel).
+// IPaymentClient resolves whether a booking was in fact paid at the gateway (expiry sweeper).
 type IPaymentClient interface {
-	Resolve(ctx context.Context, bookingID string, mode ResolveMode) (ResolveResult, error)
+	Resolve(ctx context.Context, bookingID string) (ResolveResult, error)
 }
 
-// ResolveResult is the Payment Service's answer to a resolve request. SettlementTime is set on SUCCEEDED.
+// ResolveResult is the Payment Service's answer to a resolve probe.
 type ResolveResult struct {
-	Outcome        ResolveOutcome
-	SettlementTime *time.Time
+	Paid           bool
+	SettlementTime time.Time // zero when not paid or unavailable
+	Method         string    // payment method; may be empty
 }
 
 // AdmissionClaims is the verified content of an admission token issued by the Queue Service.

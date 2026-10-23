@@ -239,24 +239,16 @@ func (f *fakeAttendeeChecker) RecordCheck(context.Context, string, []byte) (bool
 	return f.counted, f.recErr
 }
 
-// fakePayments resolves a canned result; the zero value answers NOT_PAID. It records the modes it was asked with.
+// fakePayments resolves a canned result.
 type fakePayments struct {
-	outcome   outbound.ResolveOutcome
-	settledAt *time.Time
-	err       error
-	modes     []outbound.ResolveMode
+	paid           bool
+	settlementTime time.Time
+	method         string
+	err            error
 }
 
-func (f *fakePayments) Resolve(_ context.Context, _ string, mode outbound.ResolveMode) (outbound.ResolveResult, error) {
-	f.modes = append(f.modes, mode)
-	if f.err != nil {
-		return outbound.ResolveResult{}, f.err
-	}
-	o := f.outcome
-	if o == "" {
-		o = outbound.OutcomeNotPaid
-	}
-	return outbound.ResolveResult{Outcome: o, SettlementTime: f.settledAt}, nil
+func (f *fakePayments) Resolve(context.Context, string) (outbound.ResolveResult, error) {
+	return outbound.ResolveResult{Paid: f.paid, SettlementTime: f.settlementTime, Method: f.method}, f.err
 }
 
 // fakeTokenVerifier returns canned admission claims.
