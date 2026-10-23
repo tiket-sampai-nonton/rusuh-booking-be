@@ -173,7 +173,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: quality-*
           path: scan-reports
@@ -242,7 +242,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: coverage-*
           path: coverage
@@ -322,7 +322,7 @@ jobs:
       matrix:
         service: ${{ fromJSON(needs.changes.outputs.services) }}
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: image-${{ matrix.service.name }}
       - name: Trivy scan image
@@ -355,7 +355,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: scan-*
           path: scan-reports
@@ -376,7 +376,7 @@ jobs:
       matrix:
         service: ${{ fromJSON(needs.changes.outputs.services) }}
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: image-${{ matrix.service.name }}
       - name: Login registry (GHCR)
