@@ -34,7 +34,7 @@
 | ADR-016 | Struktur proyek mengikuti standar proyek organisasi | 2026-10-17 | CN-02, CN-09 | SRS-C-08 |
 | ADR-017 | Tiga repository terpisah (backend, web, mobile) dalam satu organisasi GitHub | 2026-10-17 | CN-02, CN-05 | CON-06, SRS-C-08 |
 | ADR-018 | Konsistensi lintas service dengan saga koreografi dan kompensasi | 2026-10-18 | CN-03, CN-04 | NFR-10, SRS-Q-REL-04, BR-06 |
-| ADR-019 | Event sourcing untuk agregat Booking dan Payment; stok tetap relasional | 2026-10-19 | CN-03, CN-04, CN-09 | SRS-C-09, SRS-D-10, SRS-D-11, SRS-Q-REL-09 |
+| ADR-019 | Event sourcing untuk agregat Booking (Payment: tabel state, amandemen 2026-10-23); stok tetap relasional | 2026-10-19 | CN-03, CN-04, CN-09 | SRS-C-09, SRS-D-10, SRS-D-11, SRS-Q-REL-09 |
 | ADR-020 | User Service untuk akun opsional dengan login OTP email; guest checkout tetap utama | 2026-10-19 | CN-02, CN-06 | SRS §3.2.27, SRS-F-01-08, SRS-Q-SEC-10..11 |
 | ADR-021 | Usulan BE-2 yang dicatat sebagai alternatif (gRPC internal, EKS + Helm, API Gateway/Kong) | 2026-10-19 | CN-02, CN-05, CN-09 | NFR-01, NFR-03 |
 | ADR-022 | Runtime dan tooling boilerplate: Go 1.26, verb Cobra, client standar, migrasi tertanam, `/health` | 2026-10-19 | CN-09 | SRS-C-02, SRS-C-08, SRS-F-19-03 |
@@ -486,7 +486,7 @@ Prinsip pemilihan: **(1)** sesuai tech radar klien, **(2)** setiap komponen puny
 
 | Field | Value |
 |-------|-------|
-| **Status** | Accepted (keputusan tim bersama BE-2, D-04) |
+| **Status** | Accepted (keputusan tim bersama BE-2, D-04); **diamandemen 2026-10-23** untuk Payment |
 | **Date** | 2026-10-19 |
 | **Concerns** | CN-03, CN-04, CN-09 |
 | **Related requirements** | SRS-C-09, SRS-D-10, SRS-D-11, SRS-Q-REL-09; rubrik kompetensi Level 3 "aplikasi event sourcing" |
@@ -517,6 +517,18 @@ Prinsip pemilihan: **(1)** sesuai tech radar klien, **(2)** setiap komponen puny
 - Negatif: dua tabel event dan proyeksi yang harus diuji; skema event perlu versioning; ukuran tabel event bertambah (diarsipkan setelah event selesai, sejalan dengan `PII_RETENTION_DAYS_AFTER_EVENT`).
 
 **Confirmation.** `pkg/eventstore` integration test (20 penulis paralel, tepat satu berhasil); trigger append-only diuji di DDL; TC-ES-01..TC-ES-05 (Test Plan Annex A); replay booking menghasilkan state yang sama dengan read model.
+
+**Amandemen 2026-10-23 (Payment → tabel state).** Diputuskan BE-1 dari audit `docs/evidence/2026-10-23-audit-backend.md` §11.
+- **Keputusan:** Payment memakai opsi A (tanpa event sourcing). `payment_attempts` menjadi sumber kebenaran. Setiap transisi berupa `UPDATE … WHERE status = ANY(<status asal sah>)` dalam satu transaksi dengan outbox. `payment_events` tetap ada (migrasi tidak diubah) tetapi tidak dipakai. Booking tetap memakai event sourcing.
+- **Alasan:**
+  - Kode Payment belum ada, dan Midtrans menjadi wajib sehingga effort integrasi bertambah.
+  - Event sourcing di Payment menambah 8 tipe event, proyeksi, dan retry `ErrConcurrency` tanpa kebutuhan baru dari PDF.
+  - Jejak audit pembayaran sudah tersedia di `payment_callbacks` (append, `UNIQUE (provider, fingerprint)`) dan log Midtrans.
+  - Rubrik Level 3 "aplikasi event sourcing" sudah dipenuhi Booking.
+- **Konsekuensi:**
+  - Riwayat transisi attempt tidak dapat di-replay; cukup dari `payment_callbacks` + `updated_at`.
+  - Kriteria "agregat bernilai audit" di atas tidak lagi berlaku untuk Payment.
+  - Perlu diinformasikan ke BE-2 karena keputusan awal dibuat bersama.
 
 ---
 

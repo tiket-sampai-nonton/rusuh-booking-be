@@ -28,12 +28,12 @@ Setiap task selesai bila `make ci` hijau.
     - _Requirements: 1.1_
 
 - [ ] 2. Implement middleware autentikasi & proteksi di `pkg/httpx`
-  - [ ] 2.1 `VisitorAuth`: cookie `rb_visitor` → fallback `X-Visitor-Token`; verifikasi `pkg/token.Verifier`; context `Visitor{ID,BuyerNikHash,Email}`
+  - [ ] 2.1 `VisitorAuth`: cookie `rb_visitor` → fallback `X-Visitor-Token`; verifikasi `pkg/token.Verifier`; context `Visitor{ID,BuyerNikHash,Email}` **[Prioritas — dipakai Payment Task 1/3, audit 2026-10-23]**
     - _Requirements: 2.1_
     - _Design: §2_
   - [ ] 2.2 `UserAuth` (Bearer user access token) → context `User{AccountID,HasNIK,NIKHash}`; `401` + `WWW-Authenticate`
     - _Requirements: 2.2_
-  - [ ] 2.3 `ServiceAuth(allowedIssuers)` untuk `/internal/v1/*`; `ServiceTokenSource` (TTL 5 m, re-sign < 30 s sisa) + helper klien internal yang menambah `Authorization` & `X-Request-ID`
+  - [ ] 2.3 `ServiceAuth(allowedIssuers)` untuk `/internal/v1/*`; `ServiceTokenSource` (TTL 5 m, re-sign < 30 s sisa) + helper klien internal yang menambah `Authorization` & `X-Request-ID` **[Prioritas — dipakai Payment Task 0.4/7.1/11 dan Booking via Payment Task 15.5, audit 2026-10-23]**
     - _Requirements: 2.3, 2.4_
   - [ ] 2.4 `RateLimit` berbasis Valkey (`IRateStore`) dengan `Retry-After`; `ClientIP(trustProxy)`
     - _Requirements: 2.5, 2.6_
@@ -58,7 +58,7 @@ Setiap task selesai bila `make ci` hijau.
     - _Design: §3_
   - [ ] 3.2 `Relay.RunOnce`: `FOR UPDATE SKIP LOCKED`, envelope (`messageId = outbox_events.id`), publish confirm, update `published_at` / `publish_attempts` + `last_error` + backoff `available_at`
     - _Requirements: 3.2, 3.3, 3.4_
-  - [ ] 3.3 Metrik lag outbox (umur pending tertua) lewat `pkg/telemetry`
+  - [ ] 3.3 Metrik lag outbox (umur pending tertua) lewat `pkg/telemetry` **[Backlog, audit 2026-10-23: tidak diminta NFR-09]**
     - _Requirements: 3.6_
     - _Depends on: 4.1_
   - [ ] 3.4 Integration test (PostgreSQL + RabbitMQ): publish sukses; confirm gagal → pending + attempts++; broker down lalu pulih → lag 0; dua relay paralel tanpa publish ganda
@@ -93,7 +93,7 @@ Setiap task selesai bila `make ci` hijau.
   - [ ] 5.3 Breaking-change check terhadap `main` (path/field/enum dihapus atau dipersempit → gagal)
     - **Property 7: Additive contracts**
     - _Requirements: 5.2_
-  - [ ] 5.4 Validasi payload terhadap schema sebelum publish (hook di `pkg/outbox.Write` / `pkg/rabbitmq.Publisher`), aktif di `local`/`ci`, mode log-only di `prod` bila dinilai mahal
+  - [ ] 5.4 Validasi payload terhadap schema sebelum publish (hook di `pkg/outbox.Write` / `pkg/rabbitmq.Publisher`), aktif di `local`/`ci`, mode log-only di `prod` bila dinilai mahal **[Digabung ke 12.2, audit 2026-10-23: test kontrak per producer cukup]**
     - _Requirements: 5.4_
   - [ ] 5.5 `tests/contract/`: runner yang memanggil service di compose dan memvalidasi respons + error envelope (TC-API-01/02)
     - _Requirements: 5.5_
@@ -113,10 +113,10 @@ Setiap task selesai bila `make ci` hijau.
   - [ ] 7.1 `deployments/edge/nginx.conf` + layanan `edge` di compose sesuai tabel routing design §7 (cache 1 s / 2 s, SSE tanpa buffering, `/internal/*` dan `/metrics` → 403)
     - **Property 4: Internal API closed**
     - _Requirements: 7.2_
-  - [ ] 7.2 `tools/seed` (data event sintetis lewat `POST /internal/v1/admin/events`) + target `make seed`
+  - [ ] 7.2 `tools/seed` (data event sintetis lewat `POST /internal/v1/admin/events`) + target `make seed` **[Catatan audit 2026-10-23: boleh diganti seed SQL bila endpoint admin dibekukan]**
     - _Requirements: 7.3_
     - _Depends on: booking tasks 13_
-  - [ ] 7.3 Profil compose `local-offline` dengan `PAYMENT_PROVIDER=simulator`, `APP_ENV=local-offline`
+  - [ ] 7.3 Profil compose `local-offline` dengan `PAYMENT_PROVIDER=simulator`, `APP_ENV=local-offline` **[Dihapus, audit 2026-10-23: Payment wajib Midtrans, tanpa simulator]**
     - _Requirements: 7.4_
   - [x] 7.5 Observability lokal (`make obs`): `deployments/observability/{prometheus,loki,alloy,grafana}`, profile `observability` di compose, target `make obs`, folder `logs/` di-ignore. Terverifikasi 2026-10-21: keempat komponen sehat; log file dan container RabbitMQ masuk Loki; pencarian `| json | requestId=…` berjalan; datasource + 2 dashboard ter-provision. Cara pakai: catatan lokal pemilik platform (tidak di-commit)
     - _Requirements: 7.6, 4.10_
@@ -130,7 +130,7 @@ Setiap task selesai bila `make ci` hijau.
 - [ ] 8. Gerbang CI tambahan
   - [ ] 8.1 Job `docs-diagrams`: render semua blok Mermaid di `docs/` dan `specs/` (mermaid-cli), gagal bila error
     - _Requirements: 8.2_
-  - [ ] 8.2 Cek `make mock` tanpa diff dan `go mod tidy` tanpa diff di `verify-code-quality`
+  - [ ] 8.2 Cek `make mock` tanpa diff dan `go mod tidy` tanpa diff di `verify-code-quality` **[Prioritas — mencegah drift `go.mod` seperti audit F8]**
     - _Requirements: 8.3_
   - [ ] 8.3 Pastikan `scan-package` gagal pada temuan critical/high tanpa file risk-acceptance
     - _Requirements: 8.4_
@@ -168,9 +168,9 @@ Setiap task selesai bila `make ci` hijau.
     - _Requirements: 11.6_
 
 - [ ] 12. Penyelarasan event lintas service
-  - [ ] 12.1 Konstanta bersama routing key + nama queue di `pkg/rabbitmq`, lalu ganti string di kelima service dalam satu PR (sekalian pindah ke `.v1`). Koordinasikan dengan DEV-2 karena menyentuh Booking, Queue, User
+  - [ ] 12.1 Konstanta bersama routing key + nama queue di `pkg/rabbitmq`, lalu ganti string di kelima service dalam satu PR (sekalian pindah ke `.v1`). Koordinasikan dengan DEV-2 karena menyentuh Booking, Queue, User **[Backlog, audit 2026-10-23 F17: routing key tanpa versi tetap dipakai]**
     - _Requirements: 12.1, 12.2_
-  - [ ] 12.2 Test kontrak payload di CI untuk semua event; harus menangkap defect `booking.journey.ended` (booking 12.R1)
+  - [ ] 12.2 Test kontrak payload di CI untuk semua event; harus menangkap defect `booking.journey.ended` (booking 12.R1) **[Prioritas — menangkap F5/F16; mencakup 5.4]**
     - _Requirements: 12.3_
     - _Depends on: 5.1_
 
@@ -188,8 +188,18 @@ Setiap task selesai bila `make ci` hijau.
   - Tanyakan ke user bila ada keputusan yang tertunda
 
 ## Notes
+- **Rekonsiliasi audit 2026-10-23** (`docs/evidence/2026-10-23-audit-backend.md` §10–11): untuk scope Payment/Notification, urutan platform adalah 8.2 → 2.1 → 2.3 → 3.1/3.2/3.4 → 12.2. Kerjakan dulu bagian yang hanya menyentuh `pkg/`, CI, Payment, dan Notification: `pkg/outbox` dibuat baru di `pkg/` (relay Booking tidak dipindah), middleware 2.1/2.3 belum dipasang di Queue/Booking/User, dan test kontrak 12.2 dimulai dari producer Payment/User-OTP serta consumer Notification. Pemasangan di service milik nuzirwan dan penghapusan `./tests` dari `go.work` menunggu koordinasi. Task bertanda Backlog dan daftar "Backlog nice-to-have" di bawah dikerjakan hanya setelah seluruh scope PDF terdeliver.
 - Urutan kerja yang disarankan untuk owner platform: 2.6 (format error) → 4.4 (redaksi log) → 5.2 (schema OTP) → 1 (`pkg/nik`) → 3 (`pkg/outbox`) → 7 (local) → 12 → 13. Task 9, 10, 11 menyusul setelah alur lokal jalan end-to-end.
 
 - Task bertanda **blocked** menunggu open question di `specs/README.md`; jangan diimplementasikan dengan asumsi.
 - Task 5.2 mengubah `docs/contracts/` — perubahan kontrak harus additive dan direview pemilik kontrak (ADR-017: klien mengunci ref).
 - `pkg/` tidak boleh berisi aturan bisnis: batas kuota, TTL, dan state machine tetap di service.
+
+## Backlog nice-to-have (setelah seluruh scope PDF terdeliver)
+
+Dicatat dari audit 2026-10-23. Bukan requirement PDF; kode yang sudah ada tidak dihapus, hanya tidak dikembangkan.
+
+- Booking: endpoint admin `POST/PATCH /internal/v1/admin/events` (back-office di luar scope PDF), edit pesanan (`PUT /bookings/{id}/items`), `deadline-extension`.
+- Payment: refund case dari `booking.review` (R8), sweeper attempt 7.2, alert Prometheus.
+- Notification: push FCM + API push subscription, OTP test lanjutan, metrik + alert DLQ.
+- Platform: 3.3, 9 (reconcile/redrive), 11 (Terraform/cloud), 12.1 (routing key `.v1`), 13 (retensi data), 4.3, 4.6, 6.2, 8.1.

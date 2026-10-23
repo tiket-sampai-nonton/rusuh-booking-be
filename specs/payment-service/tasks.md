@@ -1,105 +1,139 @@
 # Implementation Plan: Payment Service
 
-Owner: **kamu**. Penomoran Task 0–13 DEV-2 dipertahankan; isinya diselaraskan dengan
+Owner: **kamu**. Penomoran Task 0–14 DEV-2 dipertahankan; isinya diselaraskan dengan
 `requirements.md`/`design.md` terbaru. Kode bisnis Payment belum ada (baru boilerplate + migrasi).
+
+**Rekonsiliasi audit 2026-10-23** (`docs/evidence/2026-10-23-audit-backend.md` §10):
+- **Payment wajib Midtrans** (Sandbox sudah terdaftar). Simulator tidak dibangun; test memakai fake
+  `IPaymentGateway` (unit) dan `httptest` yang meniru Midtrans (integration). Task 12 dikeluarkan,
+  Task 9 (adapter Midtrans) dikerjakan sebelum Task 3.
+- Task yang tidak dibutuhkan PDF dipindah ke bagian "Dikeluarkan dari rencana" dengan ID tetap.
+- `requirements.md`, `design.md`, dan ADR-019 sudah diselaraskan (2026-10-23): tabel state (bukan event
+  sourcing), tanpa simulator, tanpa `deadline-extension`, routing key tanpa versi, refund case ke backlog.
 
 Prinsip implementasi supaya kode mudah dijelaskan:
 - satu usecase per file;
 - respons hanya berisi field yang ada di kontrak `payment.yaml`;
 - error memakai format ringkas platform 2.6, detail cukup di log;
-- simulator dikerjakan sebelum Midtrans (Task 12 dulu, lalu Task 3), supaya semua alur bisa diuji tanpa jaringan.
+- tidak ada panggilan Midtrans/Booking di dalam transaksi DB.
 
-Blocker dari pihak lain: booking Task 13 (`payable`, `payment-lock`, `deadline-extension`) milik DEV-2.
-Sambil menunggu, pakai klien Booking palsu di test.
+Perbaikan sisi Booking yang dibutuhkan Payment dikerjakan BE-1 sendiri (Task 15) dan diinfokan ke
+nuzirwan. **Task 15 dan E2E (Task 13) dikerjakan paling akhir** (keputusan 2026-10-23): semua task Payment
+lain memakai klien Booking palsu di test, sehingga tidak menyentuh kode nuzirwan. Temuan Booking lain (F2 selain endpoint Payment, F4, F7 umum, F9, F10, F11) tetap milik nuzirwan.
 
 ## Tasks
 
 - [ ] 0. Config + plumbing bersama
-  - Variabel sudah ditambahkan ke `services/payment/.env.example` (2026-10-21); yang tersisa membaca dan memvalidasinya di `internal/config`
-  - [ ] 0.1 Config: `PAYMENT_PROVIDER` (simulator/midtrans), `MIDTRANS_*`, `PAYMENT_METHODS_ENABLED`, `PAYMENT_PAGE_TOKEN_TTL_SECONDS`, `BOOKING_SERVICE_URL`, kunci token, nilai breaker (design §6) — fail-fast
+  - Variabel sudah ada di `services/payment/.env.example`; yang tersisa membaca dan memvalidasinya di `internal/config`
+  - [ ] 0.1 Config: `MIDTRANS_*` (server key wajib, environment, base URL), `PAYMENT_METHODS_ENABLED`, `PAYMENT_PAGE_TOKEN_TTL_SECONDS`, `BOOKING_SERVICE_URL`, kunci token, nilai breaker (design §6) — fail-fast. `PAYMENT_PROVIDER` tidak dipakai lagi (hanya Midtrans)
     - _Requirements: 11.2, 9.1_
   - [ ] 0.2 Domain attempt (status + transisi), VO metode/instruksi/order ID, error domain
     - _Requirements: 4.5, 4.6_
-  - [ ] 0.3 Event store (`payment_events`) + proyeksi `payment_attempts`, idempotency store, callback store, refund store
-    - **Property 1: At most one open attempt**
+  - [ ] 0.3 Penyimpanan attempt (tabel state) + idempotency store + callback store
+    - **Diputuskan 2026-10-23:** tabel state — transisi lewat `UPDATE … WHERE status = ANY(<asal sah>)` + outbox dalam satu transaksi (design §4, amandemen ADR-019). `payment_events` dan refund store tidak dipakai
+    - **Property 1: At most one open attempt** — integration test PostgreSQL: dua charge paralel untuk booking yang sama → satu attempt terbuka
     - _Requirements: 3.3, 5.1, 5.5_
-  - [ ] 0.4 Klien Booking internal (`payable`, `payment-lock`, `deadline-extension`) dengan service token + breaker
-    - _Depends on: platform 2.3, booking 13_
+  - [ ] 0.4 Klien Booking internal (`payable`, `payment-lock`) dengan service token + breaker. `deadline-extension` tidak dipanggil (lihat Task 3)
+    - _Depends on: platform 2.3. Test memakai Booking palsu; integrasi nyata lewat Task 15.1 dan 15.5_
     - _Requirements: 3.1, 3.2_
   - _Requirements: 11.1_
+
+- [ ] 9. Adapter Midtrans + circuit breaker (dikerjakan sebelum Task 3)
+  - Core API saja: charge (`bank_transfer` VA, `qris`, `gopay`), status `GET /v2/{order_id}/status`, cancel/expire. Fallback Snap tidak dibuat
+  - Verifikasi detail API Midtrans Sandbox ke dokumentasi resmi sebelum menulis adapter (`custom_expiry` minimum, format `gross_amount`, zona `settlement_time`); catat hasilnya di evidence
+  - Breaker `midtrans_charge` dan `midtrans_status` + bulkhead (`pkg/resilience`, `pkg/telemetry.BreakerObserver`); 4xx bisnis dan `context.Canceled` tidak dihitung gagal
+  - Test adapter dengan `httptest` (respons sukses, 4xx, timeout, 5xx) — tanpa jaringan
+  - _Requirements: 9.1, 9.2, 9.3, 9.4_
 
 - [ ] 1. Payment page `GET /api/v1/payments/{bookingId}/page`
   - Data dari `payable`; metode dari `PAYMENT_METHODS_ENABLED`; metode yang breaker-nya OPEN ditandai gangguan
   - Bukan pemilik: `404 NOT_FOUND` (OQ-19, konsisten dengan Booking)
+  - _Depends on: 0.4, platform 2.1_
   - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5_
 
 - [ ] 2. Page token untuk WebView
   - `POST page-tokens` (simpan hash saja) + `POST /api/v1/payment-page-sessions` (cookie `rb_pay`, sekali pakai)
+  - Koordinasikan alur dengan FE web (`/pay/{bookingId}`) dan mobile (WebView) sebelum implementasi
   - _Requirements: 2.1, 2.2, 2.3, 2.4_
 
-- [ ] 3. Buat attempt (charge) + event sourcing
+- [ ] 3. Buat attempt (charge)
   - Urutan: idempotency → `payment-lock` → tutup attempt lama bila ganti metode → simpan attempt `CREATED` → charge (di luar transaksi) → `PENDING` atau `UNKNOWN`
-  - Expiry di gateway tidak boleh melewati `paymentExpiresAt`; order ID `RB-{publicRef}-{attemptNo}`. `publicRef` kini wajib di `Payable` (kontrak `internal-booking.yaml` sudah diperbarui oleh DEV-2, OQ-21 selesai di sisi kontrak): `GetPayable()` mengembalikan `PublicRef`; kosong → gagalkan pembuatan attempt dengan error jelas. Booking harus mengisinya di `payable` (booking Task 13)
-  - _Depends on: 12, 0.4_
+  - Expiry di gateway tidak boleh melewati `paymentExpiresAt`; order ID `RB-{publicRef}-{attemptNo}`; `publicRef` kosong → gagalkan dengan error jelas
+  - Breaker charge OPEN → `503 PAYMENT_PROVIDER_UNAVAILABLE` tanpa memanggil gateway. **Tidak** meminta `deadline-extension` (R3.9): PDF BR-05 menetapkan TTL pembayaran 10 menit sejak booking, perpanjangan mengubah aturan bisnis (audit 2026-10-23)
+  - Test alur batal (dari Task 10): ganti metode → attempt lama `CANCELLED`, attempt baru `PENDING`, TTL booking tidak berubah
+  - _Depends on: 9, 0.3, 0.4_
   - **Property 2: No charge before lock**, **Property 5: Gateway expiry within booking deadline**, **Property 6: No duplicate order on ambiguous timeout**
-  - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.7, 3.8, 3.9, 3.10, 3.11_
+  - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.7, 3.8, 3.10, 3.11_
 
 - [ ] 4. Webhook + verifikasi signature
   - Signature SHA-512 constant-time; cek order, nominal, lingkungan; simpan callback sebelum balas 200; duplikat → 200 tanpa efek; status final tidak mundur
-  - Nominal tidak cocok (`gross_amount` ≠ `amount_minor` attempt): callback dicatat `REJECTED`/`ERROR`, state tidak berubah, `payment.succeeded` tidak diterbitkan, log + alert Ops. **Tidak** menambah status `REVIEW` pada attempt: migrasi `0001` tidak memuatnya dan tidak boleh diubah. `REVIEW` hanya status booking (booking 9.R2; usulan DEV-2 "Task 14" diselesaikan di sini, 2026-10-21)
+  - Nominal tidak cocok: callback dicatat `REJECTED`/`ERROR`, state tidak berubah, `payment.succeeded` tidak diterbitkan, log. **Tidak** menambah status `REVIEW` pada attempt (migrasi `0001` tidak memuatnya)
+  - Integration test PostgreSQL: callback yang sama dikirim paralel → satu perubahan state dan satu baris outbox
+  - Demo lokal: URL webhook publik lewat tunnel (mis. ngrok) didaftarkan di dashboard Midtrans Sandbox
   - **Property 3: Signature is the only proof**, **Property 4: Webhook idempotency & monotonic status**
   - _Requirements: 4.1, 4.2, 4.3, 4.4, 4.5, 4.6, 4.7_
 
 - [ ] 5. Settlement & publish event + relay outbox
-  - `SettlementReceived` → outbox `payment.succeeded`; gagal → `payment.failed`; settle terlambat tetap diterbitkan (Booking yang memutuskan REVIEW)
+  - `SUCCEEDED` → outbox `payment.succeeded`; `FAILED` → `payment.failed`; settle terlambat tetap diterbitkan (Booking yang memutuskan)
+  - Routing key **tanpa `.v1`** (`payment.succeeded`, `payment.failed`) agar cocok dengan consumer Booking yang sudah ada; penyelarasan ke `.v1` hanya lewat platform 12.1
+  - Payload divalidasi terhadap `payment.succeeded.v1.schema.json` / `payment.failed.v1.schema.json` di test
   - Relay memakai `pkg/outbox`
-  - _Depends on: platform 3_
+  - _Depends on: platform 3.1, 3.2, 3.4_
   - _Requirements: 5.1, 5.2, 5.3, 5.4, 5.5_
 
 - [ ] 6. Status `GET /api/v1/payments/{bookingId}/status` (read-only)
   - Usulan respons ringkas ke FE dicatat di OQ-22; implementasi awal ikuti kontrak
   - _Requirements: 6.1, 6.2, 6.3_
 
-- [ ] 7. Expiry sweeper & resolve
-  - `POST /internal/v1/payments/{bookingId}/resolve` (`CHECK` / `CHECK_AND_CANCEL`), breaker OPEN → `UNKNOWN`; resolve tidak membuka refund case
-  - Sweeper attempt: cek gateway dulu, baru expire/cancel; reconciler untuk attempt `UNKNOWN`
-  - **Property 8: Resolve never blocks**
-  - _Requirements: 7.1, 7.2, 7.3, 7.4, 7.5, 7.6, 7.7_
-
-- [ ] 8. Refund case dari `booking.review`
-  - Idempoten lewat `refund_cases.attempt_id UNIQUE`; alasan diturunkan dari data attempt; payload rusak → DLQ
-  - **Property 7: Refund case idempotent**
-  - _Requirements: 8.1, 8.2, 8.3, 8.4_
-
-- [ ] 9. Wiring circuit breaker + adapter Midtrans
-  - Breaker `midtrans_charge` dan `midtrans_status` + bulkhead; 4xx bisnis tidak dihitung gagal
-  - Verifikasi detail API Midtrans Sandbox ke dokumentasi resmi sebelum menulis adapter
-  - _Requirements: 9.1, 9.2, 9.3, 9.4_
-
-- [ ] 10. Cancel payment
-  - Tidak ada endpoint cancel publik di Payment: pembatalan dipicu Booking lewat resolve `CHECK_AND_CANCEL` (Task 7). Ganti metode (Task 3) membatalkan attempt lama
-  - Task ini cukup berupa test alur batal: sudah bayar → PAID, belum → CANCELLED (TC-PAY-09)
-  - _Requirements: 7.2, 3.10_
+- [ ] 7. Resolve untuk Booking
+  - [ ] 7.1 `POST /internal/v1/payments/{bookingId}/resolve` (`CHECK` / `CHECK_AND_CANCEL`) sesuai `internal-payment.yaml`; breaker OPEN → `UNKNOWN`; `SUCCEEDED` menerapkan settlement seperti Task 5; tidak membuka refund case
+    - _Depends on: 4, 5; verifikasi end-to-end: Task 15.2_
+    - **Property 8: Resolve never blocks**
+    - _Requirements: 7.1, 7.2, 7.3, 7.4, 7.5, 7.7_
+  - [ ] 7.2 Sweeper attempt `PENDING` lewat `expires_at` tanpa webhook: `CHECK` gateway dulu, baru expire. Prioritas rendah: expiry booking sudah memanggil resolve `CHECK_AND_CANCEL`, dan `custom_expiry` Midtrans ≤ deadline booking
+    - _Requirements: 7.6_
 
 - [ ] 11. Keamanan & isolasi
-  - `/internal/*` wajib service token; tidak ada data kartu, server key, token, atau payload provider di log/event
+  - `/internal/*` hanya menerima service token Booking (issuer/sub service), bukan token user atau admission token (pelajaran audit F2); kunci tidak ada → service gagal start
+  - Tidak ada data kartu, server key, token, signature, atau payload provider di log/event
   - _Requirements: 7.7, 11.4, 5.5_
 
-- [ ] 12. Simulator (dikerjakan sebelum Task 3)
-  - Adapter `simulator` dengan perilaku sama seperti Midtrans + endpoint `/api/v1/local-simulator/payments/{attemptId}/scenario`; hanya aktif di `local`/`ci` (OQ-20), hasil berlabel `SIMULATOR`
-  - _Requirements: 10.1, 10.2, 10.3, 10.4_
-
 - [ ] 13. Verifikasi akhir
-  - `make ci` hijau; TC-PAY-01..11, TC-RES-01/02 lulus dengan simulator; uji Sandbox manual + evidence
-  - Metrik dan alert setelah OQ-5
-  - _Depends on: platform 4.2_
+  - `make ci` hijau; TC-PAY-01..05, TC-PAY-09..11, TC-RES-01/02 lulus dengan fake gateway
+  - E2E manual Midtrans Sandbox: hold → charge VA → bayar lewat simulator dashboard Sandbox → webhook → booking `PAID` → email di Mailpit; simpan evidence
+  - Metrik `rbt_payment_attempts_total{method,status}`, `rbt_payment_webhooks_total{result}`, `rbt_payment_settlements_total{method}` lewat `pkg/telemetry` (platform 4.2 selesai). Alert ditunda
   - _Requirements: 11.3_
 
-- [ ] 14. Retensi data (keputusan 2026-10-21)
-  - [ ] 14.1 Job purge outbox: hapus baris terkirim > 7 hari
-    - _Depends on: platform 13.1_
-    - _Requirements: 5.6_
+- [ ] 15. Perbaikan sisi Booking untuk integrasi Payment (dikerjakan BE-1 paling akhir, diinfokan ke nuzirwan)
+  - Batas: hanya file di bawah; tidak mengubah alur hold/queue/sweeper sesi. Setiap sub-task punya test sendiri
+  - [ ] 15.1 (F3) `paymentLock` mengisi `verification_until = payment_expires_at` saat `PENDING_PAYMENT → VERIFYING`
+    - File: `services/booking/internal/booking/infrastructure/postgres/unit_of_work.go`
+    - Test: integration test PostgreSQL pertama di Booking (`postgres/unit_of_work_integration_test.go`): lock sukses, lock kedua idempoten
+  - [ ] 15.2 (F16) Klien resolve sesuai `internal-payment.yaml`: kirim `{mode: CHECK_AND_CANCEL}`, baca `outcome`; `SUCCEEDED` → review/settle seperti sekarang, `NOT_PAID`/`NO_ATTEMPT` → expire, `UNKNOWN` → kembalikan error (stok tetap ditahan, dicoba tick berikutnya)
+    - File: `infrastructure/paymentclient/client.go`, `port/outbound` (`ResolveResult`), `application/usecase/expire.go`
+    - Test: unit test klien (`httptest`) + usecase untuk keempat outcome
+  - [ ] 15.3 (F5) Payload `booking.paid` memuat `tickets[]` (`ticketCode`, `attendeeName`, `attendeeNikMasked`, `categoryCode`) dan `event` (`name`, `startsAt`, `venue`), dibaca di transaksi `settle`. `ticketLinkToken` dijadikan opsional di `booking.paid.v1.schema.json` dan `Validate()` Notification karena belum ada penerbit maupun pemakainya; email menampilkan kode tiket
+    - File: `unit_of_work.go` (settle), `docs/contracts/events/booking.paid.v1.schema.json`, `services/notification/internal/notification/domain/dto/booking_paid_payload.go` (+ template bila perlu)
+    - Test: payload `settle` lolos schema (`tools/contracts`), Notification menerima payload tanpa `ticketLinkToken`
+  - [ ] 15.4 (F6) `settle` atas booking yang tidak payable (`EXPIRED`/`CANCELLED`): tidak mengubah status/stok, tidak menerbitkan tiket; tulis outbox `booking.review` agar pembeli mendapat email (refund manual di dashboard Midtrans)
+    - File: `unit_of_work.go` (settle)
+    - Test: integration test — settle atas booking `EXPIRED` → status tetap, tidak ada tiket, satu baris outbox `booking.review`
+  - [ ] 15.5 (F2, khusus endpoint Payment) `GET …/payable` dan `POST …/payment-lock` hanya menerima service token Payment (issuer Payment) lewat `ServiceAuth` platform 2.3; token user/admission ditolak `401`. Endpoint internal lain tidak disentuh
+    - File: `internal/delivery/booking_module.go`, `infrastructure/http/internal_handler.go`
+    - Test: handler test — token Payment `200`, token user `401`, admission token `401`
+    - _Depends on: platform 2.3_
+  - Perkiraan: ±7 file Booking + 2 file kontrak/Notification, ±350 baris termasuk test
+
+## Dikeluarkan dari rencana (audit 2026-10-23)
+
+ID dipertahankan agar jejaknya jelas. Dikerjakan hanya bila ada keputusan baru.
+
+- 8. Refund case dari `booking.review` — PDF tidak meminta refund; `custom_expiry` ≤ deadline booking membuat settle terlambat jarang; Booking tetap membuat `REVIEW` dan Notification mengirim email review. Refund dilakukan manual di dashboard Midtrans.
+- 10. Cancel payment — sudah tercakup test di Task 3 (ganti metode) dan Task 7.1 (`CHECK_AND_CANCEL`).
+- 12. Simulator — digantikan Midtrans Sandbox (wajib) + fake gateway di test.
+- 14.1 Job purge outbox — retensi bukan requirement PDF; menunggu platform 13.1.
 
 ## Notes
 - Payment tidak memutuskan PAID/REVIEW; ia hanya melaporkan `settlementTime`.
 - Tidak ada panggilan gateway/Booking di dalam transaksi DB, dan tidak ada retry buta pada charge.
+- Urutan kerja: 0 → 9 → 3 → 4 → 5 → 7.1 → 6 → 1 → 2 → 11 → 15.1 → 15.5 → 15.3 → 15.4 → 15.2 → 13 (E2E). Task 15 dan 13 terakhir karena menyentuh kode Booking milik nuzirwan.

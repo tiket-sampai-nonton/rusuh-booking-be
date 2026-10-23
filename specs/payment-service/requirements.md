@@ -6,16 +6,18 @@
 | **Service** | `services/payment` |
 | **Port** | 8083 |
 | **Schema / Role** | `payment` / `svc_payment` |
-| **Owner** | BE-2 |
-| **Arsitektur** | Hexagonal + Event Sourcing agregat PaymentAttempt (ADR-019) |
+| **Owner** | BE-1 (arnu12rahman) |
+| **Arsitektur** | Hexagonal + tabel state `payment_attempts` (ADR-019 diamandemen 2026-10-23) |
 | **Sumber (urut prioritas)** | migrasi `0001_init`, `0002_event_store` → kontrak `docs/contracts/openapi/{payment,internal-payment,internal-booking}.yaml`, `docs/contracts/events/{payment.succeeded,payment.failed,booking.review}.v1.schema.json` → SRS §3.1.3, §3.2.13–3.2.19 → **SDD-RBT-001 §4.6.2–4.6.3** (breaker, aturan transaksi Midtrans, resolve) → `docs/analisa/04c-SDD-PAYMENT-001.md` |
 
 ## Introduction
 
-Payment Service mengintegrasikan Midtrans Sandbox (atau simulator lokal), menangani payment page
-(web + mobile WebView), charge (attempt), webhook, status, resolve untuk Booking, dan refund case.
-Siklus **PaymentAttempt** direkam dengan event sourcing: `payment_events` adalah sumber kebenaran,
-`payment_attempts` read model yang diproyeksikan sinkron dalam transaksi yang sama (ADR-019).
+Payment Service mengintegrasikan **Midtrans** (wajib; Sandbox untuk lokal/demo), menangani payment page
+(web + mobile WebView), charge (attempt), webhook, status, dan resolve untuk Booking.
+Status **PaymentAttempt** disimpan di tabel `payment_attempts`; setiap transisi adalah `UPDATE` bersyarat
+(status asal harus sah) dalam satu transaksi dengan outbox. Jejak audit dari provider ada di
+`payment_callbacks` (append, `UNIQUE (provider, fingerprint)`). Tabel `payment_events` (migrasi 0002) tidak
+dipakai; event sourcing sudah dibuktikan di Booking (amandemen ADR-019, audit 2026-10-23).
 
 Prinsip inti: (1) **signature webhook terverifikasi adalah satu-satunya bukti pembayaran**;
 (2) **paling banyak satu attempt terbuka per booking**; (3) **webhook idempoten dan out-of-order aman**;
@@ -29,7 +31,7 @@ Prinsip inti: (1) **signature webhook terverifikasi adalah satu-satunya bukti pe
 | Verb Cobra, config subset (`APP_*`, `LOG_*`, `HTTP_*`, `HEALTH_TIMEOUT`, `WORKER_INTERVAL`, `POSTGRES_*`, `RABBITMQ_*`), composition root, `GET /health` | `cmd/*`, `internal/config/*`, `internal/delivery/*` | ✅ |
 | Migrasi `payment_attempts`, `payment_callbacks`, `payment_page_tokens`, `refund_cases`, `idempotency_records`, `outbox_events`, `payment_events` (+ trigger append-only) | `deployments/migrations/0001_init`, `0002_event_store` | ✅ |
 | `pkg/resilience` (Breaker + Bulkhead, tanpa nilai default), `pkg/eventstore`, `pkg/apperror` | `pkg/` | ✅ (shared) |
-| Endpoint publik/internal, usecase, adapter Midtrans/simulator, webhook, event sourcing attempt, outbox relay, consumer `booking.review`, worker | — | ❌ |
+| Endpoint publik/internal, usecase, adapter Midtrans, webhook, penyimpanan attempt, outbox relay, worker | — | ❌ |
 
 ### Delta terhadap spec/SDD lama (ditandai Δ)
 
@@ -41,7 +43,7 @@ Prinsip inti: (1) **signature webhook terverifikasi adalah satu-satunya bukti pe
 | Δ4 | Resolve membuka refund case bila menemukan settle | Resolve hanya melaporkan `SUCCEEDED + settlementTime`; refund case dibuka dari `booking.review` (Booking yang menilai tepat waktu/terlambat) |
 | Δ5 | `custom_expiry` VA tetap 900 s | Diturunkan dari `paymentExpiresAt` booking (SRS-IF-21, SRS-F-26-05) |
 | Δ6 | Attempt baru disimpan setelah charge | Attempt `CREATED` (order ID deterministik) disimpan **sebelum** charge sehingga timeout ambigu dapat direkonsiliasi (SRS-F-14-05) |
-| Δ7 | Envelope `eventId`, routing key `payment.succeeded` | Envelope `messageId`; routing key berversi `payment.succeeded.v1` (K8) |
+| Δ7 | Envelope `eventId`, routing key berversi `payment.succeeded.v1` (K8) | Envelope `messageId`; routing key **tanpa versi** `payment.succeeded`/`payment.failed`, sama dengan consumer Booking dan konvensi kode semua service (audit 2026-10-23 F17) |
 | Δ8 | Error `BOOKING_EXPIRED` (410), `VISITOR_MISMATCH` (403), `ATTEMPT_IN_PROGRESS` (409) | Tidak ada di `payment.yaml` maupun SRS §3.1.4 — **OQ-19** |
 
 ## Glossary
@@ -91,13 +93,13 @@ Trace: SRS-F-14-03..07, SRS-F-19-01, SRS-IF-20, SRS-IF-21, SRS-F-26-05 · TC-PAY
 
 1. WHEN `POST /api/v1/payments/{bookingId}/attempts` dengan `Idempotency-Key` (16–64) dan `method ∈ {VA_BCA, VA_BNI, VA_BRI, VA_PERMATA, QRIS, GOPAY}`, THE service SHALL memanggil `POST /internal/v1/bookings/{id}/payment-lock` **lebih dulu**, dan hanya bila `outcome = OK` membuat transaksi di gateway dengan `gross_amount = amountMinor` versi terkunci (SRS-F-14-03/04, invarian #11).
 2. IF `payment-lock` mengembalikan `BOOKING_NOT_PAYABLE` atau `PAYMENT_EXPIRED`, THEN THE service SHALL menolak `409 BOOKING_NOT_PAYABLE` tanpa memanggil gateway.
-3. THE service SHALL menyimpan attempt `CREATED` (append `AttemptCreated`) dengan `provider_order_id = RB-{publicRef}-{attemptNo}` **sebelum** charge; paling banyak satu attempt terbuka per booking (`uq_attempt_open_per_booking`).
+3. THE service SHALL menyimpan attempt `CREATED` dengan `provider_order_id = RB-{publicRef}-{attemptNo}` **sebelum** charge; paling banyak satu attempt terbuka per booking (`uq_attempt_open_per_booking`).
 4. THE expiry transaksi di gateway SHALL tidak melewati `paymentExpiresAt` booking (`custom_expiry` dihitung dari sisa waktu) (SRS-IF-21, TC-PAY-02).
-5. WHEN charge berhasil, THE service SHALL append `InstructionIssued` (status `PENDING`, instruksi `VA`/`QR`/`DEEPLINK`) dan membalas `201 { attemptNo, method, status, bookingVersion, expiresAt, instruction }`.
+5. WHEN charge berhasil, THE service SHALL mengubah attempt ke `PENDING` (dengan instruksi `VA`/`QR`/`DEEPLINK`) dan membalas `201 { attemptNo, method, status, bookingVersion, expiresAt, instruction }`.
 6. WHEN request diulang dengan `Idempotency-Key` sama dan `request_hash` sama, THE service SHALL mengembalikan respons tersimpan tanpa charge ulang; key sama dengan payload berbeda → `409 IDEMPOTENCY_KEY_REUSED`.
 7. IF `method` tidak aktif, THEN `422 PAYMENT_METHOD_UNAVAILABLE`.
 8. IF gateway timeout/error ambigu, THEN THE service SHALL menandai attempt `UNKNOWN`, **tidak** membuat order baru, merekonsiliasi order yang sama lewat status check, dan membalas `503 PAYMENT_PROVIDER_UNAVAILABLE` (SRS-F-14-05, TC-PAY-05).
-9. WHILE breaker charge OPEN, THE service SHALL menolak cepat `503 PAYMENT_PROVIDER_UNAVAILABLE` tanpa memanggil gateway; IF booking belum pernah menerima instruksi pembayaran, THEN THE service SHALL meminta `POST /internal/v1/bookings/{id}/deadline-extension` sekali (`reason = PROVIDER_UNAVAILABLE`) (SRS-F-19-01, TC-PAY-08).
+9. WHILE breaker charge OPEN, THE service SHALL menolak cepat `503 PAYMENT_PROVIDER_UNAVAILABLE` tanpa memanggil gateway (SRS-F-19-01, TC-PAY-08). Payment **tidak** meminta `deadline-extension`: PDF BR-05 menetapkan TTL pembayaran 10 menit sejak booking (audit 2026-10-23 F18).
 10. WHEN pembeli mengganti metode saat ada attempt terbuka, THE service SHALL membatalkan attempt lama di gateway (`cancel`/`expire`, status `CANCELLED`) lalu membuat attempt baru; TTL booking tidak di-reset (SRS-F-14-06, TC-PAY-10).
 11. Memilih metode saja (tanpa menekan bayar / tanpa POST attempts) SHALL tidak mengunci pesanan (SRS-F-14-04).
 
@@ -125,12 +127,12 @@ Trace: SRS-F-16-01, SRS-F-16-03, SRS-Q-REL-04 · TC-PAY-03, TC-PAY-06, TC-CAP-03
 
 ### Acceptance Criteria (EARS)
 
-1. WHEN attempt menjadi `SUCCEEDED`, THE service SHALL dalam satu transaksi append `SettlementReceived` (`settlementTime`, `providerTxId`), memproyeksikan read model, dan menulis outbox `payment.succeeded.v1 { bookingId, attemptId, settlementTime, amountMinor, method }` (SRS-F-16-01).
-2. WHEN attempt menjadi `FAILED`, THE service SHALL menulis outbox `payment.failed.v1 { bookingId, attemptId, reason }`.
+1. WHEN attempt menjadi `SUCCEEDED`, THE service SHALL dalam satu transaksi mengubah attempt (`settlement_time`, `provider_transaction_id`) dan menulis outbox `payment.succeeded { bookingId, attemptId, settlementTime, amountMinor, method }` (payload sesuai `payment.succeeded.v1.schema.json`) (SRS-F-16-01).
+2. WHEN attempt menjadi `FAILED`, THE service SHALL menulis outbox `payment.failed { bookingId, attemptId, reason }`.
 3. THE service SHALL tidak menilai ketepatan waktu; `payment.succeeded` tetap diterbitkan untuk settlement terlambat sehingga Booking dapat membuat `REVIEW` (SRS-F-16-03, TC-PAY-06/07).
 4. THE outbox relay SHALL menerbitkan baris pending ke `rusuh.events` dengan publisher confirm (`pkg/outbox`, platform R3); broker down tidak menghilangkan event.
-5. THE payload event, outbox, dan log SHALL tidak memuat data kartu, `MIDTRANS_SERVER_KEY`, token, atau payload provider mentah (ditolak `pkg/eventstore` untuk event store).
-6. WHEN baris `outbox_events` sudah terkirim lebih dari `OUTBOX_RETENTION_DAYS` (7) hari, job worker SHALL menghapusnya (platform R13).
+5. THE payload event, outbox, dan log SHALL tidak memuat data kartu, `MIDTRANS_SERVER_KEY`, token, atau payload provider mentah .
+6. *(Backlog, audit 2026-10-23)* WHEN baris `outbox_events` sudah terkirim lebih dari `OUTBOX_RETENTION_DAYS` (7) hari, job worker SHALL menghapusnya (platform R13).
 
 ## Requirement 6 — Status Pembayaran
 
@@ -157,10 +159,12 @@ Trace: SRS-F-13-02, SRS-F-17-01..03, SRS-Q-REL-05, SRS-IF-34 · TC-PAY-04, TC-PA
 3. WHEN resolve menemukan `SUCCEEDED`, THE service SHALL menerapkan settlement seperti R5.1 (bila belum) dan mengembalikan `settlementTime`; **tidak** membuka refund case (Booking yang menilai tepat waktu; refund case lewat R8) (Δ4).
 4. WHILE breaker status OPEN atau gateway timeout, THE service SHALL mengembalikan `outcome = UNKNOWN` cepat (Booking menahan stok `VERIFYING` dan mencoba lagi).
 5. IF booking tidak punya attempt, THEN `outcome = NO_ATTEMPT`.
-6. WHEN attempt `PENDING` melewati `expires_at` tanpa webhook, THE expiry sweeper SHALL `CHECK` gateway lebih dulu; settle → R5.1; belum → append `AttemptExpired` dan batalkan di gateway (lewat breaker); attempt final di-skip.
+6. WHEN attempt `PENDING` melewati `expires_at` tanpa webhook, THE expiry sweeper SHALL `CHECK` gateway lebih dulu; settle → R5.1; belum → ubah attempt ke `EXPIRED` dan batalkan di gateway (lewat breaker); attempt final di-skip.
 7. THE endpoint `/internal/v1/*` SHALL menolak request tanpa service token valid (`401`) dan tidak dapat diakses dari ALB publik.
 
-## Requirement 8 — Refund Case dari `booking.review`
+## Requirement 8 — Refund Case dari `booking.review` [Backlog — di luar scope PDF, audit 2026-10-23]
+
+> Tidak dikerjakan dalam scope assessment. Pembayaran terlambat ditangani Booking (`REVIEW`) + email review dari Notification; refund manual di dashboard Midtrans.
 
 **User Story:** Sebagai Ops, saya ingin kasus refund dibuka otomatis saat pembayaran diterima tetapi tidak menghasilkan tiket, agar dana dapat dikembalikan manual lewat dashboard Midtrans.
 
@@ -186,7 +190,9 @@ Trace: SRS-F-19-01..03, D-40 · TC-RES-01, TC-RES-02, TC-PAY-08
 3. WHILE breaker OPEN, THE panggilan SHALL gagal cepat dengan fallback terdefinisi (R3.9 untuk charge, R7.4 untuk resolve).
 4. Perubahan state breaker SHALL dilaporkan sebagai metrik `breaker_state{name}` (platform R4.6).
 
-## Requirement 10 — Simulator Pembayaran
+## Requirement 10 — Simulator Pembayaran [Dihapus — Payment wajib Midtrans, audit 2026-10-23]
+
+> Pengganti: unit test memakai fake `IPaymentGateway`; integration test memakai `httptest` yang meniru Midtrans; E2E manual memakai Midtrans Sandbox. Acceptance criteria di bawah dipertahankan hanya sebagai jejak.
 
 **User Story:** Sebagai developer/QA, saya ingin mensimulasikan hasil gateway tanpa Midtrans nyata, agar CI dan uji offline dapat menjalankan semua skenario pembayaran.
 
@@ -209,7 +215,7 @@ Trace: D-23, D-24, SRS-Q-MNT-02, SRS-Q-SEC-03 · TC-OBS-01, TC-SEC-03
 
 1. WHEN `GET /health`, THE service SHALL mengembalikan `200 UP`/`503 DOWN` berdasarkan PostgreSQL & RabbitMQ dalam `HEALTH_TIMEOUT`. ✅ *Terimplementasi.*
 2. THE config SHALL divalidasi saat start (fail fast) — subset sudah ✅; harus diperluas untuk `PAYMENT_PROVIDER`, `MIDTRANS_*`, `PAYMENT_METHODS_ENABLED`, `PAYMENT_PAGE_TOKEN_TTL_SECONDS`, `BOOKING_SERVICE_URL`, kunci token, nilai breaker.
-3. THE service SHALL mengekspos metrik `rbt_payment_attempts_total{method,status}`, `rbt_payment_webhooks_total{status,result}`, `rbt_payment_settlements_total{method}`, latensi Midtrans per operasi, dan state breaker; alert `PaymentCircuitOpen`, `PaymentWebhookErrorRate`, `PaymentSettlementLag`, `PaymentRefundCasesOpen`.
+3. THE service SHALL mengekspos metrik `rbt_payment_attempts_total{method,status}`, `rbt_payment_webhooks_total{status,result}`, `rbt_payment_settlements_total{method}`, latensi Midtrans per operasi, dan state breaker; alert `PaymentCircuitOpen`, `PaymentWebhookErrorRate`, `PaymentSettlementLag` *(alert: backlog)*.
 4. Log SHALL tidak memuat NIK, email, server key, token, signature, atau payload provider mentah.
 
 ---
@@ -222,17 +228,17 @@ Trace: D-23, D-24, SRS-Q-MNT-02, SRS-Q-SEC-03 · TC-OBS-01, TC-SEC-03
 | I-2 | ≤ 1 attempt terbuka per booking; retry via Idempotency-Key, bukan charge baru | `uq_attempt_open_per_booking`, R3.3, R3.6, R3.8 |
 | I-3 | Webhook idempoten & status final tidak mundur | `UNIQUE(provider,fingerprint)`, R4.4–4.6 |
 | I-4 | Status hanya dari webhook/resolve, bukan klien | R6.2 |
-| I-5 | Event store append-only | trigger `trg_payment_events_*` |
+| I-5 | Transisi status hanya lewat `UPDATE` bersyarat dari status asal yang sah; `payment_callbacks` hanya ditambah | R4.6, design §4 |
 | I-6 | Perubahan uang ⇒ outbox dalam transaksi yang sama | R5.1, R5.2 |
 | I-7 | Tanpa PII/secret di event/outbox/log | R5.5, R11.4 |
-| I-8 | Refund case idempoten tanpa inbox | R8.1 |
+| I-8 | *(Backlog)* Refund case idempoten tanpa inbox | R8.1 |
 | I-9 | Tidak ada transaksi gateway sebelum `payment-lock` OK; nominal = versi terkunci | R3.1, R3.2 (invarian backend #11) |
 
 ## Build & Verify
 
 ```bash
 make infra keys
-cd services/payment && cp .env.example .env    # PAYMENT_PROVIDER=simulator
+cd services/payment && cp .env.example .env    # isi MIDTRANS_SERVER_KEY Sandbox, jangan di-commit
 go run ./cmd migrate up && go run ./cmd api & go run ./cmd worker &
 curl -fsS localhost:8083/health
 make build && make lint && make test && make test-integration && make cover && make ci
@@ -251,5 +257,5 @@ make build && make lint && make test && make test-integration && make cover && m
 | 7 Expiry/Resolve | F-13-02, F-17-01..03, Q-REL-05 | TC-PAY-04, TC-PAY-08, TC-PAY-09 |
 | 8 Refund case | F-17-05, F-90-03 | TC-PAY-07 |
 | 9 Breaker | F-19, D-40 | TC-RES-01/02, TC-PAY-08 |
-| 10 Simulator | IF-24, C-03 | CI |
+| 10 Simulator (dihapus) | IF-24, C-03 | — (fake gateway di CI) |
 | 11 Health/Obs | D-23, Q-MNT-02 | TC-OBS-01, TC-SEC-03 |

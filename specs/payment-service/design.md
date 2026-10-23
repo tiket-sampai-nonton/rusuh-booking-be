@@ -5,7 +5,7 @@
 | **Spec** | payment-service |
 | **Sumber desain** | SDD-RBT-001 §4.4 (DDL), §4.5.2–4.5.3, **§4.6.2 (breaker, retry ownership)**, **§4.6.3 (aturan transaksi Midtrans, pemetaan status, resolve)**, §4.7.2 (diagram webhook); `docs/analisa/04c-SDD-PAYMENT-001.md`; ADR-007, ADR-010, ADR-011, ADR-019 |
 | **Kontrak** | `docs/contracts/openapi/payment.yaml`, `internal-payment.yaml`, `internal-booking.yaml` (dipanggil), `events/{payment.succeeded,payment.failed,booking.review}.v1.schema.json` |
-| **Arsitektur** | Hexagonal (ports & adapters) + **Event Sourcing** (ADR-019) |
+| **Arsitektur** | Hexagonal (ports & adapters) + tabel state `payment_attempts` (ADR-019 diamandemen 2026-10-23) |
 | **Port** | 8083 · **Schema/Role** `payment`/`svc_payment` |
 | **Status implementasi** | Boilerplate — hanya slice health; sisanya TARGET |
 
@@ -19,33 +19,29 @@
 
 ```
 services/payment/internal/
-├── config/                      [IMPL subset] (+TARGET PAYMENT_PROVIDER/MIDTRANS_*/PAYMENT_METHODS_ENABLED/…)
+├── config/                      [IMPL subset] (+TARGET MIDTRANS_*/PAYMENT_METHODS_ENABLED/…)
 ├── delivery/                    [IMPL] composition root (server.go, worker.go, clients.go, serve.go)
 └── payment/
     ├── port/
     │   ├── inbound/   IGetPaymentPage, ICreatePageToken, IExchangePageToken, ICreateAttempt,
-    │   │              IGetPaymentStatus, IHandleWebhook, IResolvePayment, IExpireAttempts,
-    │   │              IOpenRefundCase, ISimulateScenario; errors.go
-    │   └── outbound/  IAttemptEventStore, IAttemptReadModel, ICallbackStore, IPageTokenStore,
-    │                  IRefundCaseStore, IOutboxWriter, IIdempotencyStore, IPaymentGateway,
-    │                  IBookingClient, IUnitOfWork, IClock
+    │   │              IGetPaymentStatus, IHandleWebhook, IResolvePayment, IExpireAttempts; errors.go
+    │   └── outbound/  IAttemptRepository, ICallbackStore, IPageTokenStore, IOutboxWriter,
+    │                  IIdempotencyStore, IPaymentGateway, IBookingClient, IUnitOfWork, IClock
     ├── domain/
-    │   ├── entity/      PaymentAttempt (agregat event-sourced, decide()), Callback, RefundCase, PageToken
+    │   ├── entity/      PaymentAttempt (status + aturan transisi), Callback, PageToken
     │   ├── valueobject/ Money, Method, AttemptStatus, Provider, Instruction, OrderID
     │   ├── dto/ mapper/
     ├── application/usecase/  satu usecase per file
     └── infrastructure/
-        ├── http/        handler publik + internal + simulator, Register(mux)
-        ├── postgres/    event store (pkg/eventstore) + read model + callbacks + idempotency + refund
-        ├── midtrans/    IPaymentGateway nyata (charge/status/cancel + verify signature) lewat breaker
-        ├── simulator/   IPaymentGateway lokal (PAYMENT_PROVIDER=simulator)
-        ├── bookingclient/ payable, payment-lock, deadline-extension (service token, breaker)
-        ├── rabbitmq/    consumer booking.review.v1 (publish lewat pkg/outbox relay)
+        ├── http/        handler publik + internal, Register(mux)
+        ├── postgres/    attempts + callbacks + idempotency + page token (+ pkg/outbox.Write)
+        ├── midtrans/    IPaymentGateway (Core API charge/status/cancel + verify signature) lewat breaker
+        ├── bookingclient/ payable, payment-lock (service token, breaker)
         └── healthcheck/ [IMPL]
 ```
 
 Prinsip: accept interfaces/return structs; usecase bergantung pada `port/outbound`; perilaku baru lewat
-adapter baru (simulator vs Midtrans); interface berawalan `I` hanya di `port/`; **panggilan eksternal
+adapter baru; interface berawalan `I` hanya di `port/`; **panggilan eksternal
 (Booking, Midtrans) tidak pernah di dalam transaksi DB**.
 
 ---
@@ -82,9 +78,7 @@ Envelope `{meta, data}`; error `ErrorEnvelope` tanpa SQL/stack/secret/payload pr
 - **Auth:** `signature_key` (SHA-512). Body `MidtransNotification` (`additionalProperties: true`).
 - **200** setelah callback tersimpan durable; **401 `WEBHOOK_SIGNATURE_INVALID`**.
 
-### 2.7 `POST /api/v1/local-simulator/payments/{attemptId}/scenario` (R10)
-- Aktif hanya pada lingkungan yang diizinkan (OQ-20); selain itu `404 NOT_FOUND`.
-- `{ scenario ∈ SETTLE|SETTLE_LATE|EXPIRE|DENY|TIMEOUT|DUPLICATE_WEBHOOK|OUT_OF_ORDER }` → **202**.
+### 2.7 ~~Simulator~~ (dihapus 2026-10-23: Payment wajib Midtrans; test memakai fake gateway)
 
 ### 2.8 `POST /internal/v1/payments/{bookingId}/resolve` (R7)
 - **Auth:** `serviceBearer` (ADR-011). **Request:** `{ mode ∈ {CHECK, CHECK_AND_CANCEL} }`.
@@ -103,54 +97,57 @@ Envelope `{meta, data}`; error `ErrorEnvelope` tanpa SQL/stack/secret/payload pr
 | `PAYMENT_PAGE_TOKEN_INVALID` | 403 | page-sessions | token salah/kedaluwarsa/dipakai |
 | `WEBHOOK_SIGNATURE_INVALID` | 401 | webhook | signature salah/kosong |
 | `UNAUTHORIZED` | 401 | internal | service token tidak valid |
-| `NOT_FOUND` | 404 | simulator, (bukan pemilik — OQ-19) | |
+| `NOT_FOUND` | 404 | bukan pemilik (OQ-19) | |
 | `DEPENDENCY_UNAVAILABLE` | 503 | page, attempts | Booking/DB tidak terjangkau |
 
 ---
 
 ## 3. Data Model (migrasi nyata)
 
-### 3.1 `payment_attempts` (read model, 0001)
+### 3.1 `payment_attempts` (sumber kebenaran status, 0001)
 `id`, `booking_id`, `attempt_no > 0`, `method` (6 enum), `provider` (`MIDTRANS|SIMULATOR`),
 `provider_order_id UNIQUE`, `provider_transaction_id`, `status` ∈ {`CREATED, PENDING, UNKNOWN,
 SUCCEEDED, FAILED, CANCELLED, EXPIRED, REFUND_REQUIRED, REFUNDED`}, `amount_minor`, `currency`,
-`expires_at`, `instruction jsonb`, `settlement_time`, `last_provider_status`, `stream_version` (0002).
+`expires_at`, `instruction jsonb`, `settlement_time`, `last_provider_status`. `provider` selalu `MIDTRANS`;
+`stream_version` (0002), `REFUND_REQUIRED`, dan `REFUNDED` tidak dipakai.
 - `UNIQUE (booking_id, attempt_no)`; CHECK settle-family ⇒ `settlement_time`.
 - **`uq_attempt_open_per_booking`** WHERE `status IN ('CREATED','PENDING','UNKNOWN')` ⇒ at-most-once charge (I-2).
 - `uq_attempt_provider_tx` parsial.
 
-### 3.2 `payment_events` (event store, 0002)
-PK `(stream_id, version)`; `event_type ~ '^[A-Z][A-Za-z]+$'`; `payload` tanpa data kartu/server key/token;
-trigger append-only + no-truncate (I-5).
+### 3.2 `payment_events` (event store, 0002) — tidak dipakai
+Tabel tetap ada karena migrasi tidak diubah. Lihat §4.
 
 ### 3.3 `payment_callbacks` — `UNIQUE (provider, fingerprint)`; `processing_result ∈ {RECEIVED, PROCESSED, DUPLICATE, REJECTED, ERROR}`.
 `fingerprint = SHA-256(order_id | transaction_status | status_code | transaction_id | settlement_time)`
 [desain: duplikat persis = fingerprint sama; progres status = fingerprint baru].
 
 ### 3.4 `payment_page_tokens` — `token_hash PK`, `booking_id`, `visitor_id`, `expires_at`, `used_at`.
-### 3.5 `refund_cases` — `attempt_id UNIQUE` (I-8), `reason ∈ {LATE_SETTLEMENT, SETTLED_AFTER_CANCEL, DUPLICATE_PAYMENT}`, `status ∈ {OPEN, REFUNDED, CLOSED}`.
+### 3.5 `refund_cases` — tidak dipakai (R8 backlog).
 ### 3.6 `idempotency_records` — PK `(scope, owner_id, idempotency_key)`; scope `create_attempt`, owner = visitorId.
 ### 3.7 `outbox_events` — sama dengan Booking; dipakai `pkg/outbox`.
 
-Tanpa `consumer_inbox` (v4.6): `booking.review` idempoten lewat `refund_cases.attempt_id UNIQUE`.
 
 ---
 
-## 4. Event Sourcing (ADR-019)
+## 4. Transisi Status (amandemen ADR-019, 2026-10-23)
 
-Stream = `payment_attempts.id`. Setiap transisi status = satu event; proyeksi + outbox dalam transaksi
-yang sama; `ErrConcurrency` ⇒ baca ulang, ulangi.
+Keputusan: **tabel state**, bukan event sourcing. Alasan: event sourcing di Payment menambah 8 tipe event,
+proyeksi, dan retry `ErrConcurrency` tanpa kebutuhan baru dari PDF; jejak audit provider sudah ada di
+`payment_callbacks`; kompetensi event sourcing sudah dibuktikan di Booking.
 
-| Event | Transisi | Dipicu oleh | Outbox |
+Setiap transisi = satu `UPDATE payment_attempts SET status=… WHERE id=$1 AND status = ANY($asal)`
+dalam satu transaksi dengan outbox (bila ada). `RowsAffected = 0` ⇒ transisi tidak sah atau sudah
+diterapkan (idempoten, status tidak mundur). Nama kolom "Event" di bawah hanya label transisi untuk log.
+
+| Transisi | Perubahan status | Dipicu oleh | Outbox |
 |-------|----------|-------------|--------|
 | `AttemptCreated` (`method`, `amountMinor`, `bookingVersion`, `orderId`) | ∅ → CREATED | ICreateAttempt, sebelum charge | — |
 | `InstructionIssued` (`type`, `bank?`, `vaMasked?`) | CREATED/UNKNOWN → PENDING | charge OK / rekonsiliasi UNKNOWN menemukan pending | — |
 | `AttemptUnknown` (`cause`) | CREATED → UNKNOWN | charge timeout/error ambigu | — |
-| `SettlementReceived` (`settlementTime`, `providerTxId`) | PENDING/UNKNOWN/CANCELLED/EXPIRED → SUCCEEDED | webhook `settlement` / resolve / sweeper CHECK | `payment.succeeded.v1` |
-| `AttemptFailed` (`reason`) | PENDING/UNKNOWN → FAILED | webhook `deny`/`failure` | `payment.failed.v1` |
+| `SettlementReceived` (`settlementTime`, `providerTxId`) | PENDING/UNKNOWN/CANCELLED/EXPIRED → SUCCEEDED | webhook `settlement` / resolve / sweeper CHECK | `payment.succeeded` |
+| `AttemptFailed` (`reason`) | PENDING/UNKNOWN → FAILED | webhook `deny`/`failure` | `payment.failed` |
 | `AttemptCancelled` | PENDING/UNKNOWN/CREATED → CANCELLED | ganti metode, resolve `CHECK_AND_CANCEL`, webhook `cancel` | — |
 | `AttemptExpired` | PENDING/UNKNOWN → EXPIRED | webhook `expire` / sweeper | — |
-| `RefundRequired` (`reason`) | SUCCEEDED → REFUND_REQUIRED | consumer `booking.review` | — |
 
 Nama mengikuti SDD-RBT §4.5.3 (`AttemptCreated`, `InstructionIssued`, `SettlementReceived`,
 `AttemptFailed`, `AttemptExpired`, `RefundRequired`); `AttemptUnknown` dan `AttemptCancelled`
@@ -161,15 +158,15 @@ mengubah `refund_cases.status` (refund dilakukan manual di dashboard Midtrans), 
 
 ### 4.1 State Machine
 ```
-   ∅ ─AttemptCreated─▶ CREATED ─InstructionIssued─▶ PENDING ─SettlementReceived─▶ SUCCEEDED ─RefundRequired─▶ REFUND_REQUIRED
+   ∅ ─AttemptCreated─▶ CREATED ─InstructionIssued─▶ PENDING ─SettlementReceived─▶ SUCCEEDED
                           │                            │  ├─AttemptFailed────▶ FAILED
                           │ timeout ambigu             │  ├─AttemptCancelled─▶ CANCELLED ──(settle di sela cancel)──▶ SUCCEEDED
                           ▼                            │  └─AttemptExpired───▶ EXPIRED   ──(settle terlambat)───────▶ SUCCEEDED
                        UNKNOWN ──(status check)────────┘
 ```
 `SUCCEEDED` dari `CANCELLED`/`EXPIRED` diizinkan karena gateway adalah sumber kebenaran uang (pembayaran
-di sela pembatalan, SDD C.4); Booking yang memutuskan `REVIEW`. Status `SUCCEEDED`, `FAILED`,
-`REFUNDED` tidak pernah turun (R4.6).
+di sela pembatalan, SDD C.4); Booking yang memutuskan `REVIEW`. Status `SUCCEEDED` dan `FAILED`
+tidak pernah turun (R4.6).
 
 ---
 
@@ -179,7 +176,7 @@ di sela pembatalan, SDD C.4); Booking yang memutuskan `REVIEW`. Status `SUCCEEDE
 - `order_id = RB-{publicRef}-{attemptNo}` (deterministik, unik) — Δ3. `Payable` di `internal-booking.yaml` belum memuat `publicRef` → **OQ-21** (tambah field additive, atau pakai `bookingId`).
 - `gross_amount = amountMinor` versi terkunci (IDR tanpa desimal).
 - `custom_expiry` = sisa detik sampai `paymentExpiresAt` (dibulatkan ke bawah, minimal 1 menit sesuai batas Midtrans — **verifikasi**), sehingga expiry gateway tidak melewati deadline booking (Δ5).
-- Pemetaan: `GOPAY→gopay`, `QRIS→qris`, `VA_BCA/BNI/BRI→bank_transfer{bank}`, `VA_PERMATA→permata|bank_transfer`. Fallback Snap `enabled_payments=[metode]` bila Core API metode tidak tersedia di Sandbox.
+- Pemetaan: `GOPAY→gopay`, `QRIS→qris`, `VA_BCA/BNI/BRI→bank_transfer{bank}`, `VA_PERMATA→permata|bank_transfer`. Core API saja; tidak ada fallback Snap (audit 2026-10-23).
 - Response → `Instruction`: VA `{type:VA, bank, vaNumber}`, QRIS `{type:QR, qrString}`, GoPay `{type:DEEPLINK, deeplinkUrl}` (web: QR).
 
 ### 5.2 Webhook verification (I-1)
@@ -194,9 +191,9 @@ order_id tak dikenal / gross_amount ≠ amount_minor / environment beda → call
 | Midtrans | Attempt | Event | Dampak Booking |
 |----------|---------|-------|----------------|
 | `pending` | PENDING | `InstructionIssued` (bila belum) | tetap menunggu |
-| `settlement` | SUCCEEDED | `SettlementReceived` | `payment.succeeded.v1` → PAID/REVIEW |
+| `settlement` | SUCCEEDED | `SettlementReceived` | `payment.succeeded` → PAID/REVIEW |
 | `capture` + `fraud_status=accept` | SUCCEEDED | `SettlementReceived` | hanya bila kartu aktif (di luar baseline) |
-| `deny`, `failure` | FAILED | `AttemptFailed` | `payment.failed.v1`, booking menunggu TTL |
+| `deny`, `failure` | FAILED | `AttemptFailed` | `payment.failed`, booking menunggu TTL |
 | `cancel` | CANCELLED | `AttemptCancelled` | booking menunggu TTL |
 | `expire` | EXPIRED | `AttemptExpired` | — |
 | `refund`, `partial_refund`, `chargeback` | dicatat (`last_provider_status`) | — | alert Ops, di luar MVP |
@@ -205,10 +202,10 @@ order_id tak dikenal / gross_amount ≠ amount_minor / environment beda → call
 
 ### 5.4 Environments
 
-| Lingkungan | `PAYMENT_PROVIDER` | Kunci |
-|------------|--------------------|-------|
-| CI / offline | `simulator` | — |
-| Lokal + demo | `midtrans` | Sandbox `SB-Mid-server-…` (SSM di demo) |
+| Lingkungan | Gateway | Kunci |
+|------------|---------|-------|
+| CI | fake `IPaymentGateway` / `httptest` | — |
+| Lokal + demo | Midtrans Sandbox (webhook lewat tunnel, mis. ngrok) | `SB-Mid-server-…` di `.env` lokal / secret deploy |
 
 ---
 
@@ -221,7 +218,7 @@ order_id tak dikenal / gross_amount ≠ amount_minor / environment beda → call
 |---------|--------:|-------:|---------:|------:|---------:|-------|
 | `midtrans_charge` | 3 s | 5 | 20 s | 1 | 20 | 0 (tanpa blind create) |
 | `midtrans_status` (status + cancel) | 2 s | 5 | 15 s | 1 | 10 | maks 2 |
-| `booking_internal` (payable, lock, extension) | 3 s [asumsi: SDD tidak punya kolom Payment→Booking; pakai nilai Booking→Payment] | 5 | 10 s | 1 | 20 | 0 |
+| `booking_internal` (payable, lock) | 3 s [asumsi: SDD tidak punya kolom Payment→Booking; pakai nilai Booking→Payment] | 5 | 10 s | 1 | 20 | 0 |
 
 `IsFailure`: error transport/5xx/timeout; 4xx bisnis dan `context.Canceled` tidak dihitung.
 `OnStateChange` → `breaker_state{name}`. Breaker lokal per instance.
@@ -258,19 +255,14 @@ correlationId?, payload }` (Δ7); `messageId = outbox_events.id`.
 
 | Routing key | Consumer queue | Payload (schema v1) |
 |-------------|----------------|---------------------|
-| `payment.succeeded.v1` | `booking.payment-succeeded` | `{ bookingId, attemptId, settlementTime, amountMinor, method }` |
-| `payment.failed.v1` | `booking.payment-failed` | `{ bookingId, attemptId, reason }` |
+| `payment.succeeded` | `booking.payment-events` | `{ bookingId, attemptId, settlementTime, amountMinor, method }` (schema `payment.succeeded.v1`) |
+| `payment.failed` | `booking.payment-events` | `{ bookingId, attemptId, reason }` (schema `payment.failed.v1`) |
+
+Routing key tanpa versi mengikuti consumer Booking yang ada (`services/booking/internal/booking/infrastructure/rabbitmq/consumer.go`); penggantian ke `.v1` hanya lewat platform 12.1 (backlog).
 
 ### 8.2 Consumed
 
-| Routing key | Queue | Payload | Aksi |
-|-------------|-------|---------|------|
-| `booking.review.v1` | `payment.booking-review` | `{ bookingId, attemptHint?, buyerEmail, amountMinor }` | pilih attempt `SUCCEEDED` booking (atau `attemptHint`); `INSERT refund_cases … ON CONFLICT (attempt_id) DO NOTHING`; append `RefundRequired` |
-
-Penentuan `reason`: `booking.review.v1` tidak membawa alasan [kontrak]. Payment menurunkannya dari datanya:
-attempt lain booking itu sudah `SUCCEEDED` lebih dulu → `DUPLICATE_PAYMENT`; attempt `CANCELLED`/`EXPIRED`
-sebelum settle → `SETTLED_AFTER_CANCEL`; selain itu → `LATE_SETTLEMENT` [asumsi desain; konfirmasi Ops].
-Retry berjenjang + DLQ; payload rusak → `rabbitmq.Permanent(err)`.
+Tidak ada dalam scope. Consumer `booking.review` (refund case) masuk backlog (R8).
 
 ---
 
@@ -290,7 +282,7 @@ Klien            Payment                                 Booking                
   │◀─ 201 Attempt ─│
 ```
 - Timeout/error ambigu → tx2: `AttemptUnknown`; 503; reconciler (§7.3) menyelesaikan order yang sama.
-- Breaker OPEN sebelum charge → `AttemptCancelled` (attempt CREATED ditutup) + `deadline-extension` (sekali, bila belum ada instruksi) → 503.
+- Breaker OPEN sebelum charge → `AttemptCancelled` (attempt CREATED ditutup) → 503. Tanpa `deadline-extension` (BR-05).
 - `payment-lock` bukan OK → idempotency COMPLETED dengan 409 → `409 BOOKING_NOT_PAYABLE`.
 
 ### 9.2 Webhook Flow
@@ -299,9 +291,9 @@ Midtrans → Payment: POST webhook
   verify signature (constant-time) → salah: callback REJECTED, 401
   INSERT callback ON CONFLICT (provider, fingerprint) DO NOTHING → konflik: DUPLICATE, 200
   validasi order/amount/environment/transisi legal
-  tx: event (§5.3) + proyeksi + outbox (bila uang) ; callback PROCESSED
+  tx: UPDATE bersyarat (§4) + outbox (bila uang) ; callback PROCESSED
   200
-(worker) relay → payment.succeeded.v1 / payment.failed.v1
+(worker) relay → payment.succeeded / payment.failed
 ```
 
 ### 9.3 Resolve Flow (Δ4)
@@ -324,7 +316,7 @@ Resolve **tidak** membuka refund case.
 (`payment`/`svc_payment`), `RABBITMQ_*`.
 
 **[TARGET]** (+ `Validate()` fail-fast):
-`PAYMENT_PROVIDER=simulator|midtrans`; `MIDTRANS_SERVER_KEY`, `MIDTRANS_CLIENT_KEY`,
+`MIDTRANS_SERVER_KEY` (wajib), `MIDTRANS_CLIENT_KEY`,
 `MIDTRANS_ENVIRONMENT=sandbox|production`, `MIDTRANS_BASE_URL` (sandbox: `https://api.sandbox.midtrans.com`);
 breaker per tabel §6: `MIDTRANS_{CHARGE|STATUS}_{TIMEOUT|FAILURE_THRESHOLD|COOLDOWN|BULKHEAD}`;
 `PAYMENT_METHODS_ENABLED=VA_BCA,VA_BNI,VA_BRI,QRIS,GOPAY` (SDD §4.10);
@@ -339,7 +331,7 @@ Queue), kunci privat service token. Spec lama: `MIDTRANS_CB_FAILURE_THRESHOLD=3`
 Metrik: `rbt_payment_attempts_total{method,status}`, `rbt_payment_webhooks_total{status,result}`,
 `rbt_payment_settlements_total{method}`, `rbt_payment_midtrans_latency_seconds{operation}`,
 `breaker_state{name}`. Alert: `PaymentCircuitOpen` (OPEN 2m, Critical), `PaymentWebhookErrorRate`
-(>5%/5m), `PaymentSettlementLag` (>5m), `PaymentRefundCasesOpen` (>10). Log tanpa NIK/email/server
+(>5%/5m), `PaymentSettlementLag` (>5m) — alert masuk backlog; metrik counter dikerjakan. Log tanpa NIK/email/server
 key/token/payload provider mentah (I-7).
 
 ---
@@ -370,9 +362,7 @@ Untuk setiap charge, waktu kedaluwarsa transaksi di gateway ≤ `paymentExpiresA
 Untuk setiap timeout charge, tidak ada `provider_order_id` baru dibuat sampai attempt `UNKNOWN` direkonsiliasi.
 **Validates: Requirement 3.8**
 
-### Property 7: Refund case idempotent
-Untuk setiap jumlah pengiriman ulang `booking.review.v1`, tepat satu `refund_cases` per attempt.
-**Validates: Requirement 8.1**
+### Property 7: Refund case idempotent — backlog (R8)
 
 ### Property 8: Resolve never blocks
 Untuk setiap resolve saat gateway tidak sehat, respons `UNKNOWN` dikembalikan dalam batas timeout breaker.
@@ -380,13 +370,13 @@ Untuk setiap resolve saat gateway tidak sehat, respons `UNKNOWN` dikembalikan da
 
 ## 13. Testing
 
-- **Unit:** signature (valid/salah/kosong), pemetaan status, `decide()` state machine, idempotency, proyeksi, breaker config, penurunan `reason` refund.
-- **Integration (`-tags integration`, PG + RabbitMQ):** append-only, `uq_attempt_open_per_booking` paralel, dedup callback, relay + confirm, refund idempoten, `ErrConcurrency`.
-- **Simulator E2E:** semua skenario §2.7 terhadap Booking nyata di compose.
+- **Unit:** signature (valid/salah/kosong), pemetaan status, aturan transisi, idempotency, breaker config, adapter Midtrans dengan `httptest`.
+- **Integration (`-tags integration`, PG + RabbitMQ):** `uq_attempt_open_per_booking` paralel, callback duplikat paralel → satu transisi + satu outbox, UPDATE bersyarat tidak menurunkan status, relay + confirm.
+- **E2E manual Midtrans Sandbox:** hold → charge VA → bayar lewat simulator dashboard Sandbox → webhook → booking `PAID` → email; evidence di `docs/evidence/`.
 - **TC:** TC-PAY-01..11, TC-MOB-01..03, TC-SEC-01..03, TC-RES-01/02, TC-EDT-04.
 - **Coverage:** logika ≥ 80%.
 
 ## 14. Build & Verify
-`make infra keys` → `cd services/payment && cp .env.example .env` (`PAYMENT_PROVIDER=simulator`) →
+`make infra keys` → `cd services/payment && cp .env.example .env` (isi kunci Sandbox) →
 `go run ./cmd migrate up` → `go run ./cmd api & go run ./cmd worker &` → `curl -fsS localhost:8083/health`;
 `make ci` hijau.

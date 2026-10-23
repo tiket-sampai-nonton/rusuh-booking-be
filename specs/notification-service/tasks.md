@@ -1,30 +1,29 @@
 # Implementation Plan: Notification Service
 
-Owner: **kamu** (inisialisasi kode oleh DEV-2). Penomoran task DEV-2 (0a, 0b, 1–10) dipertahankan;
+Owner: **kamu** (inisialisasi kode oleh DEV-2). Penomoran task DEV-2 (0a, 0b, 1–12) dipertahankan;
 isinya diselaraskan dengan `requirements.md`/`design.md` terbaru. Sub-task **R** = perbaikan kode yang
 sudah ada.
 
 Status 2026-10-21: semua consumer (email booking, push giliran, OTP), API push-subscription, repository
-delivery, adapter SMTP/FCM/template sudah ada dan `go test` lulus. Yang perlu diperbaiki:
-- **0a.R1** — email yang gagal tidak pernah dikirim ulang (bug klaim delivery).
-- **8.R1** — SMTP belum dilindungi breaker.
-- **0b.R1** — di lokal push dibuang diam-diam.
+delivery, adapter SMTP/FCM/template sudah ada dan `go test` lulus.
+
+**Rekonsiliasi audit 2026-10-23** (`docs/evidence/2026-10-23-audit-backend.md` §10):
+- **0a.R1 terkonfirmasi masih ada** dan menjadi prioritas utama: email yang gagal tidak pernah dikirim
+  ulang, sehingga retry NFR-10 tidak berjalan untuk FR-22/FR-23.
+- Email e-tiket juga belum pernah terkirim karena producer Booking melanggar kontrak `booking.paid`
+  (audit F5, milik DEV-2). Sisi Notification sudah sesuai kontrak; tidak perlu diubah.
+- Push, OTP, redrive, dan retensi bukan requirement PDF (yang diminta hanya email sukses/expired);
+  task terkait dipindah ke "Dikeluarkan dari rencana" dengan ID tetap.
 
 ## Tasks
 
 - [ ] 0a. Delivery entity, repository, idempotensi
   - Ada: `entity/delivery.go`, `postgres/delivery_repository.go` (`ClaimDelivery`, `MarkSent`, `MarkDead`, `BumpAttempt`)
-  - [ ] 0a.R1 **Bug:** `ClaimDelivery` memakai `ON CONFLICT DO NOTHING`. Saat pesan datang lagi dari retry queue, barisnya sudah ada (status `RETRY`) sehingga dianggap duplikat dan email tidak pernah terkirim. Ganti dengan klaim kondisional: boleh lanjut bila status `PENDING`/`RETRY` atau `SENDING` yang sudah basi (design §4.3)
+  - [ ] 0a.R1 **Bug (terkonfirmasi 2026-10-23, `delivery_repository.go:30`):** `ClaimDelivery` memakai `ON CONFLICT DO NOTHING`. Saat pesan datang lagi dari retry queue, barisnya sudah ada (status `RETRY`) sehingga dianggap duplikat dan email tidak pernah terkirim. Ganti dengan klaim kondisional: boleh lanjut bila status `PENDING`/`RETRY` atau `SENDING` yang sudah basi (design §4.3)
     - **Property 1: At most one send after success**, **Property 2: Retry eventually sends**
     - _Requirements: 8.1, 8.2, 2.2_
-  - [ ] 0a.2 Test repository: baris baru → klaim; `RETRY` → klaim; `SENT` → skip
+  - [ ] 0a.2 Integration test repository (PostgreSQL, tag `integration`): baris baru → klaim; `RETRY` → klaim; `SENDING` basi → klaim; `SENT` → skip; dua klaim paralel → hanya satu berhasil
     - _Requirements: 6.1, 6.2_
-
-- [ ] 0b. Config & env (SMTP, FCM, PII, template)
-  - Ada: struct `SMTP`, `FCM`, `PII` di `internal/config`
-  - [ ] 0b.R1 Push lokal sekarang `noopPush` (dibuang tanpa jejak). Ganti dengan adapter log (`PUSH_PROVIDER=log`) yang mencatat "push terkirim" tanpa token, supaya TC-QUE-13 bisa diamati di lokal/CI (SRS-IF-23)
-    - _Requirements: 11.2_
-  - _Requirements: 11.1_
 
 - [x] 0c. Penyedia email dapat dipilih: Mailpit atau Resend (selesai 2026-10-22, branch `feature/notification-email-provider`)
   - [x] 0c.1 Config `EMAIL_PROVIDER` (default `mailpit`), `EMAIL_FROM` (cadangan `SMTP_FROM`; pengirim default hanya untuk mailpit), `RESEND_API_KEY`; validasi fail-fast; peringatan tepat sekali saat start dengan resend
@@ -39,7 +38,7 @@ delivery, adapter SMTP/FCM/template sudah ada dan `go test` lulus. Yang perlu di
   - Uji nyata ke Resend belum dijalankan: lakukan manual dengan `EMAIL_PROVIDER=resend` ke alamat milikmu (kuota 100/hari), lalu kembalikan ke `mailpit`
 
 - [x] 1. Email e-tiket (`booking.paid`)
-  - [ ] 1.1 Test isi email: kode tiket, nama, NIK tersamar, tautan tiket (TC-TKT-02)
+  - [ ] 1.1 Test isi email: kode tiket, nama, NIK tersamar, tautan tiket (TC-TKT-02). Fixture payload diambil dari `booking.paid.v1.schema.json` (bukan payload Booking saat ini, yang belum sesuai kontrak — audit F5)
     - _Requirements: 1.4_
   - _Requirements: 1.1, 1.2, 1.3_
 
@@ -58,52 +57,33 @@ delivery, adapter SMTP/FCM/template sudah ada dan `go test` lulus. Yang perlu di
   - **Property 4: Late push discarded**
   - _Requirements: 5.1, 5.2, 5.3_
 
-- [ ] 6. API push subscription
-  - Ada: `POST /api/v1/push-subscriptions`, `DELETE /api/v1/push-subscriptions/{eventId}`
-  - [ ] 6.R1 Samakan format error dengan standar ringkas (platform 2.6)
-    - _Depends on: platform 2.6_
-    - _Requirements: 7.4_
-  - _Requirements: 7.1, 7.2, 7.3_
-
-- [ ] 7. Email OTP login (tanpa retry)
-  - Ada: consumer OTP di koneksi terpisah dengan `MaxRetries=0`, AAD dekripsi cocok dengan User
-  - OTP tidak dicatat di `deliveries` (skema tidak mendukung), sesuai R12.7, jadi migrasi `0002` tidak diperlukan
-  - [ ] 7.1 Setelah schema `otp.requested.v1` masuk kontrak (platform 5.2), tambah test kontrak payload
-    - _Depends on: platform 5.2_
-    - _Requirements: 12.1_
-  - [ ] 7.2 Test TC-MSG-05 (terkirim < 5 detik) dan TC-MSG-06 (dekripsi gagal → DLQ)
-    - **Property 3: Poison goes straight to DLQ**
-    - _Requirements: 12.3, 12.6_
-  - _Requirements: 12.2, 12.4, 12.5, 12.7_
-
-- [ ] 8. Retry & DLQ
-  - Ada: retry berjenjang + DLQ dari `pkg/rabbitmq`, `Permanent` untuk payload rusak
-  - [ ] 8.R1 Bungkus pengiriman SMTP dengan `pkg/resilience` breaker + bulkhead (timeout 3 s, ambang 5, cooldown 30 s, bulkhead 10). Breaker OPEN = gagal sementara → retry
-    - **Property 5: Notification failure never affects source**
-    - _Requirements: 9.5, 13.9_
-  - [ ] 8.2 Redrive DLQ lewat `tools/redrive` (TC-MSG-02)
-    - _Depends on: platform 9.3_
-    - _Requirements: 9.6_
-  - _Requirements: 9.1, 9.2, 9.3, 9.4_
-
-- [ ] 9. Privasi
-  - [ ] 9.1 Test log scan: tidak ada email, NIK, token push, atau kode OTP di log dan `last_error`
-    - **Property 6: No secret in logs**
-    - _Requirements: 11.3, 11.4_
-
 - [x] 10. Health endpoint
   - _Requirements: 10.1_
 
-- [ ] 11. Metrik (tambahan dari spec)
-  - [ ] 11.1 Jumlah terkirim/gagal per jenis + alert `NotificationDLQNotEmpty`, setelah OQ-5
-    - _Depends on: platform 4.2_
-    - _Requirements: 9.2_
+- [ ] 8. Retry & DLQ
+  - Ada: retry berjenjang + DLQ dari `pkg/rabbitmq`, `Permanent` untuk payload rusak (Property 3 sudah diuji di `pkg/rabbitmq/handle_test.go`)
+  - [ ] 8.R1 Bungkus pengiriman email dengan `pkg/resilience` breaker + bulkhead (timeout 3 s, ambang 5, cooldown 30 s, bulkhead 10). Breaker OPEN = gagal sementara → retry. Prioritas rendah (P2): retry queue sudah memenuhi NFR-10; kerjakan setelah 0a.R1
+    - **Property 5: Notification failure never affects source**
+    - _Requirements: 9.5, 13.9_
+  - _Requirements: 9.1, 9.2, 9.3, 9.4_
 
-- [ ] 12. Retensi data pribadi (keputusan 2026-10-21)
-  - [ ] 12.1 Job worker: hapus `push_subscriptions` yang `expires_at` lewat; purge `deliveries` lama. Bertahap (`LIMIT`), idempoten, log hanya jumlah baris
-    - _Depends on: platform 13.1_
-    - _Requirements: 11.5_
+- [ ] 9. Privasi
+  - [ ] 9.1 `last_error` menyimpan `err.Error()` mentah; balasan SMTP saat `RCPT` gagal (`smtp: rcpt: %w`) bisa memuat alamat penerima. Simpan hanya kelas error (mis. `smtp_rcpt`, `smtp_dial`) + test. Prioritas rendah: SMTP hanya dipakai Mailpit lokal, adapter Resend sudah membersihkan error. Redaksi log sudah dicakup platform 4.4
+    - **Property 6: No secret in logs**
+    - _Requirements: 11.3, 11.4_
+
+## Dikeluarkan dari rencana (audit 2026-10-23)
+
+ID dipertahankan agar jejaknya jelas. Kode yang sudah ada tidak dihapus, hanya tidak dikembangkan.
+
+- 0b.R1 Adapter push `log` — push bukan requirement PDF; `noopPush` cukup untuk lokal.
+- 6. API push subscription (6.R1 format error) — push di luar requirement PDF.
+- 7. Email OTP (7.1 test kontrak, 7.2 TC-MSG-05/06) — login OTP opsional menurut asumsi PDF; poison → DLQ sudah diuji di `pkg/rabbitmq`.
+- 8.2 Redrive DLQ (`tools/redrive`) — bergantung platform 9.3 yang berprioritas rendah; redrive manual lewat RabbitMQ management cukup untuk demo.
+- 11.1 Metrik notifikasi + alert — NFR-09 meminta metrik antrian, konversi, dan expired; jumlah DLQ terlihat di RabbitMQ management.
+- 12.1 Retensi data pribadi — bukan requirement PDF; menunggu platform 13.1.
 
 ## Notes
-- Nama queue sekarang gabungan (`notification.booking.events`, dst.) dan routing key tanpa `.v1`. Keduanya bekerja karena producer memakai nama yang sama; penyelarasan dikerjakan sekali di platform task 12.
+- Nama queue sekarang gabungan (`notification.booking.events`, dst.) dan routing key tanpa `.v1`. Keduanya bekerja karena producer memakai nama yang sama; jangan diganti kecuali lewat platform 12.1.
 - Notification tidak menerbitkan event dan tidak menulis stok/uang/akun (invarian #6).
+- Urutan kerja: 0a.R1 → 0a.2 → 1.1 → 8.R1 → 9.1.

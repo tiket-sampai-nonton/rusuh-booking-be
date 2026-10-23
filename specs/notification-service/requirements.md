@@ -56,7 +56,7 @@ Trace: SRS-F-20-02, SRS-F-20-03, SRS-F-21-01, SRS-IF-22 · TC-TKT-02, TC-PAY-03 
 
 ### Acceptance Criteria (EARS)
 
-1. WHEN `booking.paid.v1` diterima (queue `notification.booking-paid`), THE service SHALL merender template `eticket` dan mengirim email teks ke `buyerEmail` berisi `event.name`, `event.startsAt`, `event.venue`, `publicRef`, daftar `tickets` (`ticketCode`, `attendeeName`, `attendeeNikMasked`, `categoryCode`), dan tautan halaman tiket bertanda tangan (`ticketLinkToken`).
+1. WHEN `booking.paid.v1` diterima (queue `notification.booking-paid`), THE service SHALL merender template `eticket` dan mengirim email teks ke `buyerEmail` berisi `event.name`, `event.startsAt`, `event.venue`, `publicRef`, daftar `tickets` (`ticketCode`, `attendeeName`, `attendeeNikMasked`, `categoryCode`), dan tautan halaman tiket bertanda tangan (`ticketLinkToken`) **bila ada** — opsional sejak 2026-10-23 karena Booking belum menerbitkan token tersebut (payment Task 15.3).
 2. WHEN email terkirim, THE service SHALL memperbarui delivery `notification_type='BOOKING_PAID'`, `channel='EMAIL'` menjadi `SENT` dengan `sent_at` dan `provider_message_id`.
 3. IF payload tidak lengkap/korup sehingga template gagal dirender, THEN THE service SHALL memperlakukannya sebagai poison (`rabbitmq.Permanent`), menandai delivery `DEAD`, tanpa retry.
 4. THE email SHALL menampilkan NIK hanya dalam bentuk tersamar (mis. `3174********0001`).
