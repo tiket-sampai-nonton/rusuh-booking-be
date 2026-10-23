@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -51,8 +52,11 @@ func TestRecoverWritesEnvelope(t *testing.T) {
 	if err := json.NewDecoder(rec.Body).Decode(&env); err != nil {
 		t.Fatal(err)
 	}
-	if env.Meta.ErrorCode != apperror.CodeInternal || env.Meta.RequestID == "" || env.Meta.Code != 500 {
+	if env.Meta.Code != 500 || env.Meta.Message != "INTERNAL_ERROR: terjadi kesalahan internal" || env.Meta.RequestID != "" {
 		t.Fatalf("envelope = %+v", env)
+	}
+	if rec.Header().Get(HeaderRequestID) == "" {
+		t.Fatal("requestId harus ada di header X-Request-ID, bukan di body")
 	}
 }
 
@@ -75,5 +79,18 @@ func TestServeShutsDownOnCancel(t *testing.T) {
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("server did not shut down")
+	}
+}
+
+func TestRequestID_RejectsUnsafeIncomingValue(t *testing.T) {
+	h := Chain(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}), RequestID())
+	for _, bad := range []string{`a"b`, "spasi di sini", "{\"x\":1}", "tab\tid", "é", strings.Repeat("a", 129)} {
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.Header.Set(HeaderRequestID, bad)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if got := rec.Header().Get(HeaderRequestID); got == bad || len(got) != 32 {
+			t.Fatalf("id %q seharusnya diganti id baru, dapat %q", bad, got)
+		}
 	}
 }

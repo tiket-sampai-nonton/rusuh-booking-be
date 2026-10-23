@@ -36,6 +36,9 @@ dan Payment) → sisanya.
   - Ada: `allocate_batch.go`, `admission_repo.go` (`ALREADY_ACTIVE`, idempoten per `queueEntryId`), `POST /internal/v1/allocations:batch`, create/get/current session
   - [x] 4.R1 Endpoint yang dipanggil Queue belum ada: `GET /internal/v1/events/{eventId}/supply` (Status Publisher Queue gagal tanpa ini) dan `POST /internal/v1/allocations/{allocationId}:release`
     - _Requirements: 17.1, 17.2, 17.3_
+  - [ ] 4.R3 Booking panic saat start (`booking-api` dan `booking-worker` restart-loop di `make up`): pola `POST /internal/v1/allocations/{allocationId}:release` di `internal_handler.go:76` tidak valid untuk `http.ServeMux` (wildcard harus satu segmen penuh). Daftarkan `POST /internal/v1/allocations/{rest}` lalu pisahkan suffix `:release` di handler (kontrak `internal-booking.yaml` dan pemanggil Queue tidak berubah); tambah tes yang membangun mux agar panic terdeteksi di unit test
+    - _Requirements: 4.4_
+    - _Ditemukan: platform 7.6 (2026-10-22), `make up`_
   - [ ] 4.R2 Saat `free + allocated + held = 0`: tandai event `SOLD_OUT` dan tulis outbox `booking.sold_out`
     - _Requirements: 3.5_
   - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.6, 3.7, 3.8, 3.9, 3.10, 4.1, 4.2, 7.1, 7.2, 8.9_

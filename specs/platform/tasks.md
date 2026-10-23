@@ -13,7 +13,7 @@ Setiap task selesai bila `make ci` hijau.
 
 - [x] 0. Fondasi yang sudah ada (audit 2026-10-21)
   - `pkg/{apperror,clock,crypto,dotenv,eventstore,httpx(server,RequestID,Recover,strict JSON),logger,migrate,postgres,rabbitmq,resilience,token,valkey}` dengan test; evidence `docs/evidence/2026-10-19-boilerplate-v1.5.md`
-  - CI `ci.yml` (build, lint+depguard, coverage ≥80%, isolation, scan), compose infra + 5 service, `make keys` untuk User
+  - CI `ci.yml` (build, lint+depguard, coverage ≥80%, isolation, scan), compose infra + 5 service, `make keys` untuk User, Queue, Payment, Booking
   - _Requirements: 2.7, 2.8, 4.5, 6.2, 7.1, 8.1_
 
 - [x] 1. Implement `pkg/nik` validator struktur NIK
@@ -40,9 +40,12 @@ Setiap task selesai bila `make ci` hijau.
   - [ ] 2.5 Unit test: cookie vs header menghasilkan identitas sama; token kedaluwarsa; issuer tak dikenal; `aud` salah
     - **Property 4: Internal API closed**, **Property 5: Same auth for web and mobile**
     - _Requirements: 2.1, 2.3_
-  - [ ] 2.6 Format error standar: `pkg/apperror` mengirim hanya `{meta:{code, message}}` dengan `message = "KODE: pesan"` (atau pesan umum untuk 5xx); `requestId` di header `X-Request-ID`; `httpx.WriteError` menulis kode error, detail, error asli, dan payload request (diredaksi lewat 4.4) ke log. Satu perubahan di `pkg/` berlaku untuk lima service; beri tahu tim web/mobile
+  - [x] 2.6 Format error standar: `pkg/apperror` mengirim hanya `{meta:{code, message}}` dengan `message = "KODE: pesan"` (atau pesan umum untuk 5xx); `requestId` di header `X-Request-ID`; `httpx.WriteError` menulis kode error, detail, error asli, dan payload request (diredaksi lewat 4.4) ke log. Satu perubahan di `pkg/` berlaku untuk lima service; beri tahu tim web/mobile. Selesai 2026-10-22 (format meta saja): `apperror.Meta` hanya `code`+`message` (+`requestId` pada respons sukses), `ClientMessage()` = `KODE: pesan`, error internal selalu `INTERNAL_ERROR: terjadi kesalahan internal`; `WriteError` melog `requestId/status/errorCode/details/error` (level Error untuk 5xx, Info untuk 4xx) dan mengirim `Retry-After` untuk 429 dari `Details[retryAfterSeconds|retryAfter]`; kontrak OpenAPI: `errorCode`/`details` ditandai `deprecated`; 2 tes DEV-2 (booking, user) kini membaca kode dari awalan message. Belum: log payload request yang diredaksi (perlu menyimpan body di `DecodeJSON`) -> sub-task 2.6a
     - _Requirements: 2.8, 2.9_
     - _Depends on: 4.4_
+  - [ ] 2.6a Log payload request (diredaksi lewat `logger.Redact`, maks 4 KiB) pada `WriteError`: `RequestID()` menaruh pemegang di context, `DecodeJSON` menyalin bytes yang dibaca; hanya dipakai di jalur error
+    - _Requirements: 2.8_
+    - _Depends on: 2.6_
   - [ ] 2.7 **Temuan:** `httpx.CORS()` (DEV-2) dipasang tanpa syarat di `delivery/server.go` kelima service, jadi `Access-Control-Allow-Origin: *` aktif di semua lingkungan, padahal komentarnya "never enable in prod". Pasang hanya bila `APP_ENV=local`
     - _Requirements: 2.10_
   - Catatan: visitor auth sekarang ditulis ulang di tiap service (`security/visitor_auth.go`). Setelah 2.1 selesai, service bisa pindah ke versi `pkg/httpx`; tidak wajib sebelum demo
@@ -65,14 +68,14 @@ Setiap task selesai bila `make ci` hijau.
 - [ ] 4. Implement telemetry & redaksi log
   - [x] 4.1 Keputusan library: Prometheus client (`client_golang`) — dipilih karena paling sederhana dijelaskan dan langsung cocok dengan Prometheus/Grafana lokal; tracing penuh (OpenTelemetry) ditunda, korelasi cukup lewat `trace_id` di log. Tercatat sebagai ADR-023 di `docs/analisa/05-ADR-RBT.md`
     - _Requirements: 4.1_
-  - [ ] 4.2 `pkg/telemetry`: registry Prometheus, handler `GET /metrics`, middleware HTTP (`rbt_http_requests_total`, `rbt_http_request_duration_seconds`, route template), adaptor `OnStateChange` breaker → `breaker_state{name}`; pasang `/metrics` + middleware di `delivery/server.go` kelima service (sama dengan 4.5). Setelah selesai, dashboard "RBT — HTTP & Runtime" otomatis terisi
+  - [x] 4.2 `pkg/telemetry`: registry Prometheus, handler `GET /metrics`, middleware HTTP (`rbt_http_requests_total`, `rbt_http_request_duration_seconds`, route template), adaptor `OnStateChange` breaker → `breaker_state{name}`; pasang `/metrics` + middleware di `delivery/server.go` kelima service (sama dengan 4.5). Setelah selesai, dashboard "RBT — HTTP & Runtime" otomatis terisi. Selesai 2026-10-22: `pkg/telemetry` (registry sendiri + collector Go/proses, `Handler()`, `HTTP(service)`, `BreakerObserver()`), `GET /metrics` dan middleware di `delivery/server.go` kelima service, breaker Queue memakai `OnStateChange`. Route = template (`unmatched` untuk 404/405), method di luar daftar baku -> `OTHER`, `/health` dan `/metrics` tidak dihitung. Terverifikasi: Prometheus lokal 4 target UP (booking DOWN karena panic route, booking 4.R3), dashboard HTTP terisi. `breaker_state` baru muncul setelah breaker pertama kali berpindah state
     - _Requirements: 4.1, 4.2, 4.6_
   - [ ] 4.3 Lint/test yang menolak label berkardinalitas tinggi (allowlist label)
     - _Requirements: 4.3_
-  - [ ] 4.4 `pkg/logger` `ReplaceAttr` redaksi kunci sensitif (termasuk group bersarang) + test NIK/email tidak muncul
+  - [x] 4.4 `pkg/logger` `ReplaceAttr` redaksi kunci sensitif (termasuk group bersarang) + test NIK/email tidak muncul. Selesai 2026-10-22: `pkg/logger/redact.go` (`replaceAttr` dipasang di `logger.New`; kunci R4.4 dicocokkan tanpa membedakan huruf/`_`/`-`, akhiran token/secret/password/email/nik ikut, `code` hanya persis) dan `logger.Redact()` untuk payload `map[string]any`/`[]any` yang dipakai 2.6; test ~80 kasus (kunci x json/text x datar/group/With/WithGroup/map) gagal bila `ReplaceAttr` dicabut. Belum: scrub nilai string (email di teks error) dan struct mentah di `slog.Any` tidak ditelusuri, aturannya log skalar/map saja
     - **Property 6: PII never logged**
     - _Requirements: 4.4_
-  - [ ] 4.5 Middleware access log di `pkg/httpx` (field R4.7; lewati `/health`, `/metrics`) + `trace_id` dari `X-Amzn-Trace-Id` / `traceparent` dan diteruskan ke klien HTTP internal; log memuat `env`
+  - [x] 4.5 Middleware access log di `pkg/httpx` (field R4.7; lewati `/health`, `/metrics`) + `trace_id` dari `X-Amzn-Trace-Id` / `traceparent` dan diteruskan ke klien HTTP internal; log memuat `env`. Selesai 2026-10-22: `httpx.AccessLog` (satu baris `request`: method, route, status, duration_ms, bytes; WARN 4xx, ERROR 5xx; tanpa query string/header; lewati /health dan /metrics), `trace_id` dari `X-Amzn-Trace-Id` Root / `traceparent` / dibuat baru (divalidasi), `logger.ContextWith` menambah `requestId` dan `trace_id` pada log ber-context, field `env` lewat `logger.Config.Env` (root.go x5), `httpx.Propagate` dipasang di klien Queue->Booking dan Booking->Payment. Batas: baris log tanpa context (`Info(...)` biasa) tidak otomatis memuat requestId/trace_id; urutan chain wajib `RequestID, AccessLog, telemetry.HTTP, Recover, mux` agar `r.Pattern` terbaca
     - Pemasangan: satu baris di `internal/delivery/server.go` tiap service (`httpx.Chain(mux, …)`) dan field `env` di `cmd/root.go` (`logger.New`) — ini bagian task ini, tidak ada task logging terpisah per service. Menyentuh service nuzirwan (perubahan kecil, koordinasikan)
     - _Requirements: 4.7, 4.8_
     - _Depends on: 4.4_
@@ -82,9 +85,9 @@ Setiap task selesai bila `make ci` hijau.
     - _Requirements: 4.10_
 
 - [ ] 5. Lengkapi dan gerbangi kontrak
-  - [ ] 5.1 CI job `contracts`: validasi 7 OpenAPI 3.1 (kin-openapi) dan JSON Schema 2020-12, dipicu perubahan `docs/contracts/`
+  - [x] 5.1 CI job `contracts`: validasi 7 OpenAPI 3.1 (kin-openapi) dan JSON Schema 2020-12, dipicu perubahan `docs/contracts/`. Selesai 2026-10-22: modul `tools/contracts` (kin-openapi v0.152.0 + jsonschema/v6, format assertion aktif) memeriksa 7 OpenAPI wajib 3.1.x dan 12 schema event wajib `$schema` 2020-12; `make contracts` (juga bagian `make ci`); job `contracts` di `ci.yml` jalan hanya bila `docs/contracts/` atau `tools/contracts/` berubah (`detect-changes.sh` output `contracts`, diuji di repo git sementara); dependabot mencakup `/tools/contracts`. Pertama kali dijalankan, validator langsung menemukan ketujuh kontrak tidak valid YAML akibat deskripsi `Meta.message` task 2.6 (kutip) -> diperbaiki
     - _Requirements: 5.1_
-  - [ ] 5.2 Schema `otp.requested.v1.schema.json` sudah ada (DEV-2, checkpoint #1) ✅. Tersisa: tambah `user-service` ke enum `producer` di `envelope.schema.json` (additive) — tanpa ini envelope OTP dari User gagal validasi kontrak — **perlu persetujuan pemilik kontrak (OQ-4)**
+  - [x] 5.2 Schema `otp.requested.v1.schema.json` sudah ada (DEV-2, checkpoint #1) ✅. Tersisa: tambah `user-service` ke enum `producer` di `envelope.schema.json` (additive) — tanpa ini envelope OTP dari User gagal validasi kontrak — **perlu persetujuan pemilik kontrak (OQ-4)**. Selesai sisi kontrak 2026-10-22: schema OTP dan enum `user-service` valid, tes `tools/contracts` memverifikasi envelope OTP lulus dan `producer:"user"` ditolak. TEMUAN: `otp_publisher.go` masih memakai `producerName = "user"` sehingga envelope nyata gagal kontrak -> ditangani user 1.R3 (kode nuzirwan, tidak disentuh di task ini)
     - Catatan: `user-service` sudah ditambahkan ke enum `producer` di `envelope.schema.json` ✅
     - _Requirements: 5.3_
   - [ ] 5.3 Breaking-change check terhadap `main` (path/field/enum dihapus atau dipersempit → gagal)
@@ -97,7 +100,7 @@ Setiap task selesai bila `make ci` hijau.
     - _Depends on: service spec endpoint selesai_
 
 - [ ] 6. Kunci & secret
-  - [ ] 6.1 Perluas `make keys`: kunci Ed25519 untuk Queue (visitor/queue/admission), Payment (page token), Booking (ticket link), dan service token per pemanggil; mount ke compose; tetap di `.gitignore`
+  - [x] 6.1 Perluas `make keys`: kunci Ed25519 untuk Queue (visitor/queue/admission), Payment (page token), Booking (ticket link), dan service token per pemanggil; mount ke compose; tetap di `.gitignore`. Selesai 2026-10-22: `make keys` idempoten membuat `{user,queue,payment,booking}-token(.pub).pem` (0644 untuk container nonroot); folder dimount `/run/keys` ke Queue, Notification, User. Kunci Payment/Booking dibuat tetapi belum dipakai kode (belum ada konsumen); service token per pemanggil ditunda sampai ada pemanggilnya
     - _Requirements: 6.1, 6.3_
   - [ ] 6.4 Seragamkan nama variabel kunci: `TOKEN_PUBLIC_KEY_FILE` (Queue, Notification) vs `TOKEN_PUBLIC_KEY_PATH` (Booking), `PII_HMAC_KEY` (Queue) vs `PII_HASH_KEY` (lainnya); satu nama untuk satu arti, koordinasikan dengan nuzirwan
     - _Requirements: 6.3_
@@ -117,7 +120,7 @@ Setiap task selesai bila `make ci` hijau.
     - _Requirements: 7.4_
   - [x] 7.5 Observability lokal (`make obs`): `deployments/observability/{prometheus,loki,alloy,grafana}`, profile `observability` di compose, target `make obs`, folder `logs/` di-ignore. Terverifikasi 2026-10-21: keempat komponen sehat; log file dan container RabbitMQ masuk Loki; pencarian `| json | requestId=…` berjalan; datasource + 2 dashboard ter-provision. Cara pakai: catatan lokal pemilik platform (tidak di-commit)
     - _Requirements: 7.6, 4.10_
-  - [ ] 7.6 Perbaiki temuan uji lokal 2026-10-21: (a) `make up` — hanya User yang punya kunci di compose, jadi Queue/Booking/Notification berhenti saat start (config fail-fast); isi env kunci/PII untuk semuanya dan lengkapi `.env.example`; (b) worker Notification dan Payment ikut membuka HTTP di `APP_PORT` sehingga bentrok dengan `api` saat dijalankan dari source dengan `.env` yang sama; beri `APP_PORT` terpisah atau jangan buka HTTP di worker
+  - [x] 7.6 Perbaiki temuan uji lokal 2026-10-21: (a) `make up` — hanya User yang punya kunci di compose, jadi Queue/Booking/Notification berhenti saat start (config fail-fast); isi env kunci/PII untuk semuanya dan lengkapi `.env.example`; (b) worker Notification dan Payment ikut membuka HTTP di `APP_PORT` sehingga bentrok dengan `api` saat dijalankan dari source dengan `.env` yang sama; beri `APP_PORT` terpisah atau jangan buka HTTP di worker. Selesai 2026-10-22: compose memberi Queue/Notification env kunci, PII (anchor `x-pii`, `PII_HMAC_KEY` Queue = `PII_HASH_KEY` User), `BOOKING_SERVICE_URL`; `.env.example` Queue/Notification dilengkapi; target `make worker-<svc>` menjalankan worker di `APP_PORT`+100 (api + worker dari source berjalan bersamaan, diuji notification 8084/8184; di Docker tidak bentrok karena container terpisah). Hasil `make up`: queue, payment, notification, user healthy; booking restart-loop karena panic route ServeMux milik DEV-2 (booking 4.R3), bukan konfigurasi
     - _Requirements: 7.1, 6.1_
     - _Depends on: 6.1_
   - [ ] 7.4 `make smoke`: alur bahagia lewat edge

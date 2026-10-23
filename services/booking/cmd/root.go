@@ -37,6 +37,7 @@ var rootCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		cfg.Log.Env = cfg.App.Env
 		l, err := logger.New(os.Stdout, cfg.Log, config.ServiceName, cmd.Name())
 		if err != nil {
 			return err
