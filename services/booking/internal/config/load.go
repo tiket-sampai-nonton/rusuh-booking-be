@@ -27,7 +27,10 @@ func Load() (Config, error) {
 			ShutdownTimeout: r.Duration("HTTP_SHUTDOWN_TIMEOUT", 15*time.Second),
 			HealthTimeout:   r.Duration("HEALTH_TIMEOUT", 2*time.Second),
 		},
-		Worker: Worker{Interval: r.Duration("WORKER_INTERVAL", 5*time.Second)},
+		Worker: Worker{
+			Interval:           r.Duration("WORKER_INTERVAL", 5*time.Second),
+			VerifyGraceSeconds: r.Int("VERIFY_GRACE_SECONDS", 180),
+		},
 	}
 
 	cfg.Postgres = postgres.Config{

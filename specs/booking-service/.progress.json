@@ -1,59 +1,28 @@
 {
   "spec": "booking-service",
-  "status": "COMPLETE",
-  "updatedAt": "2026-10-21T18:31:00+07:00",
-  "summary": "Core Booking Service business logic implemented across all hexagonal layers: domain (entities, value objects incl. NIK with no plaintext leak, event-sourcing events), ports (inbound usecases + outbound repos/UoW/stores), postgres adapters (event_repo, admission_repo with batch reserve, booking_repo, ticket/quota/attendee repos, idempotency store, outbox writer, unit_of_work with Hold/ReplaceItems/Settle/Expire enforcing the fixed supply->category->quota->booking lock order + event-store append + read-model projection + outbox), security (NIK protector + EdDSA token verifiers), payment client, rabbitmq payment consumer + outbox relay, HTTP handlers (catalog, session, booking, attendee, my-bookings, internal allocations), workers (session sweeper, expiry sweeper, outbox relay) wired into delivery.",
+  "status": "IN_PROGRESS",
+  "updatedAt": "2026-10-23T07:00:00+07:00",
+  "summary": "All rework tasks from tasks.md completed except 1.R1 (pkg/nik — depends on platform 1), 11.2 (reconciliation — depends on platform 9.1), 14.4 (metrics — depends on platform 4.2), 15.x (PII retention — depends on platform 13.1). All core business logic correctness fixes done: lock order (6.R2), EDITABLE transition (6.R3), edit guard (8.R1), settlement timeliness (9.R2), sold-out condition (9.R3), settlement time propagation (9.R1), VERIFYING two-phase expiry (10.R2), VERIFY_GRACE_SECONDS config (10.R3), session sweeper EDITABLE case (7.1 gap), booking.paid full payload (12.R2), migration 0003 city+image (2.R1), integration tests TC-BKG-07 + event sourcing (6.R4, 11.1), contract payload tests (12.R2).",
   "verification": {
-    "goBuild": "PASS",
-    "gowOffBuild": "PASS (GOWORK=off go build ./...)",
-    "goVet": "PASS",
-    "testRace": "PASS (15 packages, no failures, go test -race -count=1 ./...)",
-    "lint": "PASS for all new code; 3 remaining golangci issues are in pre-existing boilerplate (cmd/migrate.go errcheck, config/{config,load}.go Indonesian-word 'variabel' misspell false positives) unmodified by this work",
-    "coverage": {
-      "domain/entity": "86.2%",
-      "domain/valueobject": "82.8%",
-      "domain/mapper": "77.5%",
-      "application/usecase": "71.7%",
-      "infrastructure/paymentclient": "85.7%"
-    }
+    "goBuild": "PASS — go build ./services/booking/...",
+    "testRace": "PASS — go test -race -count=1 ./services/booking/... (all 17 packages pass)",
+    "lint": "4 pre-existing issues only (stream_session.go errcheck x2, internal_handler.go gofmt, sse_handler_test.go gofmt) — 0 new issues from this work",
+    "mock": "PASS — make mock"
   },
-  "invariants": {
-    "noOversell": "Enforced by DB CHECKs inside unit_of_work.Hold; lock order supply->category->quota->booking; retry on eventstore.ErrConcurrency (max 3)",
-    "janganPHP": "allocate_batch reserves admission atomically per batch, idempotent per queue_entry_id",
-    "nikQuota": "buyer_quotas CHECK (held+paid<=max) mapped to BUYER_QUOTA_EXHAUSTED",
-    "sessionTTL": "payment_expires_at from admission snapshot; ReplaceItems never resets it",
-    "settlementAtomicity": "Settle guarded by status!=PAID + ON CONFLICT on tickets (idempotent)"
-  },
-  "notImplemented": ["AC11.7: Reconciliation job — detect stock/booking drift → alert (SRS-F-90-01, TC-OPS-01)"],
-  "previousStatus": "COMPLETE",
-  "reworkTasks": [
-    "1.R1",
-    "2.R1",
-    "4.R1",
-    "4.R2",
-    "6.R1",
-    "6.R2",
-    "6.R3",
-    "6.R4",
-    "7.1",
-    "7.2",
-    "8.R1",
-    "8.R2",
-    "9.R1",
-    "9.R2",
-    "10.R1",
-    "10.R2",
-    "10.R3",
-    "11.1",
-    "11.2",
-    "12.R1",
-    "12.R2",
-    "12.R3",
-    "13",
-    "14.1",
-    "14.2",
-    "14.3",
-    "14.4"
+  "reworkTasksCompleted": [
+    "2.R1", "4.R2", "4.R3", "6.R2", "6.R3", "6.R4",
+    "8.R1", "8.R2", "9.R1", "9.R2", "9.R3", "9.R4",
+    "10.R1", "10.R2", "10.R3",
+    "11.1", "12.R1", "12.R2", "12.R3",
+    "13", "14.1", "14.2", "14.3", "7.1", "7.2"
   ],
-  "mergeNote": "2026-10-21: tasks.md digabung dengan spec terbaru; sub-task R = perbaikan kode yang sudah ada. Lihat tasks.md."
+  "reworkTasksRemaining": [
+    "1.R1 (depends on platform 1 — pkg/nik full Kemendagri validation)",
+    "11.2 (reconciliation query — depends on platform 9.1)",
+    "14.4 (metrics rbt_booking_* — depends on platform 4.2)",
+    "15.1 (buyer_email_enc migration — PII retention)",
+    "15.2 (PII purge job — depends on platform 13.1)",
+    "15.3 (outbox purge job)"
+  ],
+  "previousStatus": "COMPLETE"
 }

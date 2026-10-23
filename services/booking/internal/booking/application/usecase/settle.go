@@ -25,10 +25,11 @@ func (uc *Settle) Settle(ctx context.Context, cmd inbound.SettleCommand) error {
 		return inbound.Validation("bookingId", "bookingId harus UUID")
 	}
 	_, err := uc.uow.Settle(ctx, outbound.SettleSpec{
-		BookingID:     cmd.BookingID,
-		Method:        cmd.Method,
-		TicketCodeFn:  func(string) string { return uc.ids.NewPublicRef() },
-		CorrelationID: cmd.CorrelationID,
+		BookingID:      cmd.BookingID,
+		Method:         cmd.Method,
+		SettlementTime: cmd.SettlementTime,
+		TicketCodeFn:   func(string) string { return uc.ids.NewPublicRef() },
+		CorrelationID:  cmd.CorrelationID,
 	})
 	return err
 }

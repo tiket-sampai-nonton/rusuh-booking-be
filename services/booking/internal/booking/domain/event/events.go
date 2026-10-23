@@ -8,6 +8,7 @@ const (
 	TypeBookingHeld          = "BookingHeld"
 	TypeBookingItemsReplaced = "BookingItemsReplaced"
 	TypeBookingLocked        = "BookingLocked"
+	TypePaymentVerifying     = "PaymentVerifying" // Phase A of expiry: PENDING_PAYMENT → VERIFYING (design §7.2)
 	TypeBookingPaid          = "BookingPaid"
 	TypeBookingExpired       = "BookingExpired"
 	TypeBookingReview        = "BookingReview"
@@ -61,4 +62,9 @@ type BookingExpired struct {
 type BookingReview struct {
 	BookingID   string `json:"bookingId"`
 	AmountMinor int64  `json:"amountMinor"`
+}
+
+// PaymentVerifying is appended in Phase A of expiry when PENDING_PAYMENT moves to VERIFYING.
+type PaymentVerifying struct {
+	BookingID string `json:"bookingId"`
 }

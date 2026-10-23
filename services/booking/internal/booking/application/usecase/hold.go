@@ -78,6 +78,8 @@ func (uc *Hold) Hold(ctx context.Context, cmd inbound.HoldCommand) (dto.Booking,
 		PaymentExpiresAt: now.Add(time.Duration(admission.CfgPaymentTTLSeconds) * time.Second),
 		Lines:            lines,
 		CorrelationID:    cmd.CorrelationID,
+		CfgEditEnabled:   admission.CfgEditEnabled,
+		AdmissionUnits:   admission.Units,
 	}
 	res, err := uc.uow.Hold(ctx, spec)
 	if err != nil {

@@ -26,11 +26,17 @@ type Event struct {
 	Slug          string
 	Name          string
 	Venue         string
+	City          string // SRS-F-28-02: filter kota (migrasi 0003)
 	Timezone      string
 	StartsAt      time.Time
 	SalesStartsAt time.Time
 	SalesEndsAt   time.Time
 	Status        EventStatus
+
+	// Image URLs (SDD-BOOKING App. C.5, migrasi 0003); bisa kosong sebelum di-seed.
+	ImageURL     string
+	BannerURL    string
+	ThumbnailURL string
 
 	MaxTicketsPerOrder    int
 	MaxTicketsPerBuyerNik int

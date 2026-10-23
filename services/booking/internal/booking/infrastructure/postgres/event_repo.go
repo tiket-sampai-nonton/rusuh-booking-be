@@ -23,7 +23,9 @@ type EventRepo struct{ pool *pgxpool.Pool }
 // NewEventRepo returns the repository.
 func NewEventRepo(pool *pgxpool.Pool) *EventRepo { return &EventRepo{pool: pool} }
 
-const eventCols = `e.id::text, e.slug, e.name, e.venue, e.starts_at, e.sales_starts_at, e.sales_ends_at, e.status,
+const eventCols = `e.id::text, e.slug, e.name, e.venue, e.city,
+	COALESCE(e.image_url, ''), COALESCE(e.banner_url, ''), COALESCE(e.thumbnail_url, ''),
+	e.starts_at, e.sales_starts_at, e.sales_ends_at, e.status,
 	e.max_tickets_per_order, e.max_tickets_per_buyer_nik, e.allow_mixed_categories,
 	e.selection_ttl_seconds, e.payment_ttl_seconds, e.claim_window_seconds,
 	e.max_attendee_checks_per_session, e.selection_edit_enabled, e.max_selection_edits, e.selection_submit_grace_seconds`
@@ -31,7 +33,9 @@ const eventCols = `e.id::text, e.slug, e.name, e.venue, e.starts_at, e.sales_sta
 func scanEvent(row pgx.Row, minPrice *int64) (entity.Event, error) {
 	var e entity.Event
 	dest := []any{
-		&e.ID, &e.Slug, &e.Name, &e.Venue, &e.StartsAt, &e.SalesStartsAt, &e.SalesEndsAt, &e.Status,
+		&e.ID, &e.Slug, &e.Name, &e.Venue, &e.City,
+		&e.ImageURL, &e.BannerURL, &e.ThumbnailURL,
+		&e.StartsAt, &e.SalesStartsAt, &e.SalesEndsAt, &e.Status,
 		&e.MaxTicketsPerOrder, &e.MaxTicketsPerBuyerNik, &e.AllowMixedCategories,
 		&e.SelectionTTLSeconds, &e.PaymentTTLSeconds, &e.ClaimWindowSeconds,
 		&e.MaxAttendeeChecks, &e.SelectionEditEnabled, &e.MaxSelectionEdits, &e.SubmitGraceSeconds,
@@ -57,7 +61,7 @@ func (r *EventRepo) ListEvents(ctx context.Context, q dto.EventListQuery) ([]ent
 		  FROM booking.events e
 		  LEFT JOIN booking.ticket_categories c ON c.event_id = e.id
 		 WHERE ($1 = 'ALL' OR e.status = $1)
-		   AND ($2 = '' OR e.venue ILIKE '%%' || $2 || '%%')
+		   AND ($2 = '' OR lower(e.city) LIKE lower('%%' || $2 || '%%'))
 		 GROUP BY e.id
 		 ORDER BY %s`, eventCols, order)
 

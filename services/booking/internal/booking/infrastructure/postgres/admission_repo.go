@@ -207,11 +207,15 @@ func (r *AdmissionRepo) Release(ctx context.Context, allocationID string) (bool,
 	return released, err
 }
 
-// DueSessions scans admissions whose expiry lapsed.
+// DueSessions scans admissions whose expiry lapsed, applying grace for ACTIVE/EDITABLE (design §7.1).
 func (r *AdmissionRepo) DueSessions(ctx context.Context, now time.Time, limit int) ([]entity.Admission, error) {
 	rows, err := r.pool.Query(ctx, `SELECT `+admissionCols+`
 		FROM booking.admissions
-		WHERE status IN ('RESERVED','ACTIVE','EDITABLE') AND expires_at < $1
+		WHERE status IN ('RESERVED','ACTIVE','EDITABLE')
+		  AND expires_at + CASE
+		        WHEN status = 'RESERVED' THEN interval '0'
+		        ELSE (cfg_submit_grace_seconds || ' seconds')::interval
+		      END < $1
 		ORDER BY expires_at LIMIT $2`, now, limit)
 	if err != nil {
 		return nil, fmt.Errorf("admissions: due: %w", err)
@@ -256,23 +260,58 @@ func (r *AdmissionRepo) ExpireSession(ctx context.Context, admissionID string, n
 
 		// Release allocated stock.
 		// RESERVED and ACTIVE: stock is in allocated_units (no booking hold exists yet).
-		// EDITABLE: stock is in held_units, released by booking expiry sweeper via UoW — skip here.
-		if status == vo.AdmissionReserved || status == vo.AdmissionActive {
+		// EDITABLE: stock is partially in held_units (booking exists); release only the
+		//   unreserved portion: allocated -= (units - item_quantity). The held portion
+		//   stays until the booking expiry sweeper handles the PENDING_PAYMENT booking.
+		switch status {
+		case vo.AdmissionReserved, vo.AdmissionActive:
 			if _, err := tx.Exec(ctx, `
 				UPDATE booking.event_supply
 				   SET allocated_units = allocated_units - $2, version = version + 1, updated_at = $3
 				 WHERE event_id = $1::uuid`, eventID, units, now); err != nil {
 				return err
 			}
+		case vo.AdmissionEditable:
+			// EDITABLE: read item_quantity from the booking, release (units - item_quantity) from allocated.
+			var itemQty int
+			_ = tx.QueryRow(ctx, `SELECT item_quantity FROM booking.bookings WHERE admission_id=$1::uuid`, admissionID).Scan(&itemQty)
+			releaseUnits := units - itemQty
+			if releaseUnits > 0 {
+				if _, err := tx.Exec(ctx, `
+					UPDATE booking.event_supply
+					   SET allocated_units = allocated_units - $2, version = version + 1, updated_at = $3
+					 WHERE event_id = $1::uuid`, eventID, releaseUnits, now); err != nil {
+					return err
+				}
+			}
 		}
 
 		if _, err := tx.Exec(ctx, `
-			UPDATE booking.admissions SET status = 'EXPIRED', ended_at = $2, end_reason = $3
-			 WHERE id = $1::uuid`, admissionID, now, endReason); err != nil {
+			UPDATE booking.admissions
+			   SET status = $2, ended_at = $3, end_reason = $4
+			 WHERE id = $1::uuid`,
+			admissionID,
+			func() string {
+				if status == vo.AdmissionEditable {
+					return "CONVERTED"
+				}
+				return "EXPIRED"
+			}(),
+			now, endReason); err != nil {
 			return err
 		}
+		if status == vo.AdmissionEditable {
+			// CONVERTED: also set lock_reason (no journey.ended — booking still PENDING_PAYMENT).
+			if _, err := tx.Exec(ctx, `
+				UPDATE booking.admissions SET lock_reason='SELECTION_EXPIRED', locked_at=$2 WHERE id=$1::uuid`,
+				admissionID, now); err != nil {
+				return err
+			}
+			// No journey.ended outbox — the booking expiry sweeper publishes it when the booking expires.
+			return nil
+		}
 
-		// Publish journey.ended so Queue releases the slot (booking 10.R1, K7).
+		// Publish journey.ended so Queue releases the slot (RESERVED/ACTIVE only).
 		payload, err := json.Marshal(map[string]any{
 			"eventId": eventID, "queueEntryId": queueEntryID, "outcome": outcome,
 		})

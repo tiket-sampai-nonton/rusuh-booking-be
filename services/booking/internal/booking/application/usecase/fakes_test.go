@@ -141,22 +141,24 @@ func (f *fakeIdem) Complete(context.Context, string, string, string, int, []byte
 
 // fakeUoW records specs and returns canned results.
 type fakeUoW struct {
-	holdRes     outbound.HoldResult
-	holdErr     error
-	heldSpec    outbound.HoldSpec
-	replaceVer  int
-	replaceErr  error
-	settled     bool
-	settleErr   error
-	settleSpec  outbound.SettleSpec
-	expireActed bool
-	expireErr   error
-	expireSpec  outbound.ExpireSpec
-	extendErr   error
-	extendCalls int
-	lockResult  outbound.PaymentLockResult
-	lockErr     error
-	lockCalls   int
+	holdRes          outbound.HoldResult
+	holdErr          error
+	heldSpec         outbound.HoldSpec
+	replaceVer       int
+	replaceErr       error
+	settled          bool
+	settleErr        error
+	settleSpec       outbound.SettleSpec
+	expireActed      bool
+	expireErr        error
+	expireSpec       outbound.ExpireSpec
+	extendErr        error
+	extendCalls      int
+	lockResult       outbound.PaymentLockResult
+	lockErr          error
+	lockCalls        int
+	startVerifyActed bool
+	startVerifyErr   error
 }
 
 func (f *fakeUoW) Hold(_ context.Context, spec outbound.HoldSpec) (outbound.HoldResult, error) {
@@ -182,10 +184,15 @@ func (f *fakeUoW) PaymentLock(_ context.Context, _ outbound.PaymentLockSpec) (ou
 	f.lockCalls++
 	return f.lockResult, f.lockErr
 }
+func (f *fakeUoW) StartVerifying(_ context.Context, _ string, _ int) (bool, error) {
+	return f.startVerifyActed, f.startVerifyErr
+}
 
-// fakeBookingRepo returns a fixed booking.
+// fakeBookingRepo returns a fixed booking (second booking returned on second call if set).
 type fakeBookingRepo struct {
 	booking entity.Booking
+	second  entity.Booking // returned on the 2nd GetByID call (for two-phase expire tests)
+	calls   int
 	getErr  error
 	list    []dto.MyBookingItem
 	next    string
@@ -194,6 +201,10 @@ type fakeBookingRepo struct {
 }
 
 func (f *fakeBookingRepo) GetByID(context.Context, string) (entity.Booking, error) {
+	f.calls++
+	if f.calls > 1 && f.second.ID != "" {
+		return f.second, f.getErr
+	}
 	return f.booking, f.getErr
 }
 func (f *fakeBookingRepo) ListByAccount(context.Context, string, string, int) ([]dto.MyBookingItem, string, error) {
