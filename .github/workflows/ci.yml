@@ -411,7 +411,7 @@ jobs:
       # GANTI: isi repo variables AWS_ROLE_ARN_DEV dan AWS_REGION (OIDC, tanpa access key).
       - name: Kredensial AWS (OIDC)
         if: vars.AWS_ROLE_ARN_DEV != ''
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN_DEV }}
           aws-region: ${{ vars.AWS_REGION }}
@@ -443,7 +443,7 @@ jobs:
       # GANTI: isi repo variables AWS_ROLE_ARN_PROD dan AWS_REGION.
       - name: Kredensial AWS (OIDC)
         if: vars.AWS_ROLE_ARN_PROD != ''
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN_PROD }}
           aws-region: ${{ vars.AWS_REGION }}
