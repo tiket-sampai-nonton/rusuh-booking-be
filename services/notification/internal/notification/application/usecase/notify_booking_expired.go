@@ -52,7 +52,7 @@ func (u *NotifyBookingExpired) NotifyBookingExpired(ctx context.Context, sourceM
 	}
 
 	subject := fmt.Sprintf("[RBT] Booking Kedaluwarsa — %s", p.PublicRef)
-	providerID, serr := u.email.SendEmail(ctx, p.BuyerEmail, subject, body, idempotencyKey(sourceMessageID, entity.TypeBookingExpired))
+	providerID, serr := u.email.SendEmail(ctx, p.BuyerEmail, subject, body, "", idempotencyKey(sourceMessageID, entity.TypeBookingExpired))
 	if serr != nil {
 		recordSendFailure(ctx, u.repo, sourceMessageID, entity.TypeBookingExpired, u.clock.Now(), serr)
 		return fmt.Errorf("send expired email: %w", serr)

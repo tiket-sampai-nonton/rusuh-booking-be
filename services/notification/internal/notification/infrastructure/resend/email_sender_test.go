@@ -39,7 +39,7 @@ func TestSendEmail_Success(t *testing.T) {
 		_, _ = w.Write([]byte(`{"id":"49a3999c-0ce1-4ea6-ab68-afcd6dc2e794"}`))
 	})
 
-	id, err := s.SendEmail(context.Background(), testTo, "Subjek", "Isi pesan", "msg-1:BOOKING_PAID")
+	id, err := s.SendEmail(context.Background(), testTo, "Subjek", "Isi pesan", "", "msg-1:BOOKING_PAID")
 
 	require.NoError(t, err)
 	assert.Equal(t, "49a3999c-0ce1-4ea6-ab68-afcd6dc2e794", id)
@@ -52,6 +52,20 @@ func TestSendEmail_Success(t *testing.T) {
 	assert.Equal(t, []any{testTo}, gotBody["to"])
 	assert.Equal(t, "Subjek", gotBody["subject"])
 	assert.Equal(t, "Isi pesan", gotBody["text"])
+	assert.NotContains(t, gotBody, "html", "tanpa html, field html tidak dikirim")
+}
+
+func TestSendEmail_SendsHTMLWhenGiven(t *testing.T) {
+	var gotBody map[string]any
+	s := newSender(t, func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &gotBody)
+		_, _ = w.Write([]byte(`{"id":"x"}`))
+	})
+	_, err := s.SendEmail(context.Background(), testTo, "Subjek", "Isi pesan", "<p>Isi</p>", "k")
+	require.NoError(t, err)
+	assert.Equal(t, "Isi pesan", gotBody["text"])
+	assert.Equal(t, "<p>Isi</p>", gotBody["html"])
 }
 
 func TestSendEmail_ErrorClassification(t *testing.T) {
@@ -76,7 +90,7 @@ func TestSendEmail_ErrorClassification(t *testing.T) {
 				w.WriteHeader(tt.status)
 				_, _ = w.Write([]byte(`{"name":"validation_error","message":"x"}`))
 			})
-			_, err := s.SendEmail(context.Background(), testTo, "s", "b", "k")
+			_, err := s.SendEmail(context.Background(), testTo, "s", "b", "", "k")
 			require.Error(t, err)
 			assert.Equal(t, tt.permanent, rabbitmq.IsPermanent(err))
 		})
@@ -90,7 +104,7 @@ func TestSendEmail_ErrorNeverLeaksSecrets(t *testing.T) {
 		w.WriteHeader(http.StatusForbidden)
 		_, _ = w.Write([]byte(`{"name":"validation_error","message":"You can only send testing emails to your own email address (owner@private.com). to=` + testTo + ` key=` + testKey + `"}`))
 	})
-	_, err := s.SendEmail(context.Background(), testTo, "s", "b", "k")
+	_, err := s.SendEmail(context.Background(), testTo, "s", "b", "", "k")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "403")
 	assert.Contains(t, err.Error(), "validation_error")
@@ -104,7 +118,7 @@ func TestSendEmail_ServerNameIsSanitized(t *testing.T) {
 		w.WriteHeader(http.StatusInternalServerError)
 		_, _ = w.Write([]byte(`{"name":"boom owner@private.com"}`))
 	})
-	_, err := s.SendEmail(context.Background(), testTo, "s", "b", "k")
+	_, err := s.SendEmail(context.Background(), testTo, "s", "b", "", "k")
 	require.Error(t, err)
 	assert.NotContains(t, err.Error(), "owner@private.com")
 }
@@ -115,7 +129,7 @@ func TestSendEmail_NetworkErrorIsTransient(t *testing.T) {
 	srv.Close() // nothing listens any more
 	s := resend.New(resend.Config{APIKey: testKey, From: "no-reply@rusuh.dev", BaseURL: url, Timeout: time.Second})
 
-	_, err := s.SendEmail(context.Background(), testTo, "s", "b", "k")
+	_, err := s.SendEmail(context.Background(), testTo, "s", "b", "", "k")
 
 	require.Error(t, err)
 	assert.False(t, rabbitmq.IsPermanent(err))
@@ -129,7 +143,7 @@ func TestSendEmail_TimeoutIsTransient(t *testing.T) {
 	t.Cleanup(func() { close(release); srv.Close() })
 	s := resend.New(resend.Config{APIKey: testKey, From: "no-reply@rusuh.dev", BaseURL: srv.URL, Timeout: 50 * time.Millisecond})
 
-	_, err := s.SendEmail(context.Background(), testTo, "s", "b", "k")
+	_, err := s.SendEmail(context.Background(), testTo, "s", "b", "", "k")
 
 	require.Error(t, err)
 	assert.False(t, rabbitmq.IsPermanent(err))
@@ -137,7 +151,7 @@ func TestSendEmail_TimeoutIsTransient(t *testing.T) {
 
 func TestSendEmail_SuccessWithoutIDIsAnError(t *testing.T) {
 	s := newSender(t, func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(`{}`)) })
-	_, err := s.SendEmail(context.Background(), testTo, "s", "b", "k")
+	_, err := s.SendEmail(context.Background(), testTo, "s", "b", "", "k")
 	require.Error(t, err)
 	assert.False(t, rabbitmq.IsPermanent(err))
 }

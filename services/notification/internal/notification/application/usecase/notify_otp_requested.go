@@ -67,7 +67,7 @@ func (u *NotifyOTPRequested) NotifyOTPRequested(ctx context.Context, sourceMessa
 	}
 
 	// No retry: SMTP failure is logged and acked (time-sensitive, TTL ~5m).
-	if _, serr := u.email.SendEmail(ctx, email, "Kode Login Anda", body, sourceMessageID+":"+otpIdempotencySuffix); serr != nil {
+	if _, serr := u.email.SendEmail(ctx, email, "Kode Login Anda", body, "", sourceMessageID+":"+otpIdempotencySuffix); serr != nil {
 		u.log.Error("OTP email gagal (tanpa retry)", "messageId", sourceMessageID, "error", serr)
 		return nil
 	}

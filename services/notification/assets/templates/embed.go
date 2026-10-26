@@ -3,7 +3,7 @@ package templates
 
 import "embed"
 
-// FS holds every *.tmpl email template.
+// FS holds every email template: *.tmpl (plain text) and *.html (HTML variant).
 //
-//go:embed *.tmpl
+//go:embed *.tmpl *.html
 var FS embed.FS

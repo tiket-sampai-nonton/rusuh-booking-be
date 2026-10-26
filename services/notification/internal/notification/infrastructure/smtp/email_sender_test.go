@@ -3,6 +3,7 @@ package smtp_test
 import (
 	"bufio"
 	"context"
+	"encoding/base64"
 	"net"
 	"strings"
 	"sync"
@@ -92,7 +93,7 @@ func TestSender_SendEmail(t *testing.T) {
 	host, port := f.addr()
 	s := smtp.New(smtp.Config{Host: host, Port: port, From: "no-reply@rusuh.example", Timeout: 2 * time.Second})
 
-	id, err := s.SendEmail(context.Background(), "buyer@example.id", "[RBT] Hi", "hello world", "key-1")
+	id, err := s.SendEmail(context.Background(), "buyer@example.id", "[RBT] Hi", "hello world", "", "key-1")
 	require.NoError(t, err)
 	assert.NotEmpty(t, id)
 
@@ -105,9 +106,26 @@ func TestSender_SendEmail(t *testing.T) {
 	assert.Contains(t, body, "Message-ID:")
 }
 
+func TestSender_SendEmailWithHTMLIsMultipart(t *testing.T) {
+	f := startFakeSMTP(t)
+	host, port := f.addr()
+	s := smtp.New(smtp.Config{Host: host, Port: port, From: "no-reply@rusuh.example", Timeout: 2 * time.Second})
+
+	_, err := s.SendEmail(context.Background(), "buyer@example.id", "[RBT] Hi", "teks biasa", "<p>versi html</p>", "key-1")
+	require.NoError(t, err)
+
+	f.mu.Lock()
+	body := f.body
+	f.mu.Unlock()
+	assert.Contains(t, body, "Content-Type: multipart/alternative; boundary=")
+	assert.Contains(t, body, "Content-Type: text/plain; charset=utf-8")
+	assert.Contains(t, body, "Content-Type: text/html; charset=utf-8")
+	assert.Contains(t, body, base64.StdEncoding.EncodeToString([]byte("<p>versi html</p>")))
+}
+
 func TestSender_DialErrorIsReturned(t *testing.T) {
 	// Nothing listening on this port → transient dial error (retryable).
 	s := smtp.New(smtp.Config{Host: "127.0.0.1", Port: 1, From: "x@y.id", Timeout: time.Second})
-	_, err := s.SendEmail(context.Background(), "a@b.id", "s", "b", "key-1")
+	_, err := s.SendEmail(context.Background(), "a@b.id", "s", "b", "", "key-1")
 	require.Error(t, err)
 }

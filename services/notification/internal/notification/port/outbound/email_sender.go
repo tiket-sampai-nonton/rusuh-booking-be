@@ -9,5 +9,5 @@ import "context"
 // providers without that feature (SMTP/Mailpit) ignore it. A rabbitmq.Permanent error means retrying
 // cannot help (rejected sender, bad address, invalid key).
 type IEmailSender interface {
-	SendEmail(ctx context.Context, to, subject, body, idempotencyKey string) (messageID string, err error)
+	SendEmail(ctx context.Context, to, subject, text, html, idempotencyKey string) (messageID string, err error)
 }

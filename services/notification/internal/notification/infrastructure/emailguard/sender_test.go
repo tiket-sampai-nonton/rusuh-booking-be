@@ -24,7 +24,7 @@ type fakeSender struct {
 	block chan struct{}
 }
 
-func (f *fakeSender) SendEmail(ctx context.Context, _, _, _, _ string) (string, error) {
+func (f *fakeSender) SendEmail(ctx context.Context, _, _, _, _, _ string) (string, error) {
 	f.mu.Lock()
 	f.calls++
 	err, block := f.err, f.block
@@ -45,7 +45,7 @@ type clock struct{ t time.Time }
 func (c *clock) now() time.Time { return c.t }
 
 func send(s *emailguard.Sender) (string, error) {
-	return s.SendEmail(context.Background(), "a@b.id", "subj", "body", "key")
+	return s.SendEmail(context.Background(), "a@b.id", "subj", "body", "", "key")
 }
 
 func TestSender_PassesThroughSuccess(t *testing.T) {

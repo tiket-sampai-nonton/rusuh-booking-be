@@ -58,7 +58,8 @@ func TestNotifyBookingPaid_SendsAndMarksSent(t *testing.T) {
 	m.pii.EXPECT().HMACRecipient("buyer@example.id").Return([]byte("h"))
 	m.repo.EXPECT().ClaimDelivery(gomock.Any(), gomock.Any()).Return(true, nil)
 	m.tmpl.EXPECT().Render("eticket", gomock.Any()).Return("body", nil)
-	m.email.EXPECT().SendEmail(gomock.Any(), "buyer@example.id", gomock.Any(), "body", gomock.Any()).Return("prov-1", nil)
+	m.tmpl.EXPECT().RenderHTML("eticket", gomock.Any()).Return("<p>html</p>", nil)
+	m.email.EXPECT().SendEmail(gomock.Any(), "buyer@example.id", gomock.Any(), "body", "<p>html</p>", gomock.Any()).Return("prov-1", nil)
 	m.repo.EXPECT().MarkSent(gomock.Any(), "msg-1", gomock.Any(), "prov-1").Return(nil)
 
 	err := uc.NotifyBookingPaid(context.Background(), "msg-1", validPaidPayload())
@@ -98,7 +99,8 @@ func TestNotifyBookingPaid_SMTPErrorRetries(t *testing.T) {
 	m.pii.EXPECT().HMACRecipient(gomock.Any()).Return([]byte("h"))
 	m.repo.EXPECT().ClaimDelivery(gomock.Any(), gomock.Any()).Return(true, nil)
 	m.tmpl.EXPECT().Render("eticket", gomock.Any()).Return("body", nil)
-	m.email.EXPECT().SendEmail(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return("", errors.New("smtp down"))
+	m.tmpl.EXPECT().RenderHTML("eticket", gomock.Any()).Return("<p>html</p>", nil)
+	m.email.EXPECT().SendEmail(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return("", errors.New("smtp down"))
 	m.repo.EXPECT().BumpAttempt(gomock.Any(), "msg-1", gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 
 	err := uc.NotifyBookingPaid(context.Background(), "msg-1", validPaidPayload())

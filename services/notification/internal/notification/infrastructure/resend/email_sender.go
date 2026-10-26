@@ -52,6 +52,7 @@ type request struct {
 	To      []string `json:"to"`
 	Subject string   `json:"subject"`
 	Text    string   `json:"text"`
+	HTML    string   `json:"html,omitempty"`
 }
 
 type response struct {
@@ -66,8 +67,8 @@ var errName = regexp.MustCompile(`^[a-z_]{1,40}$`)
 // SendEmail posts one plain-text email and returns the Resend email id. idempotencyKey makes a retry
 // within 24 hours a no-op on the provider side. 400/401/403/422 are permanent (rabbitmq.Permanent);
 // 429, 5xx, timeouts and network errors are transient.
-func (s *Sender) SendEmail(ctx context.Context, to, subject, body, idempotencyKey string) (string, error) {
-	payload, err := json.Marshal(request{From: s.cfg.From, To: []string{to}, Subject: subject, Text: body})
+func (s *Sender) SendEmail(ctx context.Context, to, subject, body, html, idempotencyKey string) (string, error) {
+	payload, err := json.Marshal(request{From: s.cfg.From, To: []string{to}, Subject: subject, Text: body, HTML: html})
 	if err != nil {
 		return "", fmt.Errorf("resend: encode: %w", err)
 	}

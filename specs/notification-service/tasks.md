@@ -35,7 +35,7 @@ delivery, adapter SMTP/FCM/template sudah ada dan `go test` lulus.
   - [x] 0c.3 Pilih adapter di `notification_module.go` (`newEmailSender`); port `IEmailSender` menerima `idempotencyKey`; usecase paid/expired/review menandai delivery `DEAD` pada error permanen; test `httptest` tanpa Resend nyata
     - _Requirements: 13.2, 13.10_
   - Catatan: breaker + bulkhead (R13.9) dikerjakan di 8.R1 karena membungkus `IEmailSender` apa pun; retry email sementara belum mengirim ulang sampai 0a.R1 selesai (bug `ClaimDelivery`, bukan bagian 0c)
-  - Uji nyata ke Resend belum dijalankan: lakukan manual dengan `EMAIL_PROVIDER=resend` ke alamat milikmu (kuota 100/hari), lalu kembalikan ke `mailpit`
+  - Uji nyata ke Resend selesai 2026-10-26: worker dengan `EMAIL_PROVIDER=resend` (env proses, `.env` tetap `mailpit`), event `booking.paid` uji dari RabbitMQ ke alamat pemilik → delivery `SENT` dengan `provider_message_id`
 
 - [x] 1. Email e-tiket (`booking.paid`)
   - [x] 1.1 Selesai 2026-10-26 (`renderer_test.go`; `ticketLinkToken` kini opsional di `Validate()` dan template menyembunyikan baris tautan bila kosong; schema kontrak diubah di payment Task 15.3). Test isi email: kode tiket, nama, NIK tersamar, tautan tiket (TC-TKT-02). Fixture payload diambil dari `booking.paid.v1.schema.json` (bukan payload Booking saat ini, yang belum sesuai kontrak — audit F5)

@@ -3,6 +3,7 @@ package template
 
 import (
 	"fmt"
+	htmltemplate "html/template"
 	"strings"
 	"text/template"
 	"time"
@@ -13,6 +14,7 @@ import (
 // Renderer renders named templates parsed once at construction.
 type Renderer struct {
 	tmpl *template.Template
+	html *htmltemplate.Template
 }
 
 // New parses every embedded *.tmpl with the shared funcmap. It fails fast if a template is malformed.
@@ -21,7 +23,20 @@ func New() (*Renderer, error) {
 	if err != nil {
 		return nil, fmt.Errorf("template: parse: %w", err)
 	}
-	return &Renderer{tmpl: t}, nil
+	h, err := htmltemplate.New("notification-html").Funcs(funcMap()).ParseFS(templates.FS, "*.html")
+	if err != nil {
+		return nil, fmt.Errorf("template: parse html: %w", err)
+	}
+	return &Renderer{tmpl: t, html: h}, nil
+}
+
+// RenderHTML executes the html/template named name (file name.html) so every value is escaped for HTML.
+func (r *Renderer) RenderHTML(name string, data any) (string, error) {
+	var sb strings.Builder
+	if err := r.html.ExecuteTemplate(&sb, name+".html", data); err != nil {
+		return "", fmt.Errorf("template: render html %s: %w", name, err)
+	}
+	return sb.String(), nil
 }
 
 // Render executes the template named name (without extension) with data.
@@ -35,8 +50,9 @@ func (r *Renderer) Render(name string, data any) (string, error) {
 
 func funcMap() template.FuncMap {
 	return template.FuncMap{
-		"formatTime": func(t time.Time) string { return t.UTC().Format("02 Jan 2006 15:04 MST") },
-		"formatIDR":  formatIDR,
+		"formatTime":  func(t time.Time) string { return t.UTC().Format("02 Jan 2006 15:04 MST") },
+		"formatIDR":   formatIDR,
+		"formatStart": formatStart,
 	}
 }
 
@@ -61,4 +77,19 @@ func formatIDR(minor int64) string {
 		return "-" + out.String()
 	}
 	return out.String()
+}
+
+var wib = time.FixedZone("WIB", 7*60*60)
+
+var months = [...]string{"Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"}
+
+// formatStart turns an RFC 3339 start time into "26 Des 2026, 02.00 WIB". The event payload carries no time zone, so WIB is
+// assumed (shortcut: events outside WIB would need the zone in the booking.paid payload). An unparsable value is shown as is.
+func formatStart(s string) string {
+	t, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		return s
+	}
+	t = t.In(wib)
+	return fmt.Sprintf("%d %s %d, %02d.%02d WIB", t.Day(), months[t.Month()-1], t.Year(), t.Hour(), t.Minute())
 }

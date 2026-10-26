@@ -5,9 +5,12 @@ package smtp
 import (
 	"context"
 	"crypto/tls"
+	"encoding/base64"
 	"fmt"
+	"mime/multipart"
 	"net"
 	"net/smtp"
+	"net/textproto"
 	"regexp"
 	"strconv"
 	"strings"
@@ -41,9 +44,9 @@ func New(cfg Config) *Sender {
 
 // SendEmail builds an RFC822 text/plain message and delivers it, returning the Message-ID header.
 // The idempotency key is ignored: SMTP has no provider-side dedup (the deliveries table does that).
-func (s *Sender) SendEmail(ctx context.Context, to, subject, body, _ string) (string, error) {
+func (s *Sender) SendEmail(ctx context.Context, to, subject, body, html, _ string) (string, error) {
 	messageID := fmt.Sprintf("<%s@notification.rusuh>", rabbitmq.NewID())
-	msg := s.build(messageID, to, subject, body)
+	msg := s.build(messageID, to, subject, body, html)
 
 	done := make(chan error, 1)
 	go func() { done <- s.deliver(to, msg) }()
@@ -80,7 +83,7 @@ func redact(err error) error {
 	return err
 }
 
-func (s *Sender) build(messageID, to, subject, body string) []byte {
+func (s *Sender) build(messageID, to, subject, body, html string) []byte {
 	var b strings.Builder
 	b.WriteString("From: " + s.cfg.From + "\r\n")
 	b.WriteString("To: " + to + "\r\n")
@@ -88,9 +91,19 @@ func (s *Sender) build(messageID, to, subject, body string) []byte {
 	b.WriteString("Message-ID: " + messageID + "\r\n")
 	b.WriteString("Date: " + time.Now().UTC().Format(time.RFC1123Z) + "\r\n")
 	b.WriteString("MIME-Version: 1.0\r\n")
-	b.WriteString("Content-Type: text/plain; charset=utf-8\r\n")
-	b.WriteString("\r\n")
-	b.WriteString(body)
+	if html == "" {
+		b.WriteString("Content-Type: text/plain; charset=utf-8\r\n\r\n")
+		b.WriteString(body)
+		return []byte(b.String())
+	}
+	// text first, html last: clients show the last alternative they understand.
+	mw := multipart.NewWriter(&b)
+	b.WriteString("Content-Type: multipart/alternative; boundary=" + mw.Boundary() + "\r\n\r\n")
+	for _, part := range []struct{ typ, content string }{{"text/plain", body}, {"text/html", html}} {
+		w, _ := mw.CreatePart(textproto.MIMEHeader{"Content-Type": {part.typ + "; charset=utf-8"}, "Content-Transfer-Encoding": {"base64"}})
+		_, _ = w.Write([]byte(wrap76(base64.StdEncoding.EncodeToString([]byte(part.content)))))
+	}
+	_ = mw.Close()
 	return []byte(b.String())
 }
 
@@ -140,4 +153,14 @@ func (s *Sender) deliver(to string, msg []byte) error {
 		return fmt.Errorf("smtp: close data: %w", err)
 	}
 	return c.Quit()
+}
+
+// wrap76 breaks base64 into 76-character lines as RFC 2045 requires.
+func wrap76(s string) string {
+	var b strings.Builder
+	for len(s) > 76 {
+		b.WriteString(s[:76] + "\r\n")
+		s = s[76:]
+	}
+	return b.String() + s + "\r\n"
 }

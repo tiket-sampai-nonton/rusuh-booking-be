@@ -26,7 +26,8 @@ func TestNotifyBookingPaid_PassesIdempotencyKey(t *testing.T) {
 	m.pii.EXPECT().HMACRecipient(gomock.Any()).Return([]byte("h"))
 	m.repo.EXPECT().ClaimDelivery(gomock.Any(), gomock.Any()).Return(true, nil)
 	m.tmpl.EXPECT().Render("eticket", gomock.Any()).Return("body", nil)
-	m.email.EXPECT().SendEmail(gomock.Any(), gomock.Any(), gomock.Any(), "body", "msg-1:BOOKING_PAID").Return("p", nil)
+	m.tmpl.EXPECT().RenderHTML("eticket", gomock.Any()).Return("<p>html</p>", nil)
+	m.email.EXPECT().SendEmail(gomock.Any(), gomock.Any(), gomock.Any(), "body", gomock.Any(), "msg-1:BOOKING_PAID").Return("p", nil)
 	m.repo.EXPECT().MarkSent(gomock.Any(), "msg-1", gomock.Any(), "p").Return(nil)
 
 	require.NoError(t, uc.NotifyBookingPaid(context.Background(), "msg-1", validPaidPayload()))
@@ -37,7 +38,8 @@ func TestNotifyBookingPaid_PermanentSendErrorMarksDead(t *testing.T) {
 	m.pii.EXPECT().HMACRecipient(gomock.Any()).Return([]byte("h"))
 	m.repo.EXPECT().ClaimDelivery(gomock.Any(), gomock.Any()).Return(true, nil)
 	m.tmpl.EXPECT().Render("eticket", gomock.Any()).Return("body", nil)
-	m.email.EXPECT().SendEmail(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+	m.tmpl.EXPECT().RenderHTML("eticket", gomock.Any()).Return("<p>html</p>", nil)
+	m.email.EXPECT().SendEmail(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return("", rabbitmq.Permanent(errors.New("resend: status 403 validation_error")))
 	m.repo.EXPECT().MarkDead(gomock.Any(), "msg-1", gomock.Any(), gomock.Any()).Return(nil) // no BumpAttempt expected
 
@@ -67,7 +69,7 @@ func TestNotifyBookingExpired_SendErrors(t *testing.T) {
 			pii.EXPECT().HMACRecipient(gomock.Any()).Return([]byte("h"))
 			repo.EXPECT().ClaimDelivery(gomock.Any(), gomock.Any()).Return(true, nil)
 			tmpl.EXPECT().Render("expired", gomock.Any()).Return("body", nil)
-			email.EXPECT().SendEmail(gomock.Any(), gomock.Any(), gomock.Any(), "body", "m1:BOOKING_EXPIRED").Return("", tt.sendErr)
+			email.EXPECT().SendEmail(gomock.Any(), gomock.Any(), gomock.Any(), "body", gomock.Any(), "m1:BOOKING_EXPIRED").Return("", tt.sendErr)
 			if tt.permanent {
 				repo.EXPECT().MarkDead(gomock.Any(), "m1", gomock.Any(), gomock.Any()).Return(nil)
 			} else {
@@ -103,7 +105,7 @@ func TestNotifyBookingReview_SendErrors(t *testing.T) {
 			pii.EXPECT().HMACRecipient(gomock.Any()).Return([]byte("h"))
 			repo.EXPECT().ClaimDelivery(gomock.Any(), gomock.Any()).Return(true, nil)
 			tmpl.EXPECT().Render("review", gomock.Any()).Return("body", nil)
-			email.EXPECT().SendEmail(gomock.Any(), gomock.Any(), gomock.Any(), "body", "m1:BOOKING_REVIEW").Return("", tt.sendErr)
+			email.EXPECT().SendEmail(gomock.Any(), gomock.Any(), gomock.Any(), "body", gomock.Any(), "m1:BOOKING_REVIEW").Return("", tt.sendErr)
 			if tt.permanent {
 				repo.EXPECT().MarkDead(gomock.Any(), "m1", gomock.Any(), gomock.Any()).Return(nil)
 			} else {
@@ -124,7 +126,7 @@ func TestNotifyOTP_PassesIdempotencyKey(t *testing.T) {
 	m.pii.EXPECT().UnsealEmail(gomock.Any()).Return("buyer@example.id", nil)
 	m.pii.EXPECT().UnsealOTP(gomock.Any()).Return("123456", nil)
 	m.tmpl.EXPECT().Render("otp_login", gomock.Any()).Return("body", nil)
-	m.email.EXPECT().SendEmail(gomock.Any(), gomock.Any(), gomock.Any(), "body", "m1:OTP_LOGIN").Return("p", nil)
+	m.email.EXPECT().SendEmail(gomock.Any(), gomock.Any(), gomock.Any(), "body", gomock.Any(), "m1:OTP_LOGIN").Return("p", nil)
 
 	require.NoError(t, uc.NotifyOTPRequested(context.Background(), "m1", otpPayload(now.Add(5*time.Minute))))
 }

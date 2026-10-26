@@ -41,16 +41,16 @@ func (m *MockIEmailSender) EXPECT() *MockIEmailSenderMockRecorder {
 }
 
 // SendEmail mocks base method.
-func (m *MockIEmailSender) SendEmail(ctx context.Context, to, subject, body, idempotencyKey string) (string, error) {
+func (m *MockIEmailSender) SendEmail(ctx context.Context, to, subject, text, html, idempotencyKey string) (string, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "SendEmail", ctx, to, subject, body, idempotencyKey)
+	ret := m.ctrl.Call(m, "SendEmail", ctx, to, subject, text, html, idempotencyKey)
 	ret0, _ := ret[0].(string)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // SendEmail indicates an expected call of SendEmail.
-func (mr *MockIEmailSenderMockRecorder) SendEmail(ctx, to, subject, body, idempotencyKey any) *gomock.Call {
+func (mr *MockIEmailSenderMockRecorder) SendEmail(ctx, to, subject, text, html, idempotencyKey any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SendEmail", reflect.TypeOf((*MockIEmailSender)(nil).SendEmail), ctx, to, subject, body, idempotencyKey)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SendEmail", reflect.TypeOf((*MockIEmailSender)(nil).SendEmail), ctx, to, subject, text, html, idempotencyKey)
 }

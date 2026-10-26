@@ -51,21 +51,26 @@ func (u *NotifyBookingPaid) NotifyBookingPaid(ctx context.Context, sourceMessage
 		return nil // R8: duplicate → ack
 	}
 
-	body, rerr := u.tmpl.Render("eticket", dto.EticketData{
+	data := dto.EticketData{
 		PublicRef:       p.PublicRef,
 		EventName:       p.Event.Name,
 		EventStartsAt:   p.Event.StartsAt,
 		EventVenue:      p.Event.Venue,
 		Tickets:         p.Tickets,
 		TicketLinkToken: p.TicketLinkToken,
-	})
+	}
+	body, rerr := u.tmpl.Render("eticket", data)
+	var html string
+	if rerr == nil {
+		html, rerr = u.tmpl.RenderHTML("eticket", data)
+	}
 	if rerr != nil {
 		_ = u.repo.MarkDead(ctx, sourceMessageID, entity.TypeBookingPaid, rerr.Error())
 		return rabbitmq.Permanent(fmt.Errorf("render eticket: %w", rerr))
 	}
 
 	subject := fmt.Sprintf("[RBT] E-Tiket Anda — %s", p.Event.Name)
-	providerID, serr := u.email.SendEmail(ctx, p.BuyerEmail, subject, body, idempotencyKey(sourceMessageID, entity.TypeBookingPaid))
+	providerID, serr := u.email.SendEmail(ctx, p.BuyerEmail, subject, body, html, idempotencyKey(sourceMessageID, entity.TypeBookingPaid))
 	if serr != nil {
 		recordSendFailure(ctx, u.repo, sourceMessageID, entity.TypeBookingPaid, u.clock.Now(), serr)
 		return fmt.Errorf("send eticket email: %w", serr) // transient → retry; permanent stays permanent (DLQ)

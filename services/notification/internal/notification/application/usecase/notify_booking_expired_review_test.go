@@ -28,7 +28,7 @@ func TestNotifyBookingExpired_SendsAndMarksSent(t *testing.T) {
 	pii.EXPECT().HMACRecipient(gomock.Any()).Return([]byte("h"))
 	repo.EXPECT().ClaimDelivery(gomock.Any(), gomock.Any()).Return(true, nil)
 	tmpl.EXPECT().Render("expired", gomock.Any()).Return("body", nil)
-	email.EXPECT().SendEmail(gomock.Any(), "buyer@example.id", gomock.Any(), "body", gomock.Any()).Return("p", nil)
+	email.EXPECT().SendEmail(gomock.Any(), "buyer@example.id", gomock.Any(), "body", gomock.Any(), gomock.Any()).Return("p", nil)
 	repo.EXPECT().MarkSent(gomock.Any(), "m1", gomock.Any(), "p").Return(nil)
 
 	p := dto.BookingExpiredPayload{BookingID: "b1", PublicRef: "RBT-1", BuyerEmail: "buyer@example.id", Reason: dto.ReasonPaymentTimeout}
@@ -61,7 +61,7 @@ func TestNotifyBookingReview_SendsAndMarksSent(t *testing.T) {
 	pii.EXPECT().HMACRecipient(gomock.Any()).Return([]byte("h"))
 	repo.EXPECT().ClaimDelivery(gomock.Any(), gomock.Any()).Return(true, nil)
 	tmpl.EXPECT().Render("review", gomock.Any()).Return("body", nil)
-	email.EXPECT().SendEmail(gomock.Any(), "buyer@example.id", gomock.Any(), "body", gomock.Any()).Return("p", nil)
+	email.EXPECT().SendEmail(gomock.Any(), "buyer@example.id", gomock.Any(), "body", gomock.Any(), gomock.Any()).Return("p", nil)
 	repo.EXPECT().MarkSent(gomock.Any(), "m1", gomock.Any(), "p").Return(nil)
 
 	p := dto.BookingReviewPayload{BookingID: "b1", BuyerEmail: "buyer@example.id", AmountMinor: 3000000}

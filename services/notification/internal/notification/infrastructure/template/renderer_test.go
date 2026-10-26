@@ -30,6 +30,38 @@ func TestRenderer_Eticket(t *testing.T) {
 	assert.Contains(t, out, "Konser ABC")
 }
 
+// The start time is shown in WIB (the payload has no zone); an unparsable value is shown as is.
+func TestRenderer_EticketStartsAtInWIB(t *testing.T) {
+	r, err := template.New()
+	require.NoError(t, err)
+	data := dto.EticketData{PublicRef: "RB-1", EventName: "Konser", EventStartsAt: "2026-12-25T19:00:00Z", EventVenue: "GBK"}
+	out, err := r.Render("eticket", data)
+	require.NoError(t, err)
+	assert.Contains(t, out, "26 Des 2026, 02.00 WIB")
+
+	data.EventStartsAt = "2026-11-15"
+	out, err = r.Render("eticket", data)
+	require.NoError(t, err)
+	assert.Contains(t, out, "2026-11-15")
+}
+
+// The HTML variant carries the same facts and escapes buyer-supplied values.
+func TestRenderer_EticketHTML(t *testing.T) {
+	r, err := template.New()
+	require.NoError(t, err)
+	out, err := r.RenderHTML("eticket", dto.EticketData{
+		PublicRef: "RB-1", EventName: "Konser <ABC>", EventStartsAt: "2026-12-25T19:00:00Z", EventVenue: "GBK",
+		Tickets: []dto.TicketInfo{{TicketCode: "RB-TESTRSND", AttendeeName: `<script>alert(1)</script>`, AttendeeNikMasked: "3174********0001", CategoryCode: "VIP"}},
+	})
+	require.NoError(t, err)
+	assert.Contains(t, out, "RB-TESTRSND")
+	assert.Contains(t, out, "3174********0001")
+	assert.Contains(t, out, "26 Des 2026, 02.00 WIB")
+	assert.NotContains(t, out, "<script>")
+	assert.Contains(t, out, "&lt;script&gt;")
+	assert.NotContains(t, out, "Lihat e-tiket", "tanpa token tidak ada baris tautan")
+}
+
 func TestRenderer_Expired(t *testing.T) {
 	r, _ := template.New()
 	out, err := r.Render("expired", dto.ExpiredData{PublicRef: "RBT-1", Reason: "PAYMENT_TIMEOUT"})

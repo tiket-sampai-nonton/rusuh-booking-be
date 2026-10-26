@@ -6,4 +6,6 @@ package outbound
 // permanent (poison → DLQ).
 type ITemplateRenderer interface {
 	Render(name string, data any) (string, error)
+	// RenderHTML renders the HTML variant (html/template, so buyer-supplied values are escaped).
+	RenderHTML(name string, data any) (string, error)
 }

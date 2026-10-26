@@ -57,12 +57,12 @@ func isProviderFailure(err error) bool {
 }
 
 // SendEmail sends through the breaker and bulkhead.
-func (s *Sender) SendEmail(ctx context.Context, to, subject, body, idempotencyKey string) (string, error) {
+func (s *Sender) SendEmail(ctx context.Context, to, subject, body, html, idempotencyKey string) (string, error) {
 	var id string
 	err := s.breaker.Do(ctx, func(ctx context.Context) error {
 		return s.bulkhead.Do(ctx, func(ctx context.Context) error {
 			var err error
-			id, err = s.next.SendEmail(ctx, to, subject, body, idempotencyKey)
+			id, err = s.next.SendEmail(ctx, to, subject, body, html, idempotencyKey)
 			return err
 		})
 	})

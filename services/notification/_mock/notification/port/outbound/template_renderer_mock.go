@@ -53,3 +53,18 @@ func (mr *MockITemplateRendererMockRecorder) Render(name, data any) *gomock.Call
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Render", reflect.TypeOf((*MockITemplateRenderer)(nil).Render), name, data)
 }
+
+// RenderHTML mocks base method.
+func (m *MockITemplateRenderer) RenderHTML(name string, data any) (string, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "RenderHTML", name, data)
+	ret0, _ := ret[0].(string)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// RenderHTML indicates an expected call of RenderHTML.
+func (mr *MockITemplateRendererMockRecorder) RenderHTML(name, data any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RenderHTML", reflect.TypeOf((*MockITemplateRenderer)(nil).RenderHTML), name, data)
+}
