@@ -171,8 +171,8 @@ func (f fixture) outboxPayload(t *testing.T, routingKey string) json.RawMessage 
 	return raw
 }
 
-// F3: the payment lock used to violate CHECK (status <> 'VERIFYING' OR verification_until IS NOT NULL), so every
-// payment attempt failed with a 500.
+// F3/§9.4 K1: payment-lock stamps payment_started_at; booking status stays PENDING_PAYMENT (K1).
+// The second call is idempotent: version and event count stay the same.
 func TestPaymentLock_MovesToVerifyingAndIsIdempotent(t *testing.T) {
 	f := seed(t)
 	ctx := context.Background()
@@ -183,9 +183,10 @@ func TestPaymentLock_MovesToVerifyingAndIsIdempotent(t *testing.T) {
 	assert.Equal(t, "OK", res.Outcome)
 	assert.EqualValues(t, 150000, res.AmountMinor)
 	assert.Equal(t, 2, res.Version)
-	assert.Equal(t, "VERIFYING", f.status(t, id))
-	assert.Equal(t, 1, f.n(t, `SELECT count(*) FROM booking.bookings WHERE id=$1::uuid AND verification_until = payment_expires_at AND payment_started_at IS NOT NULL`, id),
-		"verification_until diisi dan payment_started_at tercatat")
+	// §9.4 K1: booking status stays PENDING_PAYMENT after payment-lock; only payment_started_at is set.
+	assert.Equal(t, "PENDING_PAYMENT", f.status(t, id))
+	assert.Equal(t, 1, f.n(t, `SELECT count(*) FROM booking.bookings WHERE id=$1::uuid AND payment_started_at IS NOT NULL`, id),
+		"payment_started_at tercatat setelah payment-lock")
 
 	again, err := f.uow.PaymentLock(ctx, outbound.PaymentLockSpec{BookingID: id, AttemptKey: "attempt-2", CorrelationID: id})
 	require.NoError(t, err)

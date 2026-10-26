@@ -11,8 +11,10 @@ import (
 
 // Expire expires or reviews a booking whose payment window lapsed. Design §7.2:
 //   - Phase A (in-tx): PENDING_PAYMENT past deadline → VERIFYING + verification_until.
-//   - Phase B (outside tx): call Payment resolve; SUCCEEDED → Settle directly (sweeper is the safety
-//     net for lost webhooks); NOT_PAID/NO_ATTEMPT/grace-exhausted → uow.Expire.
+//   - Phase B (outside tx): call Payment resolve (CHECK_AND_CANCEL); outcome drives final state.
+//     SUCCEEDED → Settle directly (sweeper is the safety net for lost webhooks).
+//     NOT_PAID / NO_ATTEMPT → grace window then Expire.
+//     UNKNOWN / unreachable → keep held, retry next sweep.
 type Expire struct {
 	bookings           outbound.IBookingRepo
 	payments           outbound.IPaymentClient
@@ -74,23 +76,20 @@ func (uc *Expire) ExpireBooking(ctx context.Context, bookingID string) error {
 
 	now := time.Now().UTC()
 	if booking.PaymentStartedAt != nil {
-		res, rerr := uc.payments.Resolve(ctx, bookingID)
+		res, rerr := uc.payments.Resolve(ctx, bookingID, outbound.ResolveCheckAndCancel)
 		if rerr != nil {
-			// Payment service down (circuit open) → stay VERIFYING for now.
-			return nil
+			// Payment service down → keep held, retry next sweep.
+			return rerr
 		}
-		if res.Paid {
-			// Design §7.2 SUCCEEDED: sweeper settles directly.
-			// Settle() is idempotent — if payment.succeeded consumer already ran, this is a no-op.
-			_, err = uc.uow.Settle(ctx, outbound.SettleSpec{
-				BookingID:         bookingID,
-				SettlementTime:    res.SettlementTime,
-				Method:            res.Method,
-				TicketCodeFn:      uc.ticketCodeFn,
-				TicketLinkTokenFn: uc.ticketLinkTokenFn,
-				CorrelationID:     bookingID,
-			})
-			return err
+		switch res.Outcome {
+		case outbound.OutcomeSucceeded:
+			// Sweeper settles directly; Settle() is idempotent if consumer already ran.
+			return settleFound(ctx, uc.uow, booking, res)
+		case outbound.OutcomeUnknown:
+			// Gateway cannot say yet — stock must stay held.
+			return inbound.ErrDependency
+		case outbound.OutcomeNotPaid, outbound.OutcomeNoAttempt:
+			// Fall through to grace check below.
 		}
 		// NOT_PAID or NO_ATTEMPT — check grace window before expiring.
 		if booking.VerificationUntil != nil && now.Before(*booking.VerificationUntil) {
