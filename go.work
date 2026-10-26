@@ -7,5 +7,4 @@ use (
 	./services/payment
 	./services/queue
 	./services/user
-	./tests
 )

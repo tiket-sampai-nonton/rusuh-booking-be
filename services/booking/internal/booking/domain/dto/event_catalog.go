@@ -18,6 +18,7 @@ type EventSummary struct {
 	Slug          string    `json:"slug"`
 	Name          string    `json:"name"`
 	Venue         string    `json:"venue"`
+	City          string    `json:"city"`
 	StartsAt      time.Time `json:"startsAt"`
 	SalesStartsAt time.Time `json:"salesStartsAt"`
 	SalesEndsAt   time.Time `json:"salesEndsAt"`

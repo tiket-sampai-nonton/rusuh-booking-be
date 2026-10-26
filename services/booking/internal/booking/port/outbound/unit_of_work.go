@@ -29,6 +29,9 @@ type HoldSpec struct {
 	PaymentExpiresAt time.Time
 	Lines            []HoldLine
 	CorrelationID    string
+	// For admission lock (6.R2) and EDITABLE transition (6.R3):
+	CfgEditEnabled bool // from admission.CfgEditEnabled — if false, lock immediately after hold
+	AdmissionUnits int  // admission.Units — to compute release = Units - len(Lines) on CONVERTED
 }
 
 // HoldResult is the committed hold outcome.
@@ -55,10 +58,12 @@ type ReplaceSpec struct {
 
 // SettleSpec is everything IUnitOfWork.Settle needs for an idempotent settlement.
 type SettleSpec struct {
-	BookingID     string
-	Method        string
-	TicketCodeFn  func(itemID string) string // supplies a public ticket code per item
-	CorrelationID string
+	BookingID         string
+	Method            string
+	SettlementTime    time.Time                     // gateway settlement time from payment.succeeded (R9.1, R9.3)
+	TicketCodeFn      func(itemID string) string    // supplies a public ticket code per item
+	TicketLinkTokenFn func(bookingID string) string // supplies the ticket-link token (may be nil → empty)
+	CorrelationID     string
 }
 
 // ExpireSpec is everything IUnitOfWork.Expire needs to release a booking's held stock.
@@ -102,6 +107,10 @@ type IUnitOfWork interface {
 	Expire(ctx context.Context, spec ExpireSpec) (bool, error) // acted=false when the booking was already terminal
 	ExtendDeadline(ctx context.Context, spec DeadlineSpec) error
 	PaymentLock(ctx context.Context, spec PaymentLockSpec) (PaymentLockResult, error)
+	// StartVerifying is Phase A of the expiry sweeper: transitions PENDING_PAYMENT past its deadline
+	// to VERIFYING so resolve can be called outside the transaction (design §7.2). Idempotent: returns
+	// acted=false when the booking is already VERIFYING or terminal, or not yet past its deadline.
+	StartVerifying(ctx context.Context, bookingID string, verifyGraceSeconds int) (acted bool, err error)
 }
 
 // IdempotencyRecord is a stored idempotent request.

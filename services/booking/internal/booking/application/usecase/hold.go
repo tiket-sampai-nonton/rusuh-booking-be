@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/clock"
+	pkgnik "github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/nik"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/domain/dto"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/domain/entity"
@@ -78,6 +79,8 @@ func (uc *Hold) Hold(ctx context.Context, cmd inbound.HoldCommand) (dto.Booking,
 		PaymentExpiresAt: now.Add(time.Duration(admission.CfgPaymentTTLSeconds) * time.Second),
 		Lines:            lines,
 		CorrelationID:    cmd.CorrelationID,
+		CfgEditEnabled:   admission.CfgEditEnabled,
+		AdmissionUnits:   admission.Units,
 	}
 	res, err := uc.uow.Hold(ctx, spec)
 	if err != nil {
@@ -156,7 +159,7 @@ func (uc *Hold) decide(ctx context.Context, cmd inbound.HoldCommand) (entity.Adm
 		if len(name) < 2 || len(name) > 100 {
 			return entity.Admission{}, nil, 0, inbound.Validation("fullName", "fullName harus 2..100 karakter")
 		}
-		if !vo.ValidNIKStructure(it.Attendee.NIK) {
+		if err := pkgnik.Validate(it.Attendee.NIK, uc.clock.Now()); err != nil {
 			return entity.Admission{}, nil, 0, inbound.ErrNIKInvalid
 		}
 		nik, perr := vo.ParseNIK(it.Attendee.NIK, uc.nik)

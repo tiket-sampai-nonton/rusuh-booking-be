@@ -17,6 +17,7 @@ func ToEventSummary(e entity.Event) dto.EventSummary {
 		Slug:          e.Slug,
 		Name:          e.Name,
 		Venue:         e.Venue,
+		City:          e.City,
 		StartsAt:      e.StartsAt,
 		SalesStartsAt: e.SalesStartsAt,
 		SalesEndsAt:   e.SalesEndsAt,

@@ -101,19 +101,99 @@ func (r *AdmissionRepo) ReserveBatch(ctx context.Context, eventID string, entrie
 
 func (r *AdmissionRepo) reserveOne(ctx context.Context, tx pgx.Tx, eventID string, e outbound.ReserveEntry, at time.Time) outbound.ReserveOutcome {
 	res := outbound.ReserveOutcome{QueueEntryID: e.QueueEntryID, Units: e.Units}
-	// Use a savepoint so a per-entry failure (e.g. anti-calo conflict) does not abort the whole batch.
+	// Use a savepoint so a per-entry failure does not abort the whole batch transaction.
 	if _, err := tx.Exec(ctx, "SAVEPOINT entry"); err != nil {
 		res.Outcome = "NO_SUPPLY_NOW"
 		return res
 	}
+
+	// Step 1 (§9.1): lock event_supply FOR UPDATE and read stock counters.
+	var totalCap, allocUnits, heldUnits, soldUnits int
+	if err := tx.QueryRow(ctx, `
+		SELECT total_capacity, allocated_units, held_units, sold_units
+		  FROM booking.event_supply WHERE event_id=$1::uuid FOR UPDATE`, eventID).
+		Scan(&totalCap, &allocUnits, &heldUnits, &soldUnits); err != nil {
+		_, _ = tx.Exec(ctx, "ROLLBACK TO SAVEPOINT entry")
+		res.Outcome = "NO_SUPPLY_NOW"
+		return res
+	}
+	freeUnits := totalCap - allocUnits - heldUnits - soldUnits
+
+	// Step 2 (§9.1): upsert buyer_quotas then lock the row FOR UPDATE to read remaining quota.
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO booking.buyer_quotas (event_id, buyer_nik_hash, max_quantity)
+		SELECT $1::uuid, $2, ev.max_tickets_per_buyer_nik
+		  FROM booking.events ev WHERE ev.id=$1::uuid
+		ON CONFLICT (event_id, buyer_nik_hash) DO NOTHING`, eventID, e.BuyerNIKHash); err != nil {
+		_, _ = tx.Exec(ctx, "ROLLBACK TO SAVEPOINT entry")
+		res.Outcome = "NO_SUPPLY_NOW"
+		return res
+	}
+	var heldQ, paidQ, maxQ int
+	if err := tx.QueryRow(ctx, `
+		SELECT held_quantity, paid_quantity, max_quantity
+		  FROM booking.buyer_quotas
+		 WHERE event_id=$1::uuid AND buyer_nik_hash=$2 FOR UPDATE`, eventID, e.BuyerNIKHash).
+		Scan(&heldQ, &paidQ, &maxQ); err != nil {
+		_, _ = tx.Exec(ctx, "ROLLBACK TO SAVEPOINT entry")
+		res.Outcome = "NO_SUPPLY_NOW"
+		return res
+	}
+	remaining := maxQ - (heldQ + paidQ)
+
+	// Step 3 (§9.1): quota exhaustion check (before supply checks, per design order).
+	if remaining <= 0 {
+		_, _ = tx.Exec(ctx, "ROLLBACK TO SAVEPOINT entry")
+		res.Outcome = "BUYER_QUOTA_EXHAUSTED"
+		return res
+	}
+
+	// Step 4 (§9.1): supply checks.
+	if freeUnits+allocUnits+heldUnits == 0 {
+		// Fully sold out (free=0, alloc=0, held=0): mark event SOLD_OUT and write outbox.
+		_, _ = tx.Exec(ctx, `
+			UPDATE booking.events SET status='SOLD_OUT'
+			 WHERE id=$1::uuid AND status='AVAILABLE'`, eventID)
+		_ = enqueueOutboxTx(ctx, tx, "booking.sold_out", eventID, map[string]any{"eventId": eventID})
+		_, _ = tx.Exec(ctx, "ROLLBACK TO SAVEPOINT entry")
+		res.Outcome = "SOLD_OUT"
+		return res
+	}
+	if freeUnits == 0 {
+		// free=0 but alloc+held > 0: stock is reserved but not yet held → temporary unavailability.
+		_, _ = tx.Exec(ctx, "ROLLBACK TO SAVEPOINT entry")
+		res.Outcome = "NO_SUPPLY_NOW"
+		return res
+	}
+
+	// Step 5: compute units to allocate (min of what's free, what's requested, what's remaining on quota).
+	units := e.Units
+	if units > remaining {
+		units = remaining
+	}
+	if units > freeUnits {
+		units = freeUnits
+	}
+
+	// Step 6: allocate in event_supply.
 	if _, err := tx.Exec(ctx, `
 		UPDATE booking.event_supply
 		   SET allocated_units = allocated_units + $2, version = version + 1, updated_at = $3
-		 WHERE event_id = $1::uuid`, eventID, e.Units, at); err != nil {
+		 WHERE event_id = $1::uuid`, eventID, units, at); err != nil {
 		_, _ = tx.Exec(ctx, "ROLLBACK TO SAVEPOINT entry")
 		res.Outcome = supplyOutcome(err)
 		return res
 	}
+
+	// Step 7: if this allocation exhausted all free stock, mark SOLD_OUT.
+	if freeUnits-units == 0 {
+		_, _ = tx.Exec(ctx, `
+			UPDATE booking.events SET status='SOLD_OUT'
+			 WHERE id=$1::uuid AND status='AVAILABLE'`, eventID)
+		_ = enqueueOutboxTx(ctx, tx, "booking.sold_out", eventID, map[string]any{"eventId": eventID})
+	}
+
+	// Step 8: insert admission row.
 	var allocationID string
 	var expiresAt time.Time
 	err := tx.QueryRow(ctx, `
@@ -127,11 +207,12 @@ func (r *AdmissionRepo) reserveOne(ctx context.Context, tx pgx.Tx, eventID strin
 			$8, 'RESERVED', $9::uuid, 0, 0,
 			ev.selection_ttl_seconds, ev.payment_ttl_seconds, ev.selection_submit_grace_seconds,
 			ev.selection_edit_enabled, ev.max_selection_edits, ev.allow_mixed_categories,
-			$10::timestamptz, $10::timestamptz + make_interval(secs => ev.claim_window_seconds), NULLIF($11,'')::uuid
+			$10::timestamptz, $10::timestamptz + make_interval(secs => ev.claim_window_seconds),
+			NULLIF($11,'')::uuid
 		  FROM booking.events ev WHERE ev.id = $1::uuid
 		RETURNING id::text, expires_at`,
 		eventID, e.QueueEntryID, e.Seq, e.VisitorID, e.BuyerNIKHash, e.BuyerEmail, e.BuyerNIKMasked,
-		e.Units, e.AdmissionJTI, at, e.AccountID).Scan(&allocationID, &expiresAt)
+		units, e.AdmissionJTI, at, e.AccountID).Scan(&allocationID, &expiresAt)
 	if err != nil {
 		_, _ = tx.Exec(ctx, "ROLLBACK TO SAVEPOINT entry")
 		if pkgpg.IsCode(err, pkgpg.CodeUniqueViolation) {
@@ -147,6 +228,7 @@ func (r *AdmissionRepo) reserveOne(ctx context.Context, tx pgx.Tx, eventID strin
 	_, _ = tx.Exec(ctx, "RELEASE SAVEPOINT entry")
 	res.Outcome = "GRANTED"
 	res.AllocationID = allocationID
+	res.Units = units
 	d := expiresAt
 	res.ClaimDeadline = &d
 	return res
@@ -207,11 +289,15 @@ func (r *AdmissionRepo) Release(ctx context.Context, allocationID string) (bool,
 	return released, err
 }
 
-// DueSessions scans admissions whose expiry lapsed.
+// DueSessions scans admissions whose expiry lapsed, applying grace for ACTIVE/EDITABLE (design §7.1).
 func (r *AdmissionRepo) DueSessions(ctx context.Context, now time.Time, limit int) ([]entity.Admission, error) {
 	rows, err := r.pool.Query(ctx, `SELECT `+admissionCols+`
 		FROM booking.admissions
-		WHERE status IN ('RESERVED','ACTIVE','EDITABLE') AND expires_at < $1
+		WHERE status IN ('RESERVED','ACTIVE','EDITABLE')
+		  AND expires_at + CASE
+		        WHEN status = 'RESERVED' THEN interval '0'
+		        ELSE (cfg_submit_grace_seconds || ' seconds')::interval
+		      END < $1
 		ORDER BY expires_at LIMIT $2`, now, limit)
 	if err != nil {
 		return nil, fmt.Errorf("admissions: due: %w", err)
@@ -256,23 +342,58 @@ func (r *AdmissionRepo) ExpireSession(ctx context.Context, admissionID string, n
 
 		// Release allocated stock.
 		// RESERVED and ACTIVE: stock is in allocated_units (no booking hold exists yet).
-		// EDITABLE: stock is in held_units, released by booking expiry sweeper via UoW — skip here.
-		if status == vo.AdmissionReserved || status == vo.AdmissionActive {
+		// EDITABLE: stock is partially in held_units (booking exists); release only the
+		//   unreserved portion: allocated -= (units - item_quantity). The held portion
+		//   stays until the booking expiry sweeper handles the PENDING_PAYMENT booking.
+		switch status {
+		case vo.AdmissionReserved, vo.AdmissionActive:
 			if _, err := tx.Exec(ctx, `
 				UPDATE booking.event_supply
 				   SET allocated_units = allocated_units - $2, version = version + 1, updated_at = $3
 				 WHERE event_id = $1::uuid`, eventID, units, now); err != nil {
 				return err
 			}
+		case vo.AdmissionEditable:
+			// EDITABLE: read item_quantity from the booking, release (units - item_quantity) from allocated.
+			var itemQty int
+			_ = tx.QueryRow(ctx, `SELECT item_quantity FROM booking.bookings WHERE admission_id=$1::uuid`, admissionID).Scan(&itemQty)
+			releaseUnits := units - itemQty
+			if releaseUnits > 0 {
+				if _, err := tx.Exec(ctx, `
+					UPDATE booking.event_supply
+					   SET allocated_units = allocated_units - $2, version = version + 1, updated_at = $3
+					 WHERE event_id = $1::uuid`, eventID, releaseUnits, now); err != nil {
+					return err
+				}
+			}
 		}
 
 		if _, err := tx.Exec(ctx, `
-			UPDATE booking.admissions SET status = 'EXPIRED', ended_at = $2, end_reason = $3
-			 WHERE id = $1::uuid`, admissionID, now, endReason); err != nil {
+			UPDATE booking.admissions
+			   SET status = $2, ended_at = $3, end_reason = $4
+			 WHERE id = $1::uuid`,
+			admissionID,
+			func() string {
+				if status == vo.AdmissionEditable {
+					return "CONVERTED"
+				}
+				return "EXPIRED"
+			}(),
+			now, endReason); err != nil {
 			return err
 		}
+		if status == vo.AdmissionEditable {
+			// CONVERTED: also set lock_reason (no journey.ended — booking still PENDING_PAYMENT).
+			if _, err := tx.Exec(ctx, `
+				UPDATE booking.admissions SET lock_reason='SELECTION_EXPIRED', locked_at=$2 WHERE id=$1::uuid`,
+				admissionID, now); err != nil {
+				return err
+			}
+			// No journey.ended outbox — the booking expiry sweeper publishes it when the booking expires.
+			return nil
+		}
 
-		// Publish journey.ended so Queue releases the slot (booking 10.R1, K7).
+		// Publish journey.ended so Queue releases the slot (RESERVED/ACTIVE only).
 		payload, err := json.Marshal(map[string]any{
 			"eventId": eventID, "queueEntryId": queueEntryID, "outcome": outcome,
 		})
@@ -294,4 +415,16 @@ func mapAdmissionErr(a entity.Admission, err error) (entity.Admission, error) {
 		return entity.Admission{}, fmt.Errorf("admissions: %w", err)
 	}
 	return a, nil
+}
+
+// enqueueOutboxTx writes one outbox row inside an existing transaction (used by reserveOne).
+func enqueueOutboxTx(ctx context.Context, tx pgx.Tx, routingKey, aggregateID string, payload any) error {
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(ctx, `
+		INSERT INTO booking.outbox_events (routing_key, aggregate_id, schema_version, payload)
+		VALUES ($1, $2::uuid, 1, $3)`, routingKey, aggregateID, raw)
+	return err
 }

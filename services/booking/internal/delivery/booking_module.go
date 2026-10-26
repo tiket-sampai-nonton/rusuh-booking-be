@@ -89,7 +89,14 @@ func newBookingModule(cfg config.Config, clients *Clients, logger *slog.Logger) 
 	deadlineUC := usecase.NewExtendDeadline(uow)
 	lockUC := usecase.NewPaymentLock(uow, clk)
 	releaseAlloc := usecase.NewReleaseAllocation(admissionRepo)
-	expiry := usecase.NewExpire(bookingRepo, paymentClient, uow)
+	expiry := usecase.NewExpire(
+		bookingRepo,
+		paymentClient,
+		uow,
+		cfg.Worker.VerifyGraceSeconds,
+		func(string) string { return idGen.NewPublicRef() },
+		nil, // ticketLinkTokenFn: nil → empty token (ticket-link signing not needed on expiry path)
+	)
 	cancelBook := usecase.NewCancelBooking(bookingRepo, paymentClient, uow, clk)
 
 	// Handlers.

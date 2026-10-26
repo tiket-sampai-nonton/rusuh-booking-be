@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/clock"
+	pkgnik "github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/nik"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/domain/dto"
 	vo "github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/domain/valueobject"
@@ -40,7 +41,7 @@ func (uc *CheckAttendee) CheckAttendee(ctx context.Context, sessionID string, re
 	if !isUUID(sessionID) {
 		return dto.AttendeeCheck{}, inbound.Validation("sessionId", "sessionId harus UUID")
 	}
-	if !vo.ValidNIKStructure(req.NIK) {
+	if err := pkgnik.Validate(req.NIK, uc.clock.Now()); err != nil {
 		return dto.AttendeeCheck{}, inbound.ErrNIKInvalid // no quota decrement
 	}
 	admission, err := uc.admissions.GetByID(ctx, sessionID)

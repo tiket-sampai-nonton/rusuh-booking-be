@@ -31,7 +31,8 @@ type HTTP struct {
 
 // Worker holds background job tuning.
 type Worker struct {
-	Interval time.Duration
+	Interval           time.Duration
+	VerifyGraceSeconds int // VERIFY_GRACE_SECONDS: how long VERIFYING bookings wait before forced expiry (design §7.2)
 }
 
 // Config is the full service configuration.
@@ -58,6 +59,9 @@ func (c Config) Validate() error {
 	}
 	if c.HTTP.ShutdownTimeout <= 0 || c.HTTP.HealthTimeout <= 0 || c.Worker.Interval <= 0 {
 		errs = append(errs, errors.New("HTTP_SHUTDOWN_TIMEOUT, HEALTH_TIMEOUT, dan WORKER_INTERVAL harus > 0"))
+	}
+	if c.Worker.VerifyGraceSeconds < 60 || c.Worker.VerifyGraceSeconds > 600 {
+		errs = append(errs, fmt.Errorf("VERIFY_GRACE_SECONDS %d di luar rentang [60, 600]", c.Worker.VerifyGraceSeconds))
 	}
 	errs = append(errs, c.Log.Validate())
 	errs = append(errs, c.Postgres.Validate())

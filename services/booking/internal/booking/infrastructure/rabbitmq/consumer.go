@@ -60,11 +60,12 @@ func (c *PaymentConsumer) handle(ctx context.Context, d pkgrabbitmq.Delivery) er
 			return pkgrabbitmq.Permanent(fmt.Errorf("payment.succeeded tanpa bookingId"))
 		}
 		return c.settle.Settle(ctx, inbound.SettleCommand{
-			BookingID:     p.BookingID,
-			AttemptID:     p.AttemptID,
-			AmountMinor:   p.AmountMinor,
-			Method:        p.Method,
-			CorrelationID: d.Envelope.CorrelationID,
+			BookingID:      p.BookingID,
+			AttemptID:      p.AttemptID,
+			AmountMinor:    p.AmountMinor,
+			SettlementTime: parseRFC3339(p.SettlementTime),
+			Method:         p.Method,
+			CorrelationID:  d.Envelope.CorrelationID,
 		})
 	case routingPaymentFailed:
 		// Log only; the booking waits for its TTL (AC9.3).
@@ -132,6 +133,15 @@ func (r *OutboxRelay) RunOnce(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// parseRFC3339 parses an RFC3339 timestamp string; returns zero time on parse error.
+func parseRFC3339(s string) time.Time {
+	if s == "" {
+		return time.Time{}
+	}
+	t, _ := time.Parse(time.RFC3339, s)
+	return t
 }
 
 func backoff(attempts int) time.Duration {

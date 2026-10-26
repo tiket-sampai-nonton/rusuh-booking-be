@@ -18,8 +18,8 @@ import (
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/port/outbound"
 )
 
-// Authorizer adds the service bearer token (short-lived, ADR-011) and the request/trace headers to an outgoing
-// request. In production it is httpx.ServiceTokenSource.
+// Authorizer adds the service bearer token (short-lived, ADR-011) and the request/trace headers to an
+// outgoing request. In production it is httpx.ServiceTokenSource.
 type Authorizer interface {
 	Authorize(req *http.Request) error
 }
@@ -45,8 +45,9 @@ type resolveBody struct {
 	SettlementTime *time.Time `json:"settlementTime"`
 }
 
-// Resolve asks Payment about the booking's payment. Any failure to get a clear answer (transport error, non-200,
-// unreadable or unknown outcome) is inbound.ErrDependency: the caller then keeps the stock held and tries again.
+// Resolve asks Payment about the booking's payment. Any failure to get a clear answer (transport
+// error, non-200, unreadable or unknown outcome) is inbound.ErrDependency: the caller keeps the
+// stock held and tries again.
 func (c *Client) Resolve(ctx context.Context, bookingID string, mode outbound.ResolveMode) (outbound.ResolveResult, error) {
 	raw, _ := json.Marshal(map[string]string{"mode": string(mode)})
 	endpoint := fmt.Sprintf("%s/internal/v1/payments/%s/resolve", c.baseURL, url.PathEscape(bookingID))

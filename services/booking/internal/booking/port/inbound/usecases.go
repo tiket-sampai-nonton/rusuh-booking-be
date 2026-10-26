@@ -5,6 +5,7 @@ package inbound
 import (
 	"context"
 	"io"
+	"time"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/domain/dto"
 )
@@ -101,11 +102,12 @@ type IBookingHistoryUsecase interface {
 
 // SettleCommand carries a payment.succeeded event.
 type SettleCommand struct {
-	BookingID     string
-	AttemptID     string
-	AmountMinor   int64
-	Method        string
-	CorrelationID string
+	BookingID      string
+	AttemptID      string
+	AmountMinor    int64
+	SettlementTime time.Time // from payment.succeeded.v1 payload; used for timeliness check (R9.3)
+	Method         string
+	CorrelationID  string
 }
 
 // ISettlementUsecase settles a paid booking (consumed from payment.succeeded).
