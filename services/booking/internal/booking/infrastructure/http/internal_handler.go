@@ -2,6 +2,7 @@ package http
 
 import (
 	stdhttp "net/http"
+	"strings"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/httpx"
 
@@ -11,13 +12,14 @@ import (
 
 // InternalHandler serves the internal API called by the Queue Service (serviceBearer).
 type InternalHandler struct {
-	alloc       inbound.IAllocationUsecase
-	supply      inbound.ISupplyUsecase
-	payable     inbound.IGetPayableUsecase
-	deadlineExt inbound.IDeadlineExtensionUsecase
-	paymentLock inbound.IPaymentLockUsecase
+	alloc        inbound.IAllocationUsecase
+	supply       inbound.ISupplyUsecase
+	payable      inbound.IGetPayableUsecase
+	deadlineExt  inbound.IDeadlineExtensionUsecase
+	paymentLock  inbound.IPaymentLockUsecase
 	releaseAlloc inbound.IReleaseAllocationUsecase
-	verifier    IUserTokenVerifier // service bearer verifier (EdDSA, ADR-011)
+	verifier     IUserTokenVerifier // service bearer verifier (EdDSA, ADR-011)
+	paymentAuth  httpx.Middleware   // only the Payment Service token (payable, payment-lock); nil means refuse everything
 }
 
 // NewInternalHandler wires the handler.
@@ -55,6 +57,13 @@ func (h *InternalHandler) WithReleaseAllocation(uc inbound.IReleaseAllocationUse
 	return h
 }
 
+// WithPaymentAuth sets the guard for the endpoints only the Payment Service calls (audit F2, payment Task 15.5).
+// Use httpx.ServiceAuth with the Payment verifier. Without it those endpoints refuse every request.
+func (h *InternalHandler) WithPaymentAuth(mw httpx.Middleware) *InternalHandler {
+	h.paymentAuth = mw
+	return h
+}
+
 // Register mounts the internal routes behind the service bearer.
 func (h *InternalHandler) Register(mux *stdhttp.ServeMux) {
 	if h.alloc != nil {
@@ -64,17 +73,30 @@ func (h *InternalHandler) Register(mux *stdhttp.ServeMux) {
 		mux.Handle("GET /internal/v1/events/{eventId}/supply", h.service(h.getSupply))
 	}
 	if h.payable != nil {
-		mux.Handle("GET /internal/v1/bookings/{bookingId}/payable", h.service(h.getPayable))
+		mux.Handle("GET /internal/v1/bookings/{bookingId}/payable", h.paymentOnly(h.getPayable))
 	}
 	if h.deadlineExt != nil {
 		mux.Handle("POST /internal/v1/bookings/{bookingId}/deadline-extension", h.service(h.extendDeadline))
 	}
 	if h.paymentLock != nil {
-		mux.Handle("POST /internal/v1/bookings/{bookingId}/payment-lock", h.service(h.lockPayment))
+		mux.Handle("POST /internal/v1/bookings/{bookingId}/payment-lock", h.paymentOnly(h.lockPayment))
 	}
 	if h.releaseAlloc != nil {
-		mux.Handle("POST /internal/v1/allocations/{allocationId}:release", h.service(h.releaseAllocation))
+		mux.Handle("POST /internal/v1/allocations/{rest}", h.service(h.releaseAllocation))
 	}
+}
+
+// paymentOnly guards the endpoints that only the Payment Service may call: payable (reveals a buyer's booking) and
+// payment-lock (locks a booking and fixes its amount). A user token or an admission token must never pass here, and the
+// guard fails closed: with no Payment verifier configured every request is refused, never accepted.
+func (h *InternalHandler) paymentOnly(next stdhttp.HandlerFunc) stdhttp.Handler {
+	if h.paymentAuth == nil {
+		return stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+			w.Header().Set("WWW-Authenticate", `Bearer realm="rbt-internal"`)
+			httpx.WriteError(w, r, inbound.ErrUnauthorized)
+		})
+	}
+	return httpx.Chain(next, h.paymentAuth)
 }
 
 // service guards internal endpoints with the service bearer token.
@@ -156,7 +178,13 @@ func (h *InternalHandler) releaseAllocation(w stdhttp.ResponseWriter, r *stdhttp
 		httpx.WriteError(w, r, err)
 		return
 	}
-	resp, err := h.releaseAlloc.Release(r.Context(), r.PathValue("allocationId"))
+	// ServeMux wildcards must be a whole segment, so the contract path ".../{id}:release" arrives as one value.
+	id, ok := strings.CutSuffix(r.PathValue("rest"), ":release")
+	if !ok || id == "" {
+		httpx.WriteError(w, r, inbound.ErrNotFound)
+		return
+	}
+	resp, err := h.releaseAlloc.Release(r.Context(), id)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

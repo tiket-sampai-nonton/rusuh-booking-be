@@ -284,3 +284,54 @@ Urutan kerja BE-1 (diperbarui: pekerjaan yang menyentuh kode nuzirwan di akhir):
 6. Terakhir, setelah koordinasi dengan nuzirwan: Payment Task 15 (sisi Booking) → Task 13 (E2E Midtrans Sandbox).
 
 Kontrak yang berubah di Task 15.3 (`booking.paid.v1`: `ticketLinkToken` tidak lagi wajib) bersifat melonggarkan, bukan breaking: producer lama yang mengirim field tersebut tetap valid.
+
+## 12. Progres eksekusi (26 Oktober 2026)
+
+Dikerjakan menurut urutan §11 untuk semua pekerjaan yang tidak menyentuh kode nuzirwan. Setiap batch lolos gate: golangci-lint 0 isu, `go vet`, gosec (tanpa HIGH baru), govulncheck, unit + integration test `-race`, `go mod tidy` dan `_mock` tanpa diff, coverage ≥ 80% (`pkg` 90,6%, Notification 82,7%, Payment 90,1%).
+
+| Batch | Hasil | Bukti |
+|---|---|---|
+| B1 | `make tidy` (amqp091 1.16.0); platform 8.2 sudah ada di CI | build + test semua modul lulus dengan `GOWORK=off` |
+| B9 Notification | F19 selesai: klaim delivery kondisional + lease; test terbukti gagal di kode lama. Juga `ticketLinkToken` opsional, breaker + bulkhead email, alamat email tidak lagi ada di `last_error`/log SMTP | `delivery_repository_integration_test.go`, `emailguard/`, `smtp/redact_test.go` |
+| Platform | 2.1 `VisitorAuth`, 2.3 `ServiceAuth` (fail-closed, token > 5 menit ditolak) + `ServiceTokenSource`, 3 `pkg/outbox`, 12.2 `pkg/contract` (validator JSON Schema), `telemetry.NewCounterVec` | `pkg/httpx/auth_test.go`, `pkg/outbox/outbox_integration_test.go` (termasuk RabbitMQ asli), `pkg/contract/schema_test.go` |
+| B5–B7 Payment | Tasks 0, 9, 3, 4, 5, 6, 1, 2, 7.1, 11 selesai; Task 13 sebagian (perjalanan otomatis + metrik). Tabel state, bukan event sourcing | test perjalanan lengkap `internal/delivery/payment_journey_integration_test.go` |
+
+### Temuan baru dari pengerjaan
+
+- **F22 (diperbaiki).** Relay outbox Booking membuat `messageId` baru pada setiap percobaan publish, padahal Notification memakai `messageId` sebagai kunci dedup. `pkg/outbox` memakai id baris outbox yang stabil. Relay Booking belum dipindah (milik nuzirwan).
+- **F23 (diperbaiki).** Fingerprint callback webhook tidak memuat hasil verifikasi signature dan nominal, sehingga webhook palsu bisa menempati baris audit callback asli. Ditemukan oleh test perjalanan; test unitnya ada di `handle_webhook_test.go`.
+- **F24 (diperbaiki).** Status transaksi kedaluwarsa Midtrans dijawab dengan `status_code` 407 di body; adapter menganggapnya penolakan. Ditemukan oleh test adapter. Lihat `docs/evidence/2026-10-26-midtrans-verifikasi.md`.
+- **F25 (diperbaiki 2026-10-26).** Satuan `amountMinor`: contoh SDD (`priceMinor: 1500000` untuk VIP Rp 1.500.000) dan simulator Midtrans ("IDR 150000.00" untuk 150000) menunjukkan 1 minor unit = 1 rupiah. `formatIDR` Notification yang membagi 100 keliru dan sudah diperbaiki beserta testnya.
+- **F26 (belum).** Token service Queue → Booking berumur panjang (dibuat sekali saat start). Begitu Booking memasang `ServiceAuth` (Task 15.5), token itu ditolak karena umurnya > 5 menit; Queue perlu memakai `httpx.ServiceTokenSource`.
+- Gate menegakkan aturan arsitektur: paket `domain` hanya boleh stdlib, jadi test kontrak ditaruh di lapisan `application`.
+- Lint dan gosec lama yang bukan dari perubahan ini: 2 isu `eventstore_integration_test.go`, 2 gosec G115 di `pkg`, 2 gosec G101 (false positive) di Notification.
+
+### Yang tersisa
+
+1. **Task 15 (sisi Booking, milik nuzirwan, perlu koordinasi):** F3 `payment-lock`, F5 payload `booking.paid` (+ schema `ticketLinkToken` opsional), F6, F16 klien resolve, F2 `ServiceAuth` untuk `payable`/`payment-lock`. Tanpa F3 dan F16, E2E tidak bisa jalan; tanpa F5 email e-tiket tidak terkirim.
+2. **Task 13:** E2E Midtrans Sandbox nyata (server key Anda + tunnel untuk webhook) dan koreksi asumsi zona waktu `settlement_time`.
+3. Hapus `./tests` dari `go.work` (milik Irwan).
+
+## 13. E2E Midtrans Sandbox nyata (26 Oktober 2026)
+
+Dijalankan atas izin pemilik: API dan worker Payment asli dengan server key Sandbox di `.env`, Booking digantikan program uji sementara, webhook lewat tunnel `cloudflared`. Hasil lengkap di `docs/evidence/2026-10-26-midtrans-verifikasi.md`. Ringkasan:
+
+- Semua metode aktif berhasil membuat transaksi Sandbox nyata; webhook nyata terverifikasi, idempoten, dan menghasilkan event `payment.succeeded` di RabbitMQ.
+- **Zona `settlement_time` terbukti WIB**, `amountMinor` = rupiah, `X-Override-Notification` berfungsi, status/cancel/resolve nyata benar.
+- Perubahan kode karena pengujian ini: opsi `MIDTRANS_NOTIFICATION_URL` (kosong secara default; hanya untuk tes lokal lewat tunnel https), `formatIDR` Notification.
+- Temuan lingkungan: kolom `payment.payment_attempts.booking_version` sudah ada di database lokal sebelum migrasi 0003 dijalankan, tanpa tercatat di `schema_migrations`. Pemilik mengonfirmasi bahwa ia sendiri yang menambahkannya secara manual (log PostgreSQL mencatat `ALTER TABLE payment.payment_attempts DROP COLUMN booking_version` pukul 08:35 WIB dari sesi itu). Tabel kosong; kolom dihapus lalu migrasi diterapkan lewat runner agar status migrasi konsisten dengan kode.
+- Verifikasi lanjutan sore hari: cancel pada order settle (412), order tidak ada (404), kedaluwarsa nyata (status 407, webhook `expire`), dan batas minimum `custom_expiry` (20 detik ditolak, 30 detik diterima). Test opt-in `-tags sandbox` mengulang ini kapan saja.
+- Yang masih menunggu: Task 15 (Booking nyata). `VA_PERMATA` tidak diperlukan.
+
+## 14. Task 15 (sisi Booking) dan E2E dengan Booking nyata (26 Oktober 2026)
+
+Dikerjakan atas izin pemilik; Irwan (nuzirwan) diinfokan oleh pemilik. Perubahan Booking: F3 `payment-lock` mengisi `verification_until`; F16 klien resolve (`CHECK`/`CHECK_AND_CANCEL`, `outcome`); F5 payload `booking.paid` sesuai kontrak (`ticketLinkToken` opsional); F6 pembayaran terlambat → status `REVIEW` + event `booking.review`; F2 `ServiceAuth` untuk `payable`/`payment-lock` (token Payment saja); 4.R3 panic rute `:release` diperbaiki (+ test mux). Test integrasi PostgreSQL pertama di Booking (terbukti gagal di kode lama).
+
+**E2E nyata** (Booking, Payment, Notification asli; Midtrans Sandbox; webhook via tunnel): hold → attempt GoPay → bayar di simulator → webhook → Booking `PAID`, 1 tiket, stok terjual 1, email e-tiket di Mailpit. Booking kedua: attempt lalu dibiarkan kedaluwarsa → `EXPIRED`, stok kembali, email expired terkirim. Cancel oleh pembeli setelah pembayaran dimulai ditolak `409 BOOKING_LOCKED` (aturan lama, disengaja).
+
+Temuan baru:
+- **F27 (diperbaiki).** `ticketCodeFor` hanya 32 bit dan deterministik; kini 48 bit. Jalur `settle` dari event memakai `NewPublicRef` acak berformat `RB-…` (format berbeda, aman untuk retry).
+- **F28 (belum).** Booking memercayai `X-Visitor-ID`/cookie `rb_visitor` mentah tanpa verifikasi JWT; identitas pengunjung bisa dipalsukan.
+- **Cakupan Booking 51,7%** (< 80% ambang CI) — masalah lama, di luar Task 15.
+
+Sisa: F26 (token Queue → Booking berumur panjang), F28, kunci token Booking di compose (platform 7.x), fase VERIFYING/grace, `settlementTime` terlambat dari event `payment.succeeded`, hapus `./tests` dari `go.work`.

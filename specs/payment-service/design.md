@@ -320,6 +320,7 @@ Resolve **tidak** membuka refund case.
 `MIDTRANS_ENVIRONMENT=sandbox|production`, `MIDTRANS_BASE_URL` (sandbox: `https://api.sandbox.midtrans.com`);
 breaker per tabel §6: `MIDTRANS_{CHARGE|STATUS}_{TIMEOUT|FAILURE_THRESHOLD|COOLDOWN|BULKHEAD}`;
 `PAYMENT_METHODS_ENABLED=VA_BCA,VA_BNI,VA_BRI,QRIS,GOPAY` (SDD §4.10);
+`MIDTRANS_NOTIFICATION_URL` (opsional, https): dikirim sebagai `X-Override-Notification` pada charge agar webhook tes lokal masuk lewat tunnel; kosongkan di staging dan produksi;
 `PAYMENT_PAGE_TOKEN_TTL_SECONDS=60` (30–120); `BOOKING_SERVICE_URL`; `TOKEN_PUBLIC_KEY_FILE` = kunci publik Queue untuk verifikasi visitor (publik
 Queue), kunci privat service token. Spec lama: `MIDTRANS_CB_FAILURE_THRESHOLD=3`, `…RECOVERY_TIMEOUT=60s`
 — diganti (K9).

@@ -2,6 +2,7 @@ package delivery
 
 import (
 	"crypto/ed25519"
+	"errors"
 	"log/slog"
 	"net/http"
 	"os"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/clock"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/crypto"
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/httpx"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/token"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/application/usecase"
@@ -65,7 +67,8 @@ func newBookingModule(cfg config.Config, clients *Clients, logger *slog.Logger) 
 		return nil, err
 	}
 	admissionVerifier, bearerVerifier := buildTokenVerifiers(clk.Now)
-	paymentClient := paymentclient.New(os.Getenv("PAYMENT_SERVICE_URL"), os.Getenv("BOOKING_SERVICE_TOKEN"))
+	paymentClient := paymentclient.New(os.Getenv("PAYMENT_SERVICE_URL"), buildPaymentAuthorizer(logger, clk.Now))
+	paymentAuth := buildPaymentAuth(logger, clk.Now)
 
 	// Usecases.
 	listEvents := usecase.NewListEvents(eventRepo, clk)
@@ -95,7 +98,7 @@ func newBookingModule(cfg config.Config, clients *Clients, logger *slog.Logger) 
 		bookinghttp.NewSessionHandler(sessions, attendee, cancelSess),
 		bookinghttp.NewBookingHandler(hold, edit, tickets, getBooking, cancelBook),
 		bookinghttp.NewMyBookingsHandler(history, bearerVerifier),
-		bookinghttp.NewInternalHandler(allocate, bearerVerifier).WithSupply(supply).WithPayable(payable).WithDeadlineExtension(deadlineUC).WithPaymentLock(lockUC).WithReleaseAllocation(releaseAlloc),
+		bookinghttp.NewInternalHandler(allocate, bearerVerifier).WithSupply(supply).WithPayable(payable).WithDeadlineExtension(deadlineUC).WithPaymentLock(lockUC).WithReleaseAllocation(releaseAlloc).WithPaymentAuth(paymentAuth),
 		bookinghttp.NewAdminHandler(createEvent, updateConfig, bearerVerifier),
 	}
 
@@ -155,11 +158,53 @@ func buildTokenVerifiers(now func() time.Time) (*security.AdmissionVerifier, boo
 		security.NewMultiBearerVerifier(userVerifier, queueVerifier, now)
 }
 
+// buildPaymentAuthorizer makes the short-lived service token (5 minutes, cached) Booking sends to Payment's
+// /internal/v1/payments/*. Without the private key every call fails, so expiry and cancel keep the stock held.
+func buildPaymentAuthorizer(logger *slog.Logger, now func() time.Time) paymentclient.Authorizer {
+	signer, err := loadSigner(os.Getenv("SERVICE_TOKEN_PRIVATE_KEY_PATH"), getenvOr("SERVICE_TOKEN_KEY_ID", "booking-1"))
+	if err != nil {
+		logger.Error("service token ke Payment tidak bisa dibuat; expiry dan cancel menolak sampai SERVICE_TOKEN_PRIVATE_KEY_PATH diisi", "error", err)
+		return unavailableAuthorizer{err: err}
+	}
+	return httpx.NewServiceTokenSource(signer, getenvOr("SERVICE_TOKEN_ISSUER", "rbt-booking"), getenvOr("PAYMENT_TOKEN_AUDIENCE", "rbt-payment"), now)
+}
+
+// buildPaymentAuth guards payable and payment-lock with the Payment Service's token only (issuer rbt-payment, audience
+// this service). With no key configured httpx.ServiceAuth has no verifier and refuses every request.
+func buildPaymentAuth(logger *slog.Logger, now func() time.Time) httpx.Middleware {
+	v := loadVerifier(os.Getenv("PAYMENT_TOKEN_PUBLIC_KEY_PATH"), getenvOr("PAYMENT_TOKEN_KEY_ID", "payment-1"),
+		getenvOr("PAYMENT_TOKEN_ISSUER", "rbt-payment"), getenvOr("SERVICE_TOKEN_ISSUER", "rbt-booking"), now)
+	if v == nil {
+		logger.Error("PAYMENT_TOKEN_PUBLIC_KEY_PATH tidak diset atau tidak terbaca; /payable dan /payment-lock menolak semua permintaan")
+		return httpx.ServiceAuth(now)
+	}
+	return httpx.ServiceAuth(now, v)
+}
+
+type unavailableAuthorizer struct{ err error }
+
+func (a unavailableAuthorizer) Authorize(*http.Request) error { return a.err }
+
+func loadSigner(path, kid string) (*token.Signer, error) {
+	if path == "" {
+		return nil, errors.New("SERVICE_TOKEN_PRIVATE_KEY_PATH kosong")
+	}
+	data, err := os.ReadFile(path) // #nosec G304 G703 -- path comes from service configuration, not from a request
+	if err != nil {
+		return nil, err
+	}
+	key, err := token.ParsePrivateKeyPEM(data)
+	if err != nil {
+		return nil, err
+	}
+	return token.NewSigner(key, kid)
+}
+
 func loadVerifier(path, kid, issuer, audience string, now func() time.Time) *token.Verifier {
 	if path == "" {
 		return nil
 	}
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) // #nosec G304 G703 -- path comes from service configuration, not from a request
 	if err != nil {
 		return nil
 	}

@@ -34,6 +34,7 @@ type BookingPaidPayload struct {
 }
 
 // Validate enforces the required fields of booking.paid.v1. A failure is a poison payload.
+// ticketLinkToken is optional: Booking does not issue it yet and the email then omits the link line.
 func (p BookingPaidPayload) Validate() error {
 	var errs []error
 	if p.BookingID == "" {
@@ -47,9 +48,6 @@ func (p BookingPaidPayload) Validate() error {
 	}
 	if len(p.Tickets) == 0 {
 		errs = append(errs, errors.New("tickets kosong"))
-	}
-	if p.TicketLinkToken == "" {
-		errs = append(errs, errors.New("ticketLinkToken kosong"))
 	}
 	if err := errors.Join(errs...); err != nil {
 		return fmt.Errorf("booking.paid payload tidak valid: %w", err)

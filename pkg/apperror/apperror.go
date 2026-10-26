@@ -18,6 +18,7 @@ const (
 	CodeNotFound              Code = "NOT_FOUND"
 	CodeDependencyUnavailable Code = "DEPENDENCY_UNAVAILABLE"
 	CodeRateLimited           Code = "RATE_LIMITED"
+	CodeUnauthorized          Code = "UNAUTHORIZED"
 )
 
 // Error is an application error carrying an HTTP status and a stable code.

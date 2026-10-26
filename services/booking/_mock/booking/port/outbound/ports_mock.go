@@ -552,18 +552,18 @@ func (m *MockIPaymentClient) EXPECT() *MockIPaymentClientMockRecorder {
 }
 
 // Resolve mocks base method.
-func (m *MockIPaymentClient) Resolve(ctx context.Context, bookingID string) (outbound.ResolveResult, error) {
+func (m *MockIPaymentClient) Resolve(ctx context.Context, bookingID string, mode outbound.ResolveMode) (outbound.ResolveResult, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Resolve", ctx, bookingID)
+	ret := m.ctrl.Call(m, "Resolve", ctx, bookingID, mode)
 	ret0, _ := ret[0].(outbound.ResolveResult)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // Resolve indicates an expected call of Resolve.
-func (mr *MockIPaymentClientMockRecorder) Resolve(ctx, bookingID any) *gomock.Call {
+func (mr *MockIPaymentClientMockRecorder) Resolve(ctx, bookingID, mode any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Resolve", reflect.TypeOf((*MockIPaymentClient)(nil).Resolve), ctx, bookingID)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Resolve", reflect.TypeOf((*MockIPaymentClient)(nil).Resolve), ctx, bookingID, mode)
 }
 
 // MockIAdmissionTokenVerifier is a mock of IAdmissionTokenVerifier interface.

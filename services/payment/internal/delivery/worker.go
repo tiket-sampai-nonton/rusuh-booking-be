@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/outbox"
+
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/payment/internal/config"
 )
 
@@ -31,7 +33,11 @@ func RunWorker(ctx context.Context, cfg config.Config, logger *slog.Logger, need
 	errCh := make(chan error, 1)
 	go func() { errCh <- serve(ctx, cfg, handler, logger) }()
 
-	err = loop(ctx, cfg.Worker.Interval, jobs(clients), logger)
+	js, err := jobs(clients, logger)
+	if err != nil {
+		return err
+	}
+	err = loop(ctx, cfg.Worker.Interval, js, logger)
 	if serr := <-errCh; serr != nil && !errors.Is(serr, context.Canceled) {
 		return serr
 	}
@@ -56,4 +62,18 @@ func loop(ctx context.Context, every time.Duration, js []Job, logger *slog.Logge
 }
 
 // jobs returns the background jobs of this worker. Kosong di boilerplate.
-func jobs(*Clients) []Job { return nil }
+// jobs are the periodic tasks of the worker: the outbox relay publishes payment.succeeded and payment.failed.
+func jobs(clients *Clients, logger *slog.Logger) ([]Job, error) {
+	if clients.PG == nil || clients.MQ == nil {
+		return nil, nil
+	}
+	pub, err := clients.MQ.NewPublisher()
+	if err != nil {
+		return nil, err
+	}
+	relay := outbox.NewRelay(clients.PG.Pool(), pub, "payment-service", logger)
+	return []Job{{Name: "outbox-relay", Run: func(ctx context.Context) error {
+		_, err := relay.RunOnce(ctx)
+		return err
+	}}}, nil
+}

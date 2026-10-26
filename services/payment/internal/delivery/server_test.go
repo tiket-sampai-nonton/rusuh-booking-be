@@ -31,3 +31,20 @@ func TestClients_EmptyIsSafe(t *testing.T) {
 	c.Close()
 	_ = config.ServiceName
 }
+
+func TestNewAPIHandler_FailsFastWithoutSecretsOrKeys(t *testing.T) {
+	cfg := testConfig(t) // Load tidak butuh rahasia; api/worker membutuhkannya
+	_, err := NewAPIHandler(cfg, &Clients{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "MIDTRANS_SERVER_KEY")
+	assert.ErrorContains(t, err, "SERVICE_TOKEN_PRIVATE_KEY_FILE")
+
+	cfg.Payment.Midtrans.ServerKey = "SB-Mid-server-x"
+	cfg.Payment.Token.VisitorPublicKeyFile = "/tidak/ada.pem"
+	cfg.Payment.Token.ServicePrivateKeyFile = "/tidak/ada.pem"
+	cfg.Payment.Token.BookingPublicKeyFile = "/tidak/ada.pem"
+	_, err = NewAPIHandler(cfg, &Clients{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "baca kunci", "file kunci yang hilang menghentikan start")
+	assert.NotContains(t, err.Error(), "SB-Mid-server-x", "rahasia tidak pernah muncul di error")
+}

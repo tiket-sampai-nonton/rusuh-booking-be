@@ -23,40 +23,40 @@ lain memakai klien Booking palsu di test, sehingga tidak menyentuh kode nuzirwan
 
 ## Tasks
 
-- [ ] 0. Config + plumbing bersama
+- [x] 0. Config + plumbing bersama (selesai 2026-10-26)
   - Variabel sudah ada di `services/payment/.env.example`; yang tersisa membaca dan memvalidasinya di `internal/config`
-  - [ ] 0.1 Config: `MIDTRANS_*` (server key wajib, environment, base URL), `PAYMENT_METHODS_ENABLED`, `PAYMENT_PAGE_TOKEN_TTL_SECONDS`, `BOOKING_SERVICE_URL`, kunci token, nilai breaker (design §6) — fail-fast. `PAYMENT_PROVIDER` tidak dipakai lagi (hanya Midtrans)
+  - [x] 0.1 Selesai 2026-10-26 (`internal/config/payment.go`; kunci Midtrans dan file kunci diwajibkan hanya saat api/worker start). Config: `MIDTRANS_*` (server key wajib, environment, base URL), `PAYMENT_METHODS_ENABLED`, `PAYMENT_PAGE_TOKEN_TTL_SECONDS`, `BOOKING_SERVICE_URL`, kunci token, nilai breaker (design §6) — fail-fast. `PAYMENT_PROVIDER` tidak dipakai lagi (hanya Midtrans)
     - _Requirements: 11.2, 9.1_
-  - [ ] 0.2 Domain attempt (status + transisi), VO metode/instruksi/order ID, error domain
+  - [x] 0.2 Selesai 2026-10-26 (`domain/valueobject`, `domain/entity`; migrasi `0003` menambah `booking_version`). Domain attempt (status + transisi), VO metode/instruksi/order ID, error domain
     - _Requirements: 4.5, 4.6_
-  - [ ] 0.3 Penyimpanan attempt (tabel state) + idempotency store + callback store
+  - [x] 0.3 Selesai 2026-10-26 (`infrastructure/postgres`; Property 1 dibuktikan dengan 20 `CreateNext` paralel → 1 pemenang). Penyimpanan attempt (tabel state) + idempotency store + callback store
     - **Diputuskan 2026-10-23:** tabel state — transisi lewat `UPDATE … WHERE status = ANY(<asal sah>)` + outbox dalam satu transaksi (design §4, amandemen ADR-019). `payment_events` dan refund store tidak dipakai
     - **Property 1: At most one open attempt** — integration test PostgreSQL: dua charge paralel untuk booking yang sama → satu attempt terbuka
     - _Requirements: 3.3, 5.1, 5.5_
-  - [ ] 0.4 Klien Booking internal (`payable`, `payment-lock`) dengan service token + breaker. `deadline-extension` tidak dipanggil (lihat Task 3)
+  - [x] 0.4 Selesai 2026-10-26 (`infrastructure/bookingclient`, diuji dengan Booking palsu; integrasi nyata menunggu Task 15). Klien Booking internal (`payable`, `payment-lock`) dengan service token + breaker. `deadline-extension` tidak dipanggil (lihat Task 3)
     - _Depends on: platform 2.3. Test memakai Booking palsu; integrasi nyata lewat Task 15.1 dan 15.5_
     - _Requirements: 3.1, 3.2_
   - _Requirements: 11.1_
 
-- [ ] 9. Adapter Midtrans + circuit breaker (dikerjakan sebelum Task 3)
+- [x] 9. Adapter Midtrans + circuit breaker (dikerjakan sebelum Task 3) (selesai 2026-10-26). Hasil verifikasi dokumentasi: `docs/evidence/2026-10-26-midtrans-verifikasi.md`; belum diuji ke Sandbox nyata
   - Core API saja: charge (`bank_transfer` VA, `qris`, `gopay`), status `GET /v2/{order_id}/status`, cancel/expire. Fallback Snap tidak dibuat
   - Verifikasi detail API Midtrans Sandbox ke dokumentasi resmi sebelum menulis adapter (`custom_expiry` minimum, format `gross_amount`, zona `settlement_time`); catat hasilnya di evidence
   - Breaker `midtrans_charge` dan `midtrans_status` + bulkhead (`pkg/resilience`, `pkg/telemetry.BreakerObserver`); 4xx bisnis dan `context.Canceled` tidak dihitung gagal
   - Test adapter dengan `httptest` (respons sukses, 4xx, timeout, 5xx) — tanpa jaringan
   - _Requirements: 9.1, 9.2, 9.3, 9.4_
 
-- [ ] 1. Payment page `GET /api/v1/payments/{bookingId}/page`
+- [x] 1. Payment page `GET /api/v1/payments/{bookingId}/page`
   - Data dari `payable`; metode dari `PAYMENT_METHODS_ENABLED`; metode yang breaker-nya OPEN ditandai gangguan
   - Bukan pemilik: `404 NOT_FOUND` (OQ-19, konsisten dengan Booking)
   - _Depends on: 0.4, platform 2.1_
   - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5_
 
-- [ ] 2. Page token untuk WebView
+- [x] 2. Page token untuk WebView (alur dengan FE web/mobile tetap perlu dikoordinasikan)
   - `POST page-tokens` (simpan hash saja) + `POST /api/v1/payment-page-sessions` (cookie `rb_pay`, sekali pakai)
   - Koordinasikan alur dengan FE web (`/pay/{bookingId}`) dan mobile (WebView) sebelum implementasi
   - _Requirements: 2.1, 2.2, 2.3, 2.4_
 
-- [ ] 3. Buat attempt (charge)
+- [x] 3. Buat attempt (charge)
   - Urutan: idempotency → `payment-lock` → tutup attempt lama bila ganti metode → simpan attempt `CREATED` → charge (di luar transaksi) → `PENDING` atau `UNKNOWN`
   - Expiry di gateway tidak boleh melewati `paymentExpiresAt`; order ID `RB-{publicRef}-{attemptNo}`; `publicRef` kosong → gagalkan dengan error jelas
   - Breaker charge OPEN → `503 PAYMENT_PROVIDER_UNAVAILABLE` tanpa memanggil gateway. **Tidak** meminta `deadline-extension` (R3.9): PDF BR-05 menetapkan TTL pembayaran 10 menit sejak booking, perpanjangan mengubah aturan bisnis (audit 2026-10-23)
@@ -65,7 +65,7 @@ lain memakai klien Booking palsu di test, sehingga tidak menyentuh kode nuzirwan
   - **Property 2: No charge before lock**, **Property 5: Gateway expiry within booking deadline**, **Property 6: No duplicate order on ambiguous timeout**
   - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.7, 3.8, 3.10, 3.11_
 
-- [ ] 4. Webhook + verifikasi signature
+- [x] 4. Webhook + verifikasi signature
   - Signature SHA-512 constant-time; cek order, nominal, lingkungan; simpan callback sebelum balas 200; duplikat → 200 tanpa efek; status final tidak mundur
   - Nominal tidak cocok: callback dicatat `REJECTED`/`ERROR`, state tidak berubah, `payment.succeeded` tidak diterbitkan, log. **Tidak** menambah status `REVIEW` pada attempt (migrasi `0001` tidak memuatnya)
   - Integration test PostgreSQL: callback yang sama dikirim paralel → satu perubahan state dan satu baris outbox
@@ -73,7 +73,7 @@ lain memakai klien Booking palsu di test, sehingga tidak menyentuh kode nuzirwan
   - **Property 3: Signature is the only proof**, **Property 4: Webhook idempotency & monotonic status**
   - _Requirements: 4.1, 4.2, 4.3, 4.4, 4.5, 4.6, 4.7_
 
-- [ ] 5. Settlement & publish event + relay outbox
+- [x] 5. Settlement & publish event + relay outbox
   - `SUCCEEDED` → outbox `payment.succeeded`; `FAILED` → `payment.failed`; settle terlambat tetap diterbitkan (Booking yang memutuskan)
   - Routing key **tanpa `.v1`** (`payment.succeeded`, `payment.failed`) agar cocok dengan consumer Booking yang sudah ada; penyelarasan ke `.v1` hanya lewat platform 12.1
   - Payload divalidasi terhadap `payment.succeeded.v1.schema.json` / `payment.failed.v1.schema.json` di test
@@ -81,44 +81,44 @@ lain memakai klien Booking palsu di test, sehingga tidak menyentuh kode nuzirwan
   - _Depends on: platform 3.1, 3.2, 3.4_
   - _Requirements: 5.1, 5.2, 5.3, 5.4, 5.5_
 
-- [ ] 6. Status `GET /api/v1/payments/{bookingId}/status` (read-only)
+- [x] 6. Status `GET /api/v1/payments/{bookingId}/status` (read-only)
   - Usulan respons ringkas ke FE dicatat di OQ-22; implementasi awal ikuti kontrak
   - _Requirements: 6.1, 6.2, 6.3_
 
 - [ ] 7. Resolve untuk Booking
-  - [ ] 7.1 `POST /internal/v1/payments/{bookingId}/resolve` (`CHECK` / `CHECK_AND_CANCEL`) sesuai `internal-payment.yaml`; breaker OPEN → `UNKNOWN`; `SUCCEEDED` menerapkan settlement seperti Task 5; tidak membuka refund case
+  - [x] 7.1 Selesai 2026-10-26. `POST /internal/v1/payments/{bookingId}/resolve` (`CHECK` / `CHECK_AND_CANCEL`) sesuai `internal-payment.yaml`; breaker OPEN → `UNKNOWN`; `SUCCEEDED` menerapkan settlement seperti Task 5; tidak membuka refund case
     - _Depends on: 4, 5; verifikasi end-to-end: Task 15.2_
     - **Property 8: Resolve never blocks**
     - _Requirements: 7.1, 7.2, 7.3, 7.4, 7.5, 7.7_
   - [ ] 7.2 Sweeper attempt `PENDING` lewat `expires_at` tanpa webhook: `CHECK` gateway dulu, baru expire. Prioritas rendah: expiry booking sudah memanggil resolve `CHECK_AND_CANCEL`, dan `custom_expiry` Midtrans ≤ deadline booking
     - _Requirements: 7.6_
 
-- [ ] 11. Keamanan & isolasi
+- [x] 11. Keamanan & isolasi
   - `/internal/*` hanya menerima service token Booking (issuer/sub service), bukan token user atau admission token (pelajaran audit F2); kunci tidak ada → service gagal start
   - Tidak ada data kartu, server key, token, signature, atau payload provider di log/event
   - _Requirements: 7.7, 11.4, 5.5_
 
-- [ ] 13. Verifikasi akhir
+- [ ] 13. Verifikasi akhir — **sebagian**: test perjalanan lengkap otomatis (`internal/delivery/payment_journey_integration_test.go`: PostgreSQL + RabbitMQ asli, Midtrans dan Booking palsu), metrik `rbt_payment_attempts_total` dan `rbt_payment_webhooks_total` selesai 2026-10-26. **E2E Sandbox nyata selesai 2026-10-26** dengan Booking palsu (`docs/evidence/2026-10-26-midtrans-verifikasi.md`). **E2E dengan Booking nyata selesai 2026-10-26** (hold → bayar Sandbox → webhook → `PAID` + tiket + email Mailpit; kedaluwarsa nyata → `EXPIRED`, stok kembali, email expired). Cabang 412, 404, dan kedaluwarsa nyata terverifikasi (test opt-in `-tags sandbox`); `VA_PERMATA` tidak diperlukan
   - `make ci` hijau; TC-PAY-01..05, TC-PAY-09..11, TC-RES-01/02 lulus dengan fake gateway
   - E2E manual Midtrans Sandbox: hold → charge VA → bayar lewat simulator dashboard Sandbox → webhook → booking `PAID` → email di Mailpit; simpan evidence
   - Metrik `rbt_payment_attempts_total{method,status}`, `rbt_payment_webhooks_total{result}`, `rbt_payment_settlements_total{method}` lewat `pkg/telemetry` (platform 4.2 selesai). Alert ditunda
   - _Requirements: 11.3_
 
-- [ ] 15. Perbaikan sisi Booking untuk integrasi Payment (dikerjakan BE-1 paling akhir, diinfokan ke nuzirwan)
+- [x] 15. Perbaikan sisi Booking untuk integrasi Payment (dikerjakan BE-1 paling akhir, diinfokan ke nuzirwan)
   - Batas: hanya file di bawah; tidak mengubah alur hold/queue/sweeper sesi. Setiap sub-task punya test sendiri
-  - [ ] 15.1 (F3) `paymentLock` mengisi `verification_until = payment_expires_at` saat `PENDING_PAYMENT → VERIFYING`
+  - [x] 15.1 (F3) `paymentLock` mengisi `verification_until = payment_expires_at` saat `PENDING_PAYMENT → VERIFYING`
     - File: `services/booking/internal/booking/infrastructure/postgres/unit_of_work.go`
     - Test: integration test PostgreSQL pertama di Booking (`postgres/unit_of_work_integration_test.go`): lock sukses, lock kedua idempoten
-  - [ ] 15.2 (F16) Klien resolve sesuai `internal-payment.yaml`: kirim `{mode: CHECK_AND_CANCEL}`, baca `outcome`; `SUCCEEDED` → review/settle seperti sekarang, `NOT_PAID`/`NO_ATTEMPT` → expire, `UNKNOWN` → kembalikan error (stok tetap ditahan, dicoba tick berikutnya)
+  - [x] 15.2 (F16) Klien resolve sesuai `internal-payment.yaml`: kirim `{mode: CHECK_AND_CANCEL}`, baca `outcome`; `SUCCEEDED` → review/settle seperti sekarang, `NOT_PAID`/`NO_ATTEMPT` → expire, `UNKNOWN` → kembalikan error (stok tetap ditahan, dicoba tick berikutnya)
     - File: `infrastructure/paymentclient/client.go`, `port/outbound` (`ResolveResult`), `application/usecase/expire.go`
     - Test: unit test klien (`httptest`) + usecase untuk keempat outcome
-  - [ ] 15.3 (F5) Payload `booking.paid` memuat `tickets[]` (`ticketCode`, `attendeeName`, `attendeeNikMasked`, `categoryCode`) dan `event` (`name`, `startsAt`, `venue`), dibaca di transaksi `settle`. `ticketLinkToken` dijadikan opsional di `booking.paid.v1.schema.json` dan `Validate()` Notification karena belum ada penerbit maupun pemakainya; email menampilkan kode tiket
+  - [x] 15.3 (F5) Payload `booking.paid` memuat `tickets[]` (`ticketCode`, `attendeeName`, `attendeeNikMasked`, `categoryCode`) dan `event` (`name`, `startsAt`, `venue`), dibaca di transaksi `settle`. `ticketLinkToken` dijadikan opsional di `booking.paid.v1.schema.json` dan `Validate()` Notification karena belum ada penerbit maupun pemakainya; email menampilkan kode tiket
     - File: `unit_of_work.go` (settle), `docs/contracts/events/booking.paid.v1.schema.json`, `services/notification/internal/notification/domain/dto/booking_paid_payload.go` (+ template bila perlu)
     - Test: payload `settle` lolos schema (`tools/contracts`), Notification menerima payload tanpa `ticketLinkToken`
-  - [ ] 15.4 (F6) `settle` atas booking yang tidak payable (`EXPIRED`/`CANCELLED`): tidak mengubah status/stok, tidak menerbitkan tiket; tulis outbox `booking.review` agar pembeli mendapat email (refund manual di dashboard Midtrans)
+  - [x] 15.4 (F6) `settle` atas booking yang tidak payable (`EXPIRED`/`CANCELLED`): tidak mengubah status/stok, tidak menerbitkan tiket; tulis outbox `booking.review` agar pembeli mendapat email (refund manual di dashboard Midtrans)
     - File: `unit_of_work.go` (settle)
     - Test: integration test — settle atas booking `EXPIRED` → status tetap, tidak ada tiket, satu baris outbox `booking.review`
-  - [ ] 15.5 (F2, khusus endpoint Payment) `GET …/payable` dan `POST …/payment-lock` hanya menerima service token Payment (issuer Payment) lewat `ServiceAuth` platform 2.3; token user/admission ditolak `401`. Endpoint internal lain tidak disentuh
+  - [x] 15.5 (F2, khusus endpoint Payment) `GET …/payable` dan `POST …/payment-lock` hanya menerima service token Payment (issuer Payment) lewat `ServiceAuth` platform 2.3; token user/admission ditolak `401`. Endpoint internal lain tidak disentuh
     - File: `internal/delivery/booking_module.go`, `infrastructure/http/internal_handler.go`
     - Test: handler test — token Payment `200`, token user `401`, admission token `401`
     - _Depends on: platform 2.3_

@@ -28,16 +28,16 @@ Setiap task selesai bila `make ci` hijau.
     - _Requirements: 1.1_
 
 - [ ] 2. Implement middleware autentikasi & proteksi di `pkg/httpx`
-  - [ ] 2.1 `VisitorAuth`: cookie `rb_visitor` → fallback `X-Visitor-Token`; verifikasi `pkg/token.Verifier`; context `Visitor{ID,BuyerNikHash,Email}` **[Prioritas — dipakai Payment Task 1/3, audit 2026-10-23]**
+  - [x] 2.1 Selesai 2026-10-26 (`pkg/httpx/auth.go`: cookie lalu header, `Visitor{ID,BuyerNikHash,Email}`, 401 + `WWW-Authenticate`; belum dipasang di Queue/Booking/User/Notification). `VisitorAuth`: cookie `rb_visitor` → fallback `X-Visitor-Token`; verifikasi `pkg/token.Verifier`; context `Visitor{ID,BuyerNikHash,Email}` **[Prioritas — dipakai Payment Task 1/3, audit 2026-10-23]**
     - _Requirements: 2.1_
     - _Design: §2_
   - [ ] 2.2 `UserAuth` (Bearer user access token) → context `User{AccountID,HasNIK,NIKHash}`; `401` + `WWW-Authenticate`
     - _Requirements: 2.2_
-  - [ ] 2.3 `ServiceAuth(allowedIssuers)` untuk `/internal/v1/*`; `ServiceTokenSource` (TTL 5 m, re-sign < 30 s sisa) + helper klien internal yang menambah `Authorization` & `X-Request-ID` **[Prioritas — dipakai Payment Task 0.4/7.1/11 dan Booking via Payment Task 15.5, audit 2026-10-23]**
+  - [x] 2.3 Selesai 2026-10-26 (`ServiceAuth(now, verifiers...)` fail-closed, token > 5 menit ditolak; `ServiceTokenSource` + `Authorize`; kode error `UNAUTHORIZED` ditambahkan di `pkg/apperror`; token Queue→Booking saat ini berumur panjang dan akan ditolak bila Booking memasang `ServiceAuth`, lihat payment Task 15.5). `ServiceAuth(allowedIssuers)` untuk `/internal/v1/*`; `ServiceTokenSource` (TTL 5 m, re-sign < 30 s sisa) + helper klien internal yang menambah `Authorization` & `X-Request-ID` **[Prioritas — dipakai Payment Task 0.4/7.1/11 dan Booking via Payment Task 15.5, audit 2026-10-23]**
     - _Requirements: 2.3, 2.4_
   - [ ] 2.4 `RateLimit` berbasis Valkey (`IRateStore`) dengan `Retry-After`; `ClientIP(trustProxy)`
     - _Requirements: 2.5, 2.6_
-  - [ ] 2.5 Unit test: cookie vs header menghasilkan identitas sama; token kedaluwarsa; issuer tak dikenal; `aud` salah
+  - [x] 2.5 Selesai 2026-10-26 untuk 2.1 dan 2.3 (`auth_test.go`, coverage 100%; 2.2 belum). Unit test: cookie vs header menghasilkan identitas sama; token kedaluwarsa; issuer tak dikenal; `aud` salah
     - **Property 4: Internal API closed**, **Property 5: Same auth for web and mobile**
     - _Requirements: 2.1, 2.3_
   - [x] 2.6 Format error standar: `pkg/apperror` mengirim hanya `{meta:{code, message}}` dengan `message = "KODE: pesan"` (atau pesan umum untuk 5xx); `requestId` di header `X-Request-ID`; `httpx.WriteError` menulis kode error, detail, error asli, dan payload request (diredaksi lewat 4.4) ke log. Satu perubahan di `pkg/` berlaku untuk lima service; beri tahu tim web/mobile. Selesai 2026-10-22 (format meta saja): `apperror.Meta` hanya `code`+`message` (+`requestId` pada respons sukses), `ClientMessage()` = `KODE: pesan`, error internal selalu `INTERNAL_ERROR: terjadi kesalahan internal`; `WriteError` melog `requestId/status/errorCode/details/error` (level Error untuk 5xx, Info untuk 4xx) dan mengirim `Retry-After` untuk 429 dari `Details[retryAfterSeconds|retryAfter]`; kontrak OpenAPI: `errorCode`/`details` ditandai `deprecated`; 2 tes DEV-2 (booking, user) kini membaca kode dari awalan message. Belum: log payload request yang diredaksi (perlu menyimpan body di `DecodeJSON`) -> sub-task 2.6a
@@ -51,17 +51,17 @@ Setiap task selesai bila `make ci` hijau.
   - Catatan: visitor auth sekarang ditulis ulang di tiap service (`security/visitor_auth.go`). Setelah 2.1 selesai, service bisa pindah ke versi `pkg/httpx`; tidak wajib sebelum demo
   - _Depends on: 6.1 (kunci Queue & service lokal untuk test integrasi)_
 
-- [ ] 3. Implement `pkg/outbox` (Write + Relay)
+- [x] 3. Implement `pkg/outbox` (Write + Relay) — 3.1, 3.2, 3.4 selesai 2026-10-26; 3.3 backlog
   - Catatan: Booking sudah punya relay sendiri (`booking/infrastructure/rabbitmq` `NewOutboxRelay`). Cara termudah: pindahkan relay itu ke `pkg/outbox`, lalu pakai juga di Payment
-  - [ ] 3.1 `Write(ctx, tx, Message)` menyisipkan ke `outbox_events` dengan tx pemanggil
+  - [x] 3.1 Selesai 2026-10-26 (`pkg/outbox/outbox.go`). `Write(ctx, tx, Message)` menyisipkan ke `outbox_events` dengan tx pemanggil
     - _Requirements: 3.1_
     - _Design: §3_
-  - [ ] 3.2 `Relay.RunOnce`: `FOR UPDATE SKIP LOCKED`, envelope (`messageId = outbox_events.id`), publish confirm, update `published_at` / `publish_attempts` + `last_error` + backoff `available_at`
+  - [x] 3.2 Selesai 2026-10-26 (`pkg/outbox/relay.go`; `messageId` = id baris; batch berhenti setelah 3 kegagalan beruntun; relay Booking belum dipindah, milik nuzirwan). `Relay.RunOnce`: `FOR UPDATE SKIP LOCKED`, envelope (`messageId = outbox_events.id`), publish confirm, update `published_at` / `publish_attempts` + `last_error` + backoff `available_at`
     - _Requirements: 3.2, 3.3, 3.4_
   - [ ] 3.3 Metrik lag outbox (umur pending tertua) lewat `pkg/telemetry` **[Backlog, audit 2026-10-23: tidak diminta NFR-09]**
     - _Requirements: 3.6_
     - _Depends on: 4.1_
-  - [ ] 3.4 Integration test (PostgreSQL + RabbitMQ): publish sukses; confirm gagal → pending + attempts++; broker down lalu pulih → lag 0; dua relay paralel tanpa publish ganda
+  - [x] 3.4 Selesai 2026-10-26 (`outbox_integration_test.go`, termasuk RabbitMQ asli). Integration test (PostgreSQL + RabbitMQ): publish sukses; confirm gagal → pending + attempts++; broker down lalu pulih → lag 0; dua relay paralel tanpa publish ganda
     - **Property 2: No lost outbox event**, **Property 3: Outbox single publisher per cycle**
     - _Requirements: 3.4, 3.5_
 
@@ -130,7 +130,7 @@ Setiap task selesai bila `make ci` hijau.
 - [ ] 8. Gerbang CI tambahan
   - [ ] 8.1 Job `docs-diagrams`: render semua blok Mermaid di `docs/` dan `specs/` (mermaid-cli), gagal bila error
     - _Requirements: 8.2_
-  - [ ] 8.2 Cek `make mock` tanpa diff dan `go mod tidy` tanpa diff di `verify-code-quality` **[Prioritas — mencegah drift `go.mod` seperti audit F8]**
+  - [x] 8.2 Sudah ada di CI stage `code-quality` (`go mod tidy` + `git diff --exit-code`, `go generate` + diff `_mock`); dikonfirmasi 2026-10-26, tanpa perubahan kode. Cek `make mock` tanpa diff dan `go mod tidy` tanpa diff di `verify-code-quality` **[Prioritas — mencegah drift `go.mod` seperti audit F8]**
     - _Requirements: 8.3_
   - [ ] 8.3 Pastikan `scan-package` gagal pada temuan critical/high tanpa file risk-acceptance
     - _Requirements: 8.4_
@@ -170,7 +170,7 @@ Setiap task selesai bila `make ci` hijau.
 - [ ] 12. Penyelarasan event lintas service
   - [ ] 12.1 Konstanta bersama routing key + nama queue di `pkg/rabbitmq`, lalu ganti string di kelima service dalam satu PR (sekalian pindah ke `.v1`). Koordinasikan dengan DEV-2 karena menyentuh Booking, Queue, User **[Backlog, audit 2026-10-23 F17: routing key tanpa versi tetap dipakai]**
     - _Requirements: 12.1, 12.2_
-  - [ ] 12.2 Test kontrak payload di CI untuk semua event; harus menangkap defect `booking.journey.ended` (booking 12.R1) **[Prioritas — menangkap F5/F16; mencakup 5.4]**
+  - [x] 12.2 Selesai 2026-10-26 untuk Payment (producer) dan Notification (consumer): `pkg/contract` + `payment_contract_test.go` + `contract_test.go`. **Sisa untuk producer Booking, Queue, User:** pakai `contract.ValidateFile` di test masing-masing (milik nuzirwan). Test kontrak payload di CI untuk semua event; harus menangkap defect `booking.journey.ended` (booking 12.R1) **[Prioritas — menangkap F5/F16; mencakup 5.4]**
     - _Requirements: 12.3_
     - _Depends on: 5.1_
 

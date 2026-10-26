@@ -64,15 +64,15 @@
       }
     },
     "ticketLinkToken": {
-      "type": "string"
+      "type": "string",
+      "description": "Opsional (2026-10-26): belum ada penerbit maupun pemakainya; email menampilkan kode tiket tanpa tautan."
     }
   },
   "required": [
     "bookingId",
     "publicRef",
     "buyerEmail",
-    "tickets",
-    "ticketLinkToken"
+    "tickets"
   ],
   "additionalProperties": false
 }

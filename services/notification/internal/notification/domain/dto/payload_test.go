@@ -15,6 +15,10 @@ func TestBookingPaidPayload_Validate(t *testing.T) {
 	ok := dto.BookingPaidPayload{BookingID: "b", PublicRef: "r", BuyerEmail: "e", Tickets: []dto.TicketInfo{{}}, TicketLinkToken: "t"}
 	require.NoError(t, ok.Validate())
 	require.Error(t, dto.BookingPaidPayload{}.Validate())
+
+	noLink := ok
+	noLink.TicketLinkToken = ""
+	require.NoError(t, noLink.Validate(), "ticketLinkToken opsional")
 }
 
 func TestBookingExpiredPayload_Validate(t *testing.T) {

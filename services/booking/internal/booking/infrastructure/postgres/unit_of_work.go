@@ -267,8 +267,12 @@ func (u *UnitOfWork) settle(ctx context.Context, tx pgx.Tx, spec outbound.Settle
 		Scan(&status, &version, &buyerHash, &amount, &publicRef, &email); err != nil {
 		return false, err
 	}
-	if status == vo.BookingPaid {
+	switch {
+	case status == vo.BookingPaid, status == vo.BookingReview:
 		return false, nil // idempotent no-op
+	case !status.IsPayable():
+		// EXPIRED or CANCELLED: the stock was released, so the money cannot become a ticket. Ops reviews it (AC9.4).
+		return false, u.reviewLatePayment(ctx, tx, spec, version, amount, email)
 	}
 
 	// Step 4: fetch queue_entry_id for journey.ended payload.
@@ -348,7 +352,10 @@ func (u *UnitOfWork) settle(ctx context.Context, tx pgx.Tx, spec outbound.Settle
 		_ = enqueueOutbox(ctx, tx, "booking.quota.exhausted", spec.BookingID, quotaExhausted)
 	}
 
-	paid := map[string]any{"bookingId": spec.BookingID, "publicRef": publicRef, "buyerEmail": email}
+	paid, err := paidPayload(ctx, tx, spec.BookingID, eventID, publicRef, email)
+	if err != nil {
+		return false, err
+	}
 	ended := map[string]any{"eventId": eventID, "queueEntryId": queueEntryID, "outcome": "PAID"}
 	if err := enqueueOutbox(ctx, tx, "booking.paid", spec.BookingID, paid); err != nil {
 		return false, err
@@ -357,6 +364,58 @@ func (u *UnitOfWork) settle(ctx context.Context, tx pgx.Tx, spec outbound.Settle
 		return false, err
 	}
 	return true, nil
+}
+
+// reviewLatePayment records a payment that arrived for a booking that already ended: status REVIEW, no tickets, no
+// stock change. booking.review tells the buyer (email) and Ops; the refund itself is manual.
+func (u *UnitOfWork) reviewLatePayment(ctx context.Context, tx pgx.Tx, spec outbound.SettleSpec, version int, amount int64, email string) error {
+	if _, err := u.store.Append(ctx, tx, spec.BookingID, version, eventstore.NewEvent{
+		Type: domevent.TypeBookingReview, SchemaVersion: 1,
+		Payload: domevent.BookingReview{BookingID: spec.BookingID, AmountMinor: amount}, Metadata: meta(spec.CorrelationID),
+	}); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE booking.bookings SET status='REVIEW', version=$2, updated_at=now() WHERE id=$1::uuid`, spec.BookingID, version+1); err != nil {
+		return err
+	}
+	return enqueueOutbox(ctx, tx, "booking.review", spec.BookingID, map[string]any{"bookingId": spec.BookingID, "buyerEmail": email, "amountMinor": amount})
+}
+
+// paidPayload builds booking.paid.v1 (docs/contracts/events): the e-ticket email needs the event, one line per
+// ticket, and the attendee's masked NIK. ticketLinkToken is optional in the contract and not issued yet.
+func paidPayload(ctx context.Context, tx pgx.Tx, bookingID, eventID, publicRef, email string) (map[string]any, error) {
+	var name, venue string
+	var startsAt time.Time
+	if err := tx.QueryRow(ctx, `SELECT name, venue, starts_at FROM booking.events WHERE id=$1::uuid`, eventID).Scan(&name, &venue, &startsAt); err != nil {
+		return nil, err
+	}
+	rows, err := tx.Query(ctx, `
+		SELECT t.public_code, bi.attendee_name, COALESCE(bi.attendee_nik_masked, ''), tc.code
+		  FROM booking.tickets t
+		  JOIN booking.booking_items bi ON bi.id = t.booking_item_id
+		  JOIN booking.ticket_categories tc ON tc.id = bi.category_id
+		 WHERE t.booking_id = $1::uuid
+		 ORDER BY t.issued_at, t.public_code`, bookingID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	tickets := []map[string]string{}
+	for rows.Next() {
+		var code, attendee, masked, category string
+		if err := rows.Scan(&code, &attendee, &masked, &category); err != nil {
+			return nil, err
+		}
+		tickets = append(tickets, map[string]string{"ticketCode": code, "attendeeName": attendee, "attendeeNikMasked": masked, "categoryCode": category})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return map[string]any{
+		"bookingId": bookingID, "publicRef": publicRef, "buyerEmail": email,
+		"event":   map[string]string{"eventId": eventID, "name": name, "startsAt": startsAt.UTC().Format(time.RFC3339), "venue": venue},
+		"tickets": tickets,
+	}, nil
 }
 
 // Expire releases a booking's held stock (EXPIRED) or marks it REVIEW (payment found, stock held).
@@ -541,6 +600,7 @@ func (u *UnitOfWork) paymentLock(ctx context.Context, tx pgx.Tx, spec outbound.P
 		UPDATE booking.bookings
 		   SET status = 'VERIFYING',
 		       payment_started_at = COALESCE(payment_started_at, $2),
+		       verification_until = payment_expires_at, -- CHECK: VERIFYING needs verification_until (audit F3)
 		       version = $3,
 		       updated_at = $2
 		 WHERE id = $1::uuid`, spec.BookingID, now, version+1); err != nil {

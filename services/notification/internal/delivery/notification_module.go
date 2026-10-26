@@ -15,6 +15,7 @@ import (
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/notification/internal/config"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/notification/internal/notification/application/usecase"
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/notification/internal/notification/infrastructure/emailguard"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/notification/internal/notification/infrastructure/fcm"
 	notificationhttp "github.com/tiket-sampai-nonton/rusuh-booking-be/services/notification/internal/notification/infrastructure/http"
 	notificationpg "github.com/tiket-sampai-nonton/rusuh-booking-be/services/notification/internal/notification/infrastructure/postgres"
@@ -65,7 +66,11 @@ func newNotificationModule(cfg config.Config, clients *Clients, logger *slog.Log
 		return nil, err
 	}
 
-	email, err := newEmailSender(cfg, logger)
+	provider, err := newEmailSender(cfg, logger)
+	if err != nil {
+		return nil, err
+	}
+	email, err := emailguard.New(provider, clock.System{}.Now) // breaker + bulkhead for both providers (R9.5, R13.9)
 	if err != nil {
 		return nil, err
 	}

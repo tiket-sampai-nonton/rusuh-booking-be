@@ -9,6 +9,6 @@ Venue  : {{.EventVenue}}
 Tiket:
 {{range .Tickets}}- {{.CategoryCode}} | {{.TicketCode}} | {{.AttendeeName}} | {{.AttendeeNikMasked}}
 {{end}}
-Lihat e-tiket: {{.TicketLinkToken}}
+{{if .TicketLinkToken}}Lihat e-tiket: {{.TicketLinkToken}}
 
-Tunjukkan kode tiket di pintu masuk. Terima kasih — Tim Rusuh Booking Tiket
+{{end}}Tunjukkan kode tiket di pintu masuk. Terima kasih — Tim Rusuh Booking Tiket

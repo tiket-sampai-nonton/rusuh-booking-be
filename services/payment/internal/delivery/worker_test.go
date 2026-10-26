@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestLoop_RunsJobsUntilCancelled(t *testing.T) {
@@ -24,5 +25,7 @@ func TestLoop_RunsJobsUntilCancelled(t *testing.T) {
 	assert.Eventually(t, func() bool { return ok.Load() >= 2 && failed.Load() >= 2 }, time.Second, 5*time.Millisecond)
 	cancel()
 	assert.NoError(t, <-done)
-	assert.Empty(t, jobs(&Clients{}))
+	js, err := jobs(&Clients{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	require.NoError(t, err)
+	assert.Empty(t, js)
 }

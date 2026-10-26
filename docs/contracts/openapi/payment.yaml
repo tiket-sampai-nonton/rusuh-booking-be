@@ -3,7 +3,7 @@ openapi: 3.1.0
 info:
   title: RBT Payment Service API
   version: 1.0.0
-  description: Halaman bayar, attempt Midtrans, webhook. Agregat Payment Attempt memakai event sourcing (ADR-019).
+  description: Halaman bayar, attempt Midtrans, webhook. Status attempt disimpan di tabel payment_attempts (ADR-019, amandemen 2026-10-23).
   contact:
     name: Tim PT. Tiket Sampai Nonton Sentosa
 servers:
@@ -475,6 +475,11 @@ components:
               type: string
             qrString:
               type: string
+              deprecated: true
+              description: Tidak dipakai. Midtrans memberi QR sebagai URL gambar, lihat qrUrl.
+            qrUrl:
+              type: string
+              description: URL gambar QR (PNG) dari Midtrans, untuk QRIS dan GoPay (web). Ditambahkan 2026-10-26, aditif.
             deeplinkUrl:
               type: string
           required:

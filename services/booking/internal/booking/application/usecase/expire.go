@@ -8,9 +8,14 @@ import (
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/port/outbound"
 )
 
-// Expire expires or reviews a booking whose payment window lapsed. When payment had started it asks the
-// Payment Service to resolve: no payment → EXPIRED (release stock); payment found → REVIEW (hold stock,
-// never oversell) — AC10.4/AC10.5.
+// Expire finishes a booking whose payment window lapsed. When payment had started it asks the Payment Service to
+// resolve with CHECK_AND_CANCEL (which also closes the order at the gateway):
+//   - SUCCEEDED in time → PAID; SUCCEEDED late → REVIEW;
+//   - NOT_PAID / NO_ATTEMPT → EXPIRED, stock released;
+//   - UNKNOWN or Payment unreachable → nothing changes and the stock stays held; the sweeper tries again.
+//
+// shortcut: no VERIFYING phase with a grace period (spec AC7-AC10): an unknown answer is retried on every sweep until
+// Payment answers; add verification_until handling when a bounded wait is required.
 type Expire struct {
 	bookings outbound.IBookingRepo
 	payments outbound.IPaymentClient
@@ -35,15 +40,18 @@ func (uc *Expire) ExpireBooking(ctx context.Context, bookingID string) error {
 		return nil // already terminal; nothing to do (idempotent)
 	}
 
-	review := false
 	reason := "PAYMENT_TIMEOUT"
 	if booking.PaymentStartedAt != nil {
-		res, rerr := uc.payments.Resolve(ctx, bookingID)
+		res, rerr := uc.payments.Resolve(ctx, bookingID, outbound.ResolveCheckAndCancel)
 		if rerr != nil {
 			return rerr
 		}
-		if res.Paid {
-			review = true
+		switch res.Outcome {
+		case outbound.OutcomeSucceeded:
+			return settleFound(ctx, uc.uow, booking, res)
+		case outbound.OutcomeNotPaid, outbound.OutcomeNoAttempt:
+		default: // UNKNOWN: Payment cannot say yet, so the stock must not be released
+			return inbound.ErrDependency
 		}
 	}
 	if booking.Status == vo.BookingPendingPayment && booking.PaymentStartedAt == nil {
@@ -53,7 +61,6 @@ func (uc *Expire) ExpireBooking(ctx context.Context, bookingID string) error {
 	_, err = uc.uow.Expire(ctx, outbound.ExpireSpec{
 		BookingID:     bookingID,
 		Reason:        reason,
-		Review:        review,
 		CorrelationID: bookingID,
 	})
 	return err

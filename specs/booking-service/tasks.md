@@ -36,7 +36,7 @@ dan Payment) → sisanya.
   - Ada: `allocate_batch.go`, `admission_repo.go` (`ALREADY_ACTIVE`, idempoten per `queueEntryId`), `POST /internal/v1/allocations:batch`, create/get/current session
   - [x] 4.R1 Endpoint yang dipanggil Queue belum ada: `GET /internal/v1/events/{eventId}/supply` (Status Publisher Queue gagal tanpa ini) dan `POST /internal/v1/allocations/{allocationId}:release`
     - _Requirements: 17.1, 17.2, 17.3_
-  - [ ] 4.R3 Booking panic saat start (`booking-api` dan `booking-worker` restart-loop di `make up`): pola `POST /internal/v1/allocations/{allocationId}:release` di `internal_handler.go:76` tidak valid untuk `http.ServeMux` (wildcard harus satu segmen penuh). Daftarkan `POST /internal/v1/allocations/{rest}` lalu pisahkan suffix `:release` di handler (kontrak `internal-booking.yaml` dan pemanggil Queue tidak berubah); tambah tes yang membangun mux agar panic terdeteksi di unit test
+  - [x] 4.R3 Selesai 2026-10-26 (rute `{rest}` + potong `:release` di handler; `release_route_test.go` membangun mux). Booking panic saat start (`booking-api` dan `booking-worker` restart-loop di `make up`): pola `POST /internal/v1/allocations/{allocationId}:release` di `internal_handler.go:76` tidak valid untuk `http.ServeMux` (wildcard harus satu segmen penuh). Daftarkan `POST /internal/v1/allocations/{rest}` lalu pisahkan suffix `:release` di handler (kontrak `internal-booking.yaml` dan pemanggil Queue tidak berubah); tambah tes yang membangun mux agar panic terdeteksi di unit test
     - _Requirements: 4.4_
     - _Ditemukan: platform 7.6 (2026-10-22), `make up`_
   - [ ] 4.R2 Saat `free + allocated + held = 0`: tandai event `SOLD_OUT` dan tulis outbox `booking.sold_out`

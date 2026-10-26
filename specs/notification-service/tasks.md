@@ -17,12 +17,12 @@ delivery, adapter SMTP/FCM/template sudah ada dan `go test` lulus.
 
 ## Tasks
 
-- [ ] 0a. Delivery entity, repository, idempotensi
+- [x] 0a. Delivery entity, repository, idempotensi (selesai 2026-10-26)
   - Ada: `entity/delivery.go`, `postgres/delivery_repository.go` (`ClaimDelivery`, `MarkSent`, `MarkDead`, `BumpAttempt`)
-  - [ ] 0a.R1 **Bug (terkonfirmasi 2026-10-23, `delivery_repository.go:30`):** `ClaimDelivery` memakai `ON CONFLICT DO NOTHING`. Saat pesan datang lagi dari retry queue, barisnya sudah ada (status `RETRY`) sehingga dianggap duplikat dan email tidak pernah terkirim. Ganti dengan klaim kondisional: boleh lanjut bila status `PENDING`/`RETRY` atau `SENDING` yang sudah basi (design §4.3)
+  - [x] 0a.R1 **Selesai 2026-10-26** (klaim kondisional + lease 60 s; attempts hanya naik lewat `BumpAttempt`). **Bug (terkonfirmasi 2026-10-23, `delivery_repository.go:30`):** `ClaimDelivery` memakai `ON CONFLICT DO NOTHING`. Saat pesan datang lagi dari retry queue, barisnya sudah ada (status `RETRY`) sehingga dianggap duplikat dan email tidak pernah terkirim. Ganti dengan klaim kondisional: boleh lanjut bila status `PENDING`/`RETRY` atau `SENDING` yang sudah basi (design §4.3)
     - **Property 1: At most one send after success**, **Property 2: Retry eventually sends**
     - _Requirements: 8.1, 8.2, 2.2_
-  - [ ] 0a.2 Integration test repository (PostgreSQL, tag `integration`): baris baru → klaim; `RETRY` → klaim; `SENDING` basi → klaim; `SENT` → skip; dua klaim paralel → hanya satu berhasil
+  - [x] 0a.2 Selesai 2026-10-26 (`delivery_repository_integration_test.go`, ditambah `MarkDead`/`MarkExpired` dan repository subscription; terbukti gagal di kode lama). Integration test repository (PostgreSQL, tag `integration`): baris baru → klaim; `RETRY` → klaim; `SENDING` basi → klaim; `SENT` → skip; dua klaim paralel → hanya satu berhasil
     - _Requirements: 6.1, 6.2_
 
 - [x] 0c. Penyedia email dapat dipilih: Mailpit atau Resend (selesai 2026-10-22, branch `feature/notification-email-provider`)
@@ -38,7 +38,7 @@ delivery, adapter SMTP/FCM/template sudah ada dan `go test` lulus.
   - Uji nyata ke Resend belum dijalankan: lakukan manual dengan `EMAIL_PROVIDER=resend` ke alamat milikmu (kuota 100/hari), lalu kembalikan ke `mailpit`
 
 - [x] 1. Email e-tiket (`booking.paid`)
-  - [ ] 1.1 Test isi email: kode tiket, nama, NIK tersamar, tautan tiket (TC-TKT-02). Fixture payload diambil dari `booking.paid.v1.schema.json` (bukan payload Booking saat ini, yang belum sesuai kontrak — audit F5)
+  - [x] 1.1 Selesai 2026-10-26 (`renderer_test.go`; `ticketLinkToken` kini opsional di `Validate()` dan template menyembunyikan baris tautan bila kosong; schema kontrak diubah di payment Task 15.3). Test isi email: kode tiket, nama, NIK tersamar, tautan tiket (TC-TKT-02). Fixture payload diambil dari `booking.paid.v1.schema.json` (bukan payload Booking saat ini, yang belum sesuai kontrak — audit F5)
     - _Requirements: 1.4_
   - _Requirements: 1.1, 1.2, 1.3_
 
@@ -60,15 +60,15 @@ delivery, adapter SMTP/FCM/template sudah ada dan `go test` lulus.
 - [x] 10. Health endpoint
   - _Requirements: 10.1_
 
-- [ ] 8. Retry & DLQ
+- [x] 8. Retry & DLQ (selesai 2026-10-26)
   - Ada: retry berjenjang + DLQ dari `pkg/rabbitmq`, `Permanent` untuk payload rusak (Property 3 sudah diuji di `pkg/rabbitmq/handle_test.go`)
-  - [ ] 8.R1 Bungkus pengiriman email dengan `pkg/resilience` breaker + bulkhead (timeout 3 s, ambang 5, cooldown 30 s, bulkhead 10). Breaker OPEN = gagal sementara → retry. Prioritas rendah (P2): retry queue sudah memenuhi NFR-10; kerjakan setelah 0a.R1
+  - [x] 8.R1 Selesai 2026-10-26 (`infrastructure/emailguard`, dipasang untuk Mailpit dan Resend; permanen dan bulkhead penuh tidak membuka breaker). Bungkus pengiriman email dengan `pkg/resilience` breaker + bulkhead (timeout 3 s, ambang 5, cooldown 30 s, bulkhead 10). Breaker OPEN = gagal sementara → retry. Prioritas rendah (P2): retry queue sudah memenuhi NFR-10; kerjakan setelah 0a.R1
     - **Property 5: Notification failure never affects source**
     - _Requirements: 9.5, 13.9_
   - _Requirements: 9.1, 9.2, 9.3, 9.4_
 
-- [ ] 9. Privasi
-  - [ ] 9.1 `last_error` menyimpan `err.Error()` mentah; balasan SMTP saat `RCPT` gagal (`smtp: rcpt: %w`) bisa memuat alamat penerima. Simpan hanya kelas error (mis. `smtp_rcpt`, `smtp_dial`) + test. Prioritas rendah: SMTP hanya dipakai Mailpit lokal, adapter Resend sudah membersihkan error. Redaksi log sudah dicakup platform 4.4
+- [x] 9. Privasi (selesai 2026-10-26)
+  - [x] 9.1 Selesai 2026-10-26 (alamat email di teks error SMTP diganti `[email]` di adapter, sehingga `last_error` dan log bersih; hanya alamat email yang di-scrub). `last_error` menyimpan `err.Error()` mentah; balasan SMTP saat `RCPT` gagal (`smtp: rcpt: %w`) bisa memuat alamat penerima. Simpan hanya kelas error (mis. `smtp_rcpt`, `smtp_dial`) + test. Prioritas rendah: SMTP hanya dipakai Mailpit lokal, adapter Resend sudah membersihkan error. Redaksi log sudah dicakup platform 4.4
     - **Property 6: No secret in logs**
     - _Requirements: 11.3, 11.4_
 
@@ -86,4 +86,4 @@ ID dipertahankan agar jejaknya jelas. Kode yang sudah ada tidak dihapus, hanya t
 ## Notes
 - Nama queue sekarang gabungan (`notification.booking.events`, dst.) dan routing key tanpa `.v1`. Keduanya bekerja karena producer memakai nama yang sama; jangan diganti kecuali lewat platform 12.1.
 - Notification tidak menerbitkan event dan tidak menulis stok/uang/akun (invarian #6).
-- Urutan kerja: 0a.R1 → 0a.2 → 1.1 → 8.R1 → 9.1.
+- Urutan kerja: 0a.R1 → 0a.2 → 1.1 → 8.R1 → 9.1 (semua selesai 2026-10-26).

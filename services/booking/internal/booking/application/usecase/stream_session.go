@@ -88,7 +88,7 @@ func (uc *StreamSession) Stream(ctx context.Context, sessionID, visitorID string
 			"categories": snaps,
 			"serverTime": now.Format(time.RFC3339),
 		})
-		fmt.Fprintf(w, "event: availability\ndata: %s\n\n", availData)
+		_, _ = fmt.Fprintf(w, "event: availability\ndata: %s\n\n", availData)
 
 		// timer frame — phase is LOCKED once payment has been locked in, else SELECTING.
 		phase := "SELECTING"
@@ -100,7 +100,7 @@ func (uc *StreamSession) Stream(ctx context.Context, sessionID, visitorID string
 			"serverTime": now.Format(time.RFC3339),
 			"phase":      phase,
 		})
-		fmt.Fprintf(w, "event: timer\ndata: %s\n\n", timerData)
+		_, _ = fmt.Fprintf(w, "event: timer\ndata: %s\n\n", timerData)
 
 		flush()
 

@@ -89,6 +89,19 @@ func (r *Registry) BreakerObserver() func(name string, from, to resilience.State
 	}
 }
 
+// NewCounterVec registers a business counter in this registry. Labels must have a small, fixed set of values
+// (method, status, result); never a booking id, NIK, or email. It panics on a duplicate name, like prometheus.MustRegister.
+func (r *Registry) NewCounterVec(name, help string, labels ...string) *prometheus.CounterVec {
+	c := prometheus.NewCounterVec(prometheus.CounterOpts{Name: name, Help: help}, labels)
+	r.reg.MustRegister(c)
+	return c
+}
+
+// NewCounterVec is Default.NewCounterVec.
+func NewCounterVec(name, help string, labels ...string) *prometheus.CounterVec {
+	return Default.NewCounterVec(name, help, labels...)
+}
+
 // Handler is Default.Handler.
 func Handler() http.Handler { return Default.Handler() }
 

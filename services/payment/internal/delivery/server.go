@@ -25,7 +25,7 @@ func RunServer(ctx context.Context, cfg config.Config, logger *slog.Logger, need
 	}
 	defer clients.Close()
 
-	handler, err := NewHandler(cfg, clients, logger)
+	handler, err := NewAPIHandler(cfg, clients, logger)
 	if err != nil {
 		return err
 	}
@@ -35,10 +35,26 @@ func RunServer(ctx context.Context, cfg config.Config, logger *slog.Logger, need
 
 // NewHandler builds the HTTP handler. Setiap domain mendaftarkan rute miliknya (route registrar).
 func NewHandler(cfg config.Config, clients *Clients, logger *slog.Logger) (http.Handler, error) {
+	return newHandler(cfg, clients, logger, nil)
+}
+
+// NewAPIHandler is NewHandler plus the payment API; the api process uses it, the worker does not.
+func NewAPIHandler(cfg config.Config, clients *Clients, logger *slog.Logger) (http.Handler, error) {
+	regs, err := newPaymentRegistrars(cfg, clients)
+	if err != nil {
+		return nil, err
+	}
+	return newHandler(cfg, clients, logger, regs)
+}
+
+func newHandler(cfg config.Config, clients *Clients, logger *slog.Logger, regs []registrar) (http.Handler, error) {
 	health := usecase.NewCheckHealth(config.ServiceName, healthcheck.New(clients.Pingers(), cfg.HTTP.HealthTimeout), clock.System{})
 
 	mux := http.NewServeMux()
 	paymenthttp.NewHealthHandler(health).Register(mux)
+	for _, r := range regs {
+		r.Register(mux)
+	}
 
 	mux.Handle("GET /metrics", telemetry.Handler())
 

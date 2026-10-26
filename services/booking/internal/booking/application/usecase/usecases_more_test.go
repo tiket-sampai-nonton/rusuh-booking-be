@@ -84,13 +84,50 @@ func TestExpire_NoPaymentExpires(t *testing.T) {
 	assert.Equal(t, "SESSION_EXPIRED", uow.expireSpec.Reason)
 }
 
-func TestExpire_PaymentStartedFound_Review(t *testing.T) {
-	started := time.Now()
-	bk := entity.Booking{ID: eventID, Status: vo.BookingVerifying, PaymentStartedAt: &started}
-	uow := &fakeUoW{expireActed: true}
-	uc := usecase.NewExpire(&fakeBookingRepo{booking: bk}, &fakePayments{paid: true}, uow)
-	require.NoError(t, uc.ExpireBooking(context.Background(), eventID))
-	assert.True(t, uow.expireSpec.Review)
+// Table of the Payment answers Booking must handle when a booking with a payment attempt expires.
+func TestExpire_PaymentStarted_FollowsPaymentAnswer(t *testing.T) {
+	deadline := time.Date(2026, 10, 26, 10, 0, 0, 0, time.UTC)
+	started := deadline.Add(-5 * time.Minute)
+	before, after := deadline.Add(-time.Second), deadline.Add(time.Second)
+	bk := entity.Booking{ID: eventID, Status: vo.BookingVerifying, PaymentStartedAt: &started, PaymentExpiresAt: deadline}
+
+	cases := map[string]struct {
+		pay        *fakePayments
+		wantErr    error
+		wantSettle bool
+		wantExpire bool
+		wantReview bool
+	}{
+		"SUCCEEDED tepat waktu → PAID":                  {pay: &fakePayments{outcome: outbound.OutcomeSucceeded, settledAt: &before}, wantSettle: true},
+		"SUCCEEDED tanpa waktu → PAID":                  {pay: &fakePayments{outcome: outbound.OutcomeSucceeded}, wantSettle: true},
+		"SUCCEEDED terlambat → REVIEW":                  {pay: &fakePayments{outcome: outbound.OutcomeSucceeded, settledAt: &after}, wantExpire: true, wantReview: true},
+		"NOT_PAID → EXPIRED":                            {pay: &fakePayments{outcome: outbound.OutcomeNotPaid}, wantExpire: true},
+		"NO_ATTEMPT → EXPIRED":                          {pay: &fakePayments{outcome: outbound.OutcomeNoAttempt}, wantExpire: true},
+		"UNKNOWN → stok tetap ditahan":                  {pay: &fakePayments{outcome: outbound.OutcomeUnknown}, wantErr: inbound.ErrDependency},
+		"Payment tidak terjangkau → stok tetap ditahan": {pay: &fakePayments{err: inbound.ErrDependency}, wantErr: inbound.ErrDependency},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			uow := &fakeUoW{expireActed: true, settled: true}
+			err := usecase.NewExpire(&fakeBookingRepo{booking: bk}, c.pay, uow).ExpireBooking(context.Background(), eventID)
+			if c.wantErr != nil {
+				assert.ErrorIs(t, err, c.wantErr)
+			} else {
+				require.NoError(t, err)
+			}
+			assert.Equal(t, []outbound.ResolveMode{outbound.ResolveCheckAndCancel}, c.pay.modes, "selalu CHECK_AND_CANCEL")
+			assert.Equal(t, c.wantSettle, uow.settleSpec.BookingID == eventID)
+			assert.Equal(t, c.wantExpire, uow.expireSpec.BookingID == eventID)
+			assert.Equal(t, c.wantReview, uow.expireSpec.Review)
+		})
+	}
+}
+
+func TestExpire_NoPaymentStartedNeverCallsPayment(t *testing.T) {
+	pay := &fakePayments{}
+	bk := entity.Booking{ID: eventID, Status: vo.BookingPendingPayment}
+	require.NoError(t, usecase.NewExpire(&fakeBookingRepo{booking: bk}, pay, &fakeUoW{expireActed: true}).ExpireBooking(context.Background(), eventID))
+	assert.Empty(t, pay.modes)
 }
 
 func TestExpire_AlreadyTerminalNoop(t *testing.T) {

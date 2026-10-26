@@ -9,11 +9,11 @@ import (
 
 //go:generate go tool mockgen -source=delivery_repository.go -destination=../../../../_mock/notification/port/outbound/delivery_repository_mock.go -package=mock_outbound
 
-// IDeliveryRepository persists delivery tracking rows. The ClaimDelivery insert with
-// ON CONFLICT DO NOTHING is the idempotency guard (no separate inbox table, §9.8).
+// IDeliveryRepository persists delivery tracking rows. The conditional claim in ClaimDelivery
+// (unique key + update only from PENDING/RETRY/stale SENDING) is the idempotency guard (no separate inbox table, §9.8).
 type IDeliveryRepository interface {
-	// ClaimDelivery inserts a SENDING row. Returns true when claimed (first time) and false
-	// when the (source_message_id, notification_type) pair already exists (duplicate → skip).
+	// ClaimDelivery claims the row for sending. Returns true when claimed (new row, or a RETRY/PENDING/stale
+	// SENDING row taken over) and false when it is already SENT, DEAD, or held by another worker (skip).
 	ClaimDelivery(ctx context.Context, d entity.Delivery) (claimed bool, err error)
 	// MarkSent transitions the row to SENT with sent_at and the provider message id.
 	MarkSent(ctx context.Context, sourceMessageID string, t entity.NotificationType, providerMessageID string) error

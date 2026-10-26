@@ -135,3 +135,22 @@ func TestLabelAllowlist(t *testing.T) {
 		}
 	}
 }
+
+func TestNewCounterVec_AppearsInMetricsOutput(t *testing.T) {
+	r := New()
+	c := r.NewCounterVec("rbt_test_events_total", "Hanya untuk test.", "method", "status")
+	c.WithLabelValues("VA_BCA", "SUCCEEDED").Inc()
+	c.WithLabelValues("VA_BCA", "SUCCEEDED").Inc()
+
+	f := family(t, r, "rbt_test_events_total")
+	require.NotNil(t, f)
+	require.Len(t, f.Metric, 1)
+	assert.Equal(t, map[string]string{"method": "VA_BCA", "status": "SUCCEEDED"}, labels(f.Metric[0]))
+	assert.EqualValues(t, 2, f.Metric[0].GetCounter().GetValue())
+
+	rec := httptest.NewRecorder()
+	r.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	assert.Contains(t, rec.Body.String(), `rbt_test_events_total{method="VA_BCA",status="SUCCEEDED"} 2`)
+
+	assert.Panics(t, func() { r.NewCounterVec("rbt_test_events_total", "duplikat", "x") }, "nama ganda ditolak")
+}

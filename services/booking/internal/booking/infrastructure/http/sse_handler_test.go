@@ -46,7 +46,7 @@ func (w *nonFlushWriter) Header() http.Header {
 	}
 	return w.header
 }
-func (w *nonFlushWriter) WriteHeader(code int)      { w.code = code }
+func (w *nonFlushWriter) WriteHeader(code int) { w.code = code }
 func (w *nonFlushWriter) Write(b []byte) (int, error) {
 	if w.code == 0 {
 		w.code = http.StatusOK

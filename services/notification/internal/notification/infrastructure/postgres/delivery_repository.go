@@ -19,20 +19,31 @@ type Deliveries struct{ pool *pgxpool.Pool }
 // NewDeliveries returns the repository.
 func NewDeliveries(pool *pgxpool.Pool) *Deliveries { return &Deliveries{pool: pool} }
 
-// ClaimDelivery inserts a SENDING row. ON CONFLICT DO NOTHING is the idempotency guard: a conflict
-// on (source_message_id, notification_type) returns no row → claimed=false (duplicate, skip).
+// claimLease is how long a SENDING row stays owned by the worker that claimed it. A crash between
+// claim and send leaves the row SENDING; once the lease lapses the broker redelivery may claim it again.
+// shortcut: fixed value, not derived from the sender timeout (design §4.3: 2 × timeout); make it config when SMTP/Resend timeouts exceed 30 s.
+const claimLease = 60 * time.Second
+
+// ClaimDelivery claims one delivery for sending. It inserts a SENDING row, or takes over an existing
+// row that is waiting for another attempt (PENDING/RETRY) or whose SENDING lease has lapsed. A row that
+// is SENT, DEAD, or still held by another worker returns no row → claimed=false (duplicate, skip).
+// The attempts counter is advanced by BumpAttempt on failure, not here.
 func (r *Deliveries) ClaimDelivery(ctx context.Context, d entity.Delivery) (bool, error) {
 	var id string
 	err := r.pool.QueryRow(ctx, `
 		INSERT INTO deliveries (source_message_id, notification_type, channel, booking_id, queue_entry_id,
-		                        recipient_hash, status, attempts)
-		VALUES ($1::uuid, $2, $3, $4::uuid, $5::uuid, $6, 'SENDING', 0)
-		ON CONFLICT (source_message_id, notification_type) DO NOTHING
+		                        recipient_hash, status, attempts, next_attempt_at)
+		VALUES ($1::uuid, $2, $3, $4::uuid, $5::uuid, $6, 'SENDING', 0, now() + make_interval(secs => $7))
+		ON CONFLICT (source_message_id, notification_type) DO UPDATE
+		   SET status = 'SENDING', next_attempt_at = now() + make_interval(secs => $7)
+		 WHERE deliveries.status IN ('PENDING', 'RETRY')
+		    OR (deliveries.status = 'SENDING' AND deliveries.next_attempt_at < now())
 		RETURNING id::text`,
 		d.SourceMessageID, string(d.Type), string(d.Channel), d.BookingID, d.QueueEntryID, d.RecipientHash,
+		claimLease.Seconds(),
 	).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return false, nil // conflict → already processed
+		return false, nil // SENT/DEAD/SENDING held by another worker → skip
 	}
 	if err != nil {
 		return false, fmt.Errorf("deliveries: claim: %w", err)

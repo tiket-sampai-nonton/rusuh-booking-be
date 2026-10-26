@@ -40,9 +40,10 @@ func funcMap() template.FuncMap {
 	}
 }
 
-// formatIDR formats a minor-unit (cents) amount as thousands-separated rupiah, e.g. 3000000 → "30.000".
+// formatIDR formats an amount as thousands-separated rupiah, e.g. 3000000 → "3.000.000". In this system one IDR
+// minor unit is one rupiah (Booking stores price_minor = 1500000 for Rp 1.500.000; IDR has no decimals), so nothing is divided.
 func formatIDR(minor int64) string {
-	rupiah := minor / 100
+	rupiah := minor
 	neg := rupiah < 0
 	if neg {
 		rupiah = -rupiah
