@@ -53,6 +53,7 @@ func funcMap() template.FuncMap {
 		"formatTime":  func(t time.Time) string { return t.UTC().Format("02 Jan 2006 15:04 MST") },
 		"formatIDR":   formatIDR,
 		"formatStart": formatStart,
+		"formatClock": func(t time.Time) string { return t.In(wib).Format("15.04") + " WIB" },
 	}
 }
 

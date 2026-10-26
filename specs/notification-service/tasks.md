@@ -78,12 +78,13 @@ ID dipertahankan agar jejaknya jelas. Kode yang sudah ada tidak dihapus, hanya t
 
 - 0b.R1 Adapter push `log` — push bukan requirement PDF; `noopPush` cukup untuk lokal.
 - 6. API push subscription (6.R1 format error) — push di luar requirement PDF.
-- 7. Email OTP (7.1 test kontrak, 7.2 TC-MSG-05/06) — login OTP opsional menurut asumsi PDF; poison → DLQ sudah diuji di `pkg/rabbitmq`.
+- 7. Email OTP (7.1 test kontrak, 7.2 TC-MSG-05/06) — login OTP opsional menurut asumsi PDF; poison → DLQ sudah diuji di `pkg/rabbitmq`. **Terverifikasi nyata 2026-10-26** (User API → RabbitMQ → Notification → Resend → `otp/verify` 200; kode OTP tidak muncul di log). Kode tidak dihapus.
 - 8.2 Redrive DLQ (`tools/redrive`) — bergantung platform 9.3 yang berprioritas rendah; redrive manual lewat RabbitMQ management cukup untuk demo.
 - 11.1 Metrik notifikasi + alert — NFR-09 meminta metrik antrian, konversi, dan expired; jumlah DLQ terlihat di RabbitMQ management.
 - 12.1 Retensi data pribadi — bukan requirement PDF; menunggu platform 13.1.
 
 ## Notes
 - Nama queue sekarang gabungan (`notification.booking.events`, dst.) dan routing key tanpa `.v1`. Keduanya bekerja karena producer memakai nama yang sama; jangan diganti kecuali lewat platform 12.1.
+- Email e-tiket, expired, review, dan OTP punya varian HTML (`assets/templates/*.html`, layout bersama `layout.html`, `html/template`); versi teks tetap dikirim sebagai cadangan. QR code ada di backlog (`specs/platform/tasks.md`).
 - Notification tidak menerbitkan event dan tidak menulis stok/uang/akun (invarian #6).
 - Urutan kerja: 0a.R1 → 0a.2 → 1.1 → 8.R1 → 9.1 (semua selesai 2026-10-26).

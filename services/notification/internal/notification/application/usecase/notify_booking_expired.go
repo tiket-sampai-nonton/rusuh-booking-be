@@ -45,14 +45,14 @@ func (u *NotifyBookingExpired) NotifyBookingExpired(ctx context.Context, sourceM
 		return nil
 	}
 
-	body, rerr := u.tmpl.Render("expired", dto.ExpiredData{PublicRef: p.PublicRef, Reason: p.Reason})
+	body, html, rerr := renderBoth(u.tmpl, "expired", dto.ExpiredData{PublicRef: p.PublicRef, Reason: p.Reason})
 	if rerr != nil {
 		_ = u.repo.MarkDead(ctx, sourceMessageID, entity.TypeBookingExpired, rerr.Error())
 		return rabbitmq.Permanent(fmt.Errorf("render expired: %w", rerr))
 	}
 
 	subject := fmt.Sprintf("[RBT] Booking Kedaluwarsa — %s", p.PublicRef)
-	providerID, serr := u.email.SendEmail(ctx, p.BuyerEmail, subject, body, "", idempotencyKey(sourceMessageID, entity.TypeBookingExpired))
+	providerID, serr := u.email.SendEmail(ctx, p.BuyerEmail, subject, body, html, idempotencyKey(sourceMessageID, entity.TypeBookingExpired))
 	if serr != nil {
 		recordSendFailure(ctx, u.repo, sourceMessageID, entity.TypeBookingExpired, u.clock.Now(), serr)
 		return fmt.Errorf("send expired email: %w", serr)

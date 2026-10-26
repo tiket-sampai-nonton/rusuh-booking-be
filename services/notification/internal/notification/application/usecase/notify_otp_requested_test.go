@@ -51,6 +51,7 @@ func TestNotifyOTP_SendsEmail(t *testing.T) {
 	m.pii.EXPECT().UnsealEmail(gomock.Any()).Return("buyer@example.id", nil)
 	m.pii.EXPECT().UnsealOTP(gomock.Any()).Return("123456", nil)
 	m.tmpl.EXPECT().Render("otp_login", gomock.Any()).Return("body", nil)
+	m.tmpl.EXPECT().RenderHTML("otp_login", gomock.Any()).Return("<p>html</p>", nil)
 	m.email.EXPECT().SendEmail(gomock.Any(), "buyer@example.id", gomock.Any(), "body", gomock.Any(), gomock.Any()).Return("p", nil)
 
 	require.NoError(t, uc.NotifyOTPRequested(context.Background(), "m1", otpPayload(now.Add(5*time.Minute))))
@@ -81,6 +82,7 @@ func TestNotifyOTP_SMTPErrorAcksNoRetry(t *testing.T) {
 	m.pii.EXPECT().UnsealEmail(gomock.Any()).Return("buyer@example.id", nil)
 	m.pii.EXPECT().UnsealOTP(gomock.Any()).Return("123456", nil)
 	m.tmpl.EXPECT().Render("otp_login", gomock.Any()).Return("body", nil)
+	m.tmpl.EXPECT().RenderHTML("otp_login", gomock.Any()).Return("<p>html</p>", nil)
 	m.email.EXPECT().SendEmail(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return("", errors.New("smtp down"))
 
 	// SMTP failure is acked (time-sensitive, no retry).

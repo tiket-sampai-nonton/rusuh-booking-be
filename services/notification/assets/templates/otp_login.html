@@ -1,0 +1,13 @@
+{{template "top" .}}
+    <tr><td style="background:#2a1f6b;border-radius:14px 14px 0 0;padding:26px 28px;color:#ffffff;">
+      <div style="font-size:11px;letter-spacing:2px;text-transform:uppercase;color:#f5b94a;font-weight:bold;">Kode login</div>
+      <div style="font-size:24px;line-height:1.2;font-weight:bold;margin-top:6px;">Masuk ke Rusuh Booking Tiket</div>
+    </td></tr>
+    <tr><td style="background:#ffffff;border-radius:0 0 14px 14px;padding:28px;">
+      <div style="font-size:14px;color:#4a4468;">Masukkan kode berikut untuk melanjutkan login:</div>
+      <div style="background:#f2f0f7;border-radius:10px;padding:18px;text-align:center;margin:16px 0;">
+        <div style="font-family:'Courier New',monospace;font-size:34px;font-weight:bold;letter-spacing:8px;color:#2a1f6b;">{{.Code}}</div>
+      </div>
+      <div style="font-size:13px;line-height:1.6;color:#4a4468;">Berlaku hingga <strong>{{formatClock .ExpiresAt}}</strong>.<br>Jangan bagikan kode ini kepada siapa pun, termasuk pihak yang mengaku dari kami.</div>
+    </td></tr>
+{{template "bottom" .}}

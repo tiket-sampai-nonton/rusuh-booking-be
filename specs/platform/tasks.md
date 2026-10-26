@@ -203,3 +203,14 @@ Dicatat dari audit 2026-10-23. Bukan requirement PDF; kode yang sudah ada tidak 
 - Payment: refund case dari `booking.review` (R8), sweeper attempt 7.2, alert Prometheus.
 - Notification: push FCM + API push subscription, OTP test lanjutan, metrik + alert DLQ.
 - Platform: 3.3, 9 (reconcile/redrive), 11 (Terraform/cloud), 12.1 (routing key `.v1`), 13 (retensi data), 4.3, 4.6, 6.2, 8.1.
+- Notification (next improvement): QR code di email e-tiket (isi = kode tiket; butuh library QR dan gambar inline CID/lampiran, per tiket). Saat ini email HTML hanya menampilkan kode tiket besar.
+
+## Koordinasi dengan nuzirwan (Booking)
+
+Dicatat 2026-10-26, dibahas bersama setelah scope PDF terdeliver:
+
+- **Format kode tiket:** jalur settle dari event memakai `NewPublicRef` (`RB-` + 8 hex acak, `ids.go`), jalur resolve memakai `ticketCodeFor` (`TK-` + 12 hex dari id item). Satukan satu format dan satu pembuat; pertimbangkan bentuk yang cocok untuk QR/scan gate.
+- **F28:** Booking memercayai `X-Visitor-ID`/cookie `rb_visitor` tanpa verifikasi JWT (identitas pengunjung bisa dipalsukan); Payment sudah memakai `httpx.VisitorAuth`.
+- **F26:** token service Queue → Booking berumur panjang; Queue perlu `httpx.ServiceTokenSource`.
+- Kunci token Booking di compose (platform 7.x), fase VERIFYING/grace, cakupan test Booking 51,7% (< 80%).
+

@@ -1,0 +1,17 @@
+{{template "top" .}}
+    <tr><td style="background:#2a1f6b;border-radius:14px 14px 0 0;padding:26px 28px;color:#ffffff;">
+      <div style="font-size:11px;letter-spacing:2px;text-transform:uppercase;color:#f5b94a;font-weight:bold;">Perlu ditinjau</div>
+      <div style="font-size:24px;line-height:1.2;font-weight:bold;margin-top:6px;">Pembayaran Anda sedang kami tinjau</div>
+    </td></tr>
+    <tr><td style="background:#ffffff;border-radius:0 0 14px 14px;padding:28px;font-size:14px;line-height:1.6;color:#4a4468;">
+      <p style="margin:0 0 14px;">Kami mendeteksi pembayaran yang perlu ditinjau.</p>
+      <div style="background:#f2f0f7;border-radius:10px;padding:14px 16px;margin-bottom:14px;">
+        <div style="font-size:11px;color:#8b86a3;text-transform:uppercase;letter-spacing:1px;">Booking</div>
+        <div style="font-family:'Courier New',monospace;font-size:14px;color:#1b1535;">{{.BookingID}}</div>
+        <div style="font-size:11px;color:#8b86a3;text-transform:uppercase;letter-spacing:1px;margin-top:10px;">Jumlah</div>
+        <div style="font-size:18px;font-weight:bold;color:#2a1f6b;">Rp {{formatIDR .AmountMinor}}</div>
+        {{if .AttemptHint}}<div style="font-size:11px;color:#8b86a3;text-transform:uppercase;letter-spacing:1px;margin-top:10px;">Catatan</div><div style="color:#1b1535;">{{.AttemptHint}}</div>{{end}}
+      </div>
+      <p style="margin:0;">Tim kami akan memproses dalam 3&ndash;5 hari kerja. Terima kasih &mdash; Tim Rusuh Booking Tiket</p>
+    </td></tr>
+{{template "bottom" .}}

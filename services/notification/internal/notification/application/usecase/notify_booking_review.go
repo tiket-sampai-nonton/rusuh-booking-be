@@ -45,13 +45,13 @@ func (u *NotifyBookingReview) NotifyBookingReview(ctx context.Context, sourceMes
 		return nil
 	}
 
-	body, rerr := u.tmpl.Render("review", dto.ReviewData{BookingID: p.BookingID, AmountMinor: p.AmountMinor, AttemptHint: p.AttemptHint})
+	body, html, rerr := renderBoth(u.tmpl, "review", dto.ReviewData{BookingID: p.BookingID, AmountMinor: p.AmountMinor, AttemptHint: p.AttemptHint})
 	if rerr != nil {
 		_ = u.repo.MarkDead(ctx, sourceMessageID, entity.TypeBookingReview, rerr.Error())
 		return rabbitmq.Permanent(fmt.Errorf("render review: %w", rerr))
 	}
 
-	providerID, serr := u.email.SendEmail(ctx, p.BuyerEmail, "[RBT] Pembayaran Perlu Ditinjau", body, "", idempotencyKey(sourceMessageID, entity.TypeBookingReview))
+	providerID, serr := u.email.SendEmail(ctx, p.BuyerEmail, "[RBT] Pembayaran Perlu Ditinjau", body, html, idempotencyKey(sourceMessageID, entity.TypeBookingReview))
 	if serr != nil {
 		recordSendFailure(ctx, u.repo, sourceMessageID, entity.TypeBookingReview, u.clock.Now(), serr)
 		return fmt.Errorf("send review email: %w", serr)

@@ -28,6 +28,7 @@ func TestNotifyBookingExpired_SendsAndMarksSent(t *testing.T) {
 	pii.EXPECT().HMACRecipient(gomock.Any()).Return([]byte("h"))
 	repo.EXPECT().ClaimDelivery(gomock.Any(), gomock.Any()).Return(true, nil)
 	tmpl.EXPECT().Render("expired", gomock.Any()).Return("body", nil)
+	tmpl.EXPECT().RenderHTML("expired", gomock.Any()).Return("<p>html</p>", nil)
 	email.EXPECT().SendEmail(gomock.Any(), "buyer@example.id", gomock.Any(), "body", gomock.Any(), gomock.Any()).Return("p", nil)
 	repo.EXPECT().MarkSent(gomock.Any(), "m1", gomock.Any(), "p").Return(nil)
 
@@ -61,6 +62,7 @@ func TestNotifyBookingReview_SendsAndMarksSent(t *testing.T) {
 	pii.EXPECT().HMACRecipient(gomock.Any()).Return([]byte("h"))
 	repo.EXPECT().ClaimDelivery(gomock.Any(), gomock.Any()).Return(true, nil)
 	tmpl.EXPECT().Render("review", gomock.Any()).Return("body", nil)
+	tmpl.EXPECT().RenderHTML("review", gomock.Any()).Return("<p>html</p>", nil)
 	email.EXPECT().SendEmail(gomock.Any(), "buyer@example.id", gomock.Any(), "body", gomock.Any(), gomock.Any()).Return("p", nil)
 	repo.EXPECT().MarkSent(gomock.Any(), "m1", gomock.Any(), "p").Return(nil)
 

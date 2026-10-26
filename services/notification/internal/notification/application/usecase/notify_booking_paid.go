@@ -59,11 +59,7 @@ func (u *NotifyBookingPaid) NotifyBookingPaid(ctx context.Context, sourceMessage
 		Tickets:         p.Tickets,
 		TicketLinkToken: p.TicketLinkToken,
 	}
-	body, rerr := u.tmpl.Render("eticket", data)
-	var html string
-	if rerr == nil {
-		html, rerr = u.tmpl.RenderHTML("eticket", data)
-	}
+	body, html, rerr := renderBoth(u.tmpl, "eticket", data)
 	if rerr != nil {
 		_ = u.repo.MarkDead(ctx, sourceMessageID, entity.TypeBookingPaid, rerr.Error())
 		return rabbitmq.Permanent(fmt.Errorf("render eticket: %w", rerr))

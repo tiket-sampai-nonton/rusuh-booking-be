@@ -61,13 +61,13 @@ func (u *NotifyOTPRequested) NotifyOTPRequested(ctx context.Context, sourceMessa
 		return rabbitmq.Permanent(fmt.Errorf("decrypt code: %w", uerr))
 	}
 
-	body, rerr := u.tmpl.Render("otp_login", dto.OTPData{Code: code, ExpiresAt: expiresAt, Locale: p.LocaleOrDefault()})
+	body, html, rerr := renderBoth(u.tmpl, "otp_login", dto.OTPData{Code: code, ExpiresAt: expiresAt, Locale: p.LocaleOrDefault()})
 	if rerr != nil {
 		return rabbitmq.Permanent(fmt.Errorf("render otp_login: %w", rerr))
 	}
 
 	// No retry: SMTP failure is logged and acked (time-sensitive, TTL ~5m).
-	if _, serr := u.email.SendEmail(ctx, email, "Kode Login Anda", body, "", sourceMessageID+":"+otpIdempotencySuffix); serr != nil {
+	if _, serr := u.email.SendEmail(ctx, email, "Kode Login Anda", body, html, sourceMessageID+":"+otpIdempotencySuffix); serr != nil {
 		u.log.Error("OTP email gagal (tanpa retry)", "messageId", sourceMessageID, "error", serr)
 		return nil
 	}

@@ -85,7 +85,27 @@ func TestRenderer_OTP_FormatsTime(t *testing.T) {
 	out, err := r.Render("otp_login", dto.OTPData{Code: "123456", ExpiresAt: exp, Locale: "id"})
 	require.NoError(t, err)
 	assert.Contains(t, out, "123456")
-	assert.Contains(t, out, "2026")
+	assert.Contains(t, out, "20.50 WIB") // 13:50 UTC
+
+	html, err := r.RenderHTML("otp_login", dto.OTPData{Code: "123456", ExpiresAt: exp, Locale: "id"})
+	require.NoError(t, err)
+	assert.Contains(t, html, "123456")
+	assert.Contains(t, html, "20.50 WIB")
+}
+
+// Every email with an HTML variant renders it, sharing the layout.
+func TestRenderer_HTMLVariants(t *testing.T) {
+	r, _ := template.New()
+	cases := map[string]any{
+		"expired": dto.ExpiredData{PublicRef: "RB-1", Reason: "PAYMENT_TIMEOUT"},
+		"review":  dto.ReviewData{BookingID: "b1", AmountMinor: 1500000},
+	}
+	for name, data := range cases {
+		out, err := r.RenderHTML(name, data)
+		require.NoError(t, err, name)
+		assert.Contains(t, out, "<!doctype html>", name)
+		assert.Contains(t, out, "Rusuh Booking Tiket", name)
+	}
 }
 
 func TestRenderer_UnknownTemplateErrors(t *testing.T) {
