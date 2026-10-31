@@ -3,6 +3,7 @@ package delivery
 import (
 	"crypto/ed25519"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -149,15 +150,28 @@ func (m *module) Register(mux *http.ServeMux) {
 }
 
 func buildPII() (*security.PII, error) {
-	hashKey, err := crypto.ParseKey(getenvOr("PII_HASH_KEY", devKeyHex))
+	hashKey, err := piiKey("PII_HASH_KEY")
 	if err != nil {
 		return nil, err
 	}
-	encKey, err := crypto.ParseKey(getenvOr("PII_ENC_KEY", devKeyHex))
+	encKey, err := piiKey("PII_ENC_KEY")
 	if err != nil {
 		return nil, err
 	}
 	return security.NewPII(hashKey, encKey)
+}
+
+// piiKey reads a 32-byte hex key. Only a local run (APP_ENV local or unset) may fall back to the all-zero dev key;
+// anywhere else a missing key is a start-up error, never a silent weak key that also disagrees with Queue and User.
+func piiKey(name string) ([]byte, error) {
+	v := os.Getenv(name)
+	if v == "" {
+		if env := os.Getenv("APP_ENV"); env != "" && env != "local" {
+			return nil, fmt.Errorf("booking: %s wajib diisi di APP_ENV=%s", name, env)
+		}
+		v = devKeyHex
+	}
+	return crypto.ParseKey(v)
 }
 
 // tokenVerifiers holds one verifier per kind of token Booking accepts. The Queue key signs admission, visitor,
