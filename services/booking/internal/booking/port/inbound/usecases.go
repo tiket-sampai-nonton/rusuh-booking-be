@@ -82,7 +82,15 @@ type IEditUsecase interface {
 
 // ITicketUsecase returns e-tickets for a paid booking.
 type ITicketUsecase interface {
-	GetTickets(ctx context.Context, bookingID string) (dto.TicketList, error)
+	GetTickets(ctx context.Context, bookingID string, access TicketAccess) (dto.TicketList, error)
+}
+
+// TicketAccess is who is asking for the tickets, already verified by the HTTP layer: the visitor token's subject, the
+// buyer account of a bearer token, or the unverified ticket-link token (the usecase checks it against the booking).
+type TicketAccess struct {
+	VisitorID string
+	AccountID string
+	LinkToken string
 }
 
 // IGetBookingUsecase returns a booking by ID (caller must own the visitor token).

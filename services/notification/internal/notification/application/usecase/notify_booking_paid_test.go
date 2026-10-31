@@ -49,7 +49,7 @@ func newPaidUsecase(t *testing.T) (*usecase.NotifyBookingPaid, paidMocks) {
 		email: mock_outbound.NewMockIEmailSender(ctrl),
 		pii:   mock_outbound.NewMockIPIIProtector(ctrl),
 	}
-	uc := usecase.NewNotifyBookingPaid(m.repo, m.tmpl, m.email, m.pii, clock.Fixed{T: time.Now()}, testLogger())
+	uc := usecase.NewNotifyBookingPaid(m.repo, m.tmpl, m.email, m.pii, clock.Fixed{T: time.Now()}, testLogger(), "https://rusuh.example/tickets/")
 	return uc, m
 }
 
@@ -116,4 +116,15 @@ func TestNotifyBookingPaid_ClaimErrorRetries(t *testing.T) {
 	err := uc.NotifyBookingPaid(context.Background(), "msg-1", validPaidPayload())
 	require.Error(t, err)
 	assert.False(t, rabbitmq.IsPermanent(err))
+}
+
+func TestTicketURL_OnlyWhenThereIsABaseAndAToken(t *testing.T) {
+	cases := map[string]struct{ base, id, tok, want string }{
+		"lengkap":     {"https://rusuh.example/tickets/", "b 1", "t/k+1", "https://rusuh.example/tickets/b%201?t=t%2Fk%2B1"},
+		"tanpa token": {"https://rusuh.example/tickets", "b1", "", ""},
+		"tanpa base":  {"", "b1", "tok", ""},
+	}
+	for name, c := range cases {
+		assert.Equal(t, c.want, usecase.TicketURLForTest(c.base, c.id, c.tok), name)
+	}
 }

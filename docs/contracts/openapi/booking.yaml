@@ -132,6 +132,13 @@ paths:
             application/json:
               schema:
                 "$ref": "#/components/schemas/ErrorEnvelope"
+        '400':
+          description: 'Parameter path bukan UUID atau body tidak valid — errorCode:
+            `VALIDATION_ERROR`'
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ErrorEnvelope"
   "/api/v1/booking-sessions":
     post:
       tags:
@@ -286,6 +293,13 @@ paths:
             application/json:
               schema:
                 "$ref": "#/components/schemas/ErrorEnvelope"
+        '400':
+          description: 'Parameter path bukan UUID atau body tidak valid — errorCode:
+            `VALIDATION_ERROR`'
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ErrorEnvelope"
   "/api/v1/booking-sessions/{sessionId}/stream":
     get:
       tags:
@@ -332,6 +346,13 @@ paths:
         '403':
           description: 'Token valid tetapi bukan pemilik sesi/pesanan — errorCode:
             `VISITOR_MISMATCH`'
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ErrorEnvelope"
+        '400':
+          description: 'Parameter path bukan UUID atau body tidak valid — errorCode:
+            `VALIDATION_ERROR`'
           content:
             application/json:
               schema:
@@ -406,6 +427,13 @@ paths:
             application/json:
               schema:
                 "$ref": "#/components/schemas/ErrorEnvelope"
+        '400':
+          description: 'Parameter path bukan UUID atau body tidak valid — errorCode:
+            `VALIDATION_ERROR`'
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ErrorEnvelope"
   "/api/v1/booking-sessions/{sessionId}/cancel":
     post:
       tags:
@@ -440,6 +468,13 @@ paths:
         '403':
           description: 'Token valid tetapi bukan pemilik sesi/pesanan — errorCode:
             `VISITOR_MISMATCH`'
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ErrorEnvelope"
+        '400':
+          description: 'Parameter path bukan UUID atau body tidak valid — errorCode:
+            `VALIDATION_ERROR`'
           content:
             application/json:
               schema:
@@ -600,6 +635,13 @@ paths:
             application/json:
               schema:
                 "$ref": "#/components/schemas/ErrorEnvelope"
+        '400':
+          description: 'Parameter path bukan UUID atau body tidak valid — errorCode:
+            `VALIDATION_ERROR`'
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ErrorEnvelope"
   "/api/v1/bookings/{bookingId}":
     get:
       tags:
@@ -647,6 +689,13 @@ paths:
         '403':
           description: 'Token valid tetapi bukan pemilik sesi/pesanan — errorCode:
             `VISITOR_MISMATCH`'
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ErrorEnvelope"
+        '400':
+          description: 'Parameter path bukan UUID atau body tidak valid — errorCode:
+            `VALIDATION_ERROR`'
           content:
             application/json:
               schema:
@@ -703,6 +752,13 @@ paths:
         '403':
           description: 'Token valid tetapi bukan pemilik sesi/pesanan — errorCode:
             `VISITOR_MISMATCH`'
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ErrorEnvelope"
+        '400':
+          description: 'Parameter path bukan UUID atau body tidak valid — errorCode:
+            `VALIDATION_ERROR`'
           content:
             application/json:
               schema:
@@ -765,6 +821,16 @@ paths:
             application/json:
               schema:
                 "$ref": "#/components/schemas/ErrorEnvelope"
+        '400':
+          description: 'Parameter path bukan UUID atau body tidak valid — errorCode:
+            `VALIDATION_ERROR`'
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ErrorEnvelope"
+      description: 'Hanya untuk pemilik booking: visitor token yang sama, akun pembeli
+        yang sama (bearer), atau tautan e-tiket dari email (?t=). Selain itu 404 (tidak
+        dibedakan dari booking yang tidak ada). 409 bila belum PAID.'
   "/api/v1/me/bookings":
     get:
       tags:

@@ -150,6 +150,8 @@ services:
       TOKEN_AUDIENCE: rbt
       SMTP_HOST: mailpit
       SMTP_PORT: "1025"
+      # Page that shows e-tickets; the e-ticket email links to {base}/{bookingId}?t={token}. Empty = no link in the email.
+      TICKET_LINK_BASE_URL: ${TICKET_LINK_BASE_URL:-}
     depends_on: { postgres: { condition: service_healthy } }
     volumes: *keys-volume
     restart: "no"

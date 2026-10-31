@@ -89,7 +89,7 @@ func newNotificationModule(cfg config.Config, clients *Clients, logger *slog.Log
 	subs := notificationpg.NewSubscriptions(clients.PG.Pool())
 	clk := clock.System{}
 
-	paid := usecase.NewNotifyBookingPaid(deliveries, tmpl, email, pii, clk, logger)
+	paid := usecase.NewNotifyBookingPaid(deliveries, tmpl, email, pii, clk, logger, cfg.Email.TicketLinkBaseURL)
 	expired := usecase.NewNotifyBookingExpired(deliveries, tmpl, email, pii, clk, logger)
 	review := usecase.NewNotifyBookingReview(deliveries, tmpl, email, pii, clk, logger)
 	turnSoon := usecase.NewNotifyTurnSoon(deliveries, subs, push, pii, clk, logger)

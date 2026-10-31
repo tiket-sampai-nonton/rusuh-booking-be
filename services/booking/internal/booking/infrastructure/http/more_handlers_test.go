@@ -218,3 +218,25 @@ func TestBookingHandler_ReplaceItemsPassesTheVerifiedVisitor(t *testing.T) {
 	assert.Equal(t, http.StatusConflict, do(t, bad, http.MethodPut, "/api/v1/bookings/b1/items", `{"version":1,"items":[]}`, nil).Code)
 	assert.Equal(t, http.StatusBadRequest, do(t, h, http.MethodPut, "/api/v1/bookings/b1/items", `{bukan`, nil).Code)
 }
+
+// Who is asking is decided here (verified visitor token, verified buyer bearer, email link); the use case decides ownership.
+func TestBookingHandler_GetTicketsPassesVerifiedIdentity(t *testing.T) {
+	var got inbound.TicketAccess
+	h := bookinghttp.NewBookingHandler(&fakeHold{}, &recEdit{}, fakeTickets{resp: dto.TicketList{BookingID: "b1"}, got: &got}, fakeGet{}, fakeCancel{}).WithBuyerAuth(allowAll{})
+
+	w := do(t, h, http.MethodGet, "/api/v1/bookings/b1/tickets?t=link-1", "", map[string]string{"X-Visitor-Token": "v-1"})
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, inbound.TicketAccess{VisitorID: "v-1", LinkToken: "link-1"}, got)
+
+	w = do(t, h, http.MethodGet, "/api/v1/bookings/b1/tickets", "", map[string]string{"Authorization": "Bearer t"})
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "queue-service", got.AccountID, "akun dari bearer terverifikasi")
+
+	assert.Equal(t, http.StatusUnauthorized, do(t, bookinghttp.NewBookingHandler(&fakeHold{}, &recEdit{}, fakeTickets{}, fakeGet{}, fakeCancel{}),
+		http.MethodGet, "/api/v1/bookings/b1/tickets", "", map[string]string{"Authorization": "Bearer t"}).Code, "bearer tanpa verifier ditolak")
+	denied := bookinghttp.NewBookingHandler(&fakeHold{}, &recEdit{}, fakeTickets{}, fakeGet{}, fakeCancel{}).WithBuyerAuth(denyAllVerifier{})
+	assert.Equal(t, http.StatusUnauthorized, do(t, denied, http.MethodGet, "/api/v1/bookings/b1/tickets", "", map[string]string{"Authorization": "Bearer t"}).Code)
+
+	notFound := bookinghttp.NewBookingHandler(&fakeHold{}, &recEdit{}, fakeTickets{err: inbound.ErrNotFound}, fakeGet{}, fakeCancel{})
+	assert.Equal(t, http.StatusNotFound, do(t, notFound, http.MethodGet, "/api/v1/bookings/b1/tickets", "", nil).Code)
+}

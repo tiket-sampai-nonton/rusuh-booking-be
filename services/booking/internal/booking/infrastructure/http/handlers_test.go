@@ -58,9 +58,13 @@ func (f fakeEdit) ReplaceItems(context.Context, inbound.EditCommand) (dto.Bookin
 type fakeTickets struct {
 	resp dto.TicketList
 	err  error
+	got  *inbound.TicketAccess
 }
 
-func (f fakeTickets) GetTickets(context.Context, string) (dto.TicketList, error) {
+func (f fakeTickets) GetTickets(_ context.Context, _ string, a inbound.TicketAccess) (dto.TicketList, error) {
+	if f.got != nil {
+		*f.got = a
+	}
 	return f.resp, f.err
 }
 

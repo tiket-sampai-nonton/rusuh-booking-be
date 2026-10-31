@@ -25,7 +25,7 @@ func settleFound(ctx context.Context, uow outbound.IUnitOfWork, b entity.Booking
 		BookingID:      b.ID,
 		Method:         "UNKNOWN",
 		SettlementTime: st,
-		TicketCodeFn:   ticketCodeFor(b.ID),
+		TicketCodeFn:   func(string) string { return NewTicketCode() },
 		CorrelationID:  b.ID,
 	})
 	return err

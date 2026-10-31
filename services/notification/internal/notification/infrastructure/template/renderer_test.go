@@ -19,8 +19,8 @@ func TestRenderer_Eticket(t *testing.T) {
 
 	out, err := r.Render("eticket", dto.EticketData{
 		PublicRef: "RBT-ABC", EventName: "Konser ABC", EventStartsAt: "2026-11-15", EventVenue: "GBK",
-		Tickets:         []dto.TicketInfo{{TicketCode: "TKT-001", AttendeeName: "Budi", AttendeeNikMasked: "3174********0001", CategoryCode: "VIP"}},
-		TicketLinkToken: "tok",
+		Tickets:   []dto.TicketInfo{{TicketCode: "TKT-001", AttendeeName: "Budi", AttendeeNikMasked: "3174********0001", CategoryCode: "VIP"}},
+		TicketURL: "https://rusuh.example/tickets/b?t=tok",
 	})
 	require.NoError(t, err)
 	assert.Contains(t, out, "RBT-ABC")
@@ -136,7 +136,7 @@ func renderPaid(t *testing.T, tokenField string) string {
 	require.NoError(t, err)
 	out, err := r.Render("eticket", dto.EticketData{
 		PublicRef: p.PublicRef, EventName: p.Event.Name, EventStartsAt: p.Event.StartsAt, EventVenue: p.Event.Venue,
-		Tickets: p.Tickets, TicketLinkToken: p.TicketLinkToken,
+		Tickets: p.Tickets, TicketURL: link(p.TicketLinkToken),
 	})
 	require.NoError(t, err)
 	return out
@@ -144,7 +144,7 @@ func renderPaid(t *testing.T, tokenField string) string {
 
 func TestRenderer_Eticket_ContractPayload(t *testing.T) {
 	out := renderPaid(t, `, "ticketLinkToken": "opaque-token"`)
-	for _, want := range []string{"RB-7K2M9Q", "Konser A", "GBK", "TK-AAAA1111", "TK-BBBB2222", "Budi Santoso", "Sari Dewi", "3174********0001", "3174********0002", "Lihat e-tiket: opaque-token"} {
+	for _, want := range []string{"RB-7K2M9Q", "Konser A", "GBK", "TK-AAAA1111", "TK-BBBB2222", "Budi Santoso", "Sari Dewi", "3174********0001", "3174********0002", "Lihat e-tiket: https://rusuh.example/tickets/b?t=opaque-token"} {
 		assert.Contains(t, out, want)
 	}
 	assert.NotRegexp(t, `\d{16}`, out, "NIK lengkap tidak boleh muncul di email")
@@ -165,4 +165,12 @@ func TestRenderer_Review_AmountMatchesBookingPrice(t *testing.T) {
 	out, err = r.Render("review", dto.ReviewData{BookingID: "b1", AmountMinor: 500})
 	require.NoError(t, err)
 	assert.Contains(t, out, "Rp 500\n", "jumlah kecil tidak dibulatkan menjadi 5")
+}
+
+// The link line appears only when Booking issued a token (the use case builds the URL from it).
+func link(token string) string {
+	if token == "" {
+		return ""
+	}
+	return "https://rusuh.example/tickets/b?t=" + token
 }

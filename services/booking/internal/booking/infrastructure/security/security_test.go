@@ -126,3 +126,22 @@ func TestAdmissionVerifier_OnlyAdmissionTokens(t *testing.T) {
 		assert.Error(t, err, scope)
 	}
 }
+
+func TestTicketLinks_BoundToTheBookingAndTheKey(t *testing.T) {
+	links, err := security.NewTicketLinks([]byte("0123456789abcdef0123456789abcdef"))
+	require.NoError(t, err)
+	tok := links.Token("booking-1")
+	assert.NotEmpty(t, tok)
+	assert.True(t, links.Valid("booking-1", tok))
+	assert.False(t, links.Valid("booking-2", tok), "tautan hanya membuka booking-nya sendiri")
+	assert.False(t, links.Valid("booking-1", tok+"x"))
+	assert.False(t, links.Valid("booking-1", ""))
+	assert.Equal(t, tok, links.Token("booking-1"), "stabil")
+
+	other, err := security.NewTicketLinks([]byte("ffffffffffffffffffffffffffffffff"))
+	require.NoError(t, err)
+	assert.False(t, other.Valid("booking-1", tok), "kunci lain tidak menerima")
+
+	_, err = security.NewTicketLinks([]byte("pendek"))
+	assert.Error(t, err)
+}

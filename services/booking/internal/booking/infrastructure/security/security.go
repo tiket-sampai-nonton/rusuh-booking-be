@@ -3,6 +3,9 @@
 package security
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
 	"errors"
 	"strings"
 	"time"
@@ -137,4 +140,28 @@ func (v *BearerVerifier) isAdmin(email string) bool {
 		return v.admins[email[at:]]
 	}
 	return false
+}
+
+// TicketLinks signs and verifies the ticket-link token in the e-ticket email: HMAC-SHA256(bookingID), so the link only
+// opens the tickets of the booking it was issued for and cannot be derived from the booking id.
+type TicketLinks struct{ key []byte }
+
+// NewTicketLinks builds the signer; the key must be at least 16 bytes.
+func NewTicketLinks(key []byte) (*TicketLinks, error) {
+	if len(key) < 16 {
+		return nil, errors.New("security: kunci tautan tiket minimal 16 byte")
+	}
+	return &TicketLinks{key: key}, nil
+}
+
+// Token returns the base64url token for a booking.
+func (l *TicketLinks) Token(bookingID string) string {
+	m := hmac.New(sha256.New, l.key)
+	m.Write([]byte("ticket-link:" + bookingID))
+	return base64.RawURLEncoding.EncodeToString(m.Sum(nil))
+}
+
+// Valid reports whether token was issued for bookingID (constant time).
+func (l *TicketLinks) Valid(bookingID, token string) bool {
+	return hmac.Equal([]byte(l.Token(bookingID)), []byte(token))
 }

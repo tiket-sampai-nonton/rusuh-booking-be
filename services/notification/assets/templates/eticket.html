@@ -29,7 +29,7 @@
     </td></tr>
     {{end}}
     <tr><td style="background:#ffffff;border-top:2px dashed #cfc9e6;border-radius:0 0 14px 14px;padding:20px 28px;font-size:13px;line-height:1.6;color:#4a4468;">
-      {{if .TicketLinkToken}}<p style="margin:0 0 10px;">Lihat e-tiket: {{.TicketLinkToken}}</p>{{end}}
+      {{if .TicketURL}}<p style="margin:0 0 10px;">Lihat e-tiket: <a href="{{.TicketURL}}">{{.TicketURL}}</a></p>{{end}}
       Tunjukkan kode tiket di pintu masuk. Terima kasih &mdash; Tim Rusuh Booking Tiket
     </td></tr>
 {{template "bottom" .}}

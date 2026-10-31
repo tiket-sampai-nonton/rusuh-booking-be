@@ -86,7 +86,11 @@ func newBookingModule(cfg config.Config, clients *Clients, logger *slog.Logger) 
 	cancelSess := usecase.NewCancelSession(admissionRepo)
 	hold := usecase.NewHold(admissionRepo, eventRepo, idemStore, uow, pii, idGen, clk)
 	edit := usecase.NewEdit(bookingRepo, admissionRepo, eventRepo, uow, pii, clk)
-	tickets := usecase.NewGetTickets(bookingRepo, ticketRepo)
+	links, err := buildTicketLinks()
+	if err != nil {
+		return nil, err
+	}
+	tickets := usecase.NewGetTickets(bookingRepo, ticketRepo, links)
 	history := usecase.NewListMyBookings(bookingRepo)
 	getBooking := usecase.NewGetBooking(bookingRepo, clk)
 	payable := usecase.NewGetPayable(bookingRepo, clk)
@@ -98,8 +102,8 @@ func newBookingModule(cfg config.Config, clients *Clients, logger *slog.Logger) 
 		paymentClient,
 		uow,
 		cfg.Worker.VerifyGraceSeconds,
-		func(string) string { return idGen.NewPublicRef() },
-		nil, // ticketLinkTokenFn: nil → empty token (ticket-link signing not needed on expiry path)
+		func(string) string { return usecase.NewTicketCode() },
+		links.Token,
 	)
 	cancelBook := usecase.NewCancelBooking(bookingRepo, paymentClient, uow, clk)
 
@@ -107,7 +111,7 @@ func newBookingModule(cfg config.Config, clients *Clients, logger *slog.Logger) 
 	regs := []registrar{
 		bookinghttp.NewCatalogHandler(listEvents, getDetail),
 		bookinghttp.NewSessionHandler(sessions, attendee, cancelSess),
-		bookinghttp.NewBookingHandler(hold, edit, tickets, getBooking, cancelBook),
+		bookinghttp.NewBookingHandler(hold, edit, tickets, getBooking, cancelBook).WithBuyerAuth(tv.buyer),
 		bookinghttp.NewMyBookingsHandler(history, tv.buyer),
 		bookinghttp.NewInternalHandler(allocate, tv.service).WithSupply(supply).WithPayable(payable).WithDeadlineExtension(deadlineUC).WithPaymentLock(lockUC).WithReleaseAllocation(releaseAlloc).WithPaymentAuth(paymentAuth),
 		bookinghttp.NewAdminHandler(createEvent, updateConfig, tv.admin),
@@ -129,7 +133,7 @@ func newBookingModule(cfg config.Config, clients *Clients, logger *slog.Logger) 
 		registrars: regs,
 		sweepSess:  usecase.NewSweepSessions(admissionRepo, clk),
 		sweepExp:   usecase.NewSweepExpiries(bookingRepo, expiry, clk),
-		settle:     usecase.NewSettle(uow, idGen),
+		settle:     usecase.NewSettle(uow, links.Token),
 		outbox:     outboxWriter,
 	}, nil
 }
@@ -159,6 +163,22 @@ func buildPII() (*security.PII, error) {
 		return nil, err
 	}
 	return security.NewPII(hashKey, encKey)
+}
+
+// buildTicketLinks keys the e-ticket email link. Like the PII keys it may use a dev key only in a local run.
+func buildTicketLinks() (*security.TicketLinks, error) {
+	key := os.Getenv("TICKET_LINK_KEY")
+	if key == "" {
+		if env := os.Getenv("APP_ENV"); env != "" && env != "local" {
+			return nil, fmt.Errorf("booking: TICKET_LINK_KEY wajib diisi di APP_ENV=%s", env)
+		}
+		key = devKeyHex
+	}
+	raw, err := crypto.ParseKey(key)
+	if err != nil {
+		return nil, fmt.Errorf("booking: TICKET_LINK_KEY: %w", err)
+	}
+	return security.NewTicketLinks(raw)
 }
 
 // piiKey reads a 32-byte hex key. Only a local run (APP_ENV local or unset) may fall back to the all-zero dev key;

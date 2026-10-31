@@ -5,6 +5,8 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/clock"
@@ -28,11 +30,13 @@ type NotifyBookingPaid struct {
 	pii   outbound.IPIIProtector
 	clock clock.IClock
 	log   *slog.Logger
+	// ticketLinkBase is the page that shows the e-tickets (TICKET_LINK_BASE_URL), e.g. https://rusuh.example/tickets.
+	ticketLinkBase string
 }
 
 // NewNotifyBookingPaid accepts interfaces and returns the concrete usecase.
-func NewNotifyBookingPaid(repo outbound.IDeliveryRepository, tmpl outbound.ITemplateRenderer, email outbound.IEmailSender, pii outbound.IPIIProtector, clk clock.IClock, log *slog.Logger) *NotifyBookingPaid {
-	return &NotifyBookingPaid{repo: repo, tmpl: tmpl, email: email, pii: pii, clock: clk, log: log}
+func NewNotifyBookingPaid(repo outbound.IDeliveryRepository, tmpl outbound.ITemplateRenderer, email outbound.IEmailSender, pii outbound.IPIIProtector, clk clock.IClock, log *slog.Logger, ticketLinkBase string) *NotifyBookingPaid {
+	return &NotifyBookingPaid{repo: repo, tmpl: tmpl, email: email, pii: pii, clock: clk, log: log, ticketLinkBase: ticketLinkBase}
 }
 
 // NotifyBookingPaid processes one booking.paid event (idempotent via ClaimDelivery).
@@ -52,12 +56,12 @@ func (u *NotifyBookingPaid) NotifyBookingPaid(ctx context.Context, sourceMessage
 	}
 
 	data := dto.EticketData{
-		PublicRef:       p.PublicRef,
-		EventName:       p.Event.Name,
-		EventStartsAt:   p.Event.StartsAt,
-		EventVenue:      p.Event.Venue,
-		Tickets:         p.Tickets,
-		TicketLinkToken: p.TicketLinkToken,
+		PublicRef:     p.PublicRef,
+		EventName:     p.Event.Name,
+		EventStartsAt: p.Event.StartsAt,
+		EventVenue:    p.Event.Venue,
+		Tickets:       p.Tickets,
+		TicketURL:     ticketURL(u.ticketLinkBase, p.BookingID, p.TicketLinkToken),
 	}
 	body, html, rerr := renderBoth(u.tmpl, "eticket", data)
 	if rerr != nil {
@@ -72,4 +76,13 @@ func (u *NotifyBookingPaid) NotifyBookingPaid(ctx context.Context, sourceMessage
 		return fmt.Errorf("send eticket email: %w", serr) // transient → retry; permanent stays permanent (DLQ)
 	}
 	return u.repo.MarkSent(ctx, sourceMessageID, entity.TypeBookingPaid, providerID)
+}
+
+// ticketURL is {base}/{bookingId}?t={token}; empty unless both a base and the token Booking issued are present, so an
+// email never carries a link that cannot work.
+func ticketURL(base, bookingID, token string) string {
+	if base == "" || token == "" {
+		return ""
+	}
+	return strings.TrimRight(base, "/") + "/" + url.PathEscape(bookingID) + "?t=" + url.QueryEscape(token)
 }

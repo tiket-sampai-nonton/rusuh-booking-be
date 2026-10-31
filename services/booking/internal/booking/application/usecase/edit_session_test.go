@@ -121,22 +121,62 @@ func TestSession_GetCurrentSession_NotFound(t *testing.T) {
 }
 
 func TestGetTickets_Success(t *testing.T) {
-	bk := entity.Booking{ID: sessionID, Status: "PAID"}
+	bk := entity.Booking{ID: sessionID, Status: "PAID", VisitorID: visitor}
 	tickets := []entity.Ticket{
 		{ID: "t1", BookingID: sessionID, PublicCode: "TICKET-001"},
 	}
-	uc := usecase.NewGetTickets(&fakeBookingRepo{booking: bk}, &fakeTicketRepo{tickets: tickets})
-	result, err := uc.GetTickets(context.Background(), sessionID)
+	uc := usecase.NewGetTickets(&fakeBookingRepo{booking: bk}, &fakeTicketRepo{tickets: tickets}, nil)
+	result, err := uc.GetTickets(context.Background(), sessionID, inbound.TicketAccess{VisitorID: visitor})
 	require.NoError(t, err)
 	assert.Equal(t, sessionID, result.BookingID)
 	assert.Len(t, result.Tickets, 1)
 }
 
 func TestGetTickets_NotPaid(t *testing.T) {
-	bk := entity.Booking{ID: sessionID, Status: "PENDING_PAYMENT"}
-	uc := usecase.NewGetTickets(&fakeBookingRepo{booking: bk}, &fakeTicketRepo{})
-	_, err := uc.GetTickets(context.Background(), sessionID)
+	bk := entity.Booking{ID: sessionID, Status: "PENDING_PAYMENT", VisitorID: visitor}
+	uc := usecase.NewGetTickets(&fakeBookingRepo{booking: bk}, &fakeTicketRepo{}, nil)
+	_, err := uc.GetTickets(context.Background(), sessionID, inbound.TicketAccess{VisitorID: visitor})
 	assert.ErrorIs(t, err, inbound.ErrNotPayable)
+}
+
+type linkCheck struct{ ok string }
+
+func (l linkCheck) Valid(_, tok string) bool { return tok == l.ok }
+
+// A booking id alone never opens the tickets: only the booking's visitor, its buyer account, or the email link do.
+func TestGetTickets_OnlyTheOwnerOrTheEmailLinkCanRead(t *testing.T) {
+	bk := entity.Booking{ID: sessionID, Status: "PAID", VisitorID: visitor, AccountID: "acc-1"}
+	tickets := []entity.Ticket{{ID: "t1", BookingID: sessionID, PublicCode: "TK-1"}}
+	uc := usecase.NewGetTickets(&fakeBookingRepo{booking: bk}, &fakeTicketRepo{tickets: tickets}, linkCheck{ok: "good-link"})
+	ctx := context.Background()
+
+	for name, a := range map[string]inbound.TicketAccess{
+		"pemilik (visitor)":     {VisitorID: visitor},
+		"akun pembeli":          {AccountID: "acc-1"},
+		"tautan dari email":     {LinkToken: "good-link"},
+		"visitor salah, tautan": {VisitorID: "lain", LinkToken: "good-link"},
+	} {
+		out, err := uc.GetTickets(ctx, sessionID, a)
+		require.NoError(t, err, name)
+		assert.Len(t, out.Tickets, 1, name)
+	}
+	for name, a := range map[string]inbound.TicketAccess{
+		"tanpa identitas":  {},
+		"visitor lain":     {VisitorID: "lain"},
+		"akun lain":        {AccountID: "acc-2"},
+		"tautan palsu":     {LinkToken: "bad-link"},
+		"akun kosong sama": {AccountID: ""},
+		"visitor kosong":   {VisitorID: ""},
+		"tautan kosong":    {LinkToken: ""},
+	} {
+		_, err := uc.GetTickets(ctx, sessionID, a)
+		assert.ErrorIs(t, err, inbound.ErrNotFound, name+": tidak boleh membedakan 'tidak ada' dan 'bukan milik Anda'")
+	}
+
+	guestBooking := entity.Booking{ID: sessionID, Status: "PAID"} // no account: an empty account id must not match
+	g := usecase.NewGetTickets(&fakeBookingRepo{booking: guestBooking}, &fakeTicketRepo{tickets: tickets}, nil)
+	_, err := g.GetTickets(ctx, sessionID, inbound.TicketAccess{})
+	assert.ErrorIs(t, err, inbound.ErrNotFound)
 }
 
 func TestSession_CreateRequiresATokenAndMatchesTheVisitor(t *testing.T) {

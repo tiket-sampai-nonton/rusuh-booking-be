@@ -4,12 +4,13 @@ import "time"
 
 // EticketData is the render data for the eticket template.
 type EticketData struct {
-	PublicRef       string
-	EventName       string
-	EventStartsAt   string
-	EventVenue      string
-	Tickets         []TicketInfo
-	TicketLinkToken string
+	PublicRef     string
+	EventName     string
+	EventStartsAt string
+	EventVenue    string
+	Tickets       []TicketInfo
+	// TicketURL opens the tickets without logging in (ticket-link token inside); empty when no link base is configured.
+	TicketURL string
 }
 
 // ExpiredData is the render data for the expired template.

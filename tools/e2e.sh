@@ -32,7 +32,7 @@ start() { # svc verb port [ENV=val...]
 start queue api 8081;        start queue worker 8091
 start booking api 8082 "${booking_env[@]}"; start booking worker 8092 "${booking_env[@]}"
 start payment api 8083;      start payment worker 8093
-start notification api 8084; start notification worker 8094
+start notification api 8084; start notification worker 8094 TICKET_LINK_BASE_URL="http://localhost:3000/tickets"
 start user api 8085
 
 for port in 8081 8082 8083 8084 8085; do
