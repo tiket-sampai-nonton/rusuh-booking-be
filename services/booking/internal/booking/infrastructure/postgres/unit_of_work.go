@@ -766,7 +766,7 @@ func (u *UnitOfWork) ExtendDeadline(ctx context.Context, spec outbound.DeadlineS
 func (u *UnitOfWork) extendDeadline(ctx context.Context, tx pgx.Tx, spec outbound.DeadlineSpec) error {
 	tag, err := tx.Exec(ctx, `
 		UPDATE booking.bookings
-		   SET payment_expires_at = payment_expires_at + ($2 || ' seconds')::interval,
+		   SET payment_expires_at = payment_expires_at + make_interval(secs => $2),
 		       deadline_extended_at = now(),
 		       updated_at = now()
 		 WHERE id = $1::uuid
