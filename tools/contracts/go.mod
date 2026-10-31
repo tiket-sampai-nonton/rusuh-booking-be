@@ -1,6 +1,6 @@
 module github.com/tiket-sampai-nonton/rusuh-booking-be/tools/contracts
 
-go 1.26
+go 1.26.10
 
 require (
 	github.com/getkin/kin-openapi v0.152.0

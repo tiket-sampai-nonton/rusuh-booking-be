@@ -1,6 +1,6 @@
 module github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking
 
-go 1.26
+go 1.26.10
 
 require (
 	github.com/jackc/pgx/v5 v5.11.0
