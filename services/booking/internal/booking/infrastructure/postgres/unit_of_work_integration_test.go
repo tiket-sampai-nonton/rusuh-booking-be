@@ -134,7 +134,7 @@ func (f fixture) hold(t *testing.T) string {
 	id := f.q(t, `SELECT gen_random_uuid()::text`)
 	_, err := f.uow.Hold(context.Background(), outbound.HoldSpec{
 		BookingID: id, PublicRef: "RB-7F3A9C21", EventID: f.eventID, AdmissionID: f.admissionID, VisitorID: visitor,
-		BuyerNIKHash: []byte(f.nikH), BuyerEmail: "pembeli@contoh.id", AmountMinor: 150000, PaymentExpiresAt: time.Now().Add(10 * time.Minute),
+		BuyerNIKHash: []byte(f.nikH), BuyerEmail: "pembeli@contoh.id", AmountMinor: 150000, CfgEditEnabled: true, PaymentExpiresAt: time.Now().Add(10 * time.Minute),
 		Lines: []outbound.HoldLine{{
 			CategoryID: f.categoryID, UnitPriceMinor: 150000, AttendeeNIKHash: []byte("attendee-1"), AttendeeNIKEnc: []byte("enc"),
 			AttendeeNIKMasked: "3174********0001", AttendeeName: "Budi Santoso",
@@ -143,6 +143,30 @@ func (f fixture) hold(t *testing.T) string {
 	})
 	require.NoError(t, err)
 	return id
+}
+
+// Regression: a hold that locks at once (edit disabled) appends BookingHeld + BookingLocked, so the read model must
+// be at version 2; otherwise the next transition (payment-lock, settle, expire) hits an event-store version conflict.
+func TestHold_LockedAtOnceKeepsReadModelInStepWithTheStream(t *testing.T) {
+	f := seed(t)
+	ctx := context.Background()
+	id := f.q(t, `SELECT gen_random_uuid()::text`)
+	res, err := f.uow.Hold(ctx, outbound.HoldSpec{
+		BookingID: id, PublicRef: "RB-7F3A9C22", EventID: f.eventID, AdmissionID: f.admissionID, VisitorID: visitor,
+		BuyerNIKHash: []byte(f.nikH), BuyerEmail: "pembeli@contoh.id", AmountMinor: 150000, CfgEditEnabled: false,
+		PaymentExpiresAt: time.Now().Add(10 * time.Minute), CorrelationID: id,
+		Lines: []outbound.HoldLine{{
+			CategoryID: f.categoryID, UnitPriceMinor: 150000, AttendeeNIKHash: []byte("attendee-1"), AttendeeNIKEnc: []byte("enc"),
+			AttendeeNIKMasked: "3174********0001", AttendeeName: "Budi Santoso",
+		}},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 2, res.Version)
+	assert.Equal(t, 2, f.n(t, `SELECT version FROM booking.bookings WHERE id=$1::uuid`, id))
+
+	lock, err := f.uow.PaymentLock(ctx, outbound.PaymentLockSpec{BookingID: id, AttemptKey: "attempt-1", CorrelationID: id})
+	require.NoError(t, err)
+	assert.Equal(t, "OK", lock.Outcome)
 }
 
 func (f fixture) status(t *testing.T, id string) string {

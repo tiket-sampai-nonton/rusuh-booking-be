@@ -41,6 +41,7 @@ func testPool(t *testing.T) *pgxpool.Pool {
 	cfg, err := pgxpool.ParseConfig(dsn)
 	require.NoError(t, err, "parse TEST_POSTGRES_DSN")
 	cfg.MaxConns = 30
+	cfg.ConnConfig.RuntimeParams["search_path"] = "booking" // the Makefile DSN has none
 	pool, err := pgxpool.NewWithConfig(context.Background(), cfg)
 	require.NoError(t, err, "pgxpool.New")
 	t.Cleanup(pool.Close)
@@ -84,16 +85,16 @@ func seedTestEvent(t *testing.T, pool *pgxpool.Pool, suffix string, capacity int
 	require.NoError(t, err)
 
 	_, err = pool.Exec(ctx, `
-		INSERT INTO booking.event_supply (event_id, total_capacity)
-		VALUES ($1::uuid, $2)
-		ON CONFLICT (event_id) DO UPDATE SET total_capacity=$2`, eventID, capacity)
+		INSERT INTO booking.event_supply (event_id, total_capacity, allocated_units)
+		VALUES ($1::uuid, $2, $2)
+		ON CONFLICT (event_id) DO UPDATE SET total_capacity=$2, allocated_units=$2`, eventID, capacity)
 	require.NoError(t, err)
 
 	return eventID, catID
 }
 
 // seedActiveAdmission inserts an ACTIVE admission for use in a hold test goroutine.
-func seedActiveAdmission(t *testing.T, pool *pgxpool.Pool, admID, eventID, visitorID string) {
+func seedActiveAdmission(t *testing.T, pool *pgxpool.Pool, admID, eventID, visitorID string, nikHash []byte) {
 	t.Helper()
 	_, err := pool.Exec(context.Background(), `
 		INSERT INTO booking.admissions
@@ -104,11 +105,11 @@ func seedActiveAdmission(t *testing.T, pool *pgxpool.Pool, admID, eventID, visit
 			 cfg_edit_enabled, cfg_max_edits, cfg_allow_mixed_categories,
 			 reserved_at, expires_at)
 		VALUES ($1::uuid, $2::uuid, gen_random_uuid(), 1, $3::uuid,
-			'\xdeadbeef', 'test@test.id',
+			$4, 'test@test.id',
 			1, 'ACTIVE', gen_random_uuid(),
 			300, 600, 5, true, 3, true,
 			now(), now()+interval '10 minutes')
-		ON CONFLICT (id) DO NOTHING`, admID, eventID, visitorID)
+		ON CONFLICT (id) DO NOTHING`, admID, eventID, visitorID, nikHash)
 	require.NoError(t, err)
 }
 
@@ -134,16 +135,16 @@ func TestTC_BKG07_NoOversell(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			ctx := context.Background()
-			admID := fmt.Sprintf("adm00000-0000-0000-%04d-%s", i, suffix)
-			visitorID := fmt.Sprintf("vis00000-0000-0000-%04d-%s", i, suffix)
-			bookingID := fmt.Sprintf("bkg00000-0000-0000-%04d-%s", i, suffix)
+			admID := fmt.Sprintf("ad000000-0000-0000-%04d-%s", i, suffix)
+			visitorID := fmt.Sprintf("b1500000-0000-0000-%04d-%s", i, suffix)
+			bookingID := fmt.Sprintf("b0000000-0000-0000-%04d-%s", i, suffix)
 			nikHash := []byte(fmt.Sprintf("nik%08d", i))
 
-			seedActiveAdmission(t, pool, admID, eventID, visitorID)
+			seedActiveAdmission(t, pool, admID, eventID, visitorID, nikHash)
 
 			spec := outbound.HoldSpec{
 				BookingID:        bookingID,
-				PublicRef:        fmt.Sprintf("RB%08d", i),
+				PublicRef:        fmt.Sprintf("RB%08d", (time.Now().UnixNano()/1e3%1e6)*100+int64(i)), // unique across runs
 				EventID:          eventID,
 				AdmissionID:      admID,
 				VisitorID:        visitorID,
@@ -198,7 +199,7 @@ func TestEventSourcing_ConcurrencyGuard(t *testing.T) {
 	pool := testPool(t)
 
 	suffix := fmt.Sprintf("%012d", time.Now().UnixNano()%1e12)
-	bookingID := fmt.Sprintf("es000000-0000-0000-0000-%s", suffix)
+	bookingID := fmt.Sprintf("e5000000-0000-0000-0000-%s", suffix)
 
 	store, err := eventstore.New("booking_events")
 	require.NoError(t, err)
