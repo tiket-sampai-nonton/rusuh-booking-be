@@ -79,6 +79,7 @@ func call(t *testing.T, method, url string, headers map[string]string, body any)
 	require.NoError(t, err, "%s %s", method, url)
 	defer func() { _ = res.Body.Close() }()
 	raw, _ := io.ReadAll(res.Body)
+	record(method, url, headers, body, res, raw)
 	out := resp{Status: res.StatusCode, Raw: string(raw)}
 	var env struct {
 		Meta map[string]any `json:"meta"`

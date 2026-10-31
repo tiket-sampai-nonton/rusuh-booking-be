@@ -124,22 +124,22 @@ func TestHold_DuplicateRequestsAndUnauthorizedAccess(t *testing.T) {
 	}
 }
 
-// Slow (about 2.5 minutes: the shortest payment TTL the schema allows is 120 s). Run with E2E_SLOW=1.
+// Slow (about 5 minutes: payment TTL is at least 120 s, then a 180 s verification grace). Run with E2E_SLOW=1.
 func TestExpiredPayment_LateSettlementGoesToReviewWithoutTickets(t *testing.T) {
 	if os.Getenv("E2E_SLOW") == "" {
-		t.Skip("lambat (~2,5 menit); jalankan dengan E2E_SLOW=1")
+		t.Skip("lambat (~5 menit); jalankan dengan E2E_SLOW=1")
 	}
 	key := serverKey(t)
 	admin := login(t, fmt.Sprintf("admin-%d@contoh.id", time.Now().UnixNano()))
 	eventID, categoryID := newEvent(t, admin, 10)
 	ah := map[string]string{"Authorization": "Bearer " + admin}
-	// 120 s payment and 60 s selection are the schema minimums; out-of-range values are a 400, not a 500.
+	// 120 s is the shortest payment TTL (selection must be above the warning/grace seconds and not above payment); out-of-range values are a 400, not a 500.
 	mustStatus(t, 400, call(t, "PATCH", bookingURL+"/internal/v1/admin/events/"+eventID, ah, map[string]any{"paymentTtlSeconds": 15}), "ttl di bawah batas")
-	mustStatus(t, 200, call(t, "PATCH", bookingURL+"/internal/v1/admin/events/"+eventID, ah, map[string]any{"selectionTtlSeconds": 60, "paymentTtlSeconds": 120}), "short ttl")
+	mustStatus(t, 200, call(t, "PATCH", bookingURL+"/internal/v1/admin/events/"+eventID, ah, map[string]any{"selectionTtlSeconds": 90, "paymentTtlSeconds": 120}), "short ttl")
 
 	h := startBooking(t, eventID, categoryID)
-	time.Sleep(122 * time.Second)
-	eventually(t, 90*time.Second, "booking EXPIRED oleh sweeper", func() bool {
+	// payment TTL (120 s) + verification grace (180 s) + sweeper interval
+	eventually(t, 330*time.Second, "booking EXPIRED oleh sweeper", func() bool {
 		return call(t, "GET", bookingURL+"/api/v1/bookings/"+h.bookingID, h.vh, nil).str("status") == "EXPIRED"
 	})
 	// The FE can no longer start a payment for it.
