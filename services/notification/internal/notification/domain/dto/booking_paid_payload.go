@@ -27,7 +27,8 @@ type TicketInfo struct {
 type BookingPaidPayload struct {
 	BookingID       string       `json:"bookingId"`
 	PublicRef       string       `json:"publicRef"`
-	BuyerEmail      string       `json:"buyerEmail"`
+	BuyerEmail      string       `json:"buyerEmail"`    // legacy plaintext: still accepted for messages produced before PDP-1
+	BuyerEmailEnc   string       `json:"buyerEmailEnc"` // AES-GCM base64 (AAD booking.buyer_email); opened only when sending
 	Event           EventInfo    `json:"event"`
 	Tickets         []TicketInfo `json:"tickets"`
 	TicketLinkToken string       `json:"ticketLinkToken"`
@@ -43,8 +44,8 @@ func (p BookingPaidPayload) Validate() error {
 	if p.PublicRef == "" {
 		errs = append(errs, errors.New("publicRef kosong"))
 	}
-	if p.BuyerEmail == "" {
-		errs = append(errs, errors.New("buyerEmail kosong"))
+	if p.BuyerEmail == "" && p.BuyerEmailEnc == "" {
+		errs = append(errs, errors.New("buyerEmailEnc kosong"))
 	}
 	if len(p.Tickets) == 0 {
 		errs = append(errs, errors.New("tickets kosong"))

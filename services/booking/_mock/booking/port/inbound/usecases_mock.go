@@ -462,18 +462,18 @@ func (m *MockITicketUsecase) EXPECT() *MockITicketUsecaseMockRecorder {
 }
 
 // GetTickets mocks base method.
-func (m *MockITicketUsecase) GetTickets(ctx context.Context, bookingID string) (dto.TicketList, error) {
+func (m *MockITicketUsecase) GetTickets(ctx context.Context, bookingID string, access inbound.TicketAccess) (dto.TicketList, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetTickets", ctx, bookingID)
+	ret := m.ctrl.Call(m, "GetTickets", ctx, bookingID, access)
 	ret0, _ := ret[0].(dto.TicketList)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // GetTickets indicates an expected call of GetTickets.
-func (mr *MockITicketUsecaseMockRecorder) GetTickets(ctx, bookingID any) *gomock.Call {
+func (mr *MockITicketUsecaseMockRecorder) GetTickets(ctx, bookingID, access any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTickets", reflect.TypeOf((*MockITicketUsecase)(nil).GetTickets), ctx, bookingID)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTickets", reflect.TypeOf((*MockITicketUsecase)(nil).GetTickets), ctx, bookingID, access)
 }
 
 // MockIGetBookingUsecase is a mock of IGetBookingUsecase interface.

@@ -14,18 +14,24 @@
     },
     "buyerEmail": {
       "type": "string",
-      "format": "email"
+      "deprecated": true,
+      "description": "Tidak lagi dikirim. Hanya diterima Notification untuk pesan lama yang masih di antrean."
     },
     "amountMinor": {
       "type": "integer",
       "format": "int64",
       "minimum": 0,
       "description": "Minor unit IDR"
+    },
+    "buyerEmailEnc": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Email pembeli, AES-256-GCM (AAD booking.buyer_email) base64; dibuat Queue, hanya Notification yang membuka (UU PDP Pasal 39)"
     }
   },
   "required": [
     "bookingId",
-    "buyerEmail",
+    "buyerEmailEnc",
     "amountMinor"
   ],
   "additionalProperties": false

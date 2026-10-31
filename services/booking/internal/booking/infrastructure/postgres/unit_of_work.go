@@ -25,8 +25,9 @@ const maxRetries = 3
 // (supply → category → quota → booking), the event-store append, the read-model projection, and the
 // outbox write. It satisfies outbound.IUnitOfWork.
 type UnitOfWork struct {
-	pool  *pgxpool.Pool
-	store *eventstore.Store
+	pool      *pgxpool.Pool
+	store     *eventstore.Store
+	sealEmail func(string) (string, error) // legacy plaintext email -> ciphertext; may be nil
 }
 
 // NewUnitOfWork constructs the unit of work over the pool and the booking_events store.
@@ -114,10 +115,10 @@ func (u *UnitOfWork) hold(ctx context.Context, tx pgx.Tx, spec outbound.HoldSpec
 	// (7) project read model (booking LAST).
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO booking.bookings (id, public_ref, event_id, admission_id, visitor_id, buyer_nik_hash,
-			buyer_email, status, amount_minor, item_quantity, payment_expires_at, version, account_id)
+			buyer_email_enc, status, amount_minor, item_quantity, payment_expires_at, version, account_id)
 		VALUES ($1::uuid,$2,$3::uuid,$4::uuid,$5::uuid,$6,$7,'PENDING_PAYMENT',$8,$9,$10,1, NULLIF($11,'')::uuid)`,
 		spec.BookingID, spec.PublicRef, spec.EventID, spec.AdmissionID, spec.VisitorID, spec.BuyerNIKHash,
-		spec.BuyerEmail, spec.AmountMinor, n, spec.PaymentExpiresAt, spec.AccountID); err != nil {
+		u.emailEnc(spec.BuyerEmailEnc, spec.BuyerEmail), spec.AmountMinor, n, spec.PaymentExpiresAt, spec.AccountID); err != nil {
 		return outbound.HoldResult{}, mapHoldErr(err)
 	}
 	for _, l := range spec.Lines {
@@ -359,14 +360,15 @@ func (u *UnitOfWork) settle(ctx context.Context, tx pgx.Tx, spec outbound.Settle
 	var version int
 	var buyerHash []byte
 	var amount int64
-	var publicRef, email string
+	var publicRef, email, legacyEmail string
 	var paymentExpiresAt time.Time
 	if err := tx.QueryRow(ctx, `
-		SELECT status, version, buyer_nik_hash, amount_minor, public_ref, buyer_email, payment_expires_at
+		SELECT status, version, buyer_nik_hash, amount_minor, public_ref, COALESCE(buyer_email_enc, ''), COALESCE(buyer_email, ''), payment_expires_at
 		  FROM booking.bookings WHERE id=$1::uuid FOR UPDATE`, spec.BookingID).
-		Scan(&status, &version, &buyerHash, &amount, &publicRef, &email, &paymentExpiresAt); err != nil {
+		Scan(&status, &version, &buyerHash, &amount, &publicRef, &email, &legacyEmail, &paymentExpiresAt); err != nil {
 		return false, err
 	}
+	email = u.emailEnc(email, legacyEmail)
 	if status == vo.BookingPaid || status == vo.BookingReview {
 		return false, nil // idempotent no-op (design §9.5: PAID/REVIEW → no-op, ack)
 	}
@@ -395,7 +397,7 @@ func (u *UnitOfWork) settle(ctx context.Context, tx pgx.Tx, spec outbound.Settle
 			 WHERE id=$1::uuid`, spec.BookingID, version+1); err != nil {
 			return false, err
 		}
-		review := map[string]any{"bookingId": spec.BookingID, "buyerEmail": email, "amountMinor": amount}
+		review := map[string]any{"bookingId": spec.BookingID, "buyerEmailEnc": email, "amountMinor": amount}
 		return false, enqueueOutbox(ctx, tx, "booking.review", spec.BookingID, review)
 	}
 
@@ -452,7 +454,7 @@ func (u *UnitOfWork) settle(ctx context.Context, tx pgx.Tx, spec outbound.Settle
 			 WHERE event_id=$1::uuid AND buyer_nik_hash=$2`, eventID, buyerHash, nLate); err != nil {
 			return false, err
 		}
-		review := map[string]any{"bookingId": spec.BookingID, "buyerEmail": email, "amountMinor": amount}
+		review := map[string]any{"bookingId": spec.BookingID, "buyerEmailEnc": email, "amountMinor": amount}
 		ended := map[string]any{"eventId": eventID, "queueEntryId": queueEntryID, "outcome": "EXPIRED"}
 		if err := enqueueOutbox(ctx, tx, "booking.review", spec.BookingID, review); err != nil {
 			return false, err
@@ -594,7 +596,7 @@ func (u *UnitOfWork) settle(ctx context.Context, tx pgx.Tx, spec outbound.Settle
 	paid := map[string]any{
 		"bookingId":       spec.BookingID,
 		"publicRef":       publicRef,
-		"buyerEmail":      email,
+		"buyerEmailEnc":   email,
 		"event":           map[string]any{"eventId": eventID, "name": evName, "venue": evVenue, "startsAt": evStartsAt.UTC().Format(time.RFC3339)},
 		"tickets":         ticketLines,
 		"ticketLinkToken": ticketLinkToken,
@@ -643,15 +645,16 @@ func (u *UnitOfWork) expire(ctx context.Context, tx pgx.Tx, spec outbound.Expire
 	// Step 3: lock booking row and read full state.
 	var status vo.BookingStatus
 	var version int
-	var publicRef, email string
+	var publicRef, email, legacyEmail string
 	var buyerHash []byte
 	var amount int64
 	if err := tx.QueryRow(ctx, `
-		SELECT status, version, public_ref, buyer_email, buyer_nik_hash, amount_minor
+		SELECT status, version, public_ref, COALESCE(buyer_email_enc, ''), COALESCE(buyer_email, ''), buyer_nik_hash, amount_minor
 		  FROM booking.bookings WHERE id=$1::uuid FOR UPDATE`, spec.BookingID).
-		Scan(&status, &version, &publicRef, &email, &buyerHash, &amount); err != nil {
+		Scan(&status, &version, &publicRef, &email, &legacyEmail, &buyerHash, &amount); err != nil {
 		return false, err
 	}
+	email = u.emailEnc(email, legacyEmail)
 	if !status.IsPayable() {
 		return false, nil // already terminal — idempotent
 	}
@@ -694,7 +697,7 @@ func (u *UnitOfWork) expire(ctx context.Context, tx pgx.Tx, spec outbound.Expire
 				return false, err
 			}
 		}
-		review := map[string]any{"bookingId": spec.BookingID, "buyerEmail": email, "amountMinor": amount}
+		review := map[string]any{"bookingId": spec.BookingID, "buyerEmailEnc": email, "amountMinor": amount}
 		return true, enqueueOutbox(ctx, tx, "booking.review", spec.BookingID, review)
 	}
 
@@ -748,7 +751,7 @@ func (u *UnitOfWork) expire(ctx context.Context, tx pgx.Tx, spec outbound.Expire
 			return false, err
 		}
 	}
-	expired := map[string]any{"bookingId": spec.BookingID, "publicRef": publicRef, "buyerEmail": email, "reason": spec.Reason}
+	expired := map[string]any{"bookingId": spec.BookingID, "publicRef": publicRef, "buyerEmailEnc": email, "reason": spec.Reason}
 	ended := map[string]any{"eventId": eventID, "queueEntryId": queueEntryID, "outcome": "EXPIRED"}
 	if err := enqueueOutbox(ctx, tx, "booking.expired", spec.BookingID, expired); err != nil {
 		return false, err
@@ -1037,4 +1040,24 @@ func sum(m map[string]int) int {
 		t += v
 	}
 	return t
+}
+
+// emailEnc is the sealed buyer email to store or put in an event. New rows already carry ciphertext (sealed by Queue).
+// A row from before PDP-1 only has the legacy plaintext column; it is sealed on the fly so plaintext never leaves the
+// database in an event. Without a sealer the legacy value is dropped rather than leaked.
+func (u *UnitOfWork) emailEnc(enc, legacy string) string {
+	if enc != "" || legacy == "" || u.sealEmail == nil {
+		return enc
+	}
+	sealed, err := u.sealEmail(legacy)
+	if err != nil {
+		return ""
+	}
+	return sealed
+}
+
+// WithEmailSealer sets how legacy plaintext emails are sealed (AAD crypto.AADBuyerEmail).
+func (u *UnitOfWork) WithEmailSealer(fn func(string) (string, error)) *UnitOfWork {
+	u.sealEmail = fn
+	return u
 }

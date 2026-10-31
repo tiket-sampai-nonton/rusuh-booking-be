@@ -352,6 +352,21 @@ func (mr *MockIPIIProtectorMockRecorder) HashNIK(nik any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "HashNIK", reflect.TypeOf((*MockIPIIProtector)(nil).HashNIK), nik)
 }
 
+// SealBuyerEmail mocks base method.
+func (m *MockIPIIProtector) SealBuyerEmail(email string) (string, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "SealBuyerEmail", email)
+	ret0, _ := ret[0].(string)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// SealBuyerEmail indicates an expected call of SealBuyerEmail.
+func (mr *MockIPIIProtectorMockRecorder) SealBuyerEmail(email any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SealBuyerEmail", reflect.TypeOf((*MockIPIIProtector)(nil).SealBuyerEmail), email)
+}
+
 // SealEmail mocks base method.
 func (m *MockIPIIProtector) SealEmail(email string) ([]byte, error) {
 	m.ctrl.T.Helper()

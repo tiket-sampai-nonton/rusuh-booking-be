@@ -224,11 +224,15 @@ func (u *JoinQueue) tryDirectAdmission(ctx context.Context, eventID string, ent 
 	if err != nil || active >= settings.ActiveSlotCapacity {
 		return false
 	}
+	emailEnc, err := u.d.PII.SealBuyerEmail(email)
+	if err != nil {
+		return false // stays WAITING; the Promotor retries
+	}
 	resp, err := u.d.Booking.ReserveBatch(ctx, outbound.AllocationBatchRequest{
 		EventID: eventID,
 		Entries: []outbound.AllocationEntryRequest{{
 			QueueEntryID: ent.ID, VisitorID: ent.VisitorID, BuyerNikHash: nikHashHex, Units: 1,
-			BuyerNikMasked: ent.BuyerNikMasked, BuyerEmail: email, AccountID: ent.AccountID,
+			BuyerNikMasked: ent.BuyerNikMasked, BuyerEmailEnc: emailEnc, AccountID: ent.AccountID,
 		}},
 	})
 	if err != nil || len(resp.Allocations) == 0 {

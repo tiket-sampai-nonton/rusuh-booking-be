@@ -23,7 +23,8 @@ type HoldSpec struct {
 	AdmissionID      string
 	VisitorID        string
 	BuyerNIKHash     []byte
-	BuyerEmail       string
+	BuyerEmail       string // legacy plaintext fallback; the unit of work seals it
+	BuyerEmailEnc    string
 	AccountID        string
 	AmountMinor      int64
 	PaymentExpiresAt time.Time

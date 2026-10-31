@@ -49,7 +49,7 @@ func (uc *AllocateBatch) AllocateBatch(ctx context.Context, req dto.AllocationBa
 			VisitorID:      e.VisitorID,
 			BuyerNIKHash:   nikHash,
 			BuyerNIKMasked: e.BuyerNIKMasked,
-			BuyerEmail:     e.BuyerEmail,
+			BuyerEmailEnc:  e.BuyerEmailEnc,
 			AccountID:      e.AccountID,
 			Units:          units,
 			AdmissionJTI:   uc.ids.NewID(),

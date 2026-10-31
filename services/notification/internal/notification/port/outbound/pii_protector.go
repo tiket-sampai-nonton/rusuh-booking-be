@@ -7,6 +7,8 @@ package outbound
 type IPIIProtector interface {
 	// UnsealEmail decrypts an email sealed with AAD "users.accounts.email".
 	UnsealEmail(enc []byte) (string, error)
+	// UnsealBuyerEmail opens the base64 buyer email ciphertext Queue produced (AAD "booking.buyer_email").
+	UnsealBuyerEmail(enc string) (string, error)
 	// UnsealOTP decrypts an OTP code sealed with AAD "otp.requested.code".
 	UnsealOTP(enc []byte) (string, error)
 	// SealPushToken encrypts an FCM device token for storage (push_token_enc).

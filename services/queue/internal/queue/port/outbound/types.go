@@ -88,7 +88,7 @@ type AllocationEntryRequest struct {
 	// Contract internal-booking AllocationBatchRequest: Booking keeps these on the admission and the booking
 	// (e-ticket email, buyer NIK shown masked, login account).
 	BuyerNikMasked string `json:"buyerNikMasked"`
-	BuyerEmail     string `json:"buyerEmail"`
+	BuyerEmailEnc  string `json:"buyerEmailEnc"` // AES-GCM, opened only by Notification
 	AccountID      string `json:"accountId,omitempty"`
 }
 

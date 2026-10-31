@@ -23,7 +23,7 @@ type BookingRepo struct{ pool *pgxpool.Pool }
 func NewBookingRepo(pool *pgxpool.Pool) *BookingRepo { return &BookingRepo{pool: pool} }
 
 const bookingCols = `id::text, public_ref, event_id::text, admission_id::text, visitor_id::text,
-	buyer_nik_hash, buyer_email, status, currency, amount_minor, item_quantity, version,
+	buyer_nik_hash, COALESCE(buyer_email, ''), COALESCE(buyer_email_enc, ''), status, currency, amount_minor, item_quantity, version,
 	COALESCE(account_id::text, ''), created_at, payment_expires_at, payment_started_at, verification_until, paid_at,
 	COALESCE((SELECT a.buyer_nik_masked FROM booking.admissions a WHERE a.id = bookings.admission_id), '')`
 
@@ -31,7 +31,7 @@ func scanBooking(row pgx.Row) (entity.Booking, error) {
 	var b entity.Booking
 	err := row.Scan(
 		&b.ID, &b.PublicRef, &b.EventID, &b.AdmissionID, &b.VisitorID,
-		&b.BuyerNIKHash, &b.BuyerEmail, &b.Status, &b.Currency, &b.AmountMinor, &b.ItemQuantity, &b.Version,
+		&b.BuyerNIKHash, &b.BuyerEmail, &b.BuyerEmailEnc, &b.Status, &b.Currency, &b.AmountMinor, &b.ItemQuantity, &b.Version,
 		&b.AccountID, &b.CreatedAt, &b.PaymentExpiresAt, &b.PaymentStartedAt, &b.VerificationUntil, &b.PaidAt, &b.BuyerNIKMasked,
 	)
 	return b, err

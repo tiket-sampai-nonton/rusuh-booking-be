@@ -95,6 +95,10 @@ func (p *Promoter) runEvent(ctx context.Context, eventID string) error {
 			continue
 		}
 		email, uerr := p.pii.UnsealEmail(ent.EmailEnc)
+		var emailEnc string
+		if uerr == nil {
+			emailEnc, uerr = p.pii.SealBuyerEmail(email)
+		}
 		if uerr != nil {
 			p.logger.Error("email antrean tidak bisa dibuka; entry dilewati", "eventId", eventID, "entryId", entryID, "error", uerr)
 			continue
@@ -102,7 +106,7 @@ func (p *Promoter) runEvent(ctx context.Context, eventID string) error {
 		visitorByEntry[entryID] = ent.VisitorID
 		entries = append(entries, outbound.AllocationEntryRequest{
 			QueueEntryID: entryID, VisitorID: ent.VisitorID, BuyerNikHash: ent.BuyerNikHashHex(), Units: 1,
-			Seq: int64(ent.Seq), BuyerNikMasked: ent.BuyerNikMasked, BuyerEmail: email, AccountID: ent.AccountID,
+			Seq: int64(ent.Seq), BuyerNikMasked: ent.BuyerNikMasked, BuyerEmailEnc: emailEnc, AccountID: ent.AccountID,
 		})
 	}
 	if len(entries) == 0 {

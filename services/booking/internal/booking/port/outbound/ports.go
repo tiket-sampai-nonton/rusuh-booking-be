@@ -52,7 +52,7 @@ type ReserveEntry struct {
 	VisitorID      string
 	BuyerNIKHash   []byte
 	BuyerNIKMasked string
-	BuyerEmail     string
+	BuyerEmailEnc  string // sealed by Queue
 	AccountID      string
 	Units          int
 	AdmissionJTI   string

@@ -45,7 +45,11 @@ func (u *NotifyBookingPaid) NotifyBookingPaid(ctx context.Context, sourceMessage
 		return rabbitmq.Permanent(err) // poison → DLQ
 	}
 
-	claim := mapper.NewEmailDelivery(sourceMessageID, entity.TypeBookingPaid, p.BookingID, u.pii.HMACRecipient(p.BuyerEmail))
+	to, rerr := recipient(u.pii, p.BuyerEmail, p.BuyerEmailEnc)
+	if rerr != nil {
+		return rerr
+	}
+	claim := mapper.NewEmailDelivery(sourceMessageID, entity.TypeBookingPaid, p.BookingID, u.pii.HMACRecipient(to))
 	claimed, err := u.repo.ClaimDelivery(ctx, claim)
 	if err != nil {
 		return fmt.Errorf("claim delivery: %w", err) // transient (DB) → retry
@@ -70,7 +74,7 @@ func (u *NotifyBookingPaid) NotifyBookingPaid(ctx context.Context, sourceMessage
 	}
 
 	subject := fmt.Sprintf("[RBT] E-Tiket Anda — %s", p.Event.Name)
-	providerID, serr := u.email.SendEmail(ctx, p.BuyerEmail, subject, body, html, idempotencyKey(sourceMessageID, entity.TypeBookingPaid))
+	providerID, serr := u.email.SendEmail(ctx, to, subject, body, html, idempotencyKey(sourceMessageID, entity.TypeBookingPaid))
 	if serr != nil {
 		recordSendFailure(ctx, u.repo, sourceMessageID, entity.TypeBookingPaid, u.clock.Now(), serr)
 		return fmt.Errorf("send eticket email: %w", serr) // transient → retry; permanent stays permanent (DLQ)
@@ -85,4 +89,18 @@ func ticketURL(base, bookingID, token string) string {
 		return ""
 	}
 	return strings.TrimRight(base, "/") + "/" + url.PathEscape(bookingID) + "?t=" + url.QueryEscape(token)
+}
+
+// recipient returns the address to send to. The event carries the buyer email as ciphertext; this is the only place it
+// is opened. A message produced before PDP-1 may still carry the plaintext field. A ciphertext that does not open is a
+// poison message (wrong key or tampering) and goes to the DLQ instead of being retried forever.
+func recipient(pii outbound.IPIIProtector, plain, enc string) (string, error) {
+	if enc == "" {
+		return plain, nil
+	}
+	email, err := pii.UnsealBuyerEmail(enc)
+	if err != nil {
+		return "", rabbitmq.Permanent(fmt.Errorf("buka buyerEmailEnc: %w", err))
+	}
+	return email, nil
 }

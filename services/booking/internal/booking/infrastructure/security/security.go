@@ -43,6 +43,16 @@ func (p *PII) HashNIK(nik string) []byte { return p.hasher.Hash(nik) }
 // SealNIK returns the AES-256-GCM ciphertext bound to the NIK column context.
 func (p *PII) SealNIK(nik string) ([]byte, error) { return p.sealer.Seal([]byte(nik), []byte(aadNIK)) }
 
+// SealBuyerEmail seals a legacy plaintext buyer email (AAD crypto.AADBuyerEmail) into the base64 form Queue produces, so
+// rows from before PDP-1 can be forwarded and backfilled. Booking never opens such ciphertext.
+func (p *PII) SealBuyerEmail(email string) (string, error) {
+	enc, err := p.sealer.Seal([]byte(email), []byte(crypto.AADBuyerEmail))
+	if err != nil {
+		return "", err
+	}
+	return base64.StdEncoding.EncodeToString(enc), nil
+}
+
 // AdmissionVerifier verifies the one-time EdDSA admission token minted by the Queue Service. It
 // satisfies outbound.IAdmissionTokenVerifier.
 type AdmissionVerifier struct {

@@ -69,7 +69,7 @@ func seedActiveAdmission(t *testing.T, pool *pgxpool.Pool, admID, eventID, visit
 	_, err := pool.Exec(context.Background(), `
 		INSERT INTO booking.admissions
 			(id, event_id, queue_entry_id, queue_seq, visitor_id,
-			 buyer_nik_hash, buyer_email,
+			 buyer_nik_hash, buyer_email_enc,
 			 units, status, admission_jti,
 			 cfg_selection_ttl_seconds, cfg_payment_ttl_seconds, cfg_submit_grace_seconds,
 			 cfg_edit_enabled, cfg_max_edits, cfg_allow_mixed_categories,
@@ -125,7 +125,7 @@ func TestTC_BKG07_NoOversell(t *testing.T) {
 				AdmissionID:      admID,
 				VisitorID:        visitorID,
 				BuyerNIKHash:     nikHash,
-				BuyerEmail:       fmt.Sprintf("u%d@t.id", i),
+				BuyerEmailEnc:    sealedEmail,
 				AmountMinor:      10000,
 				PaymentExpiresAt: time.Now().Add(10 * time.Minute),
 				Lines: []outbound.HoldLine{{

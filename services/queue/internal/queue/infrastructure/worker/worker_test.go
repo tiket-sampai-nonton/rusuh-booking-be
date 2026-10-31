@@ -35,6 +35,7 @@ func newWorkerMocks(t *testing.T) workerMocks {
 	ctrl := gomock.NewController(t)
 	pii := mock_outbound.NewMockIPIIProtector(ctrl)
 	pii.EXPECT().UnsealEmail(gomock.Any()).Return("pembeli@contoh.id", nil).AnyTimes()
+	pii.EXPECT().SealBuyerEmail("pembeli@contoh.id").Return("c2VhbGVk", nil).AnyTimes()
 	return workerMocks{
 		pii:      pii,
 		store:    mock_outbound.NewMockIQueueStore(ctrl),
@@ -67,7 +68,7 @@ func TestPromoter_PromotesReservedAndPublishes(t *testing.T) {
 	m.booking.EXPECT().ReserveBatch(ctx, gomock.Any()).DoAndReturn(
 		func(_ context.Context, req outbound.AllocationBatchRequest) (outbound.AllocationBatchResponse, error) {
 			require.Len(t, req.Entries, 1)
-			assert.Equal(t, "pembeli@contoh.id", req.Entries[0].BuyerEmail)
+			assert.Equal(t, "c2VhbGVk", req.Entries[0].BuyerEmailEnc, "Booking hanya menerima ciphertext")
 			assert.Equal(t, "3174********0001", req.Entries[0].BuyerNikMasked)
 			assert.Equal(t, "acc-1", req.Entries[0].AccountID)
 			return outbound.AllocationBatchResponse{

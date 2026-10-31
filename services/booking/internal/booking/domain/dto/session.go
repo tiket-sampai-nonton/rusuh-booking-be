@@ -31,7 +31,7 @@ type AllocationEntry struct {
 	VisitorID      string `json:"visitorId"`
 	BuyerNIKHash   string `json:"buyerNikHash"` // hex HMAC
 	BuyerNIKMasked string `json:"buyerNikMasked"`
-	BuyerEmail     string `json:"buyerEmail"`
+	BuyerEmailEnc  string `json:"buyerEmailEnc"`
 	AccountID      string `json:"accountId"`
 	Units          int    `json:"units"`
 }

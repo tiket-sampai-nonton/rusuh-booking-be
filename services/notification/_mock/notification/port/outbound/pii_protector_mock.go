@@ -68,6 +68,21 @@ func (mr *MockIPIIProtectorMockRecorder) SealPushToken(token any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SealPushToken", reflect.TypeOf((*MockIPIIProtector)(nil).SealPushToken), token)
 }
 
+// UnsealBuyerEmail mocks base method.
+func (m *MockIPIIProtector) UnsealBuyerEmail(enc string) (string, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "UnsealBuyerEmail", enc)
+	ret0, _ := ret[0].(string)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// UnsealBuyerEmail indicates an expected call of UnsealBuyerEmail.
+func (mr *MockIPIIProtectorMockRecorder) UnsealBuyerEmail(enc any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UnsealBuyerEmail", reflect.TypeOf((*MockIPIIProtector)(nil).UnsealBuyerEmail), enc)
+}
+
 // UnsealEmail mocks base method.
 func (m *MockIPIIProtector) UnsealEmail(enc []byte) (string, error) {
 	m.ctrl.T.Helper()

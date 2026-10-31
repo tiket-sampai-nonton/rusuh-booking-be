@@ -459,9 +459,9 @@ components:
                 type: string
                 example: 3174********0001
                 description: NIK tersamar
-              buyerEmail:
+              buyerEmailEnc:
                 type: string
-                format: email
+                description: Email pembeli, AES-256-GCM (AAD booking.buyer_email) base64. Dibuat Queue; Booking hanya menyimpan dan meneruskannya; hanya Notification yang membuka.
               accountId:
                 type:
                 - string
@@ -474,7 +474,7 @@ components:
             - visitorId
             - buyerNikHash
             - buyerNikMasked
-            - buyerEmail
+            - buyerEmailEnc
       required:
       - eventId
       - entries
@@ -596,8 +596,6 @@ components:
         visitorId:
           type: string
           format: uuid
-        buyerEmail:
-          type: string
         version:
           type: integer
         canEdit:

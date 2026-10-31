@@ -128,3 +128,31 @@ func TestTicketURL_OnlyWhenThereIsABaseAndAToken(t *testing.T) {
 		assert.Equal(t, c.want, usecase.TicketURLForTest(c.base, c.id, c.tok), name)
 	}
 }
+
+// The event carries the buyer email as ciphertext; only here, when sending, is it opened.
+func TestNotifyBookingPaid_OpensTheCiphertextToSend(t *testing.T) {
+	uc, m := newPaidUsecase(t)
+	p := validPaidPayload()
+	p.BuyerEmail, p.BuyerEmailEnc = "", "c2VhbGVk"
+	m.pii.EXPECT().UnsealBuyerEmail("c2VhbGVk").Return("buyer@example.id", nil)
+	m.pii.EXPECT().HMACRecipient("buyer@example.id").Return([]byte("h"))
+	m.repo.EXPECT().ClaimDelivery(gomock.Any(), gomock.Any()).Return(true, nil)
+	m.tmpl.EXPECT().Render("eticket", gomock.Any()).Return("body", nil)
+	m.tmpl.EXPECT().RenderHTML("eticket", gomock.Any()).Return("<p>html</p>", nil)
+	m.email.EXPECT().SendEmail(gomock.Any(), "buyer@example.id", gomock.Any(), "body", "<p>html</p>", gomock.Any()).Return("prov-1", nil)
+	m.repo.EXPECT().MarkSent(gomock.Any(), "msg-1", gomock.Any(), "prov-1").Return(nil)
+
+	require.NoError(t, uc.NotifyBookingPaid(context.Background(), "msg-1", p))
+}
+
+// A ciphertext that does not open (wrong key, tampering) is poison: DLQ, no claim, no email.
+func TestNotifyBookingPaid_UnopenableCiphertextIsPermanent(t *testing.T) {
+	uc, m := newPaidUsecase(t)
+	p := validPaidPayload()
+	p.BuyerEmail, p.BuyerEmailEnc = "", "bukan-ciphertext"
+	m.pii.EXPECT().UnsealBuyerEmail("bukan-ciphertext").Return("", errors.New("crypto: gagal membuka ciphertext"))
+
+	err := uc.NotifyBookingPaid(context.Background(), "msg-1", p)
+	require.Error(t, err)
+	assert.True(t, rabbitmq.IsPermanent(err))
+}

@@ -14,10 +14,11 @@ const (
 
 // BookingExpiredPayload is the booking.expired.v1 payload (design §10.2).
 type BookingExpiredPayload struct {
-	BookingID  string `json:"bookingId"`
-	PublicRef  string `json:"publicRef"`
-	BuyerEmail string `json:"buyerEmail"`
-	Reason     string `json:"reason"`
+	BookingID     string `json:"bookingId"`
+	PublicRef     string `json:"publicRef"`
+	BuyerEmail    string `json:"buyerEmail"`    // legacy plaintext: still accepted for messages produced before PDP-1
+	BuyerEmailEnc string `json:"buyerEmailEnc"` // AES-GCM base64 (AAD booking.buyer_email); opened only when sending
+	Reason        string `json:"reason"`
 }
 
 // Validate enforces the required fields of booking.expired.v1.
@@ -29,8 +30,8 @@ func (p BookingExpiredPayload) Validate() error {
 	if p.PublicRef == "" {
 		errs = append(errs, errors.New("publicRef kosong"))
 	}
-	if p.BuyerEmail == "" {
-		errs = append(errs, errors.New("buyerEmail kosong"))
+	if p.BuyerEmail == "" && p.BuyerEmailEnc == "" {
+		errs = append(errs, errors.New("buyerEmailEnc kosong"))
 	}
 	switch p.Reason {
 	case ReasonPaymentTimeout, ReasonSessionExpired, ReasonCancelled:

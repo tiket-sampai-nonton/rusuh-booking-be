@@ -14,7 +14,8 @@
     },
     "buyerEmail": {
       "type": "string",
-      "format": "email"
+      "deprecated": true,
+      "description": "Tidak lagi dikirim. Hanya diterima Notification untuk pesan lama yang masih di antrean."
     },
     "event": {
       "type": "object",
@@ -66,12 +67,17 @@
     "ticketLinkToken": {
       "type": "string",
       "description": "Opsional (2026-10-26): belum ada penerbit maupun pemakainya; email menampilkan kode tiket tanpa tautan."
+    },
+    "buyerEmailEnc": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Email pembeli, AES-256-GCM (AAD booking.buyer_email) base64; dibuat Queue, hanya Notification yang membuka (UU PDP Pasal 39)"
     }
   },
   "required": [
     "bookingId",
     "publicRef",
-    "buyerEmail",
+    "buyerEmailEnc",
     "tickets"
   ],
   "additionalProperties": false

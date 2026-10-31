@@ -35,7 +35,11 @@ func (u *NotifyBookingExpired) NotifyBookingExpired(ctx context.Context, sourceM
 		return rabbitmq.Permanent(err)
 	}
 
-	claim := mapper.NewEmailDelivery(sourceMessageID, entity.TypeBookingExpired, p.BookingID, u.pii.HMACRecipient(p.BuyerEmail))
+	to, rerr := recipient(u.pii, p.BuyerEmail, p.BuyerEmailEnc)
+	if rerr != nil {
+		return rerr
+	}
+	claim := mapper.NewEmailDelivery(sourceMessageID, entity.TypeBookingExpired, p.BookingID, u.pii.HMACRecipient(to))
 	claimed, err := u.repo.ClaimDelivery(ctx, claim)
 	if err != nil {
 		return fmt.Errorf("claim delivery: %w", err)
@@ -52,7 +56,7 @@ func (u *NotifyBookingExpired) NotifyBookingExpired(ctx context.Context, sourceM
 	}
 
 	subject := fmt.Sprintf("[RBT] Booking Kedaluwarsa — %s", p.PublicRef)
-	providerID, serr := u.email.SendEmail(ctx, p.BuyerEmail, subject, body, html, idempotencyKey(sourceMessageID, entity.TypeBookingExpired))
+	providerID, serr := u.email.SendEmail(ctx, to, subject, body, html, idempotencyKey(sourceMessageID, entity.TypeBookingExpired))
 	if serr != nil {
 		recordSendFailure(ctx, u.repo, sourceMessageID, entity.TypeBookingExpired, u.clock.Now(), serr)
 		return fmt.Errorf("send expired email: %w", serr)

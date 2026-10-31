@@ -84,3 +84,14 @@ func TestSubscribeRequest_Validate(t *testing.T) {
 	assert.Contains(t, d, "platform")
 	assert.Contains(t, d, "pushToken")
 }
+
+func TestBuyerEmail_EitherCiphertextOrLegacyPlaintextIsEnough(t *testing.T) {
+	base := dto.BookingPaidPayload{BookingID: "b", PublicRef: "r", Tickets: []dto.TicketInfo{{}}}
+	assert.Error(t, base.Validate(), "tanpa email sama sekali")
+	enc := base
+	enc.BuyerEmailEnc = "c2VhbGVk"
+	assert.NoError(t, enc.Validate())
+	legacy := base
+	legacy.BuyerEmail = "e"
+	assert.NoError(t, legacy.Validate(), "pesan lama sebelum PDP-1")
+}

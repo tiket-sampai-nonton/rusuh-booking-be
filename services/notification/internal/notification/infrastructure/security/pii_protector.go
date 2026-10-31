@@ -3,6 +3,8 @@
 package security
 
 import (
+	"encoding/base64"
+
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/crypto"
 )
 
@@ -35,6 +37,19 @@ func NewPII(encKey, hashKey []byte) (*PII, error) {
 // UnsealEmail decrypts an email sealed by the User Service (AAD users.accounts.email).
 func (p *PII) UnsealEmail(enc []byte) (string, error) {
 	out, err := p.sealer.Open(enc, []byte(aadEmail))
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
+}
+
+// UnsealBuyerEmail opens the base64 buyer email sealed by Queue (AAD crypto.AADBuyerEmail), carried in booking.* events.
+func (p *PII) UnsealBuyerEmail(enc string) (string, error) {
+	raw, err := base64.StdEncoding.DecodeString(enc)
+	if err != nil {
+		return "", crypto.ErrDecrypt
+	}
+	out, err := p.sealer.Open(raw, []byte(crypto.AADBuyerEmail))
 	if err != nil {
 		return "", err
 	}

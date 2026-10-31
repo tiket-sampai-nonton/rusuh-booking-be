@@ -171,7 +171,7 @@ func TestAdmissionRepo_ReserveBatchGrantsInOrderThenRunsOutOfSupply(t *testing.T
 	entry := func(n int) outbound.ReserveEntry {
 		return outbound.ReserveEntry{
 			QueueEntryID: f.q(t, `SELECT gen_random_uuid()::text`), Seq: int64(n), VisitorID: f.q(t, `SELECT gen_random_uuid()::text`),
-			BuyerNIKHash: []byte{byte(n)}, BuyerNIKMasked: "3174********0001", BuyerEmail: "pembeli@contoh.id", Units: 1,
+			BuyerNIKHash: []byte{byte(n)}, BuyerNIKMasked: "3174********0001", BuyerEmailEnc: sealedEmail, Units: 1,
 			AdmissionJTI: f.q(t, `SELECT gen_random_uuid()::text`),
 		}
 	}

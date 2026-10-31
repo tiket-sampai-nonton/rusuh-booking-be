@@ -108,3 +108,8 @@ func MaskNIK(nik string) string {
 	}
 	return nik[:4] + strings.Repeat("*", 8) + nik[12:]
 }
+
+// AADBuyerEmail binds a buyer's email ciphertext to its journey Queue -> Booking -> Notification. Queue seals the
+// email once with it; Booking only stores and forwards the ciphertext (it never needs the plaintext); Notification is
+// the only service that opens it, to send the e-ticket and other emails (UU PDP Pasal 39: confidentiality of personal data).
+const AADBuyerEmail = "booking.buyer_email"

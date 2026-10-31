@@ -97,6 +97,9 @@ func (f fixture) n(t *testing.T, sql string, args ...any) int {
 
 const visitor = "22222222-2222-2222-2222-222222222222"
 
+// sealedEmail stands in for the ciphertext Queue produces; Booking never opens it.
+const sealedEmail = "c2VhbGVkLWVtYWls"
+
 // seed creates one AVAILABLE event with 10 VIP tickets at Rp 150.000 and an ACTIVE admission for one unit.
 func seed(t *testing.T) fixture {
 	t.Helper()
@@ -122,10 +125,10 @@ func seed(t *testing.T) fixture {
 	_, err = tx.Exec(ctx, `INSERT INTO booking.event_supply (event_id, total_capacity, allocated_units) VALUES ($1::uuid, 10, 1)`, f.eventID)
 	require.NoError(t, err)
 	require.NoError(t, tx.QueryRow(ctx, `
-		INSERT INTO booking.admissions (event_id, queue_entry_id, queue_seq, visitor_id, buyer_nik_hash, buyer_email, units, status,
+		INSERT INTO booking.admissions (event_id, queue_entry_id, queue_seq, visitor_id, buyer_nik_hash, buyer_email_enc, units, status,
 			cfg_selection_ttl_seconds, cfg_payment_ttl_seconds, cfg_submit_grace_seconds, cfg_edit_enabled, cfg_max_edits, cfg_allow_mixed_categories,
 			claimed_at, expires_at)
-		VALUES ($1::uuid, gen_random_uuid(), 1, $2::uuid, $3, 'pembeli@contoh.id', 1, 'ACTIVE', 300, 600, 5, true, 3, true, now(), now() + interval '5 minutes')
+		VALUES ($1::uuid, gen_random_uuid(), 1, $2::uuid, $3, 'c2VhbGVkLWVtYWls', 1, 'ACTIVE', 300, 600, 5, true, 3, true, now(), now() + interval '5 minutes')
 		RETURNING id::text`, f.eventID, visitor, []byte(f.nikH)).Scan(&f.admissionID))
 	require.NoError(t, tx.Commit(ctx))
 	return f
@@ -137,7 +140,7 @@ func (f fixture) hold(t *testing.T) string {
 	id := f.q(t, `SELECT gen_random_uuid()::text`)
 	_, err := f.uow.Hold(context.Background(), outbound.HoldSpec{
 		BookingID: id, PublicRef: "RB-7F3A9C21", EventID: f.eventID, AdmissionID: f.admissionID, VisitorID: visitor,
-		BuyerNIKHash: []byte(f.nikH), BuyerEmail: "pembeli@contoh.id", AmountMinor: 150000, CfgEditEnabled: true, PaymentExpiresAt: time.Now().Add(10 * time.Minute),
+		BuyerNIKHash: []byte(f.nikH), BuyerEmailEnc: sealedEmail, AmountMinor: 150000, CfgEditEnabled: true, PaymentExpiresAt: time.Now().Add(10 * time.Minute),
 		Lines: []outbound.HoldLine{{
 			CategoryID: f.categoryID, UnitPriceMinor: 150000, AttendeeNIKHash: []byte("attendee-1"), AttendeeNIKEnc: []byte("enc"),
 			AttendeeNIKMasked: "3174********0001", AttendeeName: "Budi Santoso",
@@ -156,7 +159,7 @@ func TestHold_LockedAtOnceKeepsReadModelInStepWithTheStream(t *testing.T) {
 	id := f.q(t, `SELECT gen_random_uuid()::text`)
 	res, err := f.uow.Hold(ctx, outbound.HoldSpec{
 		BookingID: id, PublicRef: "RB-7F3A9C22", EventID: f.eventID, AdmissionID: f.admissionID, VisitorID: visitor,
-		BuyerNIKHash: []byte(f.nikH), BuyerEmail: "pembeli@contoh.id", AmountMinor: 150000, CfgEditEnabled: false,
+		BuyerNIKHash: []byte(f.nikH), BuyerEmailEnc: sealedEmail, AmountMinor: 150000, CfgEditEnabled: false,
 		PaymentExpiresAt: time.Now().Add(10 * time.Minute), CorrelationID: id,
 		Lines: []outbound.HoldLine{{
 			CategoryID: f.categoryID, UnitPriceMinor: 150000, AttendeeNIKHash: []byte("attendee-1"), AttendeeNIKEnc: []byte("enc"),
@@ -257,14 +260,17 @@ func TestSettle_PublishesATicketPayloadThatFollowsTheContract(t *testing.T) {
 	raw := f.outboxPayload(t, "booking.paid")
 	require.NoError(t, contract.ValidateFile(eventContract+"booking.paid.v1.schema.json", raw), "payload sesuai kontrak")
 	var p struct {
-		BookingID, PublicRef, BuyerEmail string
-		Event                            struct{ EventID, Name, StartsAt, Venue string }
-		Tickets                          []struct{ TicketCode, AttendeeName, AttendeeNikMasked, CategoryCode string }
+		BookingID, PublicRef, BuyerEmailEnc string
+		BuyerEmail                          *string
+		Event                               struct{ EventID, Name, StartsAt, Venue string }
+		Tickets                             []struct{ TicketCode, AttendeeName, AttendeeNikMasked, CategoryCode string }
 	}
 	require.NoError(t, json.Unmarshal(raw, &p))
 	assert.Equal(t, id, p.BookingID)
 	assert.Equal(t, "RB-7F3A9C21", p.PublicRef)
-	assert.Equal(t, "pembeli@contoh.id", p.BuyerEmail)
+	assert.Equal(t, sealedEmail, p.BuyerEmailEnc, "email hanya sebagai ciphertext")
+	assert.Nil(t, p.BuyerEmail, "tidak ada email plaintext di event")
+	assert.NotContains(t, string(raw), "pembeli@contoh.id")
 	assert.Equal(t, f.eventID, p.Event.EventID)
 	assert.Equal(t, "Konser A", p.Event.Name)
 	assert.Equal(t, "GBK", p.Event.Venue)
