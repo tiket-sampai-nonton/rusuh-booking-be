@@ -149,7 +149,7 @@ func TestTransition_StoresInstructionAndWritesEventOnlyWhenApplied(t *testing.T)
 	a, err := repo.CreateNext(ctx, newAttempt())
 	require.NoError(t, err)
 
-	ins := &entity.Instruction{Type: "VA", Bank: "bca", VANumber: "812785002530231"}
+	ins := &entity.Instruction{Type: "SNAP", SnapToken: "tok-1", RedirectURL: "https://snap/r/tok-1"}
 	ok, err := repo.Transition(ctx, outbound.TransitionSpec{AttemptID: a.ID, To: vo.AttemptPending, ProviderTxID: "tx-1", Instruction: ins})
 	require.NoError(t, err)
 	require.True(t, ok)

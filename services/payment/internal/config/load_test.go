@@ -50,6 +50,7 @@ func TestLoad_PaymentDefaultsAndRanges(t *testing.T) {
 	cfg, err := Load()
 	require.NoError(t, err)
 	assert.Equal(t, "https://api.sandbox.midtrans.com", cfg.Payment.Midtrans.BaseURL)
+	assert.Equal(t, "https://app.sandbox.midtrans.com", cfg.Payment.Midtrans.SnapBaseURL)
 	assert.Equal(t, []string{"VA_BCA", "VA_BNI", "VA_BRI", "QRIS", "GOPAY"}, cfg.Payment.Methods)
 	assert.Equal(t, 60*time.Second, cfg.Payment.PageTokenTTL)
 	assert.Equal(t, 5, cfg.Payment.Midtrans.Charge.FailureThreshold)
@@ -59,6 +60,7 @@ func TestLoad_PaymentDefaultsAndRanges(t *testing.T) {
 	cfg, err = Load()
 	require.NoError(t, err)
 	assert.Equal(t, "https://api.midtrans.com", cfg.Payment.Midtrans.BaseURL)
+	assert.Equal(t, "https://app.midtrans.com", cfg.Payment.Midtrans.SnapBaseURL)
 }
 
 func TestLoad_ReportsInvalidPaymentValues(t *testing.T) {

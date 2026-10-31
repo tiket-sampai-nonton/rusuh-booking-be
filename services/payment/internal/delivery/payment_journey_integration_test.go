@@ -153,13 +153,14 @@ func newFakeMidtrans(t *testing.T) *fakeMidtrans {
 	t.Helper()
 	fm := &fakeMidtrans{}
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /v2/charge", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /snap/v1/transactions", func(w http.ResponseWriter, r *http.Request) {
 		fm.charges.Add(1)
 		fm.auth.Store(r.Header.Get("Authorization"))
 		var body map[string]any
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		fm.lastReq.Store(body)
-		_, _ = w.Write([]byte(`{"status_code":"201","transaction_id":"tx-journey","transaction_status":"pending","va_numbers":[{"bank":"bca","va_number":"812785002530231"}]}`))
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"token":"snap-journey","redirect_url":"https://app.sandbox.midtrans.com/snap/v4/redirection/snap-journey"}`))
 	})
 	mux.HandleFunc("GET /v2/{id}/status", func(w http.ResponseWriter, r *http.Request) {
 		if fm.paid.Load() {
@@ -249,7 +250,7 @@ func setupJourney(t *testing.T) *journey {
 	cfg.RabbitMQ = rabbitmq.Config{URL: rmq, Exchange: "rusuh.it.payment", ExchangeType: "topic", Workers: 1, Prefetch: 5,
 		MaxRetries: 1, RetryDelays: []time.Duration{time.Second}, ConfirmWait: 5 * time.Second}
 	cfg.App.Env = "local"
-	cfg.Payment.Midtrans.BaseURL = fm.srv.URL
+	cfg.Payment.Midtrans.BaseURL, cfg.Payment.Midtrans.SnapBaseURL = fm.srv.URL, fm.srv.URL
 	cfg.Payment.Midtrans.ServerKey = serverKey
 	cfg.Payment.BookingURL = fb.srv.URL
 	cfg.Payment.Token.VisitorPublicKeyFile = writePEM(t, "queue.pub", queueKey, false)
@@ -318,14 +319,17 @@ func TestPaymentJourney(t *testing.T) {
 	code, _, _ = j.call(http.MethodGet, "/api/v1/payments/"+bookingA+"/page", "", map[string]string{"X-Visitor-Token": "sampah"})
 	assert.Equal(t, 401, code)
 
-	// FR-24: attempt → Midtrans charge with the locked amount, the booking-based order id, and Basic auth.
+	// FR-24: attempt → Midtrans Snap token with the locked amount, the booking-based order id, and Basic auth.
 	attemptHdr := map[string]string{"X-Visitor-Token": j.visitor, "Idempotency-Key": "idem-key-journey-001"}
 	code, _, raw = j.call(http.MethodPost, "/api/v1/payments/"+bookingA+"/attempts", `{"method":"VA_BCA"}`, attemptHdr)
 	require.Equal(t, 201, code, string(raw))
 	attempt := data[map[string]any](t, raw)
 	assert.Equal(t, "PENDING", attempt["status"])
 	assert.EqualValues(t, 4, attempt["bookingVersion"])
-	assert.Equal(t, "812785002530231", attempt["instruction"].(map[string]any)["vaNumber"])
+	assert.Equal(t, "https://app.sandbox.midtrans.com/snap/v4/redirection/snap-journey", attempt["redirectUrl"])
+	assert.NotEmpty(t, attempt["successReturnUrl"])
+	assert.NotEmpty(t, attempt["failedReturnUrl"])
+	assert.NotContains(t, attempt, "instruction")
 	req := j.midtrans.lastReq.Load().(map[string]any)
 	assert.Equal(t, map[string]any{"order_id": orderA, "gross_amount": float64(1500000)}, req["transaction_details"])
 	assert.Contains(t, j.midtrans.auth.Load().(string), "Basic ")
@@ -334,7 +338,7 @@ func TestPaymentJourney(t *testing.T) {
 	// R3.6: the same key again returns the stored result and never charges twice.
 	code, _, raw = j.call(http.MethodPost, "/api/v1/payments/"+bookingA+"/attempts", `{"method":"VA_BCA"}`, attemptHdr)
 	require.Equal(t, 201, code)
-	assert.Equal(t, "812785002530231", data[map[string]any](t, raw)["instruction"].(map[string]any)["vaNumber"])
+	assert.Equal(t, attempt["redirectUrl"], data[map[string]any](t, raw)["redirectUrl"])
 	assert.EqualValues(t, 1, j.midtrans.charges.Load())
 	// Same key, different payload → 409.
 	code, _, _ = j.call(http.MethodPost, "/api/v1/payments/"+bookingA+"/attempts", `{"method":"QRIS"}`, attemptHdr)

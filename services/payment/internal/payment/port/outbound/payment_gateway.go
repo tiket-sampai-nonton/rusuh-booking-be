@@ -31,6 +31,8 @@ type ChargeRequest struct {
 	AmountMinor int64
 	OrderTime   time.Time
 	Expiry      time.Duration
+	// FinishURL is where Snap returns the payer after the payment page (the FE result page, which verifies status with the backend).
+	FinishURL string
 }
 
 // ChargeResult is what the provider returned for a charge.
