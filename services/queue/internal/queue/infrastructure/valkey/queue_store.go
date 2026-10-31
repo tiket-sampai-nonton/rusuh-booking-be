@@ -81,7 +81,7 @@ func (s *QueueStore) Join(ctx context.Context, p outbound.JoinParams) (outbound.
 	}
 	args := []string{
 		p.EntryID, p.VisitorID, p.NikHash, string(p.EmailEnc), p.AccountID,
-		strconv.FormatInt(p.NowMs, 10), bstr(p.OneActivePerVisitor), bstr(p.OneActivePerEmail), p.EmailHashHex,
+		strconv.FormatInt(p.NowMs, 10), bstr(p.OneActivePerVisitor), bstr(p.OneActivePerEmail), p.EmailHashHex, p.NikMasked,
 	}
 	arr, err := s.join.Exec(ctx, s.c, keys, args).ToArray()
 	if err != nil {
@@ -428,6 +428,7 @@ func hashToEntry(id string, m map[string]string) entity.Entry {
 		e.EmailHash = b
 	}
 	e.EmailEnc = []byte(m["emailEnc"])
+	e.BuyerNikMasked = m["nikMasked"]
 	e.Status = valueobject.Status(m["status"])
 	e.JoinedAtMs = parseMs(m["joinedAtMs"])
 	e.AdmittedAtMs = parseMs(m["admittedAtMs"])

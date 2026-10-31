@@ -2,7 +2,7 @@
 -- KEYS[1]=seq  KEYS[2]=waiting  KEYS[3]=entry:<id>
 -- KEYS[4]=nik:<h>  KEYS[5]=visitor:<v>  KEYS[6]=email:<eh>  KEYS[7]=quota_exhausted
 -- ARGV: 1=entryId 2=visitorId 3=nikHash 4=emailEnc 5=accountId 6=nowMs
---       7=oneActivePerVisitor("1"/"0") 8=oneActivePerEmail("1"/"0") 9=emailHash(hex)
+--       7=oneActivePerVisitor("1"/"0") 8=oneActivePerEmail("1"/"0") 9=emailHash(hex) 10=nikMasked
 
 -- (1) kuota habis?
 if redis.call('SISMEMBER', KEYS[7], ARGV[3]) == 1 then
@@ -25,7 +25,7 @@ end
 local seq = redis.call('INCR', KEYS[1])
 redis.call('HSET', KEYS[3],
   'seq', seq, 'visitorId', ARGV[2], 'buyerNikHash', ARGV[3],
-  'emailEnc', ARGV[4], 'emailHash', ARGV[9], 'accountId', ARGV[5],
+  'emailEnc', ARGV[4], 'emailHash', ARGV[9], 'accountId', ARGV[5], 'nikMasked', ARGV[10],
   'status', 'WAITING', 'joinedAtMs', ARGV[6])
 redis.call('ZADD', KEYS[2], seq, ARGV[1])
 redis.call('SET', KEYS[4], ARGV[1])

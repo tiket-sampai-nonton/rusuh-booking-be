@@ -3,6 +3,7 @@ package usecase
 import (
 	"context"
 	"encoding/hex"
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/crypto"
 	"strings"
 	"time"
 
@@ -59,7 +60,7 @@ func (u *JoinQueue) Join(ctx context.Context, in inbound.JoinInput) (dto.QueueEn
 		return dto.QueueEntry{}, err
 	}
 
-	nikHashHex, accountID, err := u.resolveIdentity(in, now)
+	nikHashHex, accountID, nikMasked, err := u.resolveIdentity(in, now)
 	if err != nil {
 		return dto.QueueEntry{}, err
 	}
@@ -101,6 +102,7 @@ func (u *JoinQueue) Join(ctx context.Context, in inbound.JoinInput) (dto.QueueEn
 		NikHash:             nikHashHex,
 		EmailHashHex:        emailHash,
 		EmailEnc:            emailEnc,
+		NikMasked:           nikMasked,
 		AccountID:           accountID,
 		NowMs:               now.UnixMilli(),
 		OneActivePerVisitor: settings.OneActivePerVisitor,
@@ -128,7 +130,8 @@ func (u *JoinQueue) Join(ctx context.Context, in inbound.JoinInput) (dto.QueueEn
 	nikBytes, _ := hex.DecodeString(nikHashHex)
 	u.audit(ctx, in.EventID, ent, nikBytes, "JOINED", now)
 
-	admitted := u.tryDirectAdmission(ctx, in.EventID, &ent, nikHashHex, settings, now)
+	ent.BuyerNikMasked, ent.AccountID = nikMasked, accountID
+	admitted := u.tryDirectAdmission(ctx, in.EventID, &ent, nikHashHex, strings.ToLower(in.Body.Email), settings, now)
 	if admitted {
 		u.audit(ctx, in.EventID, ent, nikBytes, "ADMITTED", now)
 	}
@@ -150,26 +153,28 @@ func validateJoinBody(b dto.JoinRequest) error {
 }
 
 // resolveIdentity returns (nikHashHex, accountID) per the three auth states (design §2.1).
-func (u *JoinQueue) resolveIdentity(in inbound.JoinInput, now time.Time) (string, string, error) {
+// resolveIdentity returns the NIK hash, the account id, and the masked NIK shown back to the buyer. The masked NIK is
+// empty when the NIK comes from the login token (only its hash is known).
+func (u *JoinQueue) resolveIdentity(in inbound.JoinInput, now time.Time) (nikHash, accountID, nikMasked string, err error) {
 	if in.Bearer != "" {
 		id, err := u.d.UserVerifier.Verify(in.Bearer)
 		if err == nil {
 			if id.HasNIK && id.NIKHash != "" {
-				return id.NIKHash, id.AccountID, nil // logged-in with stored NIK: body.buyerNik ignored
+				return id.NIKHash, id.AccountID, "", nil // logged-in with stored NIK: body.buyerNik ignored
 			}
 			// logged-in without NIK: body.buyerNik required
 			if err := validateBuyerNik(in.Body.BuyerNik, now); err != nil {
-				return "", id.AccountID, err
+				return "", id.AccountID, "", err
 			}
-			return hex.EncodeToString(u.d.PII.HashNIK(in.Body.BuyerNik)), id.AccountID, nil
+			return hex.EncodeToString(u.d.PII.HashNIK(in.Body.BuyerNik)), id.AccountID, crypto.MaskNIK(in.Body.BuyerNik), nil
 		}
 		// invalid bearer → treat as guest
 	}
 	// guest: body.buyerNik required
 	if err := validateBuyerNik(in.Body.BuyerNik, now); err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
-	return hex.EncodeToString(u.d.PII.HashNIK(in.Body.BuyerNik)), "", nil
+	return hex.EncodeToString(u.d.PII.HashNIK(in.Body.BuyerNik)), "", crypto.MaskNIK(in.Body.BuyerNik), nil
 }
 
 func validateBuyerNik(nikStr string, now time.Time) error {
@@ -210,7 +215,7 @@ func (u *JoinQueue) rateLimit(ctx context.Context, in inbound.JoinInput) error {
 
 // tryDirectAdmission reserves + promotes immediately when a slot is free (design §8.1). Best-effort:
 // on any dependency hiccup the entry simply stays WAITING for the Promotor.
-func (u *JoinQueue) tryDirectAdmission(ctx context.Context, eventID string, ent *entity.Entry, nikHashHex string, settings entity.EventSettings, now time.Time) bool {
+func (u *JoinQueue) tryDirectAdmission(ctx context.Context, eventID string, ent *entity.Entry, nikHashHex, email string, settings entity.EventSettings, now time.Time) bool {
 	if settings.ActiveSlotCapacity <= 0 {
 		return false
 	}
@@ -222,6 +227,7 @@ func (u *JoinQueue) tryDirectAdmission(ctx context.Context, eventID string, ent 
 		EventID: eventID,
 		Entries: []outbound.AllocationEntryRequest{{
 			QueueEntryID: ent.ID, VisitorID: ent.VisitorID, BuyerNikHash: nikHashHex, Units: 1,
+			BuyerNikMasked: ent.BuyerNikMasked, BuyerEmail: email, AccountID: ent.AccountID,
 		}},
 	})
 	if err != nil || len(resp.Allocations) == 0 {

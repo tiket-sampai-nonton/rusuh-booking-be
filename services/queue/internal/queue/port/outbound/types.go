@@ -10,6 +10,7 @@ type JoinParams struct {
 	NikHash             string // hex
 	EmailHashHex        string // hex HMAC of email; used for the email constraint key
 	EmailEnc            []byte
+	NikMasked           string // "3174********0001"; empty when the NIK is not in the request (logged-in with stored NIK)
 	AccountID           string
 	NowMs               int64
 	OneActivePerVisitor bool
@@ -84,6 +85,11 @@ type AllocationEntryRequest struct {
 	VisitorID    string `json:"visitorId"`
 	BuyerNikHash string `json:"buyerNikHash"`
 	Units        int    `json:"units"`
+	// Contract internal-booking AllocationBatchRequest: Booking keeps these on the admission and the booking
+	// (e-ticket email, buyer NIK shown masked, login account).
+	BuyerNikMasked string `json:"buyerNikMasked"`
+	BuyerEmail     string `json:"buyerEmail"`
+	AccountID      string `json:"accountId,omitempty"`
 }
 
 // AllocationBatchResponse is the batch reply.

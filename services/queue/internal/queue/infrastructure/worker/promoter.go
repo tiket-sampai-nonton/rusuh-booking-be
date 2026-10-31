@@ -20,20 +20,21 @@ type Promoter struct {
 	booking  outbound.IBookingClient
 	pub      outbound.IEventPublisher
 	audit    outbound.IEntryAuditRepo
+	pii      outbound.IPIIProtector
 	clock    clock.IClock
 	logger   *slog.Logger
 	batchMax int
 }
 
 // NewPromoter accepts interfaces and returns the concrete worker.
-func NewPromoter(store outbound.IQueueStore, settings outbound.IEventSettingsRepo, booking outbound.IBookingClient, pub outbound.IEventPublisher, audit outbound.IEntryAuditRepo, clk clock.IClock, logger *slog.Logger, batchMax int) *Promoter {
+func NewPromoter(store outbound.IQueueStore, settings outbound.IEventSettingsRepo, booking outbound.IBookingClient, pub outbound.IEventPublisher, audit outbound.IEntryAuditRepo, pii outbound.IPIIProtector, clk clock.IClock, logger *slog.Logger, batchMax int) *Promoter {
 	if batchMax <= 0 {
 		batchMax = 200
 	}
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Promoter{store: store, settings: settings, booking: booking, pub: pub, audit: audit, clock: clk, logger: logger, batchMax: batchMax}
+	return &Promoter{store: store, settings: settings, booking: booking, pub: pub, audit: audit, pii: pii, clock: clk, logger: logger, batchMax: batchMax}
 }
 
 // Run promotes one batch for every configured event.
@@ -93,10 +94,15 @@ func (p *Promoter) runEvent(ctx context.Context, eventID string) error {
 		if gerr != nil || !found {
 			continue
 		}
+		email, uerr := p.pii.UnsealEmail(ent.EmailEnc)
+		if uerr != nil {
+			p.logger.Error("email antrean tidak bisa dibuka; entry dilewati", "eventId", eventID, "entryId", entryID, "error", uerr)
+			continue
+		}
 		visitorByEntry[entryID] = ent.VisitorID
 		entries = append(entries, outbound.AllocationEntryRequest{
 			QueueEntryID: entryID, VisitorID: ent.VisitorID, BuyerNikHash: ent.BuyerNikHashHex(), Units: 1,
-			Seq: int64(ent.Seq),
+			Seq: int64(ent.Seq), BuyerNikMasked: ent.BuyerNikMasked, BuyerEmail: email, AccountID: ent.AccountID,
 		})
 	}
 	if len(entries) == 0 {
