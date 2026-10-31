@@ -330,3 +330,21 @@ func TestSettle_AfterAReviewDecisionIsANoOp(t *testing.T) {
 	assert.Equal(t, "REVIEW", f.status(t, id))
 	assert.Equal(t, 0, f.n(t, `SELECT count(*) FROM booking.tickets`))
 }
+
+// Regression: the session sweeper must be able to end an EDITABLE admission whose selection time lapsed. CONVERTED
+// needs lock_reason in the same statement (admissions_check2); it used to fail on every tick, forever.
+func TestExpireSession_EditableAdmissionBecomesConverted(t *testing.T) {
+	f := seed(t)
+	ctx := context.Background()
+	id := f.hold(t)
+	require.Equal(t, "EDITABLE", f.q(t, `SELECT status FROM booking.admissions WHERE id=$1::uuid`, f.admissionID))
+	held := f.n(t, `SELECT held_units FROM booking.event_supply WHERE event_id=$1::uuid`, f.eventID)
+
+	require.NoError(t, NewAdmissionRepo(f.pool).ExpireSession(ctx, f.admissionID, time.Now()))
+
+	assert.Equal(t, "CONVERTED", f.q(t, `SELECT status FROM booking.admissions WHERE id=$1::uuid`, f.admissionID))
+	assert.Equal(t, "SELECTION_EXPIRED", f.q(t, `SELECT lock_reason FROM booking.admissions WHERE id=$1::uuid`, f.admissionID))
+	assert.Equal(t, held, f.n(t, `SELECT held_units FROM booking.event_supply WHERE event_id=$1::uuid`, f.eventID), "stok yang di-hold booking tidak dilepas")
+	assert.Equal(t, "PENDING_PAYMENT", f.status(t, id), "booking tetap menunggu pembayaran")
+	require.NoError(t, NewAdmissionRepo(f.pool).ExpireSession(ctx, f.admissionID, time.Now()), "idempoten")
+}

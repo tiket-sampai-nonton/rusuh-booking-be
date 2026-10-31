@@ -122,6 +122,12 @@ func TestTC_BKG07_NoOversell(t *testing.T) {
 	pool := testPool(t)
 	suffix := fmt.Sprintf("%012d", time.Now().UnixNano()%1e12)
 	eventID, catID := seedTestEvent(t, pool, suffix, totalTickets)
+	// The seeded admissions outnumber the stock on purpose; end the unused ones so the dev DB's session sweeper
+	// does not try to release stock that was never allocated to them.
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(),
+			`UPDATE booking.admissions SET status='EXPIRED', ended_at=now(), end_reason='SESSION_EXPIRED' WHERE event_id=$1::uuid AND status='ACTIVE'`, eventID)
+	})
 
 	uow, err := postgres.NewUnitOfWork(pool)
 	require.NoError(t, err)

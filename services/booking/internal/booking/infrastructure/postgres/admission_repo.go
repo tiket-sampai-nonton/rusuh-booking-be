@@ -368,29 +368,19 @@ func (r *AdmissionRepo) ExpireSession(ctx context.Context, admissionID string, n
 			}
 		}
 
-		if _, err := tx.Exec(ctx, `
-			UPDATE booking.admissions
-			   SET status = $2, ended_at = $3, end_reason = $4
-			 WHERE id = $1::uuid`,
-			admissionID,
-			func() string {
-				if status == vo.AdmissionEditable {
-					return "CONVERTED"
-				}
-				return "EXPIRED"
-			}(),
-			now, endReason); err != nil {
+		// CONVERTED requires lock_reason (admissions_check2), so it is set in the same statement.
+		if status == vo.AdmissionEditable {
+			// No journey.ended outbox: the booking is still PENDING_PAYMENT and its expiry sweeper publishes it later.
+			_, err := tx.Exec(ctx, `
+				UPDATE booking.admissions
+				   SET status = 'CONVERTED', ended_at = $2, end_reason = $3, lock_reason = 'SELECTION_EXPIRED', locked_at = $2
+				 WHERE id = $1::uuid`, admissionID, now, endReason)
 			return err
 		}
-		if status == vo.AdmissionEditable {
-			// CONVERTED: also set lock_reason (no journey.ended — booking still PENDING_PAYMENT).
-			if _, err := tx.Exec(ctx, `
-				UPDATE booking.admissions SET lock_reason='SELECTION_EXPIRED', locked_at=$2 WHERE id=$1::uuid`,
-				admissionID, now); err != nil {
-				return err
-			}
-			// No journey.ended outbox — the booking expiry sweeper publishes it when the booking expires.
-			return nil
+		if _, err := tx.Exec(ctx, `
+			UPDATE booking.admissions SET status = 'EXPIRED', ended_at = $2, end_reason = $3 WHERE id = $1::uuid`,
+			admissionID, now, endReason); err != nil {
+			return err
 		}
 
 		// Publish journey.ended so Queue releases the slot (RESERVED/ACTIVE only).
