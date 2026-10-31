@@ -723,4 +723,16 @@ Pola yang diadopsi dari usulan BE-2: **satu image banyak verb** (`api`, `worker`
 | **Konteks** | Persyaratan dan kontrak FE mobile memakai alur Snap: backend mengembalikan `redirectUrl`, FE membukanya dan memverifikasi status ke backend. Core API (`/v2/charge`) memaksa backend dan FE menangani instruksi VA/QR/deeplink per metode, dua jalur integrasi yang berlebihan. |
 | **Keputusan** | Hanya Snap (`POST /snap/v1/transactions`). Bucket metode (`VA_BCA`, `QRIS`, …) tetap di API sebagai pembatas `enabled_payments`; `SNAP` = semua channel. Status, cancel, dan webhook tetap memakai format Core API. Kode charge Core API dihapus. |
 | **Konsekuensi** | (1) Order Midtrans baru ada setelah pembayar memilih channel; status 404 sebelum itu = belum dibayar. (2) Token Snap tidak bisa dibatalkan; pembayaran lewat token lama setelah attempt diganti masuk jalur `SETTLED_AFTER_CANCEL` (refund manual). (3) Expiry Snap dalam menit, dibulatkan ke bawah; sisa waktu < 1 menit tidak dapat memulai attempt. (4) Instruksi VA/QR/deeplink hilang dari kontrak; `Attempt.instruction` dihapus. |
-| **Belum terverifikasi** | Satuan `expiry.unit=minute` dan perilaku `X-Override-Notification` pada Snap di Sandbox nyata (PAY-2). |
+| **Terverifikasi di Sandbox (2026-10-31)** | Token Snap dibuat dengan `expiry.unit=minute`; semua bucket metode diterima sebagai `enabled_payments`; memilih channel lewat `POST /snap/v1/transactions/{token}/pay` membuat order Core API berstatus `PENDING`; sebelum itu `GET /v2/{id}/status` menjawab 404. Tes: `go test -tags sandbox -run TestSandbox`. |
+| **Belum terverifikasi** | `X-Override-Notification` pada Snap; pembayaran selesai (VA/GoPay butuh halaman simulator manual). |
+
+---
+
+## ADR-025: Token dibatasi per scope; admin lewat allow-list; tiket hanya untuk pemilik
+
+| Field | Isi |
+|---|---|
+| **Status** | Accepted (2026-10-31) |
+| **Konteks** | Kunci Queue menandatangani token visitor, queue, admission, dan service. Token visitor diberikan ke siapa pun yang masuk antrean, jadi tidak boleh dianggap kredensial internal. Booking sebelumnya menerima tiap token dari kunci itu di endpoint internal/admin, memercayai nilai mentah header visitor sebagai identitas, dan membuka tiket hanya dengan `bookingId`. |
+| **Keputusan** | (1) Setiap guard menyebut satu scope: `service` untuk `/internal/v1/*` (kunci Queue), `admission` untuk membuka sesi, `visitor` untuk identitas pembeli (JWT diverifikasi di middleware; `X-Visitor-ID` dihapus), `buyer` untuk token User. (2) Admin = token `buyer` dengan email di `ADMIN_EMAILS` (entri `@domain` untuk domain yang dikuasai, mis. E2E lokal); kosong = tidak ada yang boleh. (3) Guard tanpa verifier menolak semua permintaan (fail closed). (4) Tiket dibuka oleh visitor pemilik, akun pembeli pemilik, atau tautan email bertoken HMAC-SHA256(bookingId) dengan `TICKET_LINK_KEY`; selain itu 404. (5) Kode tiket = QR payload = 80 bit acak (`TK-` + 20 hex). (6) Kunci PII dan `TICKET_LINK_KEY` wajib diisi di luar `APP_ENV=local`. |
+| **Konsekuensi** | Operator wajib mengisi `ADMIN_EMAILS`, `TICKET_LINK_KEY`, `PII_*`. Klien yang memakai `X-Visitor-ID` atau mengirim raw UUID sebagai visitor token berhenti bekerja (harus memakai token dari Queue). Email e-tiket memuat URL bila `TICKET_LINK_BASE_URL` diisi. Check-in/validasi QR belum ada; bila ditambahkan, payload perlu ditandatangani. |

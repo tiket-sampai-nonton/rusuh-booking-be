@@ -44,12 +44,26 @@ Coba login OTP: `POST localhost:8085/api/v1/auth/otp/request {"email":"kamu@cont
 |---|---|
 | `make build` / `make test` / `make lint` | build, unit test (race), lint semua modul |
 | `make test-integration` | unit + integration test (PostgreSQL, Valkey, RabbitMQ dari `make infra`) |
-| `make cover` | sama dengan stage `case-coverage` CI (ambang 80%) |
+| `make cover` | sama dengan stage `case-coverage` CI (ambang 80%, tanpa pengecualian paket) |
+| `make test-e2e` | E2E lintas service: membangun dan menjalankan 5 service di host terhadap infra Compose (`make infra`), lalu `tests/e2e` (login OTP → event → antre → klaim → sesi → hold → token Snap Sandbox → webhook → PAID → tiket → email) dan memvalidasi setiap respons terhadap OpenAPI. `E2E_SLOW=1` menambah skenario expiry (±5 menit). Butuh `MIDTRANS_SERVER_KEY` di `services/payment/.env` |
 | `make mock` | generate mock (`go tool mockgen`, versi dikunci `go.mod`) ke `_mock/` |
 | `make tidy` | `go mod tidy` semua modul |
 | `make isolation` | build tiap service tanpa `go.work` |
 | `make migrate-<svc>` / `make run-<svc>` | migrasi atau jalankan API satu service lokal |
 | `make ci` | semua pemeriksaan CI lokal |
+
+## Konfigurasi keamanan yang wajib (di luar `APP_ENV=local`)
+
+| Variabel | Service | Fungsi |
+|---|---|---|
+| `ADMIN_EMAILS` | booking | email (atau `@domain`) pemilik token pembeli yang boleh memakai `/internal/v1/admin/*`; kosong = tidak ada |
+| `TICKET_LINK_KEY` | booking | kunci HMAC token tautan e-tiket (32 byte hex) |
+| `PII_HASH_KEY`, `PII_ENC_KEY` | booking | harus sama dengan Queue/User (hash NIK cocok) |
+| `TICKET_LINK_BASE_URL` | notification | halaman e-tiket; email memuat `{base}/{bookingId}?t={token}` (kosong = tanpa tautan) |
+| `MIDTRANS_SERVER_KEY`, `MIDTRANS_SNAP_BASE_URL`, `PAYMENT_SUCCESS_RETURN_URL`, `PAYMENT_FAILED_RETURN_URL` | payment | Snap Sandbox/produksi dan halaman FE tujuan |
+| `SERVICE_TOKEN_PRIVATE_KEY_PATH`, `PAYMENT_TOKEN_PUBLIC_KEY_PATH` | booking | panggilan Booking → Payment (expiry, batal) |
+
+Detail dan alasan: ADR-025 (`docs/analisa/05-ADR-RBT.md`). Hasil audit: `docs/engineering/AUDIT-FINAL.md`.
 
 ## Struktur
 
@@ -61,7 +75,7 @@ pkg/                   utilitas lintas service tanpa logika bisnis: apperror, ht
 deployments/           compose (init schema/role), terraform, observability
 docs/                  PRD, SRS, HLD, SDD, ADR, Test Plan, Handbook, kontrak OpenAPI dan event, evidence, ai-log
 .kiro/steering, specs/ steering dan spec Kiro
-tests/                 test lintas service (BDD, k6, contract)
+tests/                 test lintas service: e2e (Go, `-tags e2e`), BDD, k6, contract
 ```
 
 Aturan struktur: `.kiro/steering/structure.md` dan Handbook §0. Lapisan ditegakkan `depguard` di `.golangci.yml`; import lintas service dicegah Go `internal/`.

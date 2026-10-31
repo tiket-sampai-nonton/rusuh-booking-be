@@ -1,70 +1,84 @@
 # Autonomous Execution Status
 
-Terakhir diperbarui: 2026-10-31. Dipakai untuk melanjutkan pekerjaan tanpa konteks percakapan.
-Branch kerja: `feature/snap-payment-ci-hardening` (satu PR, commit per task). Fokus: repo BE; repo mobile hanya referensi kontrak (tidak diubah).
-Status: Backlog / Ready / In Progress / Blocked / In Review / Done. Story point Fibonacci.
+Terakhir diperbarui: 2026-10-31 (akhir sesi). Dipakai untuk melanjutkan pekerjaan tanpa konteks percakapan.
+Branch kerja: `feature/snap-payment-ci-hardening` (satu PR, commit bertahap per task, **belum di-push**). Fokus: repo BE; repo mobile hanya referensi kontrak (tidak diubah; prioritas kontrak = mobile).
+Hasil audit lengkap, bukti, dan traceability matrix: `docs/engineering/AUDIT-FINAL.md`.
+Status: Backlog / Ready / In Progress / Blocked / In Review / Done. Story point Fibonacci. Done = kriteria penerimaan terbukti dengan tes yang dijalankan.
 
-## Baseline
+## Keputusan pemilik (diterapkan)
 
-- Stack: Go monorepo (pkg + queue, booking, payment, notification, user), PostgreSQL, Valkey, RabbitMQ. OpenAPI di `docs/contracts/openapi/*.yaml`, divalidasi `make contracts`.
-- Sebelumnya payment memakai Midtrans Core API; kontrak mobile (`rusuh-booking-mobile/.genesis/docs/api-contract`) sudah memakai Snap. Salinan root `FE-BE-align-contract.md` dan `FE-Flow-Diagrams.md` (di luar repo git) lebih lama daripada salinan mobile dan **belum disinkronkan**.
+1. Midtrans **Snap saja**, tanpa jalur Core API ganda → selesai (PAY-1).
+2. Server key Sandbox di `services/payment/.env` dipakai untuk verifikasi → selesai (PAY-2; nilai tidak pernah dicetak).
+3. Coverage: **tanpa pengecualian paket**; menulis tes nyata → selesai (TST-2/TST-3).
+4. Dokumen root `FE-BE-align-contract.md` / `FE-Flow-Diagrams.md` disamakan dengan salinan mobile → selesai (DOC-1; cadangan versi lama di scratchpad sesi).
+5. Akses AWS: lihat "Human Confirmation Required".
 
-## Backlog
+## Backlog — selesai (136 SP)
 
-| ID | Epic | Judul | Prio | SP | Status | Bukti / catatan |
-|---|---|---|---|---|---|---|
-| CI-1 | CI/CD | govulncheck: stdlib Go 1.26.x rentan | P0 | 2 | **Done** | `go 1.26.10` di go.work + go.mod; govulncheck 6 modul bersih |
-| CI-2 | CI/CD | gosec HIGH (G115 x2 pkg, G101 x2 notification) | P0 | 2 | **Done** | `#nosec` beralasan; gosec HIGH = 0 di 6 modul |
-| CI-3 | CI/CD | gitleaks 7 temuan | P0 | 2 | **Done** | fixture Idempotency-Key; `.gitleaksignore` per fingerprint; tidak ada rahasia nyata, rotasi tidak perlu |
-| CI-4 | CI/CD | `verify-reports.sh quality` lulus | P0 | 1 | **Done (lokal)** | exit 0 dengan scanner versi CI. Belum dibuktikan di runner GitHub |
-| PAY-1 | Payment | Midtrans Snap saja (hapus charge Core API) | P0 | 5 | **Done** | `Attempt` = `redirectUrl`/`successReturnUrl`/`failedReturnUrl`; bucket metode → `enabled_payments`; migrasi 0004; unit + integration payment lulus (journey memakai fake Snap) |
-| PAY-2 | Payment | Verifikasi Snap di Sandbox nyata | P1 | 3 | **Blocked** | butuh `MIDTRANS_SERVER_KEY` sandbox. Belum terverifikasi: `expiry.unit=minute`, `X-Override-Notification` pada Snap, payment_type di webhook |
-| PAY-3 | Payment | Status `GET /payments/{id}/status`: `orderId`, `paymentExpiresAt` | P1 | 1 | **Done** | sesuai kontrak mobile; tes journey |
-| PAY-4 | Payment | Dokumentasi Snap (ADR-024, SDD 04c, 08b, OpenAPI) | P1 | 3 | **Done** | |
-| API-1 | Kontrak | Selaraskan Booking/TicketList dengan kontrak mobile (`orderId`, `ticketQuantity`, `buyerNikMasked`, `publicRef`, `amountMinor`) | P1 | 3 | **Done** | mapper + repo + OpenAPI; `make contracts` ok |
-| API-2 | Kontrak | Perbedaan sengaja yang tersisa | P2 | 1 | **Done (dicatat)** | Queue `JoinRequest.buyerNik` opsional untuk user login (BE benar, kontrak mobile menandai wajib). `Attempt.redirectUrl` hanya ada saat PENDING (mobile menandai wajib). Internal booking: `publicRef`, endpoint admin hanya di BE |
-| BKG-1 | Booking | Bug: hold terkunci langsung menambah event v2 tetapi `bookings.version` tetap 1 → payment-lock/settle/expire bentrok versi | P0 | 3 | **Done** | fix + tes regresi |
-| BKG-2 | Booking | Bug: `PaymentLock` tidak idempoten (cek `status==VERIFYING`, padahal status tetap PENDING_PAYMENT) → event/versi bertambah tiap lock (mis. ganti metode) | P0 | 2 | **Done** | cek `payment_started_at` |
-| BKG-3 | Booking/Notif | Bug: payload `booking.paid` tanpa objek `event` (nama, venue, waktu) padahal dipakai e-ticket | P1 | 2 | **Done** | |
-| BKG-4 | Booking | `Settle` mengembalikan true untuk jalur REVIEW | P2 | 1 | **Done** | |
-| TST-1 | Testing | Perbaiki integration test booking (UUID non-hex, search_path, supply, NIK, public_ref) | P1 | 3 | **Done** | suite booking lulus 3× berturut dengan `-race` |
-| INF-1 | AWS | Terraform staging sesuai HLD §4.5 | P2 | 8 | **Done (tervalidasi, belum di-plan)** | `fmt -check`, `validate` (TF 1.17.1), Trivy HIGH/CRITICAL bersih. `plan`/`apply` belum (tanpa akses AWS) |
-| INF-2 | AWS | CloudFront+WAF, Route53, web Next.js, Prometheus/Grafana, scheduled scaling | P2 | 8 | Backlog | di luar INF-1; butuh domain |
-| TKT-1 | Ticketing | Audit QR | P1 | 3 | **Done (audit)** | lihat bawah |
-| NTF-1 | Notification | Audit pemicu notifikasi | P1 | 2 | **Done (audit)** | lihat bawah |
-| **TST-2** | Testing | **Coverage logika booking 50,8% (ambang 80%)** | P0 | 13 | **Backlog** | terendah: infrastructure/postgres 19%, valkey 0%, http 56%, rabbitmq 59%. Akan menggagalkan `case-coverage` di CI |
-| **TST-3** | Testing | **Coverage logika queue 64,5% (ambang 80%)** | P0 | 8 | **Backlog** | adapter valkey 11,5%, postgres 0%, bookingclient 78% |
-| AUD-1 | Audit | Matriks keterlacakan requirement (PRD/SRS → kode → tes) | P1 | 13 | Backlog | belum dibuat |
-| AUD-2 | Audit | Audit keamanan/performa menyeluruh (IDOR, rate limit, N+1, indeks) | P1 | 13 | Backlog | belum dilakukan |
-| TST-4 | Testing | E2E lintas service (booking→bayar→tiket→email) | P1 | 8 | Backlog | hanya journey payment dengan fake Midtrans yang ada |
-| DOC-1 | Docs | Sinkronkan `FE-BE-align-contract.md` dan `FE-Flow-Diagrams.md` di root dengan salinan mobile | P2 | 2 | Backlog | file di luar git; perlu keputusan pemilik |
+| ID | Task | SP | Bukti ringkas |
+|---|---|---|---|
+| CI-1..4 | govulncheck (Go 1.26.10), gosec HIGH, gitleaks, gerbang kualitas | 7 | `verify-reports.sh quality` exit 0 dengan scanner versi CI |
+| PAY-1 | Midtrans Snap saja (`redirectUrl`, return URL, bucket → `enabled_payments`, migrasi 0004) | 5 | unit + integration + E2E |
+| PAY-2 | Verifikasi Snap di Sandbox nyata | 3 | `go test -tags sandbox` (token, semua bucket, pemilihan channel → PENDING) |
+| PAY-3 | Status `orderId`, `paymentExpiresAt` | 1 | E2E + kontrak |
+| PAY-4 | Dokumentasi Snap (ADR-024/025, SDD 04c, 08b) | 3 | – |
+| API-1/2 | Booking/TicketList sesuai kontrak mobile; selisih sengaja dicatat | 4 | validator OpenAPI di E2E |
+| BKG-1..4 | versi vs event stream, payment-lock idempoten, payload `booking.paid`, nilai balik `Settle` | 8 | tes regresi |
+| BKG-5 | status event diturunkan; filter katalog sesuai SRS-F-28 | 3 | integration + mapper |
+| BKG-6 | `/payable` mengembalikan status nyata (status 503 setelah PAID) | 1 | E2E |
+| BKG-7 | `ExtendDeadline` selalu gagal | 1 | integration |
+| BKG-8 | config di luar batas → 400 | 1 | integration + E2E |
+| BKG-9 | `ReserveBatch` ulang idempoten | 2 | integration |
+| BKG-10 | session sweeper EDITABLE | 2 | integration (gagal tanpa perbaikan) |
+| QUE-1 | pengaturan event default + tolak event tak dikenal | 3 | unit + E2E |
+| QUE-2 | email/NIK tersamar/akun ke Booking (e-tiket tidak pernah terkirim) | 3 | E2E |
+| QUE-3 | promotor: prefix FIFO GRANTED dipromosikan | 3 | unit + E2E konkurensi |
+| QUE-4 | `MarkNotifiedSoon` (Ex 600 ns) | 1 | integration Valkey |
+| SEC-1 | token per scope; admin allow-list; guard fail closed | 5 | unit + E2E |
+| SEC-2 | verifikasi token visitor (IDOR) | 3 | unit + E2E |
+| SEC-3 | tiket hanya untuk pemilik / tautan email; kode tiket 80 bit; URL e-tiket | 5 | unit + E2E |
+| SEC-4 | kunci PII wajib di luar lokal | 1 | unit |
+| TST-1 | perbaiki integration test booking; DB sementara | 3 | tiga run berturut lulus |
+| TST-2 | coverage booking 50,8 → 81,0% | 13 | `make cover` |
+| TST-3 | coverage queue 64,5 → 83,6% | 8 | `make cover` |
+| TST-4 | E2E lintas service + validasi OpenAPI + `tools/e2e.sh` + `make test-e2e` | 8 | 362 dtk, lulus |
+| TKT-1 | audit QR/tiket | 3 | AUDIT-FINAL §4 |
+| NTF-1 | audit notifikasi | 2 | AUDIT-FINAL §4 |
+| INF-1 | Terraform staging (HLD §4.5) | 8 | `fmt`/`validate`/Trivy |
+| AUD-1 | traceability matrix SRS | 13 | AUDIT-FINAL §9 |
+| AUD-2 | audit keamanan/keandalan/CI/privasi | 13 | AUDIT-FINAL §2, §5–§7 |
+| DOC-1 | sinkron dokumen root dengan salinan mobile | 2 | – |
+| DOC-2 | ADR-024/025, README, tests/README, OpenAPI | (termasuk di atas) | – |
 
-Total 25 task, 112 SP. Done: 44 SP. Blocked: 3 SP. Backlog: 65 SP.
+## Backlog — tersisa (43 SP)
 
-## Temuan audit
-
-**Ticketing/QR (TKT-1).** `qrPayload = "RBT:" + ticketCode`, `ticketCode = "TK-" + 12 hex dari UUID acak item` (48 bit), unik per item (`UNIQUE`), diterbitkan sekali (`ON CONFLICT DO NOTHING`) hanya saat PAID, tanpa PII. Tidak ada endpoint check-in/validasi di PRD/SRS/kontrak mobile, jadi tidak diimplementasikan. Bila check-in ditambahkan: payload perlu ditandatangani (HMAC/EdDSA) dan validasi server-side beserta status redeemed.
-**Notifikasi (NTF-1).** E-ticket dikirim dari `booking.paid`, yang hanya diterbitkan outbox Booking setelah `Settle` commit (setelah webhook Midtrans berverifikasi signature + nominal). Notifikasi sukses tidak mendahului verifikasi backend. `booking.expired`/`booking.review`/`queue.turn.*`/`otp.requested` ada. Tidak ada notifikasi "payment pending/failed" (tidak ada di requirement yang dibaca).
-**Risiko Snap.** Token Snap tidak bisa dibatalkan; pembayaran lewat token lama setelah attempt diganti masuk `SETTLED_AFTER_CANCEL` (refund manual) — didokumentasikan di ADR-024.
-
-## Hasil yang benar-benar dijalankan
-
-| Pemeriksaan | Hasil |
-|---|---|
-| `tools/verify-reports.sh quality` (gosec 2.22.0, govulncheck 1.1.4, hadolint 2.12.0, gitleaks 8.18.4, toolchain 1.26.10) | **Lulus**, exit 0 (lokal) |
-| golangci-lint pkg + 5 service | 0 issues |
-| `go build`, `make isolation`, `make contracts` | lulus |
-| Unit + integration test `-race` (infra docker): pkg, payment, booking, queue, notification, user | **Lulus** |
-| Coverage logika (`tools/check-coverage.sh`, ambang 80%): pkg 90,6 · payment 90,0 · notification 82,6 · user 92,4 · **queue 64,5 · booking 50,8** | queue dan booking **Gagal** (sudah rendah sebelum perubahan) |
-| Terraform `fmt -check`, `validate`, Trivy config HIGH/CRITICAL | Lulus. `plan` tidak dijalankan |
-| Tes Sandbox Midtrans (`-tags sandbox`) | Tidak dijalankan (tanpa server key) |
-| Frontend (tests, E2E, mockup) | Tidak dijalankan: repo mobile hanya dipakai sebagai referensi kontrak |
-| Pipeline GitHub Actions | Tidak dijalankan |
+| ID | Task | Prio | SP | Status | Catatan |
+|---|---|---|---|---|---|
+| INF-3 | `terraform plan/apply` ke AWS | P2 | 2 | **Blocked** | butuh akses AWS (lihat bawah); apply hanya dengan persetujuan |
+| INF-2 | CloudFront+WAF, Route 53, ACM, web Next.js, Prometheus/Grafana, scheduled scaling | P2 | 8 | Backlog | butuh domain |
+| R1 | Penulis snapshot ketersediaan `booking:avail:*` untuk SSE | P2 | 5 | Backlog | FE punya fallback polling |
+| R2 | Webhook memverifikasi ulang ke Status API | P2 | 3 | Backlog | pertahanan berlapis |
+| R3 | Rate limit endpoint booking/pembayaran | P2 | 3 | Backlog | WAF di produksi |
+| R4 | Upload gambar event | P3 | 5 | Backlog | butuh keputusan produk |
+| R5/R6 | `redirectUrl` untuk CREATED/UNKNOWN; klaim `nik_masked` di token User | P3 | 2 | Backlog | |
+| R7 | Pembayaran selesai Sandbox otomatis, load test, EXPLAIN, pen-test | P2 | 13 | Backlog | |
+| R8 | Jalankan pipeline GitHub Actions; merge Dependabot | P2 | 2 | Backlog | butuh runner/repo remote |
 
 ## Human Confirmation Required
 
-1. **Server key Sandbox Midtrans** untuk PAY-2 (verifikasi Snap nyata). Memblokir keyakinan produksi, bukan task lain.
-2. **Coverage booking/queue (TST-2/TST-3, 21 SP):** menaikkan ke 80% berarti menulis banyak tes adapter. Opsi: (a) tulis tes (direkomendasikan), (b) kecualikan adapter infrastruktur dari hitungan seperti `cmd/`/`delivery/` — melonggarkan gerbang, tidak saya lakukan tanpa persetujuan. Memblokir `case-coverage` CI.
-3. **Akses AWS + domain/ACM** untuk `terraform plan/apply` dan INF-2. Apply tidak akan dijalankan tanpa persetujuan eksplisit.
-4. **Salinan root** `FE-BE-align-contract.md`/`FE-Flow-Diagrams.md` lebih lama dari salinan mobile: timpa atau biarkan?
-5. **Memerlukan merge/PR**: semua perubahan ada di branch lokal; belum di-push.
+1. **Akses AWS untuk `terraform plan`.** Login Google di browser tidak memberi akses CLI. Opsi (rekomendasi urut): (a) IAM Identity Center/SSO — jalankan sendiri `aws configure sso` lalu `aws sso login --profile rusuh` di terminal Anda, dan beri tahu nama profile; saya hanya memakai profile itu, kredensial tidak lewat percakapan; (b) role terbatas (read-only + izin plan) lewat `AWS_PROFILE`; (c) access key IAM user — paling tidak disarankan, jangan ditempel di chat. `apply` tetap hanya dengan persetujuan eksplisit Anda. Memblokir INF-3 saja.
+2. **Push dan PR** branch ini (menunggu persetujuan; sesuai CLAUDE.md saya tidak push/PR tanpa diminta).
+3. **Domain/ACM** untuk INF-2 (CloudFront, HTTPS wajib di ALB).
+4. **Keputusan produk R4** (upload gambar event) dan **retensi `buyerEmail` plaintext** di Booking terhadap UU PDP.
+5. **Breaking operasional**: `ADMIN_EMAILS`, `TICKET_LINK_KEY`, `PII_*` Booking, `TICKET_LINK_BASE_URL` harus diisi di environment nyata (README).
+
+## Perintah verifikasi
+
+```bash
+make infra && make test-integration && make cover      # unit + integration + ambang 80%
+make test-e2e                                          # E2E lintas service (E2E_SLOW=1 untuk expiry)
+make contracts && make isolation
+bash tools/verify-reports.sh quality <dir-laporan>     # gerbang kualitas CI (laporan dari scanner versi CI)
+cd services/payment && go test -tags sandbox -run TestSandbox ./internal/payment/infrastructure/midtrans/
+cd deployments/terraform && terraform init -backend=false && terraform validate
+```
