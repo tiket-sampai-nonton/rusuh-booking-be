@@ -10,6 +10,7 @@ on:
   push:
     branches: [main]
   pull_request:
+    types: [opened, synchronize, reopened, labeled]
   workflow_dispatch:
     inputs:
       deploy_env:
@@ -369,9 +370,10 @@ jobs:
   publish:
     name: publish (${{ matrix.service.name }})
     needs: [changes, scan-package-verify]
-    # Dari main (push) atau dari cabang mana pun lewat Run workflow dengan deploy_env dev/prod (supaya deploy dev bisa
-    # diuji dari cabang fitur tanpa merge). Tag `main` hanya diberikan oleh main; cabang lain hanya tag <sha>.
-    if: (github.ref == 'refs/heads/main' && github.event_name != 'pull_request') || (github.event_name == 'workflow_dispatch' && inputs.deploy_env != 'none')
+    # Dari main (push), Run workflow dengan deploy_env dev/prod, atau PR milik member (branch di repo ini, bukan fork,
+    # bukan Dependabot) yang diberi label `deploy-dev`. PR lain hanya sampai scan. Tag `main` hanya diberikan oleh main;
+    # selain itu hanya tag <sha>.
+    if: (github.ref == 'refs/heads/main' && github.event_name != 'pull_request') || (github.event_name == 'workflow_dispatch' && inputs.deploy_env != 'none') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login != 'dependabot[bot]' && contains(github.event.pull_request.labels.*.name, 'deploy-dev'))
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -410,8 +412,12 @@ jobs:
   # ------------------------------------------------------------------ stage: deployment-dev (manual)
   deployment-dev:
     needs: [changes, publish]
-    if: github.event_name == 'workflow_dispatch' && inputs.deploy_env == 'dev'
+    # Run workflow dengan deploy_env=dev atau prod (prod ikut men-deploy dev), atau PR member berlabel `deploy-dev` (syarat sama dengan publish). Prod tidak pernah dari PR.
+    if: (github.event_name == 'workflow_dispatch' && (inputs.deploy_env == 'dev' || inputs.deploy_env == 'prod')) || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login != 'dependabot[bot]' && contains(github.event.pull_request.labels.*.name, 'deploy-dev'))
     runs-on: ubuntu-latest
+    concurrency:
+      group: deploy-dev
+      cancel-in-progress: false
     environment: dev
     permissions:
       contents: read
