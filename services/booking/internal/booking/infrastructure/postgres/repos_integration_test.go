@@ -335,3 +335,31 @@ func TestEventWriteRepo_CreateAndUpdateConfig(t *testing.T) {
 	assert.Equal(t, 900, e.PaymentTTLSeconds)
 	assert.ErrorIs(t, w.UpdateConfig(ctx, "00000000-0000-0000-0000-000000000000", dto.UpdateEventConfigRequest{SelectionTTLSeconds: &sel}), inbound.ErrNotFound)
 }
+
+func TestEventRepo_OnSaleAvailability_ClampsAndHonoursTheSalesWindow(t *testing.T) {
+	f := seed(t)
+	ctx := context.Background()
+	repo := NewEventRepo(f.pool)
+	now := time.Now()
+
+	got, err := repo.OnSaleAvailability(ctx, now)
+	require.NoError(t, err)
+	require.Len(t, got[f.eventID], 1)
+	assert.Equal(t, 10, got[f.eventID][0].Available)
+
+	_, err = f.pool.Exec(ctx, `UPDATE booking.category_inventories SET held_quantity = 4, sold_quantity = 3 WHERE event_id=$1::uuid`, f.eventID)
+	require.NoError(t, err)
+	got, err = repo.OnSaleAvailability(ctx, now)
+	require.NoError(t, err)
+	assert.Equal(t, 3, got[f.eventID][0].Available, "kapasitas - ditahan - terjual")
+
+	got, err = repo.OnSaleAvailability(ctx, now.Add(-72*time.Hour))
+	require.NoError(t, err)
+	assert.Empty(t, got, "di luar masa jual")
+
+	_, err = f.pool.Exec(ctx, `UPDATE booking.events SET status='CLOSED' WHERE id=$1::uuid`, f.eventID)
+	require.NoError(t, err)
+	got, err = repo.OnSaleAvailability(ctx, now)
+	require.NoError(t, err)
+	assert.Empty(t, got, "event CLOSED tidak diproyeksikan")
+}

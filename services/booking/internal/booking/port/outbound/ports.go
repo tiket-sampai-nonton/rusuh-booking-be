@@ -148,6 +148,13 @@ type CategoryAvailabilitySnap struct {
 // after each hold/settle/expire) and tracks SSE connection count per instance.
 type IAvailabilityCache interface {
 	GetAvailability(ctx context.Context, eventID string) ([]CategoryAvailabilitySnap, error)
+	SetAvailability(ctx context.Context, eventID string, snaps []CategoryAvailabilitySnap, ttl time.Duration) error
 	IncrConn(ctx context.Context, instance string) (int, error)
 	DecrConn(ctx context.Context, instance string) error
+}
+
+// IAvailabilitySource lists the live availability of every event whose sales window is open at now,
+// keyed by event ID (the source of the SSE snapshot written by ProjectAvailability).
+type IAvailabilitySource interface {
+	OnSaleAvailability(ctx context.Context, now time.Time) (map[string][]CategoryAvailabilitySnap, error)
 }

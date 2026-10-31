@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -15,6 +16,7 @@ import (
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/domain/dto"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/domain/entity"
 	inbound "github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/port/inbound"
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/port/outbound"
 )
 
 // EventRepo reads the event catalog and config (read-only).
@@ -147,4 +149,31 @@ func orAll(v string) string {
 		return "ALL"
 	}
 	return v
+}
+
+// OnSaleAvailability returns per-category availability (capacity - held - sold, clamped at 0) for every
+// event whose sales window contains now and that is not closed, keyed by event ID.
+func (r *EventRepo) OnSaleAvailability(ctx context.Context, now time.Time) (map[string][]outbound.CategoryAvailabilitySnap, error) {
+	rows, err := r.pool.Query(ctx, `
+		SELECT e.id::text, c.id::text,
+		       GREATEST(ci.capacity - ci.held_quantity - ci.sold_quantity, 0)
+		  FROM booking.events e
+		  JOIN booking.ticket_categories c ON c.event_id = e.id
+		  JOIN booking.category_inventories ci ON ci.category_id = c.id
+		 WHERE e.status <> 'CLOSED' AND e.sales_starts_at <= $1 AND e.sales_ends_at > $1
+		 ORDER BY e.id, c.display_order`, now)
+	if err != nil {
+		return nil, fmt.Errorf("events: on-sale availability: %w", err)
+	}
+	defer rows.Close()
+	out := map[string][]outbound.CategoryAvailabilitySnap{}
+	for rows.Next() {
+		var eventID string
+		var s outbound.CategoryAvailabilitySnap
+		if err := rows.Scan(&eventID, &s.CategoryID, &s.Available); err != nil {
+			return nil, fmt.Errorf("events: scan on-sale availability: %w", err)
+		}
+		out[eventID] = append(out[eventID], s)
+	}
+	return out, rows.Err()
 }

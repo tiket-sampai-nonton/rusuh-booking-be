@@ -278,12 +278,24 @@ func (c fixedClock) Now() time.Time { return c.t }
 type fakeAvailCache struct {
 	snaps   []outbound.CategoryAvailabilitySnap
 	snapErr error
+	setErr  error
+	written map[string][]outbound.CategoryAvailabilitySnap
 	connN   int
 	connErr error
 }
 
 func (f *fakeAvailCache) GetAvailability(_ context.Context, _ string) ([]outbound.CategoryAvailabilitySnap, error) {
 	return f.snaps, f.snapErr
+}
+func (f *fakeAvailCache) SetAvailability(_ context.Context, id string, snaps []outbound.CategoryAvailabilitySnap, _ time.Duration) error {
+	if f.setErr != nil {
+		return f.setErr
+	}
+	if f.written == nil {
+		f.written = map[string][]outbound.CategoryAvailabilitySnap{}
+	}
+	f.written[id] = snaps
+	return nil
 }
 func (f *fakeAvailCache) IncrConn(_ context.Context, _ string) (int, error) {
 	return f.connN, f.connErr

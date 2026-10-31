@@ -3,6 +3,7 @@ package usecase
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/clock"
 
@@ -61,6 +62,37 @@ func (uc *SweepExpiries) SweepExpiries(ctx context.Context) error {
 	var errs []error
 	for _, id := range ids {
 		if err := uc.expiry.ExpireBooking(ctx, id); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// availabilityTTL outlives several worker ticks, so a briefly stalled projector does not blank the stream.
+const availabilityTTL = 30 * time.Second
+
+// ProjectAvailability writes the live per-category availability of every on-sale event to the cache the
+// SSE stream reads. One event failing does not stop the others.
+type ProjectAvailability struct {
+	source outbound.IAvailabilitySource
+	cache  outbound.IAvailabilityCache
+	clock  clock.IClock
+}
+
+// NewProjectAvailability wires the availability projector.
+func NewProjectAvailability(source outbound.IAvailabilitySource, cache outbound.IAvailabilityCache, clk clock.IClock) *ProjectAvailability {
+	return &ProjectAvailability{source: source, cache: cache, clock: clk}
+}
+
+// ProjectAvailability refreshes the snapshot of each on-sale event.
+func (uc *ProjectAvailability) ProjectAvailability(ctx context.Context) error {
+	byEvent, err := uc.source.OnSaleAvailability(ctx, uc.clock.Now())
+	if err != nil {
+		return err
+	}
+	var errs []error
+	for eventID, snaps := range byEvent {
+		if err := uc.cache.SetAvailability(ctx, eventID, snaps, availabilityTTL); err != nil {
 			errs = append(errs, err)
 		}
 	}

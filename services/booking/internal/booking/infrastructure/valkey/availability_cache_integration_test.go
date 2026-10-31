@@ -50,6 +50,11 @@ func TestAvailabilityCache_ReadsSnapshotAndCountsConnections(t *testing.T) {
 	_, err = cache.GetAvailability(ctx, bad)
 	assert.Error(t, err, "snapshot rusak dilaporkan")
 
+	require.NoError(t, cache.SetAvailability(ctx, ev1, []outbound.CategoryAvailabilitySnap{{CategoryID: "c9", Available: 2}}, time.Minute))
+	got, err = cache.GetAvailability(ctx, ev1)
+	require.NoError(t, err)
+	assert.Equal(t, []outbound.CategoryAvailabilitySnap{{CategoryID: "c9", Available: 2}}, got, "snapshot ditulis lalu terbaca")
+
 	n, err := cache.IncrConn(ctx, inst)
 	require.NoError(t, err)
 	assert.Equal(t, 1, n)

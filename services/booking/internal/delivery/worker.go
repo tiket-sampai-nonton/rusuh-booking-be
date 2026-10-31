@@ -75,6 +75,9 @@ func startConsumer(ctx context.Context, cfg config.Config, clients *Clients, log
 		js = append(js, Job{Name: "session-sweeper", Run: mod.sweepSess.SweepSessions})
 		js = append(js, Job{Name: "expiry-sweeper", Run: mod.sweepExp.SweepExpiries})
 	}
+	if mod.projAvail != nil {
+		js = append(js, Job{Name: "availability-projector", Run: mod.projAvail.ProjectAvailability})
+	}
 
 	if clients.MQ == nil || clients.PG == nil {
 		return js, nil
@@ -107,8 +110,12 @@ func jobs(clients *Clients) []Job {
 	if err != nil || mod.sweepSess == nil {
 		return nil
 	}
-	return []Job{
+	js := []Job{
 		{Name: "session-sweeper", Run: mod.sweepSess.SweepSessions},
 		{Name: "expiry-sweeper", Run: mod.sweepExp.SweepExpiries},
 	}
+	if mod.projAvail != nil {
+		js = append(js, Job{Name: "availability-projector", Run: mod.projAvail.ProjectAvailability})
+	}
+	return js
 }

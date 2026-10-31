@@ -47,6 +47,7 @@ Status: Backlog / Ready / In Progress / Blocked / In Review / Done. Story point 
 | INF-1 | Terraform staging (HLD §4.5) | 8 | `fmt`/`validate`/Trivy |
 | AUD-1 | traceability matrix SRS | 13 | AUDIT-FINAL §9 |
 | AUD-2 | audit keamanan/keandalan/CI/privasi | 13 | AUDIT-FINAL §2, §5–§7 |
+| R1 | Proyektor ketersediaan SSE (`availability-projector`, `SetAvailability`, `OnSaleAvailability`) | 5 | unit + integration |
 | DOC-1 | sinkron dokumen root dengan salinan mobile | 2 | – |
 | DOC-2 | ADR-024/025, README, tests/README, OpenAPI | (termasuk di atas) | – |
 
@@ -60,8 +61,8 @@ Status: Backlog / Ready / In Progress / Blocked / In Review / Done. Story point 
 | INF-3 | `terraform plan/apply` ke AWS | P2 | 2 | **Blocked** | butuh akses AWS; ditunda sesuai keputusan pemilik |
 | INF-2 | CloudFront+WAF, Route 53, ACM, web Next.js, Prometheus/Grafana, scheduled scaling | P2 | 8 | Backlog | digabung dengan penyiapan Terraform nanti; butuh domain |
 | PERF-1 | Load test (k6), EXPLAIN, pen-test | P2 | 13 | Backlog | dikerjakan bersama penyiapan infra/Terraform nanti |
-| R1 | Penulis snapshot ketersediaan `booking:avail:*` untuk SSE | P2 | 5 | Backlog | lihat AUDIT-FINAL R1 |
-| R2 | Webhook memverifikasi ulang ke Status API | P2 | 3 | Backlog | pertahanan berlapis |
+| R1 | ~~Penulis snapshot ketersediaan SSE~~ | – | 5 | **Done** | job `availability-projector` (lihat bagian selesai) |
+| R2 | Webhook verifikasi ulang Status API | – | 0 | **Dibatalkan** | keputusan pemilik: keamanan env tanggung jawab pemilik |
 | R5/R6 | `redirectUrl` untuk CREATED/UNKNOWN; klaim `nik_masked` di token User | P3 | 2 | Backlog | |
 | JIRA-1 | Sinkron Jira (epic, task, story point, status) | P2 | 2 | Backlog | Jira `SCRUM` baru berisi 1 tiket contoh |
 | R8 | Jalankan pipeline GitHub Actions; merge Dependabot | P2 | 2 | Backlog | butuh runner/repo remote |

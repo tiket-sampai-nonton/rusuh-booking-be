@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	vk "github.com/valkey-io/valkey-go"
 
@@ -40,6 +41,20 @@ func (a *AvailabilityCache) GetAvailability(ctx context.Context, eventID string)
 		return nil, fmt.Errorf("valkey: decode availability: %w", err)
 	}
 	return snaps, nil
+}
+
+// SetAvailability stores the snapshot with a TTL so a stopped projector never leaves stale stock
+// on the stream for long.
+func (a *AvailabilityCache) SetAvailability(ctx context.Context, eventID string, snaps []outbound.CategoryAvailabilitySnap, ttl time.Duration) error {
+	raw, err := json.Marshal(snaps)
+	if err != nil {
+		return fmt.Errorf("valkey: encode availability: %w", err)
+	}
+	key := fmt.Sprintf(availKeyFmt, eventID)
+	if err := a.c.Do(ctx, a.c.B().Set().Key(key).Value(string(raw)).Ex(ttl).Build()).Error(); err != nil {
+		return fmt.Errorf("valkey: set availability: %w", err)
+	}
+	return nil
 }
 
 // IncrConn increments the per-instance SSE connection counter and refreshes its TTL (self-healing

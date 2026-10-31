@@ -37,6 +37,7 @@ type module struct {
 	registrars []registrar
 	sweepSess  *usecase.SweepSessions
 	sweepExp   *usecase.SweepExpiries
+	projAvail  *usecase.ProjectAvailability
 	settle     *usecase.Settle
 	outbox     *bookingpg.OutboxWriter
 }
@@ -118,11 +119,13 @@ func newBookingModule(cfg config.Config, clients *Clients, logger *slog.Logger) 
 		bookinghttp.NewAdminHandler(createEvent, updateConfig, tv.admin),
 	}
 
+	var projAvail *usecase.ProjectAvailability
 	// SSE availability + timer stream (requires Valkey; skipped when it is not wired).
 	if clients.VK != nil {
 		cache := bookingvalkey.NewAvailabilityCache(clients.VK.VK())
 		streamUC := usecase.NewStreamSession(admissionRepo, cache, clk, 3*time.Second, 1000)
 		regs = append(regs, bookinghttp.NewSSEHandler(streamUC))
+		projAvail = usecase.NewProjectAvailability(eventRepo, cache, clk)
 	}
 
 	var visitors httpx.TokenVerifier // nil interface (not a typed nil) when the Queue key is not configured
@@ -134,6 +137,7 @@ func newBookingModule(cfg config.Config, clients *Clients, logger *slog.Logger) 
 		registrars: regs,
 		sweepSess:  usecase.NewSweepSessions(admissionRepo, clk),
 		sweepExp:   usecase.NewSweepExpiries(bookingRepo, expiry, clk),
+		projAvail:  projAvail,
 		settle:     usecase.NewSettle(uow, links.Token),
 		outbox:     outboxWriter,
 	}, nil

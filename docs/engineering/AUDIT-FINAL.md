@@ -121,7 +121,7 @@ Terraform di `deployments/terraform` (modul network/ecr/iam/storage/data_host/co
 
 | # | Sev | Item | Catatan |
 |---|---|---|---|
-| R1 | S | SSE ketersediaan kategori: `booking:avail:*` hanya dibaca, tidak ada penulis → stream selalu kosong | FE punya fallback polling `GET /booking-sessions/{id}`; perlu proyeksi stok ke Valkey |
+| R1 | S | ~~SSE ketersediaan: `booking:avail:*` tanpa penulis~~ **Selesai**: job worker `availability-projector` menulis `capacity - held - sold` (≥0) tiap event yang sedang dijual ke `booking:avail:{eventId}` (TTL 30 dtk) tiap `WORKER_INTERVAL` | unit + integration (Postgres, Valkey) |
 | R2 | S | Webhook tidak memverifikasi ulang ke Status API | Signature + nominal sudah kuat; tambahan ini pertahanan berlapis |
 | R3 | S | Tidak ada rate limit pada endpoint booking/pembayaran/webhook | Ditutup WAF di produksi (belum ada di Terraform) |
 | R4 | S | Endpoint upload gambar event (ada di rencana awal) tidak diimplementasikan; dihapus dari OpenAPI | Perlu keputusan produk |
@@ -162,7 +162,7 @@ Dikelompokkan per area SRS. "Verifikasi": **E2E** = lulus di E2E lintas service;
 | API-01 API bersama (3) | OpenAPI + envelope `{meta,data}` | Ada | E2E (validator OpenAPI) | K3 | K3 | E2E |
 | BKG-04 Ubah pesanan (11) | Booking `ReplaceItems` | Ada | Int, Unit | Tidak E2E | – | Int |
 | SES-03 Refresh/koneksi/back (13) | Booking `GetCurrentSession` | Ada | Unit | Tidak E2E | – | Unit |
-| QUE-05 Near-real-time & notif giliran (13) | Queue status, SSE, FCM | Sebagian | Unit, Int (dedupe) | F6; **R1 SSE tanpa penulis**; FCM tidak diuji | F6,R1 | Unit |
+| QUE-05 Near-real-time & notif giliran (13) | Queue status, SSE, FCM | Sebagian | Unit, Int (dedupe) | F6; R1 selesai (proyektor ketersediaan); FCM tidak diuji | F6,R1 | Unit |
 | CFG-01 Konfigurasi (8) | Booking admin `PATCH` config | Ada | Int | K4; admin dibatasi (S1) | S1,K4 | Int |
 | USR-01 Akun opsional & OTP (13) | User service | Ada | E2E (login OTP), Unit | Profil/NIK tidak E2E | – | Sebagian E2E |
 | CAT-01 Filter katalog (12) | Booking `ListEvents` | Ada | Int | K2 | K2 | Int |

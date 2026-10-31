@@ -672,3 +672,56 @@ func (mr *MockIAvailabilityCacheMockRecorder) IncrConn(ctx, instance any) *gomoc
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IncrConn", reflect.TypeOf((*MockIAvailabilityCache)(nil).IncrConn), ctx, instance)
 }
+
+// SetAvailability mocks base method.
+func (m *MockIAvailabilityCache) SetAvailability(ctx context.Context, eventID string, snaps []outbound.CategoryAvailabilitySnap, ttl time.Duration) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "SetAvailability", ctx, eventID, snaps, ttl)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// SetAvailability indicates an expected call of SetAvailability.
+func (mr *MockIAvailabilityCacheMockRecorder) SetAvailability(ctx, eventID, snaps, ttl any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetAvailability", reflect.TypeOf((*MockIAvailabilityCache)(nil).SetAvailability), ctx, eventID, snaps, ttl)
+}
+
+// MockIAvailabilitySource is a mock of IAvailabilitySource interface.
+type MockIAvailabilitySource struct {
+	ctrl     *gomock.Controller
+	recorder *MockIAvailabilitySourceMockRecorder
+	isgomock struct{}
+}
+
+// MockIAvailabilitySourceMockRecorder is the mock recorder for MockIAvailabilitySource.
+type MockIAvailabilitySourceMockRecorder struct {
+	mock *MockIAvailabilitySource
+}
+
+// NewMockIAvailabilitySource creates a new mock instance.
+func NewMockIAvailabilitySource(ctrl *gomock.Controller) *MockIAvailabilitySource {
+	mock := &MockIAvailabilitySource{ctrl: ctrl}
+	mock.recorder = &MockIAvailabilitySourceMockRecorder{mock}
+	return mock
+}
+
+// EXPECT returns an object that allows the caller to indicate expected use.
+func (m *MockIAvailabilitySource) EXPECT() *MockIAvailabilitySourceMockRecorder {
+	return m.recorder
+}
+
+// OnSaleAvailability mocks base method.
+func (m *MockIAvailabilitySource) OnSaleAvailability(ctx context.Context, now time.Time) (map[string][]outbound.CategoryAvailabilitySnap, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "OnSaleAvailability", ctx, now)
+	ret0, _ := ret[0].(map[string][]outbound.CategoryAvailabilitySnap)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// OnSaleAvailability indicates an expected call of OnSaleAvailability.
+func (mr *MockIAvailabilitySourceMockRecorder) OnSaleAvailability(ctx, now any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "OnSaleAvailability", reflect.TypeOf((*MockIAvailabilitySource)(nil).OnSaleAvailability), ctx, now)
+}
