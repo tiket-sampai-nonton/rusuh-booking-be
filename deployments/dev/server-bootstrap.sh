@@ -44,8 +44,13 @@ ufw allow 443/tcp
 ufw --force enable
 
 echo "== fail2ban untuk SSH"
-primary="$(echo "$ssh_ports" | grep -v '^22$' | head -1)"; primary="${primary:-22}"
+# Bila penyedia memetakan port (mis. 20130 -> 22), sshd bisa melihat semua koneksi datang dari IP gateway; memblokir IP itu
+# akan mengunci semua orang. Karena itu IP sumber koneksi sekarang dan IP privat (gateway/NAT) tidak pernah diblokir.
+my_ip="$(echo "${SSH_CONNECTION:-}" | awk '{print $1}')"
 cat > /etc/fail2ban/jail.d/rusuh.local <<JAIL
+[DEFAULT]
+ignoreip = 127.0.0.1/8 ::1 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 ${my_ip}
+
 [sshd]
 enabled  = true
 port     = $(echo $ssh_ports | tr ' ' ',')
@@ -72,5 +77,7 @@ echo "SELESAI. Ringkasan:"
 uname -m; . /etc/os-release && echo "$PRETTY_NAME"
 docker --version; docker compose version
 ufw status | head -12
-echo "Uji login deploy dari laptop (terminal lain, jangan tutup sesi ini):"
-echo "  ssh -p $primary -i ~/.ssh/rusuh_dev_deploy deploy@$(hostname -I | awk '{print $1}')   # ganti IP publik bila berbeda"
+echo "IP sumber koneksi ini menurut server: ${my_ip:-tidak diketahui}. Bandingkan dengan IP publik laptop Anda (curl -s ifconfig.me)."
+echo "  Sama = penyedia meneruskan IP asli, fail2ban aman. Beda (IP privat/gateway) = jangan mengandalkan fail2ban untuk SSH."
+echo "Uji login deploy dari laptop (terminal lain, jangan tutup sesi ini), pakai port SSH EKSTERNAL (mis. 20130):"
+echo "  ssh -p 20130 -i ~/.ssh/rusuh_dev_deploy deploy@103.119.237.53"
