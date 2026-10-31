@@ -3,9 +3,10 @@ package usecase
 import (
 	"context"
 	"encoding/hex"
-	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/crypto"
 	"strings"
 	"time"
+
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/crypto"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/clock"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/nik"
