@@ -107,6 +107,24 @@ func (r *AdmissionRepo) reserveOne(ctx context.Context, tx pgx.Tx, eventID strin
 		return res
 	}
 
+	// Idempotent replay: an entry that already holds a reservation gets that same grant back, even when the
+	// stock it holds is the reason nothing is free now (the Promotor may have failed to promote it last tick).
+	var prevID, prevStatus string
+	var prevUnits int
+	var prevExpires time.Time
+	if err := tx.QueryRow(ctx, `SELECT id::text, status, units, expires_at FROM booking.admissions WHERE queue_entry_id = $1::uuid`, e.QueueEntryID).
+		Scan(&prevID, &prevStatus, &prevUnits, &prevExpires); err == nil {
+		_, _ = tx.Exec(ctx, "RELEASE SAVEPOINT entry")
+		res.AllocationID = prevID
+		if prevStatus == "RESERVED" {
+			res.Outcome, res.Units = "GRANTED", prevUnits
+			res.ClaimDeadline = &prevExpires
+		} else {
+			res.Outcome = "ALREADY_ACTIVE"
+		}
+		return res
+	}
+
 	// Step 1 (§9.1): lock event_supply FOR UPDATE and read stock counters.
 	var totalCap, allocUnits, heldUnits, soldUnits int
 	if err := tx.QueryRow(ctx, `

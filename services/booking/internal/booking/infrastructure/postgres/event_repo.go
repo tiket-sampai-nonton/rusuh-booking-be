@@ -56,16 +56,25 @@ func (r *EventRepo) ListEvents(ctx context.Context, q dto.EventListQuery) ([]ent
 	case "PRICE_DESC":
 		order = "min_price_minor DESC"
 	}
+	// status follows the sales window like the status the API shows (stored SOLD_OUT/CLOSED win); timeframe applies to
+	// startsAt in WIB: THIS_WEEK Monday-Sunday, THIS_MONTH the calendar month, UPCOMING today onwards (SRS-F-28-03).
 	sql := fmt.Sprintf(`
 		SELECT %s, COALESCE(MIN(c.price_minor), 0) AS min_price_minor
 		  FROM booking.events e
 		  LEFT JOIN booking.ticket_categories c ON c.event_id = e.id
-		 WHERE ($1 = 'ALL' OR e.status = $1)
-		   AND ($2 = '' OR lower(e.city) LIKE lower('%%' || $2 || '%%'))
+		 WHERE ($1 = 'ALL' OR (CASE WHEN e.status IN ('SOLD_OUT','CLOSED') THEN e.status
+		                            WHEN now() < e.sales_starts_at THEN 'NOT_STARTED'
+		                            WHEN now() > e.sales_ends_at THEN 'CLOSED'
+		                            ELSE 'AVAILABLE' END) = $1)
+		   AND ($2 = '' OR lower(e.city) = lower($2))
+		   AND ($3 = 'ALL'
+		        OR ($3 = 'UPCOMING'   AND (e.starts_at AT TIME ZONE 'Asia/Jakarta')::date >= (now() AT TIME ZONE 'Asia/Jakarta')::date)
+		        OR ($3 = 'THIS_WEEK'  AND date_trunc('week',  e.starts_at AT TIME ZONE 'Asia/Jakarta') = date_trunc('week',  now() AT TIME ZONE 'Asia/Jakarta'))
+		        OR ($3 = 'THIS_MONTH' AND date_trunc('month', e.starts_at AT TIME ZONE 'Asia/Jakarta') = date_trunc('month', now() AT TIME ZONE 'Asia/Jakarta')))
 		 GROUP BY e.id
 		 ORDER BY %s`, eventCols, order)
 
-	rows, err := r.pool.Query(ctx, sql, q.Status, q.City)
+	rows, err := r.pool.Query(ctx, sql, orAll(q.Status), q.City, orAll(q.Timeframe))
 	if err != nil {
 		return nil, fmt.Errorf("events: list: %w", err)
 	}
@@ -130,4 +139,12 @@ func (r *EventRepo) GetDetail(ctx context.Context, eventID string) (entity.Event
 		return entity.EventDetail{}, err
 	}
 	return entity.EventDetail{Event: event, Categories: cats}, nil
+}
+
+// orAll treats an empty filter as "no filter" (the usecase normalises, other callers may not).
+func orAll(v string) string {
+	if v == "" {
+		return "ALL"
+	}
+	return v
 }
