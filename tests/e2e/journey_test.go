@@ -5,6 +5,7 @@ package e2e
 import (
 	"fmt"
 	"regexp"
+	"sync"
 	"testing"
 	"time"
 
@@ -93,7 +94,7 @@ func admit(t *testing.T, eventID string, b *buyer) {
 
 func TestJourney_LoginToPaidTicketAndEmail(t *testing.T) {
 	key := serverKey(t)
-	admin := login(t, fmt.Sprintf("admin-%d@contoh.id", time.Now().UnixNano()))
+	admin := adminToken(t)
 	eventID, categoryID := newEvent(t, admin, 10)
 
 	b := &buyer{email: fmt.Sprintf("buyer-%d@contoh.id", time.Now().UnixNano()), nik: nikFor(1 + int(time.Now().UnixNano()%8000))}
@@ -185,4 +186,53 @@ func TestJourney_LoginToPaidTicketAndEmail(t *testing.T) {
 
 func contains(s, sub string) bool {
 	return len(sub) > 0 && regexp.MustCompile(regexp.QuoteMeta(sub)).MatchString(s)
+}
+
+// adminEmail is an address in the domain the local Booking allow-lists (ADMIN_EMAILS=@admin.e2e.test); a buyer
+// token of any other address must not reach the admin endpoints.
+var (
+	adminOnce sync.Once
+	adminTok  string
+)
+
+// adminToken logs in once per test run (OTP requests are limited to a few per hour per IP); the 15 minute access token
+// outlives the whole suite.
+func adminToken(t *testing.T) string {
+	t.Helper()
+	adminOnce.Do(func() { adminTok = login(t, adminEmail()) })
+	require.NotEmpty(t, adminTok)
+	return adminTok
+}
+
+func adminEmail() string { return fmt.Sprintf("admin-%d@admin.e2e.test", time.Now().UnixNano()) }
+
+func TestAdmin_OnlyAllowListedAccountsCanCreateEvents(t *testing.T) {
+	body := map[string]any{
+		"name": "x", "slug": fmt.Sprintf("probe-%d", time.Now().UnixNano()), "venue": "v",
+		"startsAt": time.Now().Add(72 * time.Hour).UTC().Format(time.RFC3339), "salesStartsAt": time.Now().Add(-time.Hour).UTC().Format(time.RFC3339),
+		"salesEndsAt": time.Now().Add(2 * time.Hour).UTC().Format(time.RFC3339), "maxTicketsPerOrder": 3, "maxTicketsPerBuyerNik": 3,
+		"categories": []map[string]any{{"code": "A", "name": "A", "priceMinor": 1000, "capacity": 1}},
+	}
+	// No token, a visitor token (public: obtained by joining any queue), and a buyer token of a non-admin all fail.
+	admin := adminToken(t)
+	eventID, _ := newEvent(t, admin, 1)
+	b := &buyer{email: fmt.Sprintf("v-%d@contoh.id", time.Now().UnixNano()), nik: nikFor(nextSerial())}
+	admit(t, eventID, b)
+	buyerToken := login(t, fmt.Sprintf("buyer-%d@contoh.id", time.Now().UnixNano()))
+	for name, hdr := range map[string]map[string]string{
+		"tanpa token":            nil,
+		"token visitor":          {"Authorization": "Bearer " + b.visitorToken},
+		"token admission":        {"Authorization": "Bearer " + b.admissionToken},
+		"pembeli bukan admin":    {"Authorization": "Bearer " + buyerToken},
+		"internal pakai visitor": nil,
+	} {
+		if name == "internal pakai visitor" {
+			r := call(t, "GET", bookingURL+"/internal/v1/events/"+eventID+"/supply", map[string]string{"Authorization": "Bearer " + b.visitorToken}, nil)
+			assert.Equal(t, 401, r.Status, name+": "+r.Raw)
+			continue
+		}
+		assert.Equal(t, 401, call(t, "POST", bookingURL+"/internal/v1/admin/events", hdr, body).Status, name)
+	}
+	ok := call(t, "POST", bookingURL+"/internal/v1/admin/events", map[string]string{"Authorization": "Bearer " + admin}, body)
+	assert.Equal(t, 201, ok.Status, "admin sah: "+ok.Raw)
 }

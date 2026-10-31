@@ -73,7 +73,7 @@ func noTicketsAndNoEmail(t *testing.T, h held) {
 
 func TestPayment_PendingThenFailedNeverPaysOrIssuesTickets(t *testing.T) {
 	key := serverKey(t)
-	admin := login(t, fmt.Sprintf("admin-%d@contoh.id", time.Now().UnixNano()))
+	admin := adminToken(t)
 	eventID, categoryID := newEvent(t, admin, 10)
 	h := startBooking(t, eventID, categoryID)
 	h.startPayment(t)
@@ -96,7 +96,7 @@ func TestPayment_PendingThenFailedNeverPaysOrIssuesTickets(t *testing.T) {
 }
 
 func TestHold_DuplicateRequestsAndUnauthorizedAccess(t *testing.T) {
-	admin := login(t, fmt.Sprintf("admin-%d@contoh.id", time.Now().UnixNano()))
+	admin := adminToken(t)
 	eventID, categoryID := newEvent(t, admin, 10)
 	h := startBooking(t, eventID, categoryID)
 
@@ -130,7 +130,7 @@ func TestExpiredPayment_LateSettlementGoesToReviewWithoutTickets(t *testing.T) {
 		t.Skip("lambat (~5 menit); jalankan dengan E2E_SLOW=1")
 	}
 	key := serverKey(t)
-	admin := login(t, fmt.Sprintf("admin-%d@contoh.id", time.Now().UnixNano()))
+	admin := adminToken(t)
 	eventID, categoryID := newEvent(t, admin, 10)
 	ah := map[string]string{"Authorization": "Bearer " + admin}
 	// 120 s is the shortest payment TTL (selection must be above the warning/grace seconds and not above payment); out-of-range values are a 400, not a 500.
@@ -155,7 +155,7 @@ func TestExpiredPayment_LateSettlementGoesToReviewWithoutTickets(t *testing.T) {
 }
 
 func TestConcurrentBuyers_NeverOversell(t *testing.T) {
-	admin := login(t, fmt.Sprintf("admin-%d@contoh.id", time.Now().UnixNano()))
+	admin := adminToken(t)
 	const capacity, buyers = 2, 6
 	eventID, categoryID := newEventWith(t, admin, capacity, 1)
 

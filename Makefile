@@ -15,7 +15,7 @@ export TEST_POSTGRES_DATABASE ?= rbt
 export TEST_VALKEY_SERVER   ?= [{"host":"localhost","port":6379}]
 export TEST_RABBITMQ_URL    ?= amqp://guest:guest@localhost:5672/
 
-.PHONY: help keys infra obs up down logs ps build test test-integration cover lint fmt tidy mock isolation contracts migrate-% run-% worker-% ci
+.PHONY: test-e2e help keys infra obs up down logs ps build test test-integration cover lint fmt tidy mock isolation contracts migrate-% run-% worker-% ci
 
 help: ## Daftar target
 	@grep -E '^[a-zA-Z_%-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-18s %s\n", $$1, $$2}'
@@ -55,6 +55,9 @@ test: ## Unit test -race semua modul
 
 test-integration: ## Unit + integration test (butuh make infra)
 	@for m in $(MODULES); do echo "==> test-integration $$m"; (cd $$m && go test -tags integration -race -count=1 ./...) || exit 1; done
+
+test-e2e: infra keys ## E2E lintas service (5 service di host + infra Compose + Sandbox Midtrans); E2E_SLOW=1 untuk skenario expiry
+	bash tools/e2e.sh
 
 cover: ## Unit + integration test + ambang coverage logika (sama dengan stage case-coverage di CI)
 	@for m in $(MODULES); do GO_TEST_TAGS=integration bash tools/check-coverage.sh $$m $(COVERAGE_MIN) || exit 1; done
