@@ -244,3 +244,41 @@ func TestJoin_StorePropagatesError(t *testing.T) {
 	_, err := uc.Join(ctx, inbound.JoinInput{EventID: "ev1", Body: validBody(), ClientIP: "1.2.3.4"})
 	assert.Error(t, err)
 }
+
+func TestJoin_FirstJoinForKnownEventCreatesDefaultSettings(t *testing.T) {
+	uc, m := newJoin(t)
+	ctx := context.Background()
+
+	m.pii.EXPECT().HashEmail(gomock.Any()).Return([]byte{0x01}).AnyTimes()
+	m.pii.EXPECT().HashNIK(gomock.Any()).Return([]byte{0xaa})
+	m.pii.EXPECT().SealEmail(gomock.Any()).Return([]byte("enc"), nil)
+	m.limiter.EXPECT().Allow(ctx, gomock.Any(), gomock.Any(), gomock.Any()).Return(true, nil).Times(2)
+	m.settings.EXPECT().Get(ctx, "ev1").Return(entity.EventSettings{}, false, nil)
+	m.booking.EXPECT().Supply(ctx, "ev1").Return(outbound.SupplySnapshot{EventID: "ev1"}, nil)
+	m.settings.EXPECT().Ensure(ctx, "ev1").Return(entity.EventSettings{ActiveSlotCapacity: 0}, nil)
+	m.store.EXPECT().Join(ctx, gomock.Any()).Return(outbound.JoinResult{Outcome: outbound.JoinOK, Seq: 1}, nil)
+	m.audit.EXPECT().Append(ctx, gomock.Any()).Return(nil)
+	m.tokens.EXPECT().IssueQueue(gomock.Any(), gomock.Any(), gomock.Any()).Return("qt", nil)
+	m.tokens.EXPECT().IssueVisitor(gomock.Any(), gomock.Any()).Return("vt", nil)
+
+	resp, err := uc.Join(ctx, inbound.JoinInput{EventID: "ev1", Body: validBody(), ClientIP: "1.2.3.4"})
+	require.NoError(t, err)
+	assert.Equal(t, "WAITING", resp.Status)
+}
+
+func TestJoin_UnknownEventIsRefusedWithoutTouchingTheQueue(t *testing.T) {
+	uc, m := newJoin(t)
+	ctx := context.Background()
+
+	m.pii.EXPECT().HashEmail(gomock.Any()).Return([]byte{0x01}).AnyTimes()
+	m.pii.EXPECT().HashNIK(gomock.Any()).Return([]byte{0xaa})
+	m.pii.EXPECT().SealEmail(gomock.Any()).Return([]byte("enc"), nil)
+	m.limiter.EXPECT().Allow(ctx, gomock.Any(), gomock.Any(), gomock.Any()).Return(true, nil).Times(2)
+	m.settings.EXPECT().Get(ctx, "nope").Return(entity.EventSettings{}, false, nil)
+	m.booking.EXPECT().Supply(ctx, "nope").Return(outbound.SupplySnapshot{}, entity.ErrEventNotFound)
+	// no settings.Ensure, no store.Join: gomock fails the test on any unexpected call
+
+	_, err := uc.Join(ctx, inbound.JoinInput{EventID: "nope", Body: validBody(), ClientIP: "1.2.3.4"})
+	require.ErrorIs(t, err, entity.ErrEventNotFound)
+	assert.Equal(t, 404, inbound.MapError(err).HTTPStatus)
+}

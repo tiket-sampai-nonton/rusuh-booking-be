@@ -12,6 +12,8 @@ import (
 type IEventSettingsRepo interface {
 	Get(ctx context.Context, eventID string) (entity.EventSettings, bool, error)
 	ListEventIDs(ctx context.Context) ([]string, error)
+	// Ensure creates the settings row with column defaults when the event has none (idempotent) and returns it.
+	Ensure(ctx context.Context, eventID string) (entity.EventSettings, error)
 }
 
 // IEntryAuditRepo appends to the append-only entry_audit table.

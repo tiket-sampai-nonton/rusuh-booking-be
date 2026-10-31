@@ -74,9 +74,18 @@ func (u *JoinQueue) Join(ctx context.Context, in inbound.JoinInput) (dto.QueueEn
 		return dto.QueueEntry{}, err
 	}
 
-	settings, _, err := u.d.Settings.Get(ctx, in.EventID)
+	settings, found, err := u.d.Settings.Get(ctx, in.EventID)
 	if err != nil {
 		return dto.QueueEntry{}, err
+	}
+	if !found {
+		// First join for this event: only a real event (known to Booking) gets queue settings; unknown ids are refused.
+		if _, err := u.d.Booking.Supply(ctx, in.EventID); err != nil {
+			return dto.QueueEntry{}, err
+		}
+		if settings, err = u.d.Settings.Ensure(ctx, in.EventID); err != nil {
+			return dto.QueueEntry{}, err
+		}
 	}
 
 	visitorID := in.VisitorID

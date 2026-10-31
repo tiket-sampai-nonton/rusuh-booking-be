@@ -47,6 +47,18 @@ func (r *EventSettings) Get(ctx context.Context, eventID string) (entity.EventSe
 	return s, true, nil
 }
 
+// Ensure inserts a row with the column defaults when missing, then returns the row.
+func (r *EventSettings) Ensure(ctx context.Context, eventID string) (entity.EventSettings, error) {
+	if _, err := r.pool.Exec(ctx, `INSERT INTO event_settings (event_id) VALUES ($1::uuid) ON CONFLICT (event_id) DO NOTHING`, eventID); err != nil {
+		return entity.EventSettings{}, fmt.Errorf("event_settings: ensure: %w", err)
+	}
+	s, ok, err := r.Get(ctx, eventID)
+	if err != nil || !ok {
+		return entity.EventSettings{}, fmt.Errorf("event_settings: ensure: baris tidak terbaca: %w", err)
+	}
+	return s, nil
+}
+
 // ListEventIDs returns every configured event id (used by workers to iterate events).
 func (r *EventSettings) ListEventIDs(ctx context.Context) ([]string, error) {
 	rows, err := r.pool.Query(ctx, `SELECT event_id::text FROM event_settings`)
