@@ -250,7 +250,7 @@ paths:
     patch:
       tags:
       - admin
-      summary: Update event (config changes only before rulesLockedAt)
+      summary: Update event config (only before the sale starts; out-of-range values are 400)
       operationId: adminUpdateEvent
       security:
       - adminBearer: []
@@ -266,56 +266,16 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/AdminEventCreateRequest'
+              $ref: '#/components/schemas/AdminEventConfigUpdate'
       responses:
         '200':
           description: Updated
+        '400':
+          description: Value outside the allowed range (e.g. paymentTtlSeconds < 120) or invalid
+        '401':
+          description: Missing or invalid user bearer token
         '409':
           description: Rules locked after sale started
-  /internal/v1/admin/events/{eventId}/images:
-    post:
-      tags:
-      - admin
-      summary: Upload event image (poster/banner/thumbnail)
-      operationId: adminUploadEventImage
-      security:
-      - adminBearer: []
-      parameters:
-      - name: eventId
-        in: path
-        required: true
-        schema:
-          type: string
-          format: uuid
-      requestBody:
-        required: true
-        content:
-          multipart/form-data:
-            schema:
-              type: object
-              properties:
-                image:
-                  type: string
-                  format: binary
-                  description: Max 5MB, JPEG/PNG/WebP
-                type:
-                  type: string
-                  enum: [poster, banner, thumbnail]
-              required:
-              - image
-              - type
-      responses:
-        '201':
-          description: Uploaded
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  meta:
-                    $ref: '#/components/schemas/Meta'
-                  data:
-                    $ref: '#/components/schemas/ImageUploadResponse'
   /health:
     get:
       tags:
@@ -643,25 +603,28 @@ components:
       properties:
         name:
           type: string
+        slug:
+          type: string
+          description: Unique URL slug
         venue:
           type: string
-        city:
-          type: string
-        eventDate:
+        startsAt:
           type: string
           format: date-time
-        saleStart:
+        salesStartsAt:
           type: string
           format: date-time
-        saleEnd:
+        salesEndsAt:
           type: string
           format: date-time
-        imageUrl:
-          type: string
-          format: uri
-        bannerUrl:
-          type: string
-          format: uri
+        maxTicketsPerOrder:
+          type: integer
+          default: 3
+        maxTicketsPerBuyerNik:
+          type: integer
+          default: 3
+        allowMixedCategories:
+          type: boolean
         categories:
           type: array
           items:
@@ -671,59 +634,42 @@ components:
                 type: string
               name:
                 type: string
-              price:
+              priceMinor:
                 type: integer
+                format: int64
                 description: Minor unit (IDR)
               capacity:
                 type: integer
             required:
             - code
             - name
-            - price
+            - priceMinor
             - capacity
-        config:
-          $ref: '#/components/schemas/EventConfig'
       required:
       - name
+      - slug
       - venue
-      - city
-      - eventDate
-      - saleStart
-      - saleEnd
+      - startsAt
+      - salesStartsAt
+      - salesEndsAt
       - categories
-    EventConfig:
+    AdminEventConfigUpdate:
       type: object
+      description: Only the fields present are changed.
       properties:
-        maxTicketsPerOrder:
-          type: integer
-          default: 3
-        maxTicketsPerBuyerNik:
-          type: integer
-          default: 3
         selectionTtlSeconds:
           type: integer
-          default: 300
+          minimum: 60
+          maximum: 1800
         paymentTtlSeconds:
           type: integer
-          default: 600
-        claimWindowSeconds:
-          type: integer
-          default: 180
-        allowMixedCategories:
+          minimum: 120
+          maximum: 3600
+          description: Must be >= selectionTtlSeconds
+        editEnabled:
           type: boolean
-          default: true
-    ImageUploadResponse:
-      type: object
-      properties:
-        imageUrl:
-          type: string
-          format: uri
-        type:
-          type: string
-          enum: [poster, banner, thumbnail]
-      required:
-      - imageUrl
-      - type
+        maxEdits:
+          type: integer
   securitySchemes:
     serviceBearer:
       type: http

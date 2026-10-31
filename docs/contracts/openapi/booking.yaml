@@ -1,9 +1,11 @@
 # Dihasilkan dari SDD v1.5 §4.6 (tools: scratchpad gen2/contracts.py). Ubah kontrak lewat PR yang direview BE dan FE.
+---
 openapi: 3.1.0
 info:
   title: RBT Booking Service API
   version: 1.0.0
-  description: Katalog event, sesi pilih, hold, ubah pesanan, e-tiket. Agregat Booking memakai event sourcing (ADR-019).
+  description: Katalog event, sesi pilih, hold, ubah pesanan, e-tiket. Agregat Booking
+    memakai event sourcing (ADR-019).
   contact:
     name: Tim PT. Tiket Sampai Nonton Sentosa
 servers:
@@ -18,7 +20,7 @@ security:
 - visitorCookie: []
 - visitorHeader: []
 paths:
-  /api/v1/events:
+  "/api/v1/events":
     get:
       tags:
       - catalog
@@ -32,7 +34,11 @@ paths:
         description: Filter waktu (SRS-F-28-01)
         schema:
           type: string
-          enum: [ALL, THIS_WEEK, THIS_MONTH, UPCOMING]
+          enum:
+          - ALL
+          - THIS_WEEK
+          - THIS_MONTH
+          - UPCOMING
           default: ALL
       - name: city
         in: query
@@ -46,7 +52,12 @@ paths:
         description: Filter status ketersediaan (SRS-F-28-03)
         schema:
           type: string
-          enum: [ALL, NOT_STARTED, AVAILABLE, SOLD_OUT, CLOSED]
+          enum:
+          - ALL
+          - NOT_STARTED
+          - AVAILABLE
+          - SOLD_OUT
+          - CLOSED
           default: ALL
       - name: sort
         in: query
@@ -54,7 +65,10 @@ paths:
         description: Urutan hasil (SRS-F-28-06)
         schema:
           type: string
-          enum: [DATE_ASC, PRICE_ASC, PRICE_DESC]
+          enum:
+          - DATE_ASC
+          - PRICE_ASC
+          - PRICE_DESC
           default: DATE_ASC
       responses:
         '200':
@@ -65,13 +79,19 @@ paths:
                 type: object
                 properties:
                   meta:
-                    $ref: '#/components/schemas/Meta'
+                    "$ref": "#/components/schemas/Meta"
                   data:
-                    $ref: '#/components/schemas/EventList'
+                    "$ref": "#/components/schemas/EventList"
                 required:
                 - meta
                 - data
-  /api/v1/events/{eventId}:
+        '401':
+          description: 'Token visitor tidak valid atau kedaluwarsa — errorCode: `UNAUTHORIZED`'
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ErrorEnvelope"
+  "/api/v1/events/{eventId}":
     get:
       tags:
       - catalog
@@ -94,9 +114,9 @@ paths:
                 type: object
                 properties:
                   meta:
-                    $ref: '#/components/schemas/Meta'
+                    "$ref": "#/components/schemas/Meta"
                   data:
-                    $ref: '#/components/schemas/EventDetail'
+                    "$ref": "#/components/schemas/EventDetail"
                 required:
                 - meta
                 - data
@@ -105,8 +125,14 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
-  /api/v1/booking-sessions:
+                "$ref": "#/components/schemas/ErrorEnvelope"
+        '401':
+          description: 'Token visitor tidak valid atau kedaluwarsa — errorCode: `UNAUTHORIZED`'
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ErrorEnvelope"
+  "/api/v1/booking-sessions":
     post:
       tags:
       - booking
@@ -120,7 +146,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/CreateSessionRequest'
+              "$ref": "#/components/schemas/CreateSessionRequest"
       responses:
         '201':
           description: OK
@@ -130,9 +156,9 @@ paths:
                 type: object
                 properties:
                   meta:
-                    $ref: '#/components/schemas/Meta'
+                    "$ref": "#/components/schemas/Meta"
                   data:
-                    $ref: '#/components/schemas/BookingSession'
+                    "$ref": "#/components/schemas/BookingSession"
                 required:
                 - meta
                 - data
@@ -141,14 +167,20 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
+                "$ref": "#/components/schemas/ErrorEnvelope"
         '410':
           description: 'Giliran lewat — errorCode: `TURN_MISSED`, `SESSION_EXPIRED`'
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
-  /api/v1/booking-sessions/current:
+                "$ref": "#/components/schemas/ErrorEnvelope"
+        '401':
+          description: 'Token visitor tidak valid atau kedaluwarsa — errorCode: `UNAUTHORIZED`'
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ErrorEnvelope"
+  "/api/v1/booking-sessions/current":
     get:
       tags:
       - booking
@@ -173,9 +205,9 @@ paths:
                 type: object
                 properties:
                   meta:
-                    $ref: '#/components/schemas/Meta'
+                    "$ref": "#/components/schemas/Meta"
                   data:
-                    $ref: '#/components/schemas/BookingSession'
+                    "$ref": "#/components/schemas/BookingSession"
                 required:
                 - meta
                 - data
@@ -184,14 +216,21 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
+                "$ref": "#/components/schemas/ErrorEnvelope"
         '429':
-          description: 'Terlalu banyak request (lihat header Retry-After) — errorCode: `RATE_LIMITED`'
+          description: 'Terlalu banyak request (lihat header Retry-After) — errorCode:
+            `RATE_LIMITED`'
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
-  /api/v1/booking-sessions/{sessionId}:
+                "$ref": "#/components/schemas/ErrorEnvelope"
+        '401':
+          description: 'Token visitor tidak valid atau kedaluwarsa — errorCode: `UNAUTHORIZED`'
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ErrorEnvelope"
+  "/api/v1/booking-sessions/{sessionId}":
     get:
       tags:
       - booking
@@ -216,9 +255,9 @@ paths:
                 type: object
                 properties:
                   meta:
-                    $ref: '#/components/schemas/Meta'
+                    "$ref": "#/components/schemas/Meta"
                   data:
-                    $ref: '#/components/schemas/BookingSession'
+                    "$ref": "#/components/schemas/BookingSession"
                 required:
                 - meta
                 - data
@@ -227,8 +266,27 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
-  /api/v1/booking-sessions/{sessionId}/stream:
+                "$ref": "#/components/schemas/ErrorEnvelope"
+        '401':
+          description: 'Token visitor tidak valid atau kedaluwarsa — errorCode: `UNAUTHORIZED`'
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ErrorEnvelope"
+        '404':
+          description: 'Tidak ada atau bukan milik pemanggil — errorCode: `NOT_FOUND`'
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ErrorEnvelope"
+        '403':
+          description: 'Token valid tetapi bukan pemilik sesi/pesanan — errorCode:
+            `VISITOR_MISMATCH`'
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ErrorEnvelope"
+  "/api/v1/booking-sessions/{sessionId}/stream":
     get:
       tags:
       - booking
@@ -246,18 +304,39 @@ paths:
           format: uuid
       responses:
         '200':
-          description: 'text/event-stream: event `availability` dan `timer`; heartbeat SSE_HEARTBEAT_SECONDS'
+          description: 'text/event-stream: event `availability` dan `timer`; heartbeat
+            SSE_HEARTBEAT_SECONDS'
           content:
             text/event-stream:
               schema:
                 type: string
         '503':
-          description: 'Batas koneksi SSE instance tercapai; klien beralih ke polling — errorCode: `DEPENDENCY_UNAVAILABLE`'
+          description: 'Batas koneksi SSE instance tercapai; klien beralih ke polling
+            — errorCode: `DEPENDENCY_UNAVAILABLE`'
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
-  /api/v1/booking-sessions/{sessionId}/attendee-checks:
+                "$ref": "#/components/schemas/ErrorEnvelope"
+        '401':
+          description: 'Token visitor tidak valid atau kedaluwarsa — errorCode: `UNAUTHORIZED`'
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ErrorEnvelope"
+        '404':
+          description: 'Tidak ada atau bukan milik pemanggil — errorCode: `NOT_FOUND`'
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ErrorEnvelope"
+        '403':
+          description: 'Token valid tetapi bukan pemilik sesi/pesanan — errorCode:
+            `VISITOR_MISMATCH`'
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ErrorEnvelope"
+  "/api/v1/booking-sessions/{sessionId}/attendee-checks":
     post:
       tags:
       - booking
@@ -278,7 +357,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/AttendeeCheckRequest'
+              "$ref": "#/components/schemas/AttendeeCheckRequest"
       responses:
         '200':
           description: OK
@@ -288,25 +367,46 @@ paths:
                 type: object
                 properties:
                   meta:
-                    $ref: '#/components/schemas/Meta'
+                    "$ref": "#/components/schemas/Meta"
                   data:
-                    $ref: '#/components/schemas/AttendeeCheck'
+                    "$ref": "#/components/schemas/AttendeeCheck"
                 required:
                 - meta
                 - data
         '422':
-          description: 'Struktur NIK salah (jatah cek tidak berkurang) — errorCode: `NIK_INVALID`'
+          description: 'Struktur NIK salah (jatah cek tidak berkurang) — errorCode:
+            `NIK_INVALID`'
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
+                "$ref": "#/components/schemas/ErrorEnvelope"
         '429':
-          description: 'Terlalu banyak request (lihat header Retry-After) — errorCode: `RATE_LIMITED`'
+          description: 'Terlalu banyak request (lihat header Retry-After) — errorCode:
+            `RATE_LIMITED`'
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
-  /api/v1/booking-sessions/{sessionId}/cancel:
+                "$ref": "#/components/schemas/ErrorEnvelope"
+        '401':
+          description: 'Token visitor tidak valid atau kedaluwarsa — errorCode: `UNAUTHORIZED`'
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ErrorEnvelope"
+        '404':
+          description: 'Tidak ada atau bukan milik pemanggil — errorCode: `NOT_FOUND`'
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ErrorEnvelope"
+        '403':
+          description: 'Token valid tetapi bukan pemilik sesi/pesanan — errorCode:
+            `VISITOR_MISMATCH`'
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ErrorEnvelope"
+  "/api/v1/booking-sessions/{sessionId}/cancel":
     post:
       tags:
       - booking
@@ -325,7 +425,26 @@ paths:
       responses:
         '204':
           description: Alokasi dilepas ke pengantre berikutnya
-  /api/v1/bookings:
+        '401':
+          description: 'Token visitor tidak valid atau kedaluwarsa — errorCode: `UNAUTHORIZED`'
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ErrorEnvelope"
+        '404':
+          description: 'Tidak ada atau bukan milik pemanggil — errorCode: `NOT_FOUND`'
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ErrorEnvelope"
+        '403':
+          description: 'Token valid tetapi bukan pemilik sesi/pesanan — errorCode:
+            `VISITOR_MISMATCH`'
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ErrorEnvelope"
+  "/api/v1/bookings":
     post:
       tags:
       - booking
@@ -348,7 +467,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/HoldRequest'
+              "$ref": "#/components/schemas/HoldRequest"
       responses:
         '201':
           description: OK
@@ -358,9 +477,9 @@ paths:
                 type: object
                 properties:
                   meta:
-                    $ref: '#/components/schemas/Meta'
+                    "$ref": "#/components/schemas/Meta"
                   data:
-                    $ref: '#/components/schemas/Booking'
+                    "$ref": "#/components/schemas/Booking"
                 required:
                 - meta
                 - data
@@ -369,33 +488,41 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
+                "$ref": "#/components/schemas/ErrorEnvelope"
         '409':
-          description: 'Konflik — errorCode: `ATTENDEE_NIK_ALREADY_REGISTERED`, `ATTENDEE_NIK_DUPLICATE_IN_ORDER`, `CATEGORY_UNAVAILABLE`, `BUYER_QUOTA_EXHAUSTED`,
-            `IDEMPOTENCY_KEY_REUSED`'
+          description: 'Konflik — errorCode: `ATTENDEE_NIK_ALREADY_REGISTERED`, `ATTENDEE_NIK_DUPLICATE_IN_ORDER`,
+            `CATEGORY_UNAVAILABLE`, `BUYER_QUOTA_EXHAUSTED`, `IDEMPOTENCY_KEY_REUSED`'
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
+                "$ref": "#/components/schemas/ErrorEnvelope"
         '410':
           description: 'Sesi habis — errorCode: `SESSION_EXPIRED`'
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
+                "$ref": "#/components/schemas/ErrorEnvelope"
         '422':
-          description: 'Melebihi batas atau aturan event — errorCode: `QUANTITY_EXCEEDS_LIMIT`, `MIXED_CATEGORIES_NOT_ALLOWED`, `NIK_INVALID`'
+          description: 'Melebihi batas atau aturan event — errorCode: `QUANTITY_EXCEEDS_LIMIT`,
+            `MIXED_CATEGORIES_NOT_ALLOWED`, `NIK_INVALID`'
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
+                "$ref": "#/components/schemas/ErrorEnvelope"
         '503':
-          description: 'Dependency sementara tidak tersedia; ulangi dengan Idempotency-Key yang sama — errorCode: `DEPENDENCY_UNAVAILABLE`'
+          description: 'Dependency sementara tidak tersedia; ulangi dengan Idempotency-Key
+            yang sama — errorCode: `DEPENDENCY_UNAVAILABLE`'
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
-  /api/v1/bookings/{bookingId}/items:
+                "$ref": "#/components/schemas/ErrorEnvelope"
+        '401':
+          description: 'Token visitor tidak valid atau kedaluwarsa — errorCode: `UNAUTHORIZED`'
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ErrorEnvelope"
+  "/api/v1/bookings/{bookingId}/items":
     put:
       tags:
       - booking
@@ -424,7 +551,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ReplaceItemsRequest'
+              "$ref": "#/components/schemas/ReplaceItemsRequest"
       responses:
         '200':
           description: Pesanan baru; paymentExpiresAt tidak berubah
@@ -434,26 +561,46 @@ paths:
                 type: object
                 properties:
                   meta:
-                    $ref: '#/components/schemas/Meta'
+                    "$ref": "#/components/schemas/Meta"
                   data:
-                    $ref: '#/components/schemas/Booking'
+                    "$ref": "#/components/schemas/Booking"
                 required:
                 - meta
                 - data
         '409':
-          description: 'Konflik; pesanan lama tetap utuh — errorCode: `BOOKING_LOCKED`, `BOOKING_VERSION_CONFLICT`, `EDIT_LIMIT_REACHED`, `CATEGORY_UNAVAILABLE`,
+          description: 'Konflik; pesanan lama tetap utuh — errorCode: `BOOKING_LOCKED`,
+            `BOOKING_VERSION_CONFLICT`, `EDIT_LIMIT_REACHED`, `CATEGORY_UNAVAILABLE`,
             `ATTENDEE_NIK_ALREADY_REGISTERED`'
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
+                "$ref": "#/components/schemas/ErrorEnvelope"
         '422':
           description: 'Melebihi batas — errorCode: `QUANTITY_EXCEEDS_LIMIT`'
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
-  /api/v1/bookings/{bookingId}:
+                "$ref": "#/components/schemas/ErrorEnvelope"
+        '401':
+          description: 'Token visitor tidak valid atau kedaluwarsa — errorCode: `UNAUTHORIZED`'
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ErrorEnvelope"
+        '404':
+          description: 'Tidak ada atau bukan milik pemanggil — errorCode: `NOT_FOUND`'
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ErrorEnvelope"
+        '403':
+          description: 'Token valid tetapi bukan pemilik sesi/pesanan — errorCode:
+            `VISITOR_MISMATCH`'
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ErrorEnvelope"
+  "/api/v1/bookings/{bookingId}":
     get:
       tags:
       - booking
@@ -479,9 +626,9 @@ paths:
                 type: object
                 properties:
                   meta:
-                    $ref: '#/components/schemas/Meta'
+                    "$ref": "#/components/schemas/Meta"
                   data:
-                    $ref: '#/components/schemas/Booking'
+                    "$ref": "#/components/schemas/Booking"
                 required:
                 - meta
                 - data
@@ -490,8 +637,21 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
-  /api/v1/bookings/{bookingId}/cancel:
+                "$ref": "#/components/schemas/ErrorEnvelope"
+        '401':
+          description: 'Token visitor tidak valid atau kedaluwarsa — errorCode: `UNAUTHORIZED`'
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ErrorEnvelope"
+        '403':
+          description: 'Token valid tetapi bukan pemilik sesi/pesanan — errorCode:
+            `VISITOR_MISMATCH`'
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ErrorEnvelope"
+  "/api/v1/bookings/{bookingId}/cancel":
     post:
       tags:
       - booking
@@ -516,9 +676,9 @@ paths:
                 type: object
                 properties:
                   meta:
-                    $ref: '#/components/schemas/Meta'
+                    "$ref": "#/components/schemas/Meta"
                   data:
-                    $ref: '#/components/schemas/Booking'
+                    "$ref": "#/components/schemas/Booking"
                 required:
                 - meta
                 - data
@@ -527,8 +687,27 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
-  /api/v1/bookings/{bookingId}/tickets:
+                "$ref": "#/components/schemas/ErrorEnvelope"
+        '401':
+          description: 'Token visitor tidak valid atau kedaluwarsa — errorCode: `UNAUTHORIZED`'
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ErrorEnvelope"
+        '404':
+          description: 'Tidak ada atau bukan milik pemanggil — errorCode: `NOT_FOUND`'
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ErrorEnvelope"
+        '403':
+          description: 'Token valid tetapi bukan pemilik sesi/pesanan — errorCode:
+            `VISITOR_MISMATCH`'
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ErrorEnvelope"
+  "/api/v1/bookings/{bookingId}/tickets":
     get:
       tags:
       - booking
@@ -555,9 +734,9 @@ paths:
                 type: object
                 properties:
                   meta:
-                    $ref: '#/components/schemas/Meta'
+                    "$ref": "#/components/schemas/Meta"
                   data:
-                    $ref: '#/components/schemas/TicketList'
+                    "$ref": "#/components/schemas/TicketList"
                 required:
                 - meta
                 - data
@@ -566,8 +745,27 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
-  /api/v1/me/bookings:
+                "$ref": "#/components/schemas/ErrorEnvelope"
+        '401':
+          description: 'Token visitor tidak valid atau kedaluwarsa — errorCode: `UNAUTHORIZED`'
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ErrorEnvelope"
+        '404':
+          description: 'Tidak ada atau bukan milik pemanggil — errorCode: `NOT_FOUND`'
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ErrorEnvelope"
+        '403':
+          description: 'Token valid tetapi bukan pemilik sesi/pesanan — errorCode:
+            `VISITOR_MISMATCH`'
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ErrorEnvelope"
+  "/api/v1/me/bookings":
     get:
       tags:
       - booking
@@ -598,9 +796,9 @@ paths:
                 type: object
                 properties:
                   meta:
-                    $ref: '#/components/schemas/Meta'
+                    "$ref": "#/components/schemas/Meta"
                   data:
-                    $ref: '#/components/schemas/MyBookings'
+                    "$ref": "#/components/schemas/MyBookings"
                 required:
                 - meta
                 - data
@@ -609,8 +807,8 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
-  /health:
+                "$ref": "#/components/schemas/ErrorEnvelope"
+  "/health":
     get:
       tags:
       - ops
@@ -623,13 +821,13 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Health'
+                "$ref": "#/components/schemas/Health"
         '503':
           description: Ada dependency DOWN
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Health'
+                "$ref": "#/components/schemas/Health"
 components:
   schemas:
     Meta:
@@ -639,18 +837,22 @@ components:
           type: integer
         message:
           type: string
-          description: 'Pada error berformat "KODE: pesan" (KODE dari daftar SRS §3.1.4 Error Codes); error internal memakai pesan umum.'
+          description: 'Pada error berformat "KODE: pesan" (KODE dari daftar SRS §3.1.4
+            Error Codes); error internal memakai pesan umum.'
         requestId:
           type: string
-          description: Hanya pada respons sukses. Pada error, requestId dikirim di header X-Request-ID.
+          description: Hanya pada respons sukses. Pada error, requestId dikirim di
+            header X-Request-ID.
         errorCode:
           type: string
           deprecated: true
-          description: Tidak lagi dikirim (platform R2.8). Kode error ada di awalan meta.message.
+          description: Tidak lagi dikirim (platform R2.8). Kode error ada di awalan
+            meta.message.
         details:
           type: object
           deprecated: true
-          description: Tidak lagi dikirim (platform R2.8). Detail hanya ditulis ke log.
+          description: Tidak lagi dikirim (platform R2.8). Detail hanya ditulis ke
+            log.
           additionalProperties:
             type: string
       required:
@@ -659,13 +861,14 @@ components:
       type: object
       properties:
         meta:
-          $ref: '#/components/schemas/Meta'
+          "$ref": "#/components/schemas/Meta"
         data:
           type: 'null'
       required:
       - meta
       - data
-      description: Error envelope SRS §3.1.4. Tidak pernah memuat SQL, stack trace, secret, atau payload provider.
+      description: Error envelope SRS §3.1.4. Tidak pernah memuat SQL, stack trace,
+        secret, atau payload provider.
     Health:
       type: object
       properties:
@@ -749,7 +952,7 @@ components:
         events:
           type: array
           items:
-            $ref: '#/components/schemas/EventSummary'
+            "$ref": "#/components/schemas/EventSummary"
         serverTime:
           type: string
           format: date-time
@@ -760,7 +963,7 @@ components:
       type: object
       properties:
         event:
-          $ref: '#/components/schemas/EventSummary'
+          "$ref": "#/components/schemas/EventSummary"
         maxTicketsPerOrder:
           type: integer
         maxTicketsPerBuyerNik:
@@ -872,7 +1075,7 @@ components:
         booking:
           oneOf:
           - type: 'null'
-          - $ref: '#/components/schemas/Booking'
+          - "$ref": "#/components/schemas/Booking"
       required:
       - sessionId
       - eventId
@@ -887,7 +1090,7 @@ components:
       properties:
         nik:
           type: string
-          pattern: ^[0-9]{16}$
+          pattern: "^[0-9]{16}$"
           description: NIK 16 digit (dicek strukturnya; tidak pernah disimpan plaintext)
       required:
       - nik
@@ -926,8 +1129,9 @@ components:
                 properties:
                   nik:
                     type: string
-                    pattern: ^[0-9]{16}$
-                    description: NIK 16 digit (dicek strukturnya; tidak pernah disimpan plaintext)
+                    pattern: "^[0-9]{16}$"
+                    description: NIK 16 digit (dicek strukturnya; tidak pernah disimpan
+                      plaintext)
                   fullName:
                     type: string
                     minLength: 1
@@ -962,8 +1166,9 @@ components:
                   properties:
                     nik:
                       type: string
-                      pattern: ^[0-9]{16}$
-                      description: NIK 16 digit (dicek strukturnya; tidak pernah disimpan plaintext)
+                      pattern: "^[0-9]{16}$"
+                      description: NIK 16 digit (dicek strukturnya; tidak pernah disimpan
+                        plaintext)
                     fullName:
                       type: string
                       minLength: 1
@@ -978,7 +1183,8 @@ components:
                       format: uuid
                   required:
                   - keepFromItemId
-                  description: Pertahankan pemegang item lama tanpa mengirim ulang NIK
+                  description: Pertahankan pemegang item lama tanpa mengirim ulang
+                    NIK
             required:
             - categoryId
             - attendee
@@ -1031,7 +1237,8 @@ components:
           format: date-time
         version:
           type: integer
-          description: Versi stream booking_events terakhir (ADR-019); kirim saat ubah pesanan
+          description: Versi stream booking_events terakhir (ADR-019); kirim saat
+            ubah pesanan
         canEdit:
           type: boolean
         editableUntil:
@@ -1048,7 +1255,7 @@ components:
           - SELECTION_EXPIRED
           - BOOKING_ENDED
           - EDIT_DISABLED
-          - null
+          - 
         paymentPageUrl:
           type: string
         items:
@@ -1100,7 +1307,8 @@ components:
           description: NIK tersamar
         qrPayload:
           type: string
-          description: String untuk dirender sebagai QR (RBT:<ticketCode>). Tidak memuat data pribadi.
+          description: String untuk dirender sebagai QR (RBT:<ticketCode>). Tidak
+            memuat data pribadi.
       required:
       - ticketCode
       - categoryCode
@@ -1130,7 +1338,7 @@ components:
         tickets:
           type: array
           items:
-            $ref: '#/components/schemas/Ticket'
+            "$ref": "#/components/schemas/Ticket"
       required:
       - bookingId
       - orderId
