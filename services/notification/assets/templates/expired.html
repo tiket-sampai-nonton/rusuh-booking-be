@@ -1,10 +1,14 @@
 {{template "top" .}}
-    <tr><td style="background:#2a1f6b;border-radius:14px 14px 0 0;padding:26px 28px;color:#ffffff;">
-      <div style="font-size:11px;letter-spacing:2px;text-transform:uppercase;color:#f5b94a;font-weight:bold;">Booking berakhir</div>
-      <div style="font-size:24px;line-height:1.2;font-weight:bold;margin-top:6px;">Booking {{.PublicRef}} kedaluwarsa</div>
-    </td></tr>
-    <tr><td style="background:#ffffff;border-radius:0 0 14px 14px;padding:28px;font-size:14px;line-height:1.6;color:#4a4468;">
-      <p style="margin:0 0 12px;">Booking Anda berakhir dengan alasan: <strong style="color:#1b1535;">{{.Reason}}</strong>.</p>
-      <p style="margin:0;">Silakan coba lagi jika tiket masih tersedia. Terima kasih &mdash; Tim Rusuh Booking Tiket</p>
+    <tr><td style="background:#ffffff;border-radius:24px;overflow:hidden;padding:0;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+        <tr><td bgcolor="#EC1C24" style="background-color:#EC1C24;background-image:linear-gradient(135deg,#ff5a2d,#EC1C24);padding:30px 22px 16px;color:#ffffff;">
+          <div style="font-size:10px;letter-spacing:2px;text-transform:uppercase;font-weight:800;opacity:.9;">Booking berakhir</div>
+          <div style="font-size:20px;line-height:1.3;font-weight:800;margin-top:6px;">Booking {{.PublicRef}} kedaluwarsa</div>
+        </td></tr>
+        <tr><td style="padding:22px;font-size:14px;line-height:1.6;color:#3a3a42;">
+          <p style="margin:0 0 12px;">Booking Anda berakhir dengan alasan: <strong style="color:#0a0a0c;">{{.Reason}}</strong>.</p>
+          <p style="margin:0;">Silakan coba lagi jika tiket masih tersedia. Terima kasih &mdash; Tim Rusuh Booking Tiket</p>
+        </td></tr>
+      </table>
     </td></tr>
 {{template "bottom" .}}

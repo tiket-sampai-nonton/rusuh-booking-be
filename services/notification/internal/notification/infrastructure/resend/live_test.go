@@ -70,3 +70,22 @@ func TestLive_EticketThroughResend(t *testing.T) {
 	require.NoError(t, err)
 	t.Logf("terkirim, id Resend: %s", id)
 }
+
+// TestLive_OTPThroughResend sends the login-code email (sample code) to LIVE_EMAIL_TO.
+func TestLive_OTPThroughResend(t *testing.T) {
+	to, key, from := os.Getenv("LIVE_EMAIL_TO"), os.Getenv("RESEND_API_KEY"), os.Getenv("EMAIL_FROM")
+	if to == "" || key == "" || from == "" {
+		t.Skip("LIVE_EMAIL_TO, RESEND_API_KEY, dan EMAIL_FROM wajib diisi")
+	}
+	r, err := template.New()
+	require.NoError(t, err)
+	data := dto.OTPData{Code: "482913", ExpiresAt: time.Now().Add(5 * time.Minute)}
+	text, err := r.Render("otp_login", data)
+	require.NoError(t, err)
+	html, err := r.RenderHTML("otp_login", data)
+	require.NoError(t, err)
+	s := resend.New(resend.Config{APIKey: key, From: from, Timeout: 20 * time.Second})
+	id, err := s.SendEmail(context.Background(), to, "Kode Login Anda (uji)", text, html, "live-otp-"+time.Now().Format("150405"))
+	require.NoError(t, err)
+	t.Logf("terkirim, id Resend: %s", id)
+}
