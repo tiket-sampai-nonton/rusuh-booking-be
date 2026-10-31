@@ -50,13 +50,15 @@ func itoa(n int) string {
 
 // fakeEventRepo serves a fixed event + detail.
 type fakeEventRepo struct {
-	detail entity.EventDetail
-	event  entity.Event
-	list   []entity.Event
-	err    error
+	detail  entity.EventDetail
+	event   entity.Event
+	list    []entity.Event
+	err     error
+	gotList dto.EventListQuery // captured query from the most recent ListEvents call
 }
 
-func (f *fakeEventRepo) ListEvents(context.Context, dto.EventListQuery) ([]entity.Event, error) {
+func (f *fakeEventRepo) ListEvents(_ context.Context, q dto.EventListQuery) ([]entity.Event, error) {
+	f.gotList = q
 	return f.list, f.err
 }
 func (f *fakeEventRepo) GetDetail(context.Context, string) (entity.EventDetail, error) {

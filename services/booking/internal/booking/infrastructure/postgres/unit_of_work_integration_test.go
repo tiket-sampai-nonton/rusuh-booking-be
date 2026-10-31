@@ -114,8 +114,8 @@ func seed(t *testing.T) fixture {
 	require.NoError(t, err)
 	defer func() { _ = tx.Rollback(ctx) }()
 	require.NoError(t, tx.QueryRow(ctx, `
-		INSERT INTO booking.events (slug, name, venue, starts_at, sales_starts_at, sales_ends_at, status)
-		VALUES ('konser-a', 'Konser A', 'GBK', '2026-12-25T19:00:00Z', now() - interval '1 hour', now() + interval '1 day', 'AVAILABLE')
+		INSERT INTO booking.events (slug, name, venue, starts_at, sales_starts_at, sales_ends_at, status, genre)
+		VALUES ('konser-a', 'Konser A', 'GBK', '2026-12-25T19:00:00Z', now() - interval '1 hour', now() + interval '1 day', 'AVAILABLE', ARRAY['POP','ROCK'])
 		RETURNING id::text`).Scan(&f.eventID))
 	require.NoError(t, tx.QueryRow(ctx, `
 		INSERT INTO booking.ticket_categories (event_id, code, name, price_minor) VALUES ($1::uuid, 'VIP', 'VIP', 150000) RETURNING id::text`,

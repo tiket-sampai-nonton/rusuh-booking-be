@@ -26,9 +26,13 @@ type fakeCatalog struct {
 	list   dto.EventList
 	detail dto.EventDetail
 	err    error
+	got    *dto.EventListQuery // optional: records the query passed to ListEvents
 }
 
-func (f fakeCatalog) ListEvents(context.Context, dto.EventListQuery) (dto.EventList, error) {
+func (f fakeCatalog) ListEvents(_ context.Context, q dto.EventListQuery) (dto.EventList, error) {
+	if f.got != nil {
+		*f.got = q
+	}
 	return f.list, f.err
 }
 func (f fakeCatalog) GetEventDetail(context.Context, string) (dto.EventDetail, error) {
@@ -129,6 +133,41 @@ func TestCatalogHandler_ListAndDetail(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &env))
 	assert.Len(t, env.Data.Events, 1)
+}
+
+func TestCatalogHandler_ParsesGenres(t *testing.T) {
+	tests := []struct {
+		name string
+		url  string
+		want []string
+	}{
+		{"repeated form", "/api/v1/events?genres=POP&genres=ROCK", []string{"POP", "ROCK"}},
+		{"csv form", "/api/v1/events?genres=POP,ROCK", []string{"POP", "ROCK"}},
+		{"mixed repeated+csv", "/api/v1/events?genres=POP,ROCK&genres=JAZZ", []string{"POP", "ROCK", "JAZZ"}},
+		{"blanks dropped", "/api/v1/events?genres=POP,,%20,ROCK", []string{"POP", "ROCK"}},
+		{"absent -> nil", "/api/v1/events", nil},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var got dto.EventListQuery
+			cat := fakeCatalog{got: &got}
+			h := bookinghttp.NewCatalogHandler(cat, cat)
+			w := serve(t, h, http.MethodGet, tc.url, "", nil)
+			require.Equal(t, http.StatusOK, w.Code)
+			assert.Equal(t, tc.want, got.Genres, "handler meneruskan token mentah; normalisasi di usecase")
+		})
+	}
+}
+
+func TestCatalogHandler_MapsValidationErrorTo400(t *testing.T) {
+	// The usecase returns a typed VALIDATION_ERROR (its own unit tests prove which inputs trigger it);
+	// here we assert the handler maps that apperror to HTTP 400 with the code in the envelope.
+	// (Adapter talks to the port, not the usecase directly — depguard — so we drive it via fakeCatalog.)
+	cat := fakeCatalog{err: inbound.Validation("startDate", "format tanggal harus YYYY-MM-DD")}
+	h := bookinghttp.NewCatalogHandler(cat, cat)
+	w := serve(t, h, http.MethodGet, "/api/v1/events?startDate=nonsense", "", nil)
+	require.Equal(t, http.StatusBadRequest, w.Code, "body=%s", w.Body.String())
+	assert.Contains(t, w.Body.String(), "VALIDATION_ERROR")
 }
 
 func TestCatalogHandler_DetailNotFound(t *testing.T) {

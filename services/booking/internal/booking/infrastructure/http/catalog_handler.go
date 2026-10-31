@@ -2,6 +2,7 @@ package http
 
 import (
 	stdhttp "net/http"
+	"strings"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/httpx"
 
@@ -28,11 +29,16 @@ func (h *CatalogHandler) Register(mux *stdhttp.ServeMux) {
 
 func (h *CatalogHandler) listEvents(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	q := r.URL.Query()
+	// genres mendukung dua bentuk: berulang (?genres=POP&genres=ROCK) dan CSV (?genres=POP,ROCK).
+	// Param skalar lain pakai Get() (nilai pertama saja) — jangan ubah ke slice untuk skalar.
 	resp, err := h.list.ListEvents(r.Context(), dto.EventListQuery{
 		Timeframe: q.Get("timeframe"),
 		City:      q.Get("city"),
+		Genres:    parseGenres(q["genres"]),
 		Status:    q.Get("status"),
 		Sort:      q.Get("sort"),
+		StartDate: q.Get("startDate"),
+		EndDate:   q.Get("endDate"),
 	})
 	if err != nil {
 		httpx.WriteError(w, r, err)
@@ -40,6 +46,23 @@ func (h *CatalogHandler) listEvents(w stdhttp.ResponseWriter, r *stdhttp.Request
 	}
 	cache2s(w)
 	httpx.WriteData(w, r, stdhttp.StatusOK, resp)
+}
+
+// parseGenres flattens repeated and comma-separated genre params into raw tokens.
+// Normalisation, dedupe, and caps happen in the usecase (single source of truth).
+func parseGenres(raw []string) []string {
+	if len(raw) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(raw))
+	for _, v := range raw {
+		for _, part := range strings.Split(v, ",") {
+			if p := strings.TrimSpace(part); p != "" {
+				out = append(out, p)
+			}
+		}
+	}
+	return out
 }
 
 func (h *CatalogHandler) getEventDetail(w stdhttp.ResponseWriter, r *stdhttp.Request) {

@@ -26,6 +26,7 @@ func TestEventRepo_ListFilterSortAndDetail(t *testing.T) {
 	require.Len(t, all, 1)
 	assert.Equal(t, "Konser A", all[0].Name)
 	assert.EqualValues(t, 150000, all[0].MinPriceMinor, "harga minimum dari kategori")
+	assert.ElementsMatch(t, []string{"POP", "ROCK"}, all[0].Genres, "genre text[] ter-scan")
 
 	// Filters (SRS-F-28): the seeded event is on sale, in Jakarta? no city set, starts 2026-12-25 19:00 UTC (= 26 Dec WIB).
 	ids := func(q dto.EventListQuery) int {
@@ -41,6 +42,37 @@ func TestEventRepo_ListFilterSortAndDetail(t *testing.T) {
 	for _, sort := range []string{"PRICE_ASC", "PRICE_DESC", "DATE_ASC"} {
 		assert.Equal(t, 1, ids(dto.EventListQuery{Sort: sort}), sort)
 	}
+
+	// Genre filter (US-015): overlap match; empty = all. Seeded event is ARRAY['POP','ROCK'].
+	assert.Equal(t, 1, ids(dto.EventListQuery{Genres: []string{"POP"}}), "overlap satu genre")
+	assert.Equal(t, 1, ids(dto.EventListQuery{Genres: []string{"JAZZ", "ROCK"}}), "overlap salah satu dari beberapa")
+	assert.Equal(t, 0, ids(dto.EventListQuery{Genres: []string{"JAZZ"}}), "tidak overlap -> tidak muncul")
+	assert.Equal(t, 1, ids(dto.EventListQuery{Genres: nil}), "kosong -> semua")
+
+	// Date range (sargable, half-open UTC). Seeded starts_at = 2026-12-25 19:00 UTC.
+	dec := func(d int) *time.Time { t := time.Date(2026, 12, d, 0, 0, 0, 0, time.UTC); return &t }
+	assert.Equal(t, 1, ids(dto.EventListQuery{StartUTC: dec(25), EndUTC: dec(26)}), "25 Des (UTC) termasuk")
+	assert.Equal(t, 1, ids(dto.EventListQuery{StartUTC: dec(1), EndUTC: dec(26)}), "dalam rentang bulan")
+	assert.Equal(t, 0, ids(dto.EventListQuery{StartUTC: dec(26)}), "mulai 26 Des -> event 25 Des di luar")
+	assert.Equal(t, 0, ids(dto.EventListQuery{EndUTC: dec(25)}), "end eksklusif pada 25 Des -> event pukul 19:00 di luar")
+
+	// DATE_DESC ordering (needs >1 event): add a second, later event.
+	var second string
+	require.NoError(t, f.pool.QueryRow(ctx, `
+		INSERT INTO booking.events (slug, name, venue, starts_at, sales_starts_at, sales_ends_at, status, genre)
+		VALUES ('konser-b', 'Konser B', 'GBK', '2026-12-31T19:00:00Z', now() - interval '1 hour', now() + interval '1 day', 'AVAILABLE', ARRAY['JAZZ'])
+		RETURNING id::text`).Scan(&second))
+	asc, err := repo.ListEvents(ctx, dto.EventListQuery{Sort: "DATE_ASC"})
+	require.NoError(t, err)
+	require.Len(t, asc, 2)
+	assert.Equal(t, "Konser A", asc[0].Name, "DATE_ASC: yang lebih awal dulu")
+	desc, err := repo.ListEvents(ctx, dto.EventListQuery{Sort: "DATE_DESC"})
+	require.NoError(t, err)
+	require.Len(t, desc, 2)
+	assert.Equal(t, "Konser B", desc[0].Name, "DATE_DESC: yang lebih akhir dulu")
+	// clean up the second event so later assertions see a single-event catalog
+	_, err = f.pool.Exec(ctx, `DELETE FROM booking.events WHERE id=$1::uuid`, second)
+	require.NoError(t, err)
 
 	// City is an exact, case-insensitive match; THIS_WEEK/THIS_MONTH follow the calendar in WIB.
 	_, err = f.pool.Exec(ctx, `UPDATE booking.events SET city='Jakarta' WHERE id=$1::uuid`, f.eventID)

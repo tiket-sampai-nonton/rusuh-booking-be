@@ -78,16 +78,19 @@ status) dan urutan, agar saya dapat menemukan konser yang ingin saya beli tiketn
 
 ### Kriteria Penerimaan (EARS)
 
-1. WHEN klien `GET /api/v1/events`, sistem SHALL mengembalikan `{ meta, data:{ events[], serverTime } }`; setiap `EventSummary` memuat `eventId`, `slug`, `name`, `venue`, `startsAt`, `salesStartsAt`, `salesEndsAt`, `status`, `minPriceMinor` (TC-EVT-01).
+1. WHEN klien `GET /api/v1/events`, sistem SHALL mengembalikan `{ meta, data:{ events[], serverTime } }`; setiap `EventSummary` memuat `eventId`, `slug`, `name`, `venue`, `genres` (selalu array, `[]` bila kosong), `startsAt`, `salesStartsAt`, `salesEndsAt`, `status`, `minPriceMinor` (TC-EVT-01).
 2. WHERE `timeframe` ∈ {`ALL`(default),`THIS_WEEK`(Senin–Minggu),`THIS_MONTH`,`UPCOMING`(hari ini ke depan)}, sistem SHALL memfilter `startsAt` relatif tanggal server (TC-CAT-01, TC-CAT-03, SRS-F-28-01/03).
-3. WHERE `city` diberikan, sistem SHALL memfilter `events.city` case-insensitive (TC-CAT-02, SRS-F-28-02). *(Kolom `city` belum ada di migrasi — ditambah lewat migrasi `0003`.)*
+3. WHERE `city` diberikan, sistem SHALL memfilter `events.city` case-insensitive (TC-CAT-02, SRS-F-28-02). *(Kolom `city` ditambah lewat migrasi `0003`.)*
 4. WHERE `status` ∈ {`ALL`(default),`NOT_STARTED`,`AVAILABLE`,`SOLD_OUT`,`CLOSED`}, sistem SHALL hanya mengembalikan event dengan status itu; event `DRAFT` tidak pernah tampil (SRS-F-28-01).
 5. WHERE beberapa filter diberikan, sistem SHALL mengembalikan irisan (AND) (TC-CAT-04, SRS-F-28-04).
-6. WHERE `sort` ∈ {`DATE_ASC`(default),`PRICE_ASC`,`PRICE_DESC`}, sistem SHALL mengurutkan hasil sesuai (TC-CAT-06, SRS-F-28-06).
-7. Respons katalog SHALL dapat di-cache ≤ **2 detik** di CDN dengan cache key memuat parameter filter (TC-CAT-05, SRS-F-02-04, SRS-F-28-05).
+6. WHERE `sort` ∈ {`DATE_ASC`(default),`DATE_DESC`,`PRICE_ASC`,`PRICE_DESC`}, sistem SHALL mengurutkan hasil sesuai, dengan `eventId` sebagai tiebreaker agar urutan deterministik (TC-CAT-06, TC-CAT-09, SRS-F-28-06).
+7. Respons katalog SHALL mengirim `Cache-Control: public, max-age=2` sehingga dapat di-cache ≤ **2 detik** di edge; cache key edge = **query string mentah** (`timeframe,city,genres,startDate,endDate,status,sort,page,size`). Kanonikalisasi param (genre uppercase+dedupe+urut, tanggal UTC) terjadi di **usecase**, *setelah* cache — jadi param setara dengan urutan/kapitalisasi berbeda saat ini menjadi key berbeda (MISS terpisah). Menyatukan key setara memerlukan dukungan edge (redirect kanonik atau normalisasi edge) dan **belum diimplementasikan** — future hardening (TC-CAT-05, SRS-F-02-04, SRS-F-28-05).
 8. Endpoint katalog SHALL publik (tanpa visitor token) — `security: []` pada kontrak.
+9. WHERE `genres` diberikan (berulang `?genres=POP&genres=ROCK` atau CSV `?genres=POP,ROCK`), sistem SHALL mengembalikan event yang memiliki **salah satu** genre tersebut (overlap); `genres` kosong berarti semua. Token dinormalisasi (trim, uppercase, `-`/spasi→`_`, dedupe). Kosakata genre dipelihara di frontend (US-015) sehingga token tak dikenal diterima dan hanya tidak cocok (tanpa allowlist backend) (TC-CAT-07).
+10. WHERE `startDate` dan/atau `endDate` (`YYYY-MM-DD`) diberikan, sistem SHALL memfilter `startsAt` pada rentang tanggal **inklusif dalam zona WIB** (setiap batas opsional). Filter ini **independen dari `timeframe`** dan di-AND bila keduanya diberikan — pasangan yang bertentangan menghasilkan hasil kosong (TC-CAT-08, SRS-F-28-04).
+11. Validasi filter mengikuti pemisahan tegas: **enum** (`timeframe`,`status`,`sort`) *fail-soft* — nilai tak dikenal jatuh ke default; **input terstruktur** gagal keras `400 VALIDATION_ERROR` — format tanggal bukan `YYYY-MM-DD`, rentang terbalik (`startDate > endDate`), jumlah genre > 20, atau panjang token genre > 64 (TC-CAT-10). Penolakan terjadi sebelum query DB (pengerasan attack-query); WAF/rate-limit edge adalah backstop volumetrik.
 
-**Error codes:** — . Kontrak hanya mendefinisikan `200`; perilaku untuk nilai filter tak dikenal (abaikan → default, atau `400 VALIDATION_ERROR`) belum ditetapkan — OQ-14.
+**Error codes:** `VALIDATION_ERROR` (400) untuk input terstruktur yang cacat (lihat kriteria 11); nilai enum tak dikenal tidak error (fail-soft ke default). *(Menyelesaikan OQ-14: tanggal & cap genre fail-hard; enum fail-soft.)*
 
 ---
 
