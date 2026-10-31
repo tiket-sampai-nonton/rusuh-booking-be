@@ -27,29 +27,37 @@ func TestAvailabilityCache_ReadsSnapshotAndCountsConnections(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(c.Close)
 	cache := NewAvailabilityCache(c.VK())
+	// The cache uses unprefixed keys: make them unique per run and remove them afterwards.
+	run := fmt.Sprint(time.Now().UnixNano())
+	ev1, bad, inst := "ev1-"+run, "bad-"+run, "inst-"+run
+	t.Cleanup(func() {
+		for _, k := range []string{"booking:avail:" + ev1, "booking:avail:" + bad, "booking:sse:conn:" + inst} {
+			_ = c.VK().Do(context.Background(), c.VK().B().Del().Key(k).Build()).Error()
+		}
+	})
 
 	none, err := cache.GetAvailability(ctx, "no-such-event")
 	require.NoError(t, err)
 	assert.Nil(t, none, "tanpa snapshot: nil, bukan error")
 
 	raw, _ := json.Marshal([]outbound.CategoryAvailabilitySnap{{CategoryID: "c1", Available: 7}})
-	require.NoError(t, c.VK().Do(ctx, c.VK().B().Set().Key("booking:avail:ev1").Value(string(raw)).Build()).Error())
-	got, err := cache.GetAvailability(ctx, "ev1")
+	require.NoError(t, c.VK().Do(ctx, c.VK().B().Set().Key("booking:avail:"+ev1).Value(string(raw)).Build()).Error())
+	got, err := cache.GetAvailability(ctx, ev1)
 	require.NoError(t, err)
 	assert.Equal(t, []outbound.CategoryAvailabilitySnap{{CategoryID: "c1", Available: 7}}, got)
 
-	require.NoError(t, c.VK().Do(ctx, c.VK().B().Set().Key("booking:avail:bad").Value("{bukan json").Build()).Error())
-	_, err = cache.GetAvailability(ctx, "bad")
+	require.NoError(t, c.VK().Do(ctx, c.VK().B().Set().Key("booking:avail:"+bad).Value("{bukan json").Build()).Error())
+	_, err = cache.GetAvailability(ctx, bad)
 	assert.Error(t, err, "snapshot rusak dilaporkan")
 
-	n, err := cache.IncrConn(ctx, "inst-1")
+	n, err := cache.IncrConn(ctx, inst)
 	require.NoError(t, err)
 	assert.Equal(t, 1, n)
-	n, err = cache.IncrConn(ctx, "inst-1")
+	n, err = cache.IncrConn(ctx, inst)
 	require.NoError(t, err)
 	assert.Equal(t, 2, n)
-	require.NoError(t, cache.DecrConn(ctx, "inst-1"))
-	n, err = cache.IncrConn(ctx, "inst-1")
+	require.NoError(t, cache.DecrConn(ctx, inst))
+	n, err = cache.IncrConn(ctx, inst)
 	require.NoError(t, err)
 	assert.Equal(t, 2, n)
 }

@@ -13,6 +13,7 @@ import (
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/domain/entity"
 	vo "github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/domain/valueobject"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/port/inbound"
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/port/outbound"
 )
 
 const bookingID = "66666666-6666-6666-6666-666666666666"
@@ -136,4 +137,30 @@ func TestGetTickets_NotPaid(t *testing.T) {
 	uc := usecase.NewGetTickets(&fakeBookingRepo{booking: bk}, &fakeTicketRepo{})
 	_, err := uc.GetTickets(context.Background(), sessionID)
 	assert.ErrorIs(t, err, inbound.ErrNotPayable)
+}
+
+func TestSession_CreateRequiresATokenAndMatchesTheVisitor(t *testing.T) {
+	ctx := context.Background()
+	clk := fixedClock{t: time.Now()}
+
+	uc := usecase.NewSession(&fakeAdmissionRepo{}, &fakeEventRepo{}, &fakeTokenVerifier{}, clk)
+	_, err := uc.CreateSession(ctx, dto.CreateSessionRequest{}, visitor)
+	assert.Error(t, err, "admissionToken kosong")
+
+	// The admission token names a visitor: a different caller cannot open the session.
+	mismatch := usecase.NewSession(&fakeAdmissionRepo{}, &fakeEventRepo{}, &fakeTokenVerifier{claims: outbound.AdmissionClaims{JTI: "j1", VisitorID: "orang-lain"}}, clk)
+	_, err = mismatch.CreateSession(ctx, dto.CreateSessionRequest{AdmissionToken: "tok"}, visitor)
+	assert.ErrorIs(t, err, inbound.ErrVisitorMismatch)
+
+	// A token that was already used (or expired) is refused by the repository.
+	used := usecase.NewSession(&fakeAdmissionRepo{activErr: inbound.ErrAdmissionToken}, &fakeEventRepo{}, &fakeTokenVerifier{claims: outbound.AdmissionClaims{JTI: "j1"}}, clk)
+	_, err = used.CreateSession(ctx, dto.CreateSessionRequest{AdmissionToken: "tok"}, visitor)
+	assert.ErrorIs(t, err, inbound.ErrAdmissionToken)
+
+	adm := activeAdmission(true)
+	adm.ExpiresAt = time.Now().Add(time.Hour)
+	ok := usecase.NewSession(&fakeAdmissionRepo{activated: adm}, &fakeEventRepo{detail: detailWith(true, 3)}, &fakeTokenVerifier{claims: outbound.AdmissionClaims{JTI: "j1", VisitorID: visitor}}, clk)
+	sess, err := ok.CreateSession(ctx, dto.CreateSessionRequest{AdmissionToken: "tok"}, visitor)
+	require.NoError(t, err)
+	assert.Equal(t, sessionID, sess.SessionID)
 }
