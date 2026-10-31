@@ -13,6 +13,6 @@ SSH_KEY_OPT=()
 
 [ -f deployments/dev/docker-compose.dev.yaml ] || { echo "jalankan dari repo rusuh-booking-be" >&2; exit 1; }
 tar -czf - deployments/dev deployments/compose/postgres-init.sql deployments/observability \
-  | ssh -p "$SSH_PORT" "${SSH_KEY_OPT[@]}" "$SSH_TARGET" 'mkdir -p /opt/rusuh/repo && tar -C /opt/rusuh/repo -xzf - && chmod +x /opt/rusuh/repo/deployments/dev/*.sh'
+  | ssh -p "$SSH_PORT" ${SSH_KEY_OPT[@]+"${SSH_KEY_OPT[@]}"} "$SSH_TARGET" 'mkdir -p /opt/rusuh/repo && tar -C /opt/rusuh/repo -xzf - && chmod +x /opt/rusuh/repo/deployments/dev/*.sh'
 echo "terkirim ke $SSH_TARGET:/opt/rusuh/repo"
-ssh -p "$SSH_PORT" "${SSH_KEY_OPT[@]}" "$SSH_TARGET" 'ls /opt/rusuh/repo/deployments/dev | head -30'
+ssh -p "$SSH_PORT" ${SSH_KEY_OPT[@]+"${SSH_KEY_OPT[@]}"} "$SSH_TARGET" 'ls /opt/rusuh/repo/deployments/dev | head -30'
