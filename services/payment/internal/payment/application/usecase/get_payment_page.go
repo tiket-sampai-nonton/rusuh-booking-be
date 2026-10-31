@@ -44,7 +44,9 @@ func (u *GetPaymentPage) GetPage(ctx context.Context, payer inbound.Payer, booki
 	if err != nil {
 		return dto.PaymentPage{}, fmt.Errorf("%w: %w", inbound.ErrDependency, err)
 	}
-	if found {
+	// An attempt without a Snap instruction (CREATED, or UNKNOWN after an ambiguous charge) gives the FE nothing to open:
+	// show no current attempt, so the FE starts one; creating it first reconciles the old order with Midtrans.
+	if found && open.Instruction != nil && open.Instruction.RedirectURL != "" {
 		page.CurrentAttempt = mapper.AttemptPtrToDTO(&open)
 	}
 	return page, nil

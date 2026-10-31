@@ -1005,6 +1005,15 @@ components:
           format: int64
           minimum: 0
           description: Minor unit IDR
+        imageUrl:
+          type: string
+          description: URL gambar utama; tidak ada bila belum diunggah (API admin images)
+        bannerUrl:
+          type: string
+          description: URL banner (hero detail event); tidak ada bila belum diunggah
+        thumbnailUrl:
+          type: string
+          description: URL thumbnail kartu katalog; tidak ada bila belum diunggah
       required:
       - eventId
       - slug

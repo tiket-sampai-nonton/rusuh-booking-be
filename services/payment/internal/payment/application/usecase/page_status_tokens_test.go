@@ -151,3 +151,14 @@ func TestExchangePageToken(t *testing.T) {
 		assert.Equal(t, apperror.CodeDependencyUnavailable, codeOf(t, err))
 	})
 }
+
+func TestGetPage_AttemptWithoutRedirectIsNotExposed(t *testing.T) {
+	for _, st := range []vo.AttemptStatus{vo.AttemptCreated, vo.AttemptUnknown} {
+		m := newMocks(t)
+		m.booking.EXPECT().GetPayable(gomock.Any(), bookingID).Return(payable(), nil)
+		m.attempts.EXPECT().FindOpen(gomock.Any(), bookingID).Return(attempt(st), true, nil)
+		got, err := usecase.NewGetPaymentPage(m.booking, m.attempts, methods, clk).GetPage(ctx(), payer, bookingID)
+		require.NoError(t, err)
+		assert.Nil(t, got.CurrentAttempt, string(st))
+	}
+}

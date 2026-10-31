@@ -189,9 +189,9 @@ func (m *MockITokenIssuer) EXPECT() *MockITokenIssuerMockRecorder {
 }
 
 // IssueAccess mocks base method.
-func (m *MockITokenIssuer) IssueAccess(accountID, email string, nikHash []byte, now time.Time) (string, time.Time, error) {
+func (m *MockITokenIssuer) IssueAccess(accountID, email string, nikHash []byte, nikMasked string, now time.Time) (string, time.Time, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "IssueAccess", accountID, email, nikHash, now)
+	ret := m.ctrl.Call(m, "IssueAccess", accountID, email, nikHash, nikMasked, now)
 	ret0, _ := ret[0].(string)
 	ret1, _ := ret[1].(time.Time)
 	ret2, _ := ret[2].(error)
@@ -199,9 +199,9 @@ func (m *MockITokenIssuer) IssueAccess(accountID, email string, nikHash []byte, 
 }
 
 // IssueAccess indicates an expected call of IssueAccess.
-func (mr *MockITokenIssuerMockRecorder) IssueAccess(accountID, email, nikHash, now any) *gomock.Call {
+func (mr *MockITokenIssuerMockRecorder) IssueAccess(accountID, email, nikHash, nikMasked, now any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IssueAccess", reflect.TypeOf((*MockITokenIssuer)(nil).IssueAccess), accountID, email, nikHash, now)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IssueAccess", reflect.TypeOf((*MockITokenIssuer)(nil).IssueAccess), accountID, email, nikHash, nikMasked, now)
 }
 
 // MockISecretGenerator is a mock of ISecretGenerator interface.

@@ -10,7 +10,7 @@ type JoinParams struct {
 	NikHash             string // hex
 	EmailHashHex        string // hex HMAC of email; used for the email constraint key
 	EmailEnc            []byte
-	NikMasked           string // "3174********0001"; empty when the NIK is not in the request (logged-in with stored NIK)
+	NikMasked           string // "3174********0001"; from the login token claim when the account has a stored NIK
 	AccountID           string
 	NowMs               int64
 	OneActivePerVisitor bool
@@ -126,6 +126,7 @@ type SupplyCategory struct {
 type UserIdentity struct {
 	AccountID string
 	HasNIK    bool
+	NIKMasked string
 	NIKHash   string
 	Email     string
 }

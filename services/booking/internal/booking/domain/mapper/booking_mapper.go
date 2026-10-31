@@ -39,6 +39,9 @@ func ToEventSummary(e entity.Event, now time.Time) dto.EventSummary {
 		SalesEndsAt:   e.SalesEndsAt,
 		Status:        eventStatus(e, now),
 		MinPriceMinor: e.MinPriceMinor,
+		ImageURL:      e.ImageURL,
+		BannerURL:     e.BannerURL,
+		ThumbnailURL:  e.ThumbnailURL,
 	}
 }
 

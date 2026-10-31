@@ -94,7 +94,7 @@ func TestUserTokenVerifier(t *testing.T) {
 	tok, err := signer.Sign(token.Claims{
 		Issuer: "rbt-queue", Subject: "acc1", Audience: "rbt",
 		IssuedAt: now.Unix(), ExpiresAt: now.Add(time.Hour).Unix(),
-		HasNIK: true, NIKHash: "deadbeef", Email: "a@b.id",
+		HasNIK: true, NIKHash: "deadbeef", NIKMasked: "3174********0001", Email: "a@b.id",
 	})
 	require.NoError(t, err)
 
@@ -104,6 +104,7 @@ func TestUserTokenVerifier(t *testing.T) {
 	assert.Equal(t, "acc1", id.AccountID)
 	assert.True(t, id.HasNIK)
 	assert.Equal(t, "deadbeef", id.NIKHash)
+	assert.Equal(t, "3174********0001", id.NIKMasked)
 }
 
 func TestVisitorAuthenticator_FromCookie(t *testing.T) {

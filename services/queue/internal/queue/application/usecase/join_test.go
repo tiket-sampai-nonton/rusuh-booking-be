@@ -125,7 +125,7 @@ func TestJoin_LoggedInWithNIKIgnoresBodyNik(t *testing.T) {
 	uc, m := newJoin(t)
 	ctx := context.Background()
 
-	m.verifier.EXPECT().Verify("bearer").Return(outbound.UserIdentity{AccountID: "acc1", HasNIK: true, NIKHash: "deadbeef"}, nil)
+	m.verifier.EXPECT().Verify("bearer").Return(outbound.UserIdentity{AccountID: "acc1", HasNIK: true, NIKHash: "deadbeef", NIKMasked: "3174********0001"}, nil)
 	m.pii.EXPECT().HashEmail(gomock.Any()).Return([]byte{0x01}).AnyTimes()
 	m.pii.EXPECT().SealEmail(gomock.Any()).Return([]byte("enc"), nil)
 	m.limiter.EXPECT().Allow(ctx, gomock.Any(), gomock.Any(), gomock.Any()).Return(true, nil).Times(1)
@@ -134,6 +134,7 @@ func TestJoin_LoggedInWithNIKIgnoresBodyNik(t *testing.T) {
 		func(_ context.Context, p outbound.JoinParams) (outbound.JoinResult, error) {
 			assert.Equal(t, "deadbeef", p.NikHash)
 			assert.Equal(t, "acc1", p.AccountID)
+			assert.Equal(t, "3174********0001", p.NikMasked, "NIK tersamar dari klaim token, bukan kosong")
 			return outbound.JoinResult{Outcome: outbound.JoinOK, Seq: 3}, nil
 		})
 	m.audit.EXPECT().Append(ctx, gomock.Any()).Return(nil)

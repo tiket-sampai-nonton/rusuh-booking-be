@@ -67,6 +67,12 @@ func TestAdminImageUpload(t *testing.T) {
 	assert.Equal(t, png, body, "file yang disajikan sama dengan yang diunggah")
 	assert.Equal(t, "image/png", got.Header.Get("Content-Type"))
 
+	// The FE catalog and detail now carry the URL (contract: bannerUrl / thumbnailUrl / imageUrl on EventSummary).
+	d := call(t, "GET", bookingURL+"/api/v1/events/"+eventID, nil, nil)
+	mustStatus(t, 200, d, "detail")
+	ev, _ := d.Data["event"].(map[string]any)
+	assert.Equal(t, url, ev["bannerUrl"], d.Raw)
+
 	mustStatus(t, 400, upload(t, eventID, "banner", ah, []byte("<svg onload=alert(1)></svg>")), "bukan gambar")
 	mustStatus(t, 400, upload(t, eventID, "poster", ah, png), "kind salah")
 	mustStatus(t, 404, upload(t, "00000000-0000-0000-0000-000000000000", "image", ah, png), "event tidak ada")

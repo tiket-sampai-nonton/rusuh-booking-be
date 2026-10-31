@@ -155,13 +155,13 @@ func validateJoinBody(b dto.JoinRequest) error {
 
 // resolveIdentity returns (nikHashHex, accountID) per the three auth states (design §2.1).
 // resolveIdentity returns the NIK hash, the account id, and the masked NIK shown back to the buyer. The masked NIK is
-// empty when the NIK comes from the login token (only its hash is known).
+// taken from the login token's nik_masked claim when the NIK is stored on the account.
 func (u *JoinQueue) resolveIdentity(in inbound.JoinInput, now time.Time) (nikHash, accountID, nikMasked string, err error) {
 	if in.Bearer != "" {
 		id, err := u.d.UserVerifier.Verify(in.Bearer)
 		if err == nil {
 			if id.HasNIK && id.NIKHash != "" {
-				return id.NIKHash, id.AccountID, "", nil // logged-in with stored NIK: body.buyerNik ignored
+				return id.NIKHash, id.AccountID, id.NIKMasked, nil // logged-in with stored NIK: body.buyerNik ignored
 			}
 			// logged-in without NIK: body.buyerNik required
 			if err := validateBuyerNik(in.Body.BuyerNik, now); err != nil {

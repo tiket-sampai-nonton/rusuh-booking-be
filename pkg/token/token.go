@@ -35,9 +35,10 @@ type Claims struct {
 
 	// Custom claims for logged-in buyer identity (SDD-USER-001 §6.1, SRS-F-27-10).
 	// Queue/Booking use these for offline NIK validation without calling User Service.
-	Email   string `json:"email,omitempty"`    // user's email address
-	NIKHash string `json:"nik_hash,omitempty"` // HMAC-SHA256 of NIK, hex-encoded; empty if no NIK stored
-	HasNIK  bool   `json:"has_nik,omitempty"`  // true if account has NIK stored
+	Email     string `json:"email,omitempty"`      // user's email address
+	NIKHash   string `json:"nik_hash,omitempty"`   // HMAC-SHA256 of NIK, hex-encoded; empty if no NIK stored
+	HasNIK    bool   `json:"has_nik,omitempty"`    // true if account has NIK stored
+	NIKMasked string `json:"nik_masked,omitempty"` // masked NIK shown back to the buyer (e.g. 3174********0001)
 }
 
 type header struct {

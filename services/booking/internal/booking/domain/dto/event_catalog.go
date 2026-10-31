@@ -24,6 +24,9 @@ type EventSummary struct {
 	SalesEndsAt   time.Time `json:"salesEndsAt"`
 	Status        string    `json:"status"`
 	MinPriceMinor int64     `json:"minPriceMinor"`
+	ImageURL      string    `json:"imageUrl,omitempty"`
+	BannerURL     string    `json:"bannerUrl,omitempty"`
+	ThumbnailURL  string    `json:"thumbnailUrl,omitempty"`
 }
 
 // EventList is the GET /api/v1/events response body.

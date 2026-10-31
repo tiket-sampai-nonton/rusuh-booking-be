@@ -169,7 +169,7 @@ func expectSession(m mocks, rotateFrom string, email string) {
 		m.sessions.EXPECT().Rotate(gomock.Any(), rotateFrom, gomock.Any(), now).Return(sess, nil)
 	}
 	m.accounts.EXPECT().GetNIKHashByID(gomock.Any(), "acc-1").Return(nil, nil) // no NIK
-	m.tokens.EXPECT().IssueAccess("acc-1", email, nil, now).Return("access-jwt", now.Add(15*time.Minute), nil)
+	m.tokens.EXPECT().IssueAccess("acc-1", email, nil, gomock.Any(), now).Return("access-jwt", now.Add(15*time.Minute), nil)
 }
 
 func TestVerifyOTP_ExistingAccount(t *testing.T) {
@@ -318,7 +318,7 @@ func TestOpenSession_Failures(t *testing.T) {
 		m.secrets.EXPECT().RefreshToken().Return("r", nil)
 		m.sessions.EXPECT().Create(gomock.Any(), gomock.Any()).Return(entity.Session{ID: "s"}, nil)
 		m.accounts.EXPECT().GetNIKHashByID(gomock.Any(), "acc-1").Return(nil, nil)
-		m.tokens.EXPECT().IssueAccess(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return("", time.Time{}, errors.New("sign"))
+		m.tokens.EXPECT().IssueAccess(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return("", time.Time{}, errors.New("sign"))
 		_, err := u.openSession(ctx, activeAcc, email, client, now, "")
 		assert.Equal(t, apperror.CodeInternal, code(err))
 	})

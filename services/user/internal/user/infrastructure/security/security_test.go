@@ -76,7 +76,7 @@ func TestTokens_IssueAndVerify(t *testing.T) {
 	tk := NewTokens(signer, verifier, "rbt-user", "rbt", 15*time.Minute, func() time.Time { return clock })
 
 	t.Run("without NIK", func(t *testing.T) {
-		tok, exp, err := tk.IssueAccess("acc-1", "buyer@example.com", nil, now)
+		tok, exp, err := tk.IssueAccess("acc-1", "buyer@example.com", nil, "", now)
 		require.NoError(t, err)
 		assert.Equal(t, now.Add(15*time.Minute), exp)
 
@@ -94,7 +94,7 @@ func TestTokens_IssueAndVerify(t *testing.T) {
 
 	t.Run("with NIK", func(t *testing.T) {
 		nikHash := []byte{0xab, 0xcd, 0xef}
-		tok, exp, err := tk.IssueAccess("acc-2", "user@example.com", nikHash, now)
+		tok, exp, err := tk.IssueAccess("acc-2", "user@example.com", nikHash, "3174********0001", now)
 		require.NoError(t, err)
 		assert.Equal(t, now.Add(15*time.Minute), exp)
 
@@ -108,10 +108,11 @@ func TestTokens_IssueAndVerify(t *testing.T) {
 		assert.Equal(t, "user@example.com", claims.Email)
 		assert.True(t, claims.HasNIK)
 		assert.Equal(t, "abcdef", claims.NIKHash)
+		assert.Equal(t, "3174********0001", claims.NIKMasked)
 	})
 
 	t.Run("expired", func(t *testing.T) {
-		tok, _, _ := tk.IssueAccess("acc-1", "buyer@example.com", nil, now)
+		tok, _, _ := tk.IssueAccess("acc-1", "buyer@example.com", nil, "", now)
 		clock = now.Add(16 * time.Minute)
 		_, err = tk.VerifyAccess(tok)
 		assert.ErrorIs(t, err, inbound.ErrUnauthorized)

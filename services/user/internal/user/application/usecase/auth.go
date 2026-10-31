@@ -283,7 +283,7 @@ func (u *Auth) openSession(ctx context.Context, acc entity.Account, email string
 		return dto.TokenResponse{}, apperror.Internal(fmt.Errorf("fetch nik hash: %w", err))
 	}
 
-	access, accessExp, err := u.d.Tokens.IssueAccess(acc.ID, email, nikHash, now)
+	access, accessExp, err := u.d.Tokens.IssueAccess(acc.ID, email, nikHash, acc.NIKMasked, now)
 	if err != nil {
 		return dto.TokenResponse{}, apperror.Internal(err)
 	}

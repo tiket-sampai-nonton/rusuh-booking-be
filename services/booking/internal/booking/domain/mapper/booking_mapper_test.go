@@ -1,6 +1,7 @@
 package mapper_test
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -96,4 +97,14 @@ func TestToTicketList(t *testing.T) {
 	assert.Equal(t, "3174********0009", out.BuyerNIKMasked)
 	assert.Len(t, out.Tickets, 1)
 	assert.Equal(t, "QR:TK-1", out.Tickets[0].QRPayload)
+}
+
+func TestToEventSummary_CarriesImageURLsOnlyWhenPresent(t *testing.T) {
+	now := time.Now().UTC()
+	with := mapper.ToEventSummary(entity.Event{ID: "e1", ImageURL: "https://cdn/i.png", BannerURL: "https://cdn/b.png", ThumbnailURL: "https://cdn/t.png"}, now)
+	assert.Equal(t, "https://cdn/i.png", with.ImageURL)
+	assert.Equal(t, "https://cdn/b.png", with.BannerURL)
+	assert.Equal(t, "https://cdn/t.png", with.ThumbnailURL)
+	raw, _ := json.Marshal(mapper.ToEventSummary(entity.Event{ID: "e2"}, now))
+	assert.NotContains(t, string(raw), "Url", "tanpa gambar: field tidak dikirim")
 }

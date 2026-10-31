@@ -92,6 +92,7 @@ func (v *UserTokenVerifier) Verify(bearer string) (outbound.UserIdentity, error)
 	return outbound.UserIdentity{
 		AccountID: claims.Subject,
 		HasNIK:    claims.HasNIK,
+		NIKMasked: claims.NIKMasked,
 		NIKHash:   claims.NIKHash,
 		Email:     claims.Email,
 	}, nil

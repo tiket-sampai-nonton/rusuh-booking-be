@@ -453,6 +453,9 @@ components:
           type: string
           format: date-time
         currentAttempt:
+          description: Attempt yang bisa dibuka FE (PENDING, punya redirectUrl). null bila
+            belum ada atau bila attempt terbuka masih CREATED/UNKNOWN; FE lalu membuat attempt
+            baru dan BE merekonsiliasi order lama ke Midtrans lebih dulu.
           oneOf:
           - type: 'null'
           - "$ref": "#/components/schemas/Attempt"

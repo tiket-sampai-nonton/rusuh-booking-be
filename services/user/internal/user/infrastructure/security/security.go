@@ -117,7 +117,7 @@ func NewTokens(signer *token.Signer, verifier *token.Verifier, issuer, audience 
 }
 
 // IssueAccess signs an access token for accountID with identity claims.
-func (t *Tokens) IssueAccess(accountID, email string, nikHash []byte, now time.Time) (string, time.Time, error) {
+func (t *Tokens) IssueAccess(accountID, email string, nikHash []byte, nikMasked string, now time.Time) (string, time.Time, error) {
 	exp := now.Add(t.ttl)
 	jti, err := Secrets{}.RefreshToken()
 	if err != nil {
@@ -136,6 +136,7 @@ func (t *Tokens) IssueAccess(accountID, email string, nikHash []byte, now time.T
 	}
 	if len(nikHash) > 0 {
 		claims.NIKHash = fmt.Sprintf("%x", nikHash)
+		claims.NIKMasked = nikMasked
 	}
 	tok, err := t.signer.Sign(claims)
 	return tok, exp, err

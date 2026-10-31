@@ -125,8 +125,8 @@ Terraform di `deployments/terraform` (modul network/ecr/iam/storage/data_host/co
 | R2 | S | ~~Webhook tidak memverifikasi ulang ke Status API~~ **Dibatalkan** | Keputusan pemilik: signature + nominal cukup; keamanan env (server key) tanggung jawab pemilik |
 | R3 | S | ~~Tidak ada rate limit pada booking/payment/webhook~~ **Selesai** (RL-1) | Per instance dalam-memori; WAF untuk batas global ada di INF-2 |
 | R4 | S | ~~Endpoint upload gambar event tidak ada~~ **Selesai** (IMG-1) | API admin di luar kontrak FE; URL gambar belum tampil di katalog (perlu keputusan kontrak mobile) |
-| R5 | R | `Attempt.redirectUrl` hanya ada saat PENDING (kontrak mobile menandainya wajib) | FE perlu menangani `CREATED/UNKNOWN` |
-| R6 | R | `buyerNikMasked` kosong untuk user login yang NIK-nya hanya berupa hash di token | Perlu klaim `nik_masked` di token User |
+| R5 | R | ~~`redirectUrl` hanya ada saat PENDING~~ **Selesai**: `currentAttempt` di halaman pembayaran hanya berisi attempt yang punya `redirectUrl`; attempt CREATED/UNKNOWN tidak ditampilkan (FE membuat attempt baru, yang lebih dulu merekonsiliasi order lama ke Midtrans) | endpoint `/status` tetap mengembalikan status attempt apa adanya |
+| R6 | R | ~~`buyerNikMasked` kosong untuk user login~~ **Selesai**: token User membawa klaim `nik_masked`, Queue meneruskannya ke Booking | tes unit User/Queue |
 | R7 | R | Pembayaran selesai sungguhan di Sandbox, load test, EXPLAIN, pen-test tidak dilakukan | |
 | R8 | R | Pipeline GitHub Actions belum dijalankan; Dependabot belum dimerge | |
 
