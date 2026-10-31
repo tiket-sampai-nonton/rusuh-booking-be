@@ -175,13 +175,13 @@ func TestListEvents_Normalises(t *testing.T) {
 }
 
 func TestGetEventDetail_InvalidUUID(t *testing.T) {
-	uc := usecase.NewGetEventDetail(&fakeEventRepo{})
+	uc := usecase.NewGetEventDetail(&fakeEventRepo{}, fixedClock{t: time.Now()})
 	_, err := uc.GetEventDetail(context.Background(), "nope")
 	assert.Error(t, err)
 }
 
 func TestGetEventDetail_OK(t *testing.T) {
-	uc := usecase.NewGetEventDetail(&fakeEventRepo{detail: detailWith(true, 3)})
+	uc := usecase.NewGetEventDetail(&fakeEventRepo{detail: detailWith(true, 3)}, fixedClock{t: time.Now()})
 	out, err := uc.GetEventDetail(context.Background(), eventID)
 	require.NoError(t, err)
 	assert.Len(t, out.Categories, 2)

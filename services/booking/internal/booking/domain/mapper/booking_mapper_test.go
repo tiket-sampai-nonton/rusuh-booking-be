@@ -22,17 +22,43 @@ func TestToEventList(t *testing.T) {
 }
 
 func TestToEventDetail(t *testing.T) {
+	now := time.Now().UTC()
 	d := entity.EventDetail{
-		Event: entity.Event{ID: "e1", MaxTicketsPerOrder: 3, AllowMixedCategories: true},
+		Event: entity.Event{ID: "e1", MaxTicketsPerOrder: 3, AllowMixedCategories: true, SalesStartsAt: now.Add(-time.Hour), SalesEndsAt: now.Add(time.Hour)},
 		Categories: []entity.CategoryDetail{
 			{Category: entity.Category{ID: "c1", Code: "VIP", PriceMinor: 1000}, Available: 7},
 		},
 	}
-	out := mapper.ToEventDetail(d)
+	out := mapper.ToEventDetail(d, now)
 	assert.Equal(t, 3, out.MaxTicketsPerOrder)
 	assert.True(t, out.AllowMixedCategories)
 	assert.Len(t, out.Categories, 1)
 	assert.Equal(t, 7, out.Categories[0].Available)
+	assert.Equal(t, "AVAILABLE", out.Event.Status)
+}
+
+// The API shows one of NOT_STARTED, AVAILABLE, SOLD_OUT, CLOSED (FE enum). A stored DRAFT/NOT_STARTED/AVAILABLE
+// status follows the sales window and the stock, because nothing else ever advances it.
+func TestEventStatusFollowsTheSalesWindowAndStock(t *testing.T) {
+	now := time.Date(2026, 10, 31, 12, 0, 0, 0, time.UTC)
+	ev := func(st entity.EventStatus, from, to time.Duration) entity.Event {
+		return entity.Event{ID: "e", Status: st, SalesStartsAt: now.Add(from), SalesEndsAt: now.Add(to)}
+	}
+	for name, c := range map[string]struct {
+		e    entity.Event
+		want string
+	}{
+		"draft before sale":    {ev(entity.EventDraft, time.Hour, 2*time.Hour), "NOT_STARTED"},
+		"draft during sale":    {ev(entity.EventDraft, -time.Hour, time.Hour), "AVAILABLE"},
+		"available after sale": {ev(entity.EventAvailable, -2*time.Hour, -time.Hour), "CLOSED"},
+		"stored sold out wins": {ev(entity.EventSoldOut, -time.Hour, time.Hour), "SOLD_OUT"},
+		"stored closed wins":   {ev(entity.EventClosed, -time.Hour, time.Hour), "CLOSED"},
+	} {
+		assert.Equal(t, c.want, mapper.ToEventList([]entity.Event{c.e}, now).Events[0].Status, name)
+	}
+
+	soldOut := entity.EventDetail{Event: ev(entity.EventDraft, -time.Hour, time.Hour), Categories: []entity.CategoryDetail{{Available: 0}, {Available: 0}}}
+	assert.Equal(t, "SOLD_OUT", mapper.ToEventDetail(soldOut, now).Event.Status, "tanpa sisa stok di semua kategori")
 }
 
 func TestToBooking_OnlyActiveItemsAndLock(t *testing.T) {

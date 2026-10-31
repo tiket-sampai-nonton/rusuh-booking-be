@@ -73,7 +73,7 @@ func newBookingModule(cfg config.Config, clients *Clients, logger *slog.Logger) 
 
 	// Usecases.
 	listEvents := usecase.NewListEvents(eventRepo, clk)
-	getDetail := usecase.NewGetEventDetail(eventRepo)
+	getDetail := usecase.NewGetEventDetail(eventRepo, clk)
 	createEvent := usecase.NewCreateEvent(eventWriteRepo, idGen)
 	updateConfig := usecase.NewUpdateEventConfig(eventWriteRepo)
 	allocate := usecase.NewAllocateBatch(admissionRepo, idGen, clk)

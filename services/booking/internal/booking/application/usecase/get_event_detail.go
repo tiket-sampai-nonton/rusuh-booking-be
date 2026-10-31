@@ -3,6 +3,8 @@ package usecase
 import (
 	"context"
 
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/clock"
+
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/domain/dto"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/domain/mapper"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/port/inbound"
@@ -12,11 +14,12 @@ import (
 // GetEventDetail serves one event with live availability from PostgreSQL.
 type GetEventDetail struct {
 	events outbound.IEventRepo
+	clock  clock.IClock
 }
 
 // NewGetEventDetail wires the detail usecase.
-func NewGetEventDetail(events outbound.IEventRepo) *GetEventDetail {
-	return &GetEventDetail{events: events}
+func NewGetEventDetail(events outbound.IEventRepo, clk clock.IClock) *GetEventDetail {
+	return &GetEventDetail{events: events, clock: clk}
 }
 
 // GetEventDetail validates the id, loads the event, and maps it to the detail DTO.
@@ -28,5 +31,5 @@ func (uc *GetEventDetail) GetEventDetail(ctx context.Context, eventID string) (d
 	if err != nil {
 		return dto.EventDetail{}, err
 	}
-	return mapper.ToEventDetail(detail), nil
+	return mapper.ToEventDetail(detail, uc.clock.Now()), nil
 }
