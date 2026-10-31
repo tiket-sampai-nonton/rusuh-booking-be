@@ -47,6 +47,7 @@ var errMappings = []errMapping{
 	{entity.ErrEntryMoved, CodeEntryMoved, http.StatusConflict},
 	{entity.ErrNotOwner, apperror.CodeNotFound, http.StatusNotFound},
 	{entity.ErrNotFound, apperror.CodeNotFound, http.StatusNotFound},
+	{entity.ErrEventNotFound, apperror.CodeNotFound, http.StatusNotFound},
 	{entity.ErrDependencyUnavailable, apperror.CodeDependencyUnavailable, http.StatusServiceUnavailable},
 }
 

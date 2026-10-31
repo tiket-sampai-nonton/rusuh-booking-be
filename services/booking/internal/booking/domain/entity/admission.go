@@ -15,7 +15,7 @@ type Admission struct {
 	QueueSeq       int64
 	VisitorID      string
 	BuyerNIKHash   []byte
-	BuyerEmail     string
+	BuyerEmailEnc  string // AES-GCM base64 sealed by Queue; Booking forwards it, never opens it
 	BuyerNIKMasked string
 	Units          int
 	Status         vo.AdmissionStatus

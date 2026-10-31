@@ -111,7 +111,7 @@ cd tests/features && godog --tags=@booking-hold
 ### Test Flow
 1. Get payment page: `GET /payments/{id}/page`
 2. Create attempt: `POST /payments/{id}/attempts`
-3. Trigger webhook via simulator: `POST /local-simulator/.../scenario`
+3. Trigger webhook: bayar lewat halaman simulator Midtrans Sandbox, atau kirim notifikasi bertanda tangan seperti `tests/e2e` (tidak ada endpoint `local-simulator`)
 4. Verify `payment.succeeded` published
 5. Verify booking status `PAID`
 

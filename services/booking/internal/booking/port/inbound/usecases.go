@@ -27,6 +27,14 @@ type ICreateEventUsecase interface {
 	Create(ctx context.Context, req dto.CreateEventRequest) (string, error)
 }
 
+// MaxImageBytes is the largest accepted image upload.
+const MaxImageBytes = 5 << 20
+
+// IUploadEventImageUsecase validates and stores an event image and returns its public URL.
+type IUploadEventImageUsecase interface {
+	Upload(ctx context.Context, eventID, kind string, data []byte) (string, error)
+}
+
 // IUpdateEventConfigUsecase updates mutable event configuration.
 type IUpdateEventConfigUsecase interface {
 	Update(ctx context.Context, eventID string, req dto.UpdateEventConfigRequest) error
@@ -82,7 +90,15 @@ type IEditUsecase interface {
 
 // ITicketUsecase returns e-tickets for a paid booking.
 type ITicketUsecase interface {
-	GetTickets(ctx context.Context, bookingID string) (dto.TicketList, error)
+	GetTickets(ctx context.Context, bookingID string, access TicketAccess) (dto.TicketList, error)
+}
+
+// TicketAccess is who is asking for the tickets, already verified by the HTTP layer: the visitor token's subject, the
+// buyer account of a bearer token, or the unverified ticket-link token (the usecase checks it against the booking).
+type TicketAccess struct {
+	VisitorID string
+	AccountID string
+	LinkToken string
 }
 
 // IGetBookingUsecase returns a booking by ID (caller must own the visitor token).

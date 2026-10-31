@@ -7,7 +7,6 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -59,95 +58,30 @@ func capture(got *map[string]any, hdr *http.Header, path *string, body string) h
 	})
 }
 
-func TestCharge_BuildsRequestPerMethodAndParsesInstruction(t *testing.T) {
-	const vaResp = `{"status_code":"201","transaction_id":"tx-1","transaction_status":"pending","va_numbers":[{"bank":"bca","va_number":"812785002530231"}]}`
-	const goResp = `{"status_code":"201","transaction_id":"tx-2","actions":[{"name":"generate-qr-code","url":"https://qr/png"},{"name":"deeplink-redirect","url":"https://gojek/pay"},{"name":"cancel","url":"https://x/cancel"}]}`
+func TestCharge_MapsMethodToSnapChannels(t *testing.T) {
 	cases := []struct {
-		name   string
 		method vo.Method
-		resp   string
-		check  func(t *testing.T, sent map[string]any)
-		want   outbound.ChargeResult
+		want   any
 	}{
-		{"BCA", vo.MethodVABCA, vaResp, func(t *testing.T, s map[string]any) {
-			assert.Equal(t, "bank_transfer", s["payment_type"])
-			assert.Equal(t, map[string]any{"bank": "bca"}, s["bank_transfer"])
-		}, outbound.ChargeResult{ProviderTxID: "tx-1"}},
-		{"BNI", vo.MethodVABNI, strings.ReplaceAll(vaResp, "bca", "bni"), func(t *testing.T, s map[string]any) {
-			assert.Equal(t, map[string]any{"bank": "bni"}, s["bank_transfer"])
-		}, outbound.ChargeResult{ProviderTxID: "tx-1"}},
-		{"BRI", vo.MethodVABRI, strings.ReplaceAll(vaResp, "bca", "bri"), func(t *testing.T, s map[string]any) {
-			assert.Equal(t, map[string]any{"bank": "bri"}, s["bank_transfer"])
-		}, outbound.ChargeResult{ProviderTxID: "tx-1"}},
-		{"Permata", vo.MethodVAPermata, `{"status_code":"201","transaction_id":"tx-3","permata_va_number":"850003072869607"}`, func(t *testing.T, s map[string]any) {
-			assert.Equal(t, "permata", s["payment_type"])
-			assert.NotContains(t, s, "bank_transfer")
-		}, outbound.ChargeResult{ProviderTxID: "tx-3"}},
-		{"QRIS", vo.MethodQRIS, goResp, func(t *testing.T, s map[string]any) {
-			assert.Equal(t, "qris", s["payment_type"])
-			assert.Equal(t, map[string]any{"acquirer": "gopay"}, s["qris"])
-		}, outbound.ChargeResult{ProviderTxID: "tx-2"}},
-		{"GoPay", vo.MethodGoPay, goResp, func(t *testing.T, s map[string]any) {
-			assert.Equal(t, "gopay", s["payment_type"])
-		}, outbound.ChargeResult{ProviderTxID: "tx-2"}},
+		{vo.MethodVABCA, []any{"bca_va"}}, {vo.MethodVABNI, []any{"bni_va"}}, {vo.MethodVABRI, []any{"bri_va"}},
+		{vo.MethodVAPermata, []any{"permata_va"}}, {vo.MethodQRIS, []any{"qris"}}, {vo.MethodGoPay, []any{"gopay"}}, {vo.MethodSnap, nil},
 	}
 	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
+		t.Run(string(c.method), func(t *testing.T) {
 			var sent map[string]any
 			var hdr http.Header
 			var path string
-			g, _ := newGateway(t, capture(&sent, &hdr, &path, c.resp))
+			g, _ := newGateway(t, capture(&sent, &hdr, &path, `{"token":"tok","redirect_url":"https://app.sandbox.midtrans.com/snap/v4/redirection/tok"}`))
 
 			res, err := g.Charge(context.Background(), chargeReq(c.method))
 			require.NoError(t, err)
-			assert.Equal(t, c.want.ProviderTxID, res.ProviderTxID)
-			c.check(t, sent)
-
-			assert.Equal(t, "POST /v2/charge", path)
+			assert.Equal(t, "SNAP", res.Instruction.Type)
+			assert.Equal(t, c.want, sent["enabled_payments"])
+			assert.Equal(t, "POST /snap/v1/transactions", path)
 			assert.Equal(t, "Basic "+base64.StdEncoding.EncodeToString([]byte(serverKey+":")), hdr.Get("Authorization"))
 			assert.Equal(t, map[string]any{"order_id": "RB-7F3A9C21-1", "gross_amount": float64(1500000)}, sent["transaction_details"])
-			assert.Equal(t, map[string]any{"order_time": "2026-10-26 17:00:00 +0700", "expiry_duration": float64(570), "unit": "second"}, sent["custom_expiry"],
-				"expiry dihitung dari sisa waktu booking (dibulatkan ke bawah), order_time WIB")
 		})
 	}
-}
-
-func TestCharge_Instructions(t *testing.T) {
-	g, _ := newGateway(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var b map[string]any
-		_ = json.NewDecoder(r.Body).Decode(&b)
-		switch b["payment_type"] {
-		case "bank_transfer":
-			reply(w, 200, `{"status_code":"201","transaction_id":"t","va_numbers":[{"bank":"bca","va_number":"812785002530231"}]}`)
-		case "permata":
-			reply(w, 200, `{"status_code":"201","transaction_id":"t","permata_va_number":"850003072869607"}`)
-		default:
-			reply(w, 200, `{"status_code":"201","transaction_id":"t","actions":[{"name":"generate-qr-code","url":"https://qr/png"},{"name":"deeplink-redirect","url":"https://gojek/pay"}]}`)
-		}
-	}))
-	ctx := context.Background()
-
-	r, err := g.Charge(ctx, chargeReq(vo.MethodVABCA))
-	require.NoError(t, err)
-	assert.Equal(t, "VA", r.Instruction.Type)
-	assert.Equal(t, "bca", r.Instruction.Bank)
-	assert.Equal(t, "812785002530231", r.Instruction.VANumber)
-
-	r, err = g.Charge(ctx, chargeReq(vo.MethodVAPermata))
-	require.NoError(t, err)
-	assert.Equal(t, "permata", r.Instruction.Bank)
-	assert.Equal(t, "850003072869607", r.Instruction.VANumber)
-
-	r, err = g.Charge(ctx, chargeReq(vo.MethodQRIS))
-	require.NoError(t, err)
-	assert.Equal(t, "QR", r.Instruction.Type)
-	assert.Equal(t, "https://qr/png", r.Instruction.QRURL)
-
-	r, err = g.Charge(ctx, chargeReq(vo.MethodGoPay))
-	require.NoError(t, err)
-	assert.Equal(t, "DEEPLINK", r.Instruction.Type)
-	assert.Equal(t, "https://gojek/pay", r.Instruction.DeeplinkURL)
-	assert.Equal(t, "https://qr/png", r.Instruction.QRURL, "web memakai QR, mobile memakai deeplink")
 }
 
 func TestCharge_IncompleteResponseIsAmbiguousNotSuccess(t *testing.T) {
@@ -354,7 +288,7 @@ func TestCharge_OverridesNotificationURLOnlyWhenConfigured(t *testing.T) {
 	var hasHeader bool
 	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		header, hasHeader = r.Header.Get("X-Override-Notification"), r.Header.Get("X-Override-Notification") != ""
-		reply(w, 200, `{"status_code":"201","transaction_id":"t","va_numbers":[{"bank":"bca","va_number":"1"}]}`)
+		reply(w, 200, `{"token":"t","redirect_url":"https://snap/r/t"}`)
 	})
 	srv := httptest.NewServer(h)
 	defer srv.Close()

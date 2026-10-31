@@ -114,10 +114,10 @@ func (u *UnitOfWork) hold(ctx context.Context, tx pgx.Tx, spec outbound.HoldSpec
 	// (7) project read model (booking LAST).
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO booking.bookings (id, public_ref, event_id, admission_id, visitor_id, buyer_nik_hash,
-			buyer_email, status, amount_minor, item_quantity, payment_expires_at, version, account_id)
+			buyer_email_enc, status, amount_minor, item_quantity, payment_expires_at, version, account_id)
 		VALUES ($1::uuid,$2,$3::uuid,$4::uuid,$5::uuid,$6,$7,'PENDING_PAYMENT',$8,$9,$10,1, NULLIF($11,'')::uuid)`,
 		spec.BookingID, spec.PublicRef, spec.EventID, spec.AdmissionID, spec.VisitorID, spec.BuyerNIKHash,
-		spec.BuyerEmail, spec.AmountMinor, n, spec.PaymentExpiresAt, spec.AccountID); err != nil {
+		spec.BuyerEmailEnc, spec.AmountMinor, n, spec.PaymentExpiresAt, spec.AccountID); err != nil {
 		return outbound.HoldResult{}, mapHoldErr(err)
 	}
 	for _, l := range spec.Lines {
@@ -144,6 +144,7 @@ func (u *UnitOfWork) hold(ctx context.Context, tx pgx.Tx, spec outbound.HoldSpec
 		return outbound.HoldResult{}, mapHoldErr(err)
 	}
 
+	version := 1
 	// (9) Design §9.2 Step 11: transition admission to EDITABLE or CONVERTED.
 	// Lock immediately if edit is disabled OR request arrived in grace window.
 	if !spec.CfgEditEnabled || inGrace {
@@ -174,6 +175,11 @@ func (u *UnitOfWork) hold(ctx context.Context, tx pgx.Tx, spec outbound.HoldSpec
 		}); err != nil {
 			return outbound.HoldResult{}, err
 		}
+		// The read model must follow the stream: BookingHeld is v1, BookingLocked v2.
+		if _, err := tx.Exec(ctx, `UPDATE booking.bookings SET version=2, updated_at=now() WHERE id=$1::uuid`, spec.BookingID); err != nil {
+			return outbound.HoldResult{}, err
+		}
+		version = 2
 	} else {
 		// Normal case: admission → EDITABLE (buyer may still edit before paying).
 		if _, err := tx.Exec(ctx, `UPDATE booking.admissions SET status='EDITABLE' WHERE id=$1::uuid`, spec.AdmissionID); err != nil {
@@ -182,7 +188,7 @@ func (u *UnitOfWork) hold(ctx context.Context, tx pgx.Tx, spec outbound.HoldSpec
 	}
 
 	return outbound.HoldResult{
-		BookingID: spec.BookingID, PublicRef: spec.PublicRef, Version: 1,
+		BookingID: spec.BookingID, PublicRef: spec.PublicRef, Version: version,
 		Status: string(vo.BookingPendingPayment), AmountMinor: spec.AmountMinor, PaymentExpiresAt: spec.PaymentExpiresAt,
 	}, nil
 }
@@ -356,7 +362,7 @@ func (u *UnitOfWork) settle(ctx context.Context, tx pgx.Tx, spec outbound.Settle
 	var publicRef, email string
 	var paymentExpiresAt time.Time
 	if err := tx.QueryRow(ctx, `
-		SELECT status, version, buyer_nik_hash, amount_minor, public_ref, buyer_email, payment_expires_at
+		SELECT status, version, buyer_nik_hash, amount_minor, public_ref, COALESCE(buyer_email_enc, ''), payment_expires_at
 		  FROM booking.bookings WHERE id=$1::uuid FOR UPDATE`, spec.BookingID).
 		Scan(&status, &version, &buyerHash, &amount, &publicRef, &email, &paymentExpiresAt); err != nil {
 		return false, err
@@ -389,8 +395,8 @@ func (u *UnitOfWork) settle(ctx context.Context, tx pgx.Tx, spec outbound.Settle
 			 WHERE id=$1::uuid`, spec.BookingID, version+1); err != nil {
 			return false, err
 		}
-		review := map[string]any{"bookingId": spec.BookingID, "buyerEmail": email, "amountMinor": amount}
-		return true, enqueueOutbox(ctx, tx, "booking.review", spec.BookingID, review)
+		review := map[string]any{"bookingId": spec.BookingID, "buyerEmailEnc": email, "amountMinor": amount}
+		return false, enqueueOutbox(ctx, tx, "booking.review", spec.BookingID, review)
 	}
 
 	// Step 5: lock event_supply (§9.0: after booking, before quota/categories).
@@ -446,12 +452,12 @@ func (u *UnitOfWork) settle(ctx context.Context, tx pgx.Tx, spec outbound.Settle
 			 WHERE event_id=$1::uuid AND buyer_nik_hash=$2`, eventID, buyerHash, nLate); err != nil {
 			return false, err
 		}
-		review := map[string]any{"bookingId": spec.BookingID, "buyerEmail": email, "amountMinor": amount}
+		review := map[string]any{"bookingId": spec.BookingID, "buyerEmailEnc": email, "amountMinor": amount}
 		ended := map[string]any{"eventId": eventID, "queueEntryId": queueEntryID, "outcome": "EXPIRED"}
 		if err := enqueueOutbox(ctx, tx, "booking.review", spec.BookingID, review); err != nil {
 			return false, err
 		}
-		return true, enqueueOutbox(ctx, tx, "booking.journey.ended", spec.BookingID, ended)
+		return false, enqueueOutbox(ctx, tx, "booking.journey.ended", spec.BookingID, ended)
 	}
 
 	// Happy path: timely payment → PAID + tickets.
@@ -579,10 +585,17 @@ func (u *UnitOfWork) settle(ctx context.Context, tx pgx.Tx, spec outbound.Settle
 		ticketLinkToken = spec.TicketLinkTokenFn(spec.BookingID)
 	}
 
+	var evName, evVenue string
+	var evStartsAt time.Time
+	if err := tx.QueryRow(ctx, `SELECT name, venue, starts_at FROM booking.events WHERE id=$1::uuid`, eventID).
+		Scan(&evName, &evVenue, &evStartsAt); err != nil {
+		return false, err
+	}
 	paid := map[string]any{
 		"bookingId":       spec.BookingID,
 		"publicRef":       publicRef,
-		"buyerEmail":      email,
+		"buyerEmailEnc":   email,
+		"event":           map[string]any{"eventId": eventID, "name": evName, "venue": evVenue, "startsAt": evStartsAt.UTC().Format(time.RFC3339)},
 		"tickets":         ticketLines,
 		"ticketLinkToken": ticketLinkToken,
 	}
@@ -634,7 +647,7 @@ func (u *UnitOfWork) expire(ctx context.Context, tx pgx.Tx, spec outbound.Expire
 	var buyerHash []byte
 	var amount int64
 	if err := tx.QueryRow(ctx, `
-		SELECT status, version, public_ref, buyer_email, buyer_nik_hash, amount_minor
+		SELECT status, version, public_ref, COALESCE(buyer_email_enc, ''), buyer_nik_hash, amount_minor
 		  FROM booking.bookings WHERE id=$1::uuid FOR UPDATE`, spec.BookingID).
 		Scan(&status, &version, &publicRef, &email, &buyerHash, &amount); err != nil {
 		return false, err
@@ -681,7 +694,7 @@ func (u *UnitOfWork) expire(ctx context.Context, tx pgx.Tx, spec outbound.Expire
 				return false, err
 			}
 		}
-		review := map[string]any{"bookingId": spec.BookingID, "buyerEmail": email, "amountMinor": amount}
+		review := map[string]any{"bookingId": spec.BookingID, "buyerEmailEnc": email, "amountMinor": amount}
 		return true, enqueueOutbox(ctx, tx, "booking.review", spec.BookingID, review)
 	}
 
@@ -735,7 +748,7 @@ func (u *UnitOfWork) expire(ctx context.Context, tx pgx.Tx, spec outbound.Expire
 			return false, err
 		}
 	}
-	expired := map[string]any{"bookingId": spec.BookingID, "publicRef": publicRef, "buyerEmail": email, "reason": spec.Reason}
+	expired := map[string]any{"bookingId": spec.BookingID, "publicRef": publicRef, "buyerEmailEnc": email, "reason": spec.Reason}
 	ended := map[string]any{"eventId": eventID, "queueEntryId": queueEntryID, "outcome": "EXPIRED"}
 	if err := enqueueOutbox(ctx, tx, "booking.expired", spec.BookingID, expired); err != nil {
 		return false, err
@@ -753,7 +766,7 @@ func (u *UnitOfWork) ExtendDeadline(ctx context.Context, spec outbound.DeadlineS
 func (u *UnitOfWork) extendDeadline(ctx context.Context, tx pgx.Tx, spec outbound.DeadlineSpec) error {
 	tag, err := tx.Exec(ctx, `
 		UPDATE booking.bookings
-		   SET payment_expires_at = payment_expires_at + ($2 || ' seconds')::interval,
+		   SET payment_expires_at = payment_expires_at + make_interval(secs => $2),
 		       deadline_extended_at = now(),
 		       updated_at = now()
 		 WHERE id = $1::uuid
@@ -812,10 +825,11 @@ func (u *UnitOfWork) paymentLock(ctx context.Context, tx pgx.Tx, spec outbound.P
 	var version int
 	var amountMinor int64
 	var paymentExpiresAt time.Time
+	var paymentStarted *time.Time
 	if err := tx.QueryRow(ctx, `
-		SELECT status, version, amount_minor, payment_expires_at
+		SELECT status, version, amount_minor, payment_expires_at, payment_started_at
 		  FROM booking.bookings WHERE id=$1::uuid FOR UPDATE`, spec.BookingID).
-		Scan(&status, &version, &amountMinor, &paymentExpiresAt); err != nil {
+		Scan(&status, &version, &amountMinor, &paymentExpiresAt, &paymentStarted); err != nil {
 		return outbound.PaymentLockResult{}, err
 	}
 
@@ -827,8 +841,8 @@ func (u *UnitOfWork) paymentLock(ctx context.Context, tx pgx.Tx, spec outbound.P
 	if !status.IsPayable() {
 		return outbound.PaymentLockResult{Outcome: "BOOKING_NOT_PAYABLE", AmountMinor: amountMinor, PaymentExpiresAt: paymentExpiresAt}, nil
 	}
-	// Idempotent: already locked by a previous call.
-	if status == vo.BookingVerifying {
+	// Idempotent: already locked by a previous call (status stays PENDING_PAYMENT; payment_started_at marks the lock).
+	if status == vo.BookingVerifying || paymentStarted != nil {
 		return outbound.PaymentLockResult{Outcome: "OK", Version: version, AmountMinor: amountMinor, PaymentExpiresAt: paymentExpiresAt}, nil
 	}
 

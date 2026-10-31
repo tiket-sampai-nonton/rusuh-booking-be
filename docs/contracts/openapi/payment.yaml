@@ -1,9 +1,11 @@
 # Dihasilkan dari SDD v1.5 §4.6 (tools: scratchpad gen2/contracts.py). Ubah kontrak lewat PR yang direview BE dan FE.
+---
 openapi: 3.1.0
 info:
   title: RBT Payment Service API
   version: 1.0.0
-  description: Halaman bayar, attempt Midtrans, webhook. Status attempt disimpan di tabel payment_attempts (ADR-019, amandemen 2026-10-23).
+  description: Halaman bayar, attempt Midtrans, webhook. Status attempt disimpan di
+    tabel payment_attempts (ADR-019, amandemen 2026-10-23).
   contact:
     name: Tim PT. Tiket Sampai Nonton Sentosa
 servers:
@@ -18,7 +20,7 @@ security:
 - visitorCookie: []
 - visitorHeader: []
 paths:
-  /api/v1/payments/{bookingId}/page:
+  "/api/v1/payments/{bookingId}/page":
     get:
       tags:
       - payment
@@ -44,9 +46,9 @@ paths:
                 type: object
                 properties:
                   meta:
-                    $ref: '#/components/schemas/Meta'
+                    "$ref": "#/components/schemas/Meta"
                   data:
-                    $ref: '#/components/schemas/PaymentPage'
+                    "$ref": "#/components/schemas/PaymentPage"
                 required:
                 - meta
                 - data
@@ -55,8 +57,20 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
-  /api/v1/payments/{bookingId}/page-tokens:
+                "$ref": "#/components/schemas/ErrorEnvelope"
+        '401':
+          description: 'Token visitor tidak valid atau kedaluwarsa — errorCode: `UNAUTHORIZED`'
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ErrorEnvelope"
+        '404':
+          description: 'Tidak ada atau bukan milik pemanggil — errorCode: `NOT_FOUND`'
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ErrorEnvelope"
+  "/api/v1/payments/{bookingId}/page-tokens":
     post:
       tags:
       - payment
@@ -81,9 +95,9 @@ paths:
                 type: object
                 properties:
                   meta:
-                    $ref: '#/components/schemas/Meta'
+                    "$ref": "#/components/schemas/Meta"
                   data:
-                    $ref: '#/components/schemas/PageToken'
+                    "$ref": "#/components/schemas/PageToken"
                 required:
                 - meta
                 - data
@@ -92,8 +106,20 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
-  /api/v1/payment-page-sessions:
+                "$ref": "#/components/schemas/ErrorEnvelope"
+        '401':
+          description: 'Token visitor tidak valid atau kedaluwarsa — errorCode: `UNAUTHORIZED`'
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ErrorEnvelope"
+        '404':
+          description: 'Tidak ada atau bukan milik pemanggil — errorCode: `NOT_FOUND`'
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ErrorEnvelope"
+  "/api/v1/payment-page-sessions":
     post:
       tags:
       - payment
@@ -105,7 +131,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/PageSessionRequest'
+              "$ref": "#/components/schemas/PageSessionRequest"
       responses:
         '204':
           description: Cookie rb_pay diset
@@ -114,8 +140,14 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
-  /api/v1/payments/{bookingId}/attempts:
+                "$ref": "#/components/schemas/ErrorEnvelope"
+        '401':
+          description: 'Token visitor tidak valid atau kedaluwarsa — errorCode: `UNAUTHORIZED`'
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ErrorEnvelope"
+  "/api/v1/payments/{bookingId}/attempts":
     post:
       tags:
       - payment
@@ -145,7 +177,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/CreateAttemptRequest'
+              "$ref": "#/components/schemas/CreateAttemptRequest"
       responses:
         '201':
           description: OK
@@ -155,9 +187,9 @@ paths:
                 type: object
                 properties:
                   meta:
-                    $ref: '#/components/schemas/Meta'
+                    "$ref": "#/components/schemas/Meta"
                   data:
-                    $ref: '#/components/schemas/Attempt'
+                    "$ref": "#/components/schemas/Attempt"
                 required:
                 - meta
                 - data
@@ -166,20 +198,32 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
+                "$ref": "#/components/schemas/ErrorEnvelope"
         '422':
           description: 'Metode tidak aktif — errorCode: `PAYMENT_METHOD_UNAVAILABLE`'
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
+                "$ref": "#/components/schemas/ErrorEnvelope"
         '503':
           description: 'Gateway gangguan — errorCode: `PAYMENT_PROVIDER_UNAVAILABLE`'
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
-  /api/v1/payments/{bookingId}/status:
+                "$ref": "#/components/schemas/ErrorEnvelope"
+        '401':
+          description: 'Token visitor tidak valid atau kedaluwarsa — errorCode: `UNAUTHORIZED`'
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ErrorEnvelope"
+        '404':
+          description: 'Tidak ada atau bukan milik pemanggil — errorCode: `NOT_FOUND`'
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ErrorEnvelope"
+  "/api/v1/payments/{bookingId}/status":
     get:
       tags:
       - payment
@@ -205,13 +249,25 @@ paths:
                 type: object
                 properties:
                   meta:
-                    $ref: '#/components/schemas/Meta'
+                    "$ref": "#/components/schemas/Meta"
                   data:
-                    $ref: '#/components/schemas/PaymentStatus'
+                    "$ref": "#/components/schemas/PaymentStatus"
                 required:
                 - meta
                 - data
-  /api/v1/webhooks/midtrans:
+        '401':
+          description: 'Token visitor tidak valid atau kedaluwarsa — errorCode: `UNAUTHORIZED`'
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ErrorEnvelope"
+        '404':
+          description: 'Tidak ada atau bukan milik pemanggil — errorCode: `NOT_FOUND`'
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ErrorEnvelope"
+  "/api/v1/webhooks/midtrans":
     post:
       tags:
       - webhook
@@ -224,7 +280,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/MidtransNotification'
+              "$ref": "#/components/schemas/MidtransNotification"
       responses:
         '200':
           description: Tersimpan durable (payment_callbacks) sebelum 2xx
@@ -233,8 +289,8 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
-  /api/v1/local-simulator/payments/{attemptId}/scenario:
+                "$ref": "#/components/schemas/ErrorEnvelope"
+  "/api/v1/local-simulator/payments/{attemptId}/scenario":
     post:
       tags:
       - simulator
@@ -253,7 +309,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/SimulatorScenario'
+              "$ref": "#/components/schemas/SimulatorScenario"
       responses:
         '202':
           description: Skenario dijalankan
@@ -262,8 +318,14 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
-  /health:
+                "$ref": "#/components/schemas/ErrorEnvelope"
+        '401':
+          description: 'Token visitor tidak valid atau kedaluwarsa — errorCode: `UNAUTHORIZED`'
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ErrorEnvelope"
+  "/health":
     get:
       tags:
       - ops
@@ -276,13 +338,13 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Health'
+                "$ref": "#/components/schemas/Health"
         '503':
           description: Ada dependency DOWN
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Health'
+                "$ref": "#/components/schemas/Health"
 components:
   schemas:
     Meta:
@@ -292,18 +354,22 @@ components:
           type: integer
         message:
           type: string
-          description: 'Pada error berformat "KODE: pesan" (KODE dari daftar SRS §3.1.4 Error Codes); error internal memakai pesan umum.'
+          description: 'Pada error berformat "KODE: pesan" (KODE dari daftar SRS §3.1.4
+            Error Codes); error internal memakai pesan umum.'
         requestId:
           type: string
-          description: Hanya pada respons sukses. Pada error, requestId dikirim di header X-Request-ID.
+          description: Hanya pada respons sukses. Pada error, requestId dikirim di
+            header X-Request-ID.
         errorCode:
           type: string
           deprecated: true
-          description: Tidak lagi dikirim (platform R2.8). Kode error ada di awalan meta.message.
+          description: Tidak lagi dikirim (platform R2.8). Kode error ada di awalan
+            meta.message.
         details:
           type: object
           deprecated: true
-          description: Tidak lagi dikirim (platform R2.8). Detail hanya ditulis ke log.
+          description: Tidak lagi dikirim (platform R2.8). Detail hanya ditulis ke
+            log.
           additionalProperties:
             type: string
       required:
@@ -312,13 +378,14 @@ components:
       type: object
       properties:
         meta:
-          $ref: '#/components/schemas/Meta'
+          "$ref": "#/components/schemas/Meta"
         data:
           type: 'null'
       required:
       - meta
       - data
-      description: Error envelope SRS §3.1.4. Tidak pernah memuat SQL, stack trace, secret, atau payload provider.
+      description: Error envelope SRS §3.1.4. Tidak pernah memuat SQL, stack trace,
+        secret, atau payload provider.
     Health:
       type: object
       properties:
@@ -373,6 +440,7 @@ components:
             - VA_PERMATA
             - QRIS
             - GOPAY
+            - SNAP
         amountMinor:
           type: integer
           format: int64
@@ -385,9 +453,12 @@ components:
           type: string
           format: date-time
         currentAttempt:
+          description: Attempt yang bisa dibuka FE (PENDING, punya redirectUrl). null bila
+            belum ada atau bila attempt terbuka masih CREATED/UNKNOWN; FE lalu membuat attempt
+            baru dan BE merekonsiliasi order lama ke Midtrans lebih dulu.
           oneOf:
           - type: 'null'
-          - $ref: '#/components/schemas/Attempt'
+          - "$ref": "#/components/schemas/Attempt"
         canEdit:
           type: boolean
         editableUntil:
@@ -434,6 +505,7 @@ components:
           - VA_PERMATA
           - QRIS
           - GOPAY
+          - SNAP
       required:
       - method
     Attempt:
@@ -460,30 +532,21 @@ components:
         expiresAt:
           type: string
           format: date-time
-        instruction:
-          type: object
-          properties:
-            type:
-              type: string
-              enum:
-              - VA
-              - QR
-              - DEEPLINK
-            bank:
-              type: string
-            vaNumber:
-              type: string
-            qrString:
-              type: string
-              deprecated: true
-              description: Tidak dipakai. Midtrans memberi QR sebagai URL gambar, lihat qrUrl.
-            qrUrl:
-              type: string
-              description: URL gambar QR (PNG) dari Midtrans, untuk QRIS dan GoPay (web). Ditambahkan 2026-10-26, aditif.
-            deeplinkUrl:
-              type: string
-          required:
-          - type
+        redirectUrl:
+          type: string
+          format: uri
+          description: URL halaman Midtrans SNAP yang dibuka FE (redirect/WebView).
+            Ada setelah attempt PENDING. Token SNAP tidak dikirim terpisah.
+        successReturnUrl:
+          type: string
+          format: uri
+          description: Halaman FE tujuan SNAP setelah alur bayar selesai. Wajib memverifikasi
+            GET /payments/{bookingId}/status sebelum menampilkan hasil.
+        failedReturnUrl:
+          type: string
+          format: uri
+          description: Halaman FE untuk pembayaran gagal atau dibatalkan. Juga wajib
+            memverifikasi status ke backend.
       required:
       - attemptNo
       - method
@@ -497,16 +560,23 @@ components:
           format: uuid
         bookingStatus:
           type: string
+        orderId:
+          type: string
+          description: Referensi publik booking (publicRef).
+        paymentExpiresAt:
+          type: string
+          format: date-time
         attempt:
           oneOf:
           - type: 'null'
-          - $ref: '#/components/schemas/Attempt'
+          - "$ref": "#/components/schemas/Attempt"
         serverTime:
           type: string
           format: date-time
       required:
       - bookingId
       - bookingStatus
+      - paymentExpiresAt
       - serverTime
     MidtransNotification:
       type: object

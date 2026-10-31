@@ -1,6 +1,6 @@
 module github.com/tiket-sampai-nonton/rusuh-booking-be/services/notification
 
-go 1.26
+go 1.26.10
 
 require (
 	github.com/jackc/pgx/v5 v5.11.0
@@ -8,6 +8,7 @@ require (
 	github.com/stretchr/testify v1.12.1
 	github.com/tiket-sampai-nonton/rusuh-booking-be/pkg v0.0.0
 	go.uber.org/mock v0.6.0
+	rsc.io/qr v0.2.0
 )
 
 require (

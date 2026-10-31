@@ -72,22 +72,22 @@ func TestContract_SoldOut(t *testing.T) {
 // TestContract_BookingExpired verifies booking.expired.v1 required fields.
 func TestContract_BookingExpired(t *testing.T) {
 	payload := roundTrip(t, map[string]any{
-		"bookingId":  "00000000-0000-0000-0000-000000000001",
-		"publicRef":  "RB12345678",
-		"buyerEmail": "buyer@test.id",
-		"reason":     "PAYMENT_TIMEOUT",
+		"bookingId":     "00000000-0000-0000-0000-000000000001",
+		"publicRef":     "RB12345678",
+		"buyerEmailEnc": "c2VhbGVk",
+		"reason":        "PAYMENT_TIMEOUT",
 	})
-	payloadHas(t, payload, "bookingId", "publicRef", "buyerEmail", "reason")
+	payloadHas(t, payload, "bookingId", "publicRef", "buyerEmailEnc", "reason")
 }
 
 // TestContract_BookingReview verifies booking.review.v1 required fields.
 func TestContract_BookingReview(t *testing.T) {
 	payload := roundTrip(t, map[string]any{
-		"bookingId":   "00000000-0000-0000-0000-000000000001",
-		"buyerEmail":  "buyer@test.id",
-		"amountMinor": int64(150000),
+		"bookingId":     "00000000-0000-0000-0000-000000000001",
+		"buyerEmailEnc": "c2VhbGVk",
+		"amountMinor":   int64(150000),
 	})
-	payloadHas(t, payload, "bookingId", "buyerEmail", "amountMinor")
+	payloadHas(t, payload, "bookingId", "buyerEmailEnc", "amountMinor")
 }
 
 // TestContract_BookingPaid verifies booking.paid.v1 required fields including tickets array.
@@ -99,9 +99,9 @@ func TestContract_BookingPaid(t *testing.T) {
 		CategoryCode      string `json:"categoryCode"`
 	}
 	payload := roundTrip(t, map[string]any{
-		"bookingId":  "00000000-0000-0000-0000-000000000001",
-		"publicRef":  "RB12345678",
-		"buyerEmail": "buyer@test.id",
+		"bookingId":     "00000000-0000-0000-0000-000000000001",
+		"publicRef":     "RB12345678",
+		"buyerEmailEnc": "c2VhbGVk",
 		"tickets": []ticketLine{
 			{
 				TicketCode:        "TK-001",
@@ -112,7 +112,7 @@ func TestContract_BookingPaid(t *testing.T) {
 		},
 		"ticketLinkToken": "link-token-abc",
 	})
-	payloadHas(t, payload, "bookingId", "publicRef", "buyerEmail", "ticketLinkToken")
+	payloadHas(t, payload, "bookingId", "publicRef", "buyerEmailEnc", "ticketLinkToken")
 
 	// tickets must be present and be an array.
 	tickets, ok := payload["tickets"]

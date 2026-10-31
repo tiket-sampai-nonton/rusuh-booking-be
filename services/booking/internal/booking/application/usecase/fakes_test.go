@@ -278,12 +278,24 @@ func (c fixedClock) Now() time.Time { return c.t }
 type fakeAvailCache struct {
 	snaps   []outbound.CategoryAvailabilitySnap
 	snapErr error
+	setErr  error
+	written map[string][]outbound.CategoryAvailabilitySnap
 	connN   int
 	connErr error
 }
 
 func (f *fakeAvailCache) GetAvailability(_ context.Context, _ string) ([]outbound.CategoryAvailabilitySnap, error) {
 	return f.snaps, f.snapErr
+}
+func (f *fakeAvailCache) SetAvailability(_ context.Context, id string, snaps []outbound.CategoryAvailabilitySnap, _ time.Duration) error {
+	if f.setErr != nil {
+		return f.setErr
+	}
+	if f.written == nil {
+		f.written = map[string][]outbound.CategoryAvailabilitySnap{}
+	}
+	f.written[id] = snaps
+	return nil
 }
 func (f *fakeAvailCache) IncrConn(_ context.Context, _ string) (int, error) {
 	return f.connN, f.connErr
@@ -294,6 +306,14 @@ func (f *fakeAvailCache) DecrConn(_ context.Context, _ string) error { return ni
 type fakeEventWriteRepo struct {
 	createErr error
 	updateErr error
+	imageErr  error
+	imageKind string
+	imageURL  string
+}
+
+func (f *fakeEventWriteRepo) SetImageURL(_ context.Context, _, kind, url string) error {
+	f.imageKind, f.imageURL = kind, url
+	return f.imageErr
 }
 
 func (f *fakeEventWriteRepo) CreateEvent(_ context.Context, _ string, _ dto.CreateEventRequest) error {

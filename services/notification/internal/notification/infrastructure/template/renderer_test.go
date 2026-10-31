@@ -19,8 +19,8 @@ func TestRenderer_Eticket(t *testing.T) {
 
 	out, err := r.Render("eticket", dto.EticketData{
 		PublicRef: "RBT-ABC", EventName: "Konser ABC", EventStartsAt: "2026-11-15", EventVenue: "GBK",
-		Tickets:         []dto.TicketInfo{{TicketCode: "TKT-001", AttendeeName: "Budi", AttendeeNikMasked: "3174********0001", CategoryCode: "VIP"}},
-		TicketLinkToken: "tok",
+		Tickets:   []dto.EticketTicket{{TicketInfo: dto.TicketInfo{TicketCode: "TKT-001", AttendeeName: "Budi", AttendeeNikMasked: "3174********0001", CategoryCode: "VIP"}, QRPayload: "RBT:TKT-001"}},
+		TicketURL: "https://rusuh.example/tickets/b?t=tok",
 	})
 	require.NoError(t, err)
 	assert.Contains(t, out, "RBT-ABC")
@@ -51,12 +51,15 @@ func TestRenderer_EticketHTML(t *testing.T) {
 	require.NoError(t, err)
 	out, err := r.RenderHTML("eticket", dto.EticketData{
 		PublicRef: "RB-1", EventName: "Konser <ABC>", EventStartsAt: "2026-12-25T19:00:00Z", EventVenue: "GBK",
-		Tickets: []dto.TicketInfo{{TicketCode: "RB-TESTRSND", AttendeeName: `<script>alert(1)</script>`, AttendeeNikMasked: "3174********0001", CategoryCode: "VIP"}},
+		Tickets: []dto.EticketTicket{{TicketInfo: dto.TicketInfo{TicketCode: "RB-TESTRSND", AttendeeName: `<script>alert(1)</script>`, AttendeeNikMasked: "3174********0001", CategoryCode: "VIP"}, QRCID: "qr-1", QRPayload: "RBT:RB-TESTRSND"}},
 	})
 	require.NoError(t, err)
 	assert.Contains(t, out, "RB-TESTRSND")
 	assert.Contains(t, out, "3174********0001")
-	assert.Contains(t, out, "26 Des 2026, 02.00 WIB")
+	assert.Contains(t, out, "26 Des 2026")
+	assert.Contains(t, out, "02.00 WIB")
+	assert.Contains(t, out, `src="cid:qr-1"`, "QR dirujuk lewat CID")
+	assert.Contains(t, out, "RBT:RB-TESTRSND")
 	assert.NotContains(t, out, "<script>")
 	assert.Contains(t, out, "&lt;script&gt;")
 	assert.NotContains(t, out, "Lihat e-tiket", "tanpa token tidak ada baris tautan")
@@ -126,6 +129,14 @@ const contractPaidPayload = `{
   ]%s
 }`
 
+func views(in []dto.TicketInfo) []dto.EticketTicket {
+	out := make([]dto.EticketTicket, 0, len(in))
+	for _, t := range in {
+		out = append(out, dto.EticketTicket{TicketInfo: t, QRPayload: "RBT:" + t.TicketCode})
+	}
+	return out
+}
+
 func renderPaid(t *testing.T, tokenField string) string {
 	t.Helper()
 	var p dto.BookingPaidPayload
@@ -136,7 +147,7 @@ func renderPaid(t *testing.T, tokenField string) string {
 	require.NoError(t, err)
 	out, err := r.Render("eticket", dto.EticketData{
 		PublicRef: p.PublicRef, EventName: p.Event.Name, EventStartsAt: p.Event.StartsAt, EventVenue: p.Event.Venue,
-		Tickets: p.Tickets, TicketLinkToken: p.TicketLinkToken,
+		Tickets: views(p.Tickets), TicketURL: link(p.TicketLinkToken),
 	})
 	require.NoError(t, err)
 	return out
@@ -144,7 +155,7 @@ func renderPaid(t *testing.T, tokenField string) string {
 
 func TestRenderer_Eticket_ContractPayload(t *testing.T) {
 	out := renderPaid(t, `, "ticketLinkToken": "opaque-token"`)
-	for _, want := range []string{"RB-7K2M9Q", "Konser A", "GBK", "TK-AAAA1111", "TK-BBBB2222", "Budi Santoso", "Sari Dewi", "3174********0001", "3174********0002", "Lihat e-tiket: opaque-token"} {
+	for _, want := range []string{"RB-7K2M9Q", "Konser A", "GBK", "TK-AAAA1111", "TK-BBBB2222", "Budi Santoso", "Sari Dewi", "3174********0001", "3174********0002", "Lihat e-tiket: https://rusuh.example/tickets/b?t=opaque-token"} {
 		assert.Contains(t, out, want)
 	}
 	assert.NotRegexp(t, `\d{16}`, out, "NIK lengkap tidak boleh muncul di email")
@@ -165,4 +176,12 @@ func TestRenderer_Review_AmountMatchesBookingPrice(t *testing.T) {
 	out, err = r.Render("review", dto.ReviewData{BookingID: "b1", AmountMinor: 500})
 	require.NoError(t, err)
 	assert.Contains(t, out, "Rp 500\n", "jumlah kecil tidak dibulatkan menjadi 5")
+}
+
+// The link line appears only when Booking issued a token (the use case builds the URL from it).
+func link(token string) string {
+	if token == "" {
+		return ""
+	}
+	return "https://rusuh.example/tickets/b?t=" + token
 }

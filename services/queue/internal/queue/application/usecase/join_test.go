@@ -92,14 +92,25 @@ func TestJoin_DirectAdmission(t *testing.T) {
 	m.pii.EXPECT().HashEmail(gomock.Any()).Return([]byte{0x01}).AnyTimes()
 	m.pii.EXPECT().HashNIK(gomock.Any()).Return([]byte{0xaa})
 	m.pii.EXPECT().SealEmail(gomock.Any()).Return([]byte("enc"), nil)
+	m.pii.EXPECT().SealBuyerEmail("a@b.id").Return("c2VhbGVk", nil)
 	m.limiter.EXPECT().Allow(ctx, gomock.Any(), gomock.Any(), gomock.Any()).Return(true, nil).Times(2)
 	m.settings.EXPECT().Get(ctx, "ev1").Return(entity.EventSettings{ActiveSlotCapacity: 10}, true, nil)
-	m.store.EXPECT().Join(ctx, gomock.Any()).Return(outbound.JoinResult{Outcome: outbound.JoinOK, Seq: 1}, nil)
+	m.store.EXPECT().Join(ctx, gomock.Any()).DoAndReturn(func(_ context.Context, p outbound.JoinParams) (outbound.JoinResult, error) {
+		assert.Equal(t, "3201********0001", p.NikMasked, "NIK tersamar disimpan di entry")
+		return outbound.JoinResult{Outcome: outbound.JoinOK, Seq: 1}, nil
+	})
 	m.audit.EXPECT().Append(ctx, gomock.Any()).Return(nil).Times(2) // JOINED + ADMITTED
 	m.store.EXPECT().ActiveCount(ctx, "ev1").Return(0, nil)
-	m.booking.EXPECT().ReserveBatch(ctx, gomock.Any()).Return(outbound.AllocationBatchResponse{
-		Allocations: []outbound.AllocationResult{{QueueEntryID: "x", AllocationID: "al1", Status: "GRANTED", ClaimDeadline: "2026-10-20T10:01:00Z"}},
-	}, nil)
+	m.booking.EXPECT().ReserveBatch(ctx, gomock.Any()).DoAndReturn(
+		func(_ context.Context, req outbound.AllocationBatchRequest) (outbound.AllocationBatchResponse, error) {
+			// Booking stores the buyer's email (e-ticket) and masked NIK; the plain NIK never leaves the queue.
+			require.Len(t, req.Entries, 1)
+			assert.Equal(t, "c2VhbGVk", req.Entries[0].BuyerEmailEnc, "Booking hanya menerima ciphertext")
+			assert.Equal(t, "3201********0001", req.Entries[0].BuyerNikMasked)
+			return outbound.AllocationBatchResponse{
+				Allocations: []outbound.AllocationResult{{QueueEntryID: "x", AllocationID: "al1", Status: "GRANTED", ClaimDeadline: "2026-10-20T10:01:00Z"}},
+			}, nil
+		})
 	m.store.EXPECT().Promote(ctx, "ev1", gomock.Any(), 10, gomock.Any()).Return([]string{"x"}, nil)
 	m.tokens.EXPECT().IssueQueue(gomock.Any(), gomock.Any(), gomock.Any()).Return("qt", nil)
 	m.tokens.EXPECT().IssueVisitor(gomock.Any(), gomock.Any()).Return("vt", nil)
@@ -114,7 +125,7 @@ func TestJoin_LoggedInWithNIKIgnoresBodyNik(t *testing.T) {
 	uc, m := newJoin(t)
 	ctx := context.Background()
 
-	m.verifier.EXPECT().Verify("bearer").Return(outbound.UserIdentity{AccountID: "acc1", HasNIK: true, NIKHash: "deadbeef"}, nil)
+	m.verifier.EXPECT().Verify("bearer").Return(outbound.UserIdentity{AccountID: "acc1", HasNIK: true, NIKHash: "deadbeef", NIKMasked: "3174********0001"}, nil)
 	m.pii.EXPECT().HashEmail(gomock.Any()).Return([]byte{0x01}).AnyTimes()
 	m.pii.EXPECT().SealEmail(gomock.Any()).Return([]byte("enc"), nil)
 	m.limiter.EXPECT().Allow(ctx, gomock.Any(), gomock.Any(), gomock.Any()).Return(true, nil).Times(1)
@@ -123,6 +134,7 @@ func TestJoin_LoggedInWithNIKIgnoresBodyNik(t *testing.T) {
 		func(_ context.Context, p outbound.JoinParams) (outbound.JoinResult, error) {
 			assert.Equal(t, "deadbeef", p.NikHash)
 			assert.Equal(t, "acc1", p.AccountID)
+			assert.Equal(t, "3174********0001", p.NikMasked, "NIK tersamar dari klaim token, bukan kosong")
 			return outbound.JoinResult{Outcome: outbound.JoinOK, Seq: 3}, nil
 		})
 	m.audit.EXPECT().Append(ctx, gomock.Any()).Return(nil)
@@ -243,4 +255,42 @@ func TestJoin_StorePropagatesError(t *testing.T) {
 	m.store.EXPECT().Join(ctx, gomock.Any()).Return(outbound.JoinResult{}, errors.New("valkey down"))
 	_, err := uc.Join(ctx, inbound.JoinInput{EventID: "ev1", Body: validBody(), ClientIP: "1.2.3.4"})
 	assert.Error(t, err)
+}
+
+func TestJoin_FirstJoinForKnownEventCreatesDefaultSettings(t *testing.T) {
+	uc, m := newJoin(t)
+	ctx := context.Background()
+
+	m.pii.EXPECT().HashEmail(gomock.Any()).Return([]byte{0x01}).AnyTimes()
+	m.pii.EXPECT().HashNIK(gomock.Any()).Return([]byte{0xaa})
+	m.pii.EXPECT().SealEmail(gomock.Any()).Return([]byte("enc"), nil)
+	m.limiter.EXPECT().Allow(ctx, gomock.Any(), gomock.Any(), gomock.Any()).Return(true, nil).Times(2)
+	m.settings.EXPECT().Get(ctx, "ev1").Return(entity.EventSettings{}, false, nil)
+	m.booking.EXPECT().Supply(ctx, "ev1").Return(outbound.SupplySnapshot{EventID: "ev1"}, nil)
+	m.settings.EXPECT().Ensure(ctx, "ev1").Return(entity.EventSettings{ActiveSlotCapacity: 0}, nil)
+	m.store.EXPECT().Join(ctx, gomock.Any()).Return(outbound.JoinResult{Outcome: outbound.JoinOK, Seq: 1}, nil)
+	m.audit.EXPECT().Append(ctx, gomock.Any()).Return(nil)
+	m.tokens.EXPECT().IssueQueue(gomock.Any(), gomock.Any(), gomock.Any()).Return("qt", nil)
+	m.tokens.EXPECT().IssueVisitor(gomock.Any(), gomock.Any()).Return("vt", nil)
+
+	resp, err := uc.Join(ctx, inbound.JoinInput{EventID: "ev1", Body: validBody(), ClientIP: "1.2.3.4"})
+	require.NoError(t, err)
+	assert.Equal(t, "WAITING", resp.Status)
+}
+
+func TestJoin_UnknownEventIsRefusedWithoutTouchingTheQueue(t *testing.T) {
+	uc, m := newJoin(t)
+	ctx := context.Background()
+
+	m.pii.EXPECT().HashEmail(gomock.Any()).Return([]byte{0x01}).AnyTimes()
+	m.pii.EXPECT().HashNIK(gomock.Any()).Return([]byte{0xaa})
+	m.pii.EXPECT().SealEmail(gomock.Any()).Return([]byte("enc"), nil)
+	m.limiter.EXPECT().Allow(ctx, gomock.Any(), gomock.Any(), gomock.Any()).Return(true, nil).Times(2)
+	m.settings.EXPECT().Get(ctx, "nope").Return(entity.EventSettings{}, false, nil)
+	m.booking.EXPECT().Supply(ctx, "nope").Return(outbound.SupplySnapshot{}, entity.ErrEventNotFound)
+	// no settings.Ensure, no store.Join: gomock fails the test on any unexpected call
+
+	_, err := uc.Join(ctx, inbound.JoinInput{EventID: "nope", Body: validBody(), ClientIP: "1.2.3.4"})
+	require.ErrorIs(t, err, entity.ErrEventNotFound)
+	assert.Equal(t, 404, inbound.MapError(err).HTTPStatus)
 }

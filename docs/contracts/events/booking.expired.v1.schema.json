@@ -14,7 +14,8 @@
     },
     "buyerEmail": {
       "type": "string",
-      "format": "email"
+      "deprecated": true,
+      "description": "Tidak lagi dikirim. Hanya diterima Notification untuk pesan lama yang masih di antrean."
     },
     "reason": {
       "type": "string",
@@ -23,12 +24,17 @@
         "SESSION_EXPIRED",
         "CANCELLED"
       ]
+    },
+    "buyerEmailEnc": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Email pembeli, AES-256-GCM (AAD booking.buyer_email) base64; dibuat Queue, hanya Notification yang membuka (UU PDP Pasal 39)"
     }
   },
   "required": [
     "bookingId",
     "publicRef",
-    "buyerEmail",
+    "buyerEmailEnc",
     "reason"
   ],
   "additionalProperties": false

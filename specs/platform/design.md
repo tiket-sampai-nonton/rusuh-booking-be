@@ -170,7 +170,7 @@ hapus `kid` lama setelah TTL token terpanjang lewat.
 | `/api/v1/events`, `/api/v1/events/{id}` | booking-api:8082 | 2 s, cache key termasuk `timeframe,city,status,sort,page,size` |
 | `/api/v1/booking-sessions/*/stream` | booking-api:8082 | **off**, `proxy_buffering off` |
 | `/api/v1/booking-sessions*`, `/api/v1/bookings*`, `/api/v1/me/bookings` | booking-api:8082 | off |
-| `/api/v1/payments*`, `/api/v1/payment-page-sessions`, `/api/v1/webhooks/*`, `/api/v1/local-simulator/*` | payment-api:8083 | off |
+| `/api/v1/payments*`, `/api/v1/payment-page-sessions`, `/api/v1/webhooks/*` | payment-api:8083 | off |
 | `/api/v1/push-subscriptions*` | notification-api:8084 | off |
 | `/api/v1/auth/*`, `/api/v1/me` | user-api:8085 | off |
 | `/internal/*`, `/metrics` | — | **403** |

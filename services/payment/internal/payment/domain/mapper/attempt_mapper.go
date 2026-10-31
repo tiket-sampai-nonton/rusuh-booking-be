@@ -15,8 +15,7 @@ func AttemptToDTO(a entity.Attempt) dto.Attempt {
 		out.ExpiresAt = &t
 	}
 	if a.Instruction != nil {
-		i := dto.Instruction(*a.Instruction)
-		out.Instruction = &i
+		out.RedirectURL, out.SuccessReturnURL, out.FailedReturnURL = a.Instruction.RedirectURL, a.Instruction.SuccessReturnURL, a.Instruction.FailedReturnURL
 	}
 	return out
 }

@@ -109,3 +109,28 @@ func TestSupply_PropagatesRequestAndTrace(t *testing.T) {
 	assert.Equal(t, "req-7", gotReqID)
 	assert.Equal(t, "Root=1-5759e988-bd862e3fe1be46a994272793", gotTrace)
 }
+
+func TestSupply_UnknownEventIsNotFoundAndDoesNotTripTheBreaker(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNotFound) }))
+	defer srv.Close()
+
+	br := newBreaker(t) // threshold 2
+	c := bookingclient.NewClient(srv.URL, time.Second, br, "")
+	for i := 0; i < 5; i++ {
+		_, err := c.Supply(context.Background(), "made-up")
+		require.ErrorIs(t, err, entity.ErrEventNotFound)
+		assert.NotErrorIs(t, err, entity.ErrDependencyUnavailable)
+	}
+	// 5 probes for made-up ids must not open the breaker for real traffic.
+	_, err := c.Supply(context.Background(), "made-up")
+	assert.ErrorIs(t, err, entity.ErrEventNotFound)
+}
+
+func TestReserveBatch_NotFoundStaysADependencyError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNotFound) }))
+	defer srv.Close()
+
+	c := bookingclient.NewClient(srv.URL, time.Second, newBreaker(t), "")
+	_, err := c.ReserveBatch(context.Background(), outbound.AllocationBatchRequest{EventID: "ev1"})
+	assert.ErrorIs(t, err, entity.ErrDependencyUnavailable)
+}

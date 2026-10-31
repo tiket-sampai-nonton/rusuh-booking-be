@@ -24,9 +24,10 @@ var (
 	ErrSoldOut    = errors.New("queue: tiket sudah habis")
 	ErrTurnMissed = errors.New("queue: giliran terlewat")
 
-	ErrNotFound   = errors.New("queue: entry tidak ditemukan")
-	ErrNotOwner   = errors.New("queue: entry bukan milik visitor ini")
-	ErrEntryMoved = errors.New("queue: entry dipindahkan ke perangkat lain")
+	ErrNotFound      = errors.New("queue: entry tidak ditemukan")
+	ErrEventNotFound = errors.New("queue: event tidak ditemukan")
+	ErrNotOwner      = errors.New("queue: entry bukan milik visitor ini")
+	ErrEntryMoved    = errors.New("queue: entry dipindahkan ke perangkat lain")
 
 	ErrDependencyUnavailable = errors.New("queue: dependency tidak tersedia")
 )

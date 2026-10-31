@@ -23,9 +23,8 @@ import (
 const (
 	scopeCreateAttempt = "create_attempt"
 	idempotencyTTL     = 24 * time.Hour
-	// minChargeExpiry is the least time left before the booking deadline that still allows a charge. Verified on the
-	// Sandbox (2026-10-26): 30 s is accepted for every method, 20 s is rejected for VA BCA even though the docs say 20 s.
-	minChargeExpiry = 30 * time.Second
+	// minChargeExpiry is the least time left before the booking deadline that still allows a charge: Snap expiry is whole minutes.
+	minChargeExpiry = time.Minute
 )
 
 // CreateAttempt starts a payment for a booking (design §9.1): idempotency → payment-lock → close the previous
@@ -37,18 +36,22 @@ type CreateAttempt struct {
 	gateway  outbound.IPaymentGateway
 	clock    clock.IClock
 	enabled  map[vo.Method]bool
+	returns  ReturnURLs
 }
+
+// ReturnURLs are the FE pages Snap sends the payer back to; both verify the status with the backend before showing a result.
+type ReturnURLs struct{ Success, Failed string }
 
 // NewCreateAttempt wires the usecase; methods are the enabled payment methods.
 func NewCreateAttempt(b outbound.IBookingClient, a outbound.IAttemptRepository, idem outbound.IIdempotencyStore,
-	g outbound.IPaymentGateway, clk clock.IClock, methods []string) *CreateAttempt {
+	g outbound.IPaymentGateway, clk clock.IClock, methods []string, returns ReturnURLs) *CreateAttempt {
 	enabled := map[vo.Method]bool{}
 	for _, m := range methods {
 		if method, ok := vo.ParseMethod(m); ok {
 			enabled[method] = true
 		}
 	}
-	return &CreateAttempt{booking: b, attempts: a, idem: idem, gateway: g, clock: clk, enabled: enabled}
+	return &CreateAttempt{booking: b, attempts: a, idem: idem, gateway: g, clock: clk, enabled: enabled, returns: returns}
 }
 
 // CreateAttempt returns the attempt with its payment instruction. A repeat with the same Idempotency-Key returns
@@ -155,12 +158,13 @@ func (u *CreateAttempt) run(ctx context.Context, payable outbound.Payable, metho
 
 	// 4. Charge. The provider transaction expires with the booking (Property 5).
 	res, cerr := u.gateway.Charge(ctx, outbound.ChargeRequest{
-		OrderID: a.ProviderOrderID, Method: method, AmountMinor: a.AmountMinor, OrderTime: now, Expiry: remaining,
+		OrderID: a.ProviderOrderID, Method: method, AmountMinor: a.AmountMinor, OrderTime: now, Expiry: remaining, FinishURL: u.returns.Success,
 	})
 	cleanup := context.WithoutCancel(ctx)
 	switch {
 	case cerr == nil:
 		ins := res.Instruction
+		ins.SuccessReturnURL, ins.FailedReturnURL = u.returns.Success, u.returns.Failed
 		if _, err := u.attempts.Transition(cleanup, outbound.TransitionSpec{
 			AttemptID: a.ID, To: vo.AttemptPending, ProviderTxID: res.ProviderTxID, Instruction: &ins, LastProviderStatus: "pending",
 		}); err != nil {

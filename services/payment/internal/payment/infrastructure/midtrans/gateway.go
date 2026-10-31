@@ -1,5 +1,5 @@
-// Package midtrans implements IPaymentGateway on the Midtrans Core API (POST /v2/charge, GET /v2/{id}/status,
-// POST /v2/{id}/cancel). Request and response shapes were checked against docs.midtrans.com on 2026-10-26;
+// Package midtrans implements IPaymentGateway on Midtrans Snap (POST /snap/v1/transactions) plus the Core API order
+// endpoints (GET /v2/{id}/status, POST /v2/{id}/cancel). Request and response shapes were checked against docs.midtrans.com on 2026-10-26;
 // see docs/evidence/2026-10-26-midtrans-verifikasi.md. Every call runs through a circuit breaker and a bulkhead.
 package midtrans
 
@@ -37,8 +37,10 @@ type Limits struct {
 
 // Config configures the gateway. ServerKey is a secret: it is only used for the Authorization header.
 type Config struct {
-	BaseURL   string
-	ServerKey string
+	BaseURL string
+	// SnapBaseURL hosts POST /snap/v1/transactions; empty derives it from BaseURL (api. -> app.).
+	SnapBaseURL string
+	ServerKey   string
 	// NotificationURL, when set, is sent as X-Override-Notification on every charge so Midtrans posts that
 	// transaction's notifications there instead of the dashboard URL. Meant for local tests through a tunnel;
 	// leave it empty in staging and production.
@@ -56,6 +58,7 @@ type guard struct {
 // Gateway talks to Midtrans.
 type Gateway struct {
 	baseURL   string
+	snapURL   string
 	auth      string
 	notifyURL string
 	client    *http.Client
@@ -87,10 +90,18 @@ func New(cfg Config, now func() time.Time) (*Gateway, error) {
 	}
 	return &Gateway{
 		baseURL:   strings.TrimRight(cfg.BaseURL, "/"),
+		snapURL:   strings.TrimRight(snapBase(cfg), "/"),
 		auth:      "Basic " + base64.StdEncoding.EncodeToString([]byte(cfg.ServerKey+":")),
 		notifyURL: cfg.NotificationURL,
 		client:    client, charge: cg, status: sg,
 	}, nil
+}
+
+func snapBase(cfg Config) string {
+	if cfg.SnapBaseURL != "" {
+		return cfg.SnapBaseURL
+	}
+	return strings.Replace(cfg.BaseURL, "://api.", "://app.", 1)
 }
 
 func newGuard(name string, l Limits, now func() time.Time) (guard, error) {
@@ -126,135 +137,83 @@ func (g guard) do(ctx context.Context, call func(context.Context) error) error {
 	return err
 }
 
-// ---- charge ----
+// ---- snap ----
 
-type chargeBody struct {
-	PaymentType        string        `json:"payment_type"`
+type snapBody struct {
 	TransactionDetails txDetails     `json:"transaction_details"`
-	BankTransfer       *bankTransfer `json:"bank_transfer,omitempty"`
-	Qris               *qris         `json:"qris,omitempty"`
-	CustomExpiry       customExpiry  `json:"custom_expiry"`
+	Expiry             snapExpiry    `json:"expiry"`
+	EnabledPayments    []string      `json:"enabled_payments,omitempty"`
+	Callbacks          *snapCallback `json:"callbacks,omitempty"`
 }
-
 type txDetails struct {
 	OrderID     string `json:"order_id"`
 	GrossAmount int64  `json:"gross_amount"`
 }
-type bankTransfer struct {
-	Bank string `json:"bank"`
+type snapExpiry struct {
+	StartTime string `json:"start_time"`
+	Unit      string `json:"unit"`
+	Duration  int64  `json:"duration"`
 }
-type qris struct {
-	Acquirer string `json:"acquirer"`
+type snapCallback struct {
+	Finish string `json:"finish"`
 }
-type customExpiry struct {
-	OrderTime      string `json:"order_time"`
-	ExpiryDuration int64  `json:"expiry_duration"`
-	Unit           string `json:"unit"`
+type snapResponse struct {
+	responseHeader
+	Token       string `json:"token"`
+	RedirectURL string `json:"redirect_url"`
 }
 
-// Charge asks Midtrans for a payment instruction. Gross amount is amountMinor as whole rupiah (IDR has no decimals).
+// enabledPayments maps a payment-page method to the Snap channels offered to the payer (nil = all channels).
+func enabledPayments(m vo.Method) ([]string, error) {
+	switch m {
+	case vo.MethodVABCA:
+		return []string{"bca_va"}, nil
+	case vo.MethodVABNI:
+		return []string{"bni_va"}, nil
+	case vo.MethodVABRI:
+		return []string{"bri_va"}, nil
+	case vo.MethodVAPermata:
+		return []string{"permata_va"}, nil
+	case vo.MethodQRIS:
+		return []string{"qris"}, nil
+	case vo.MethodGoPay:
+		return []string{"gopay"}, nil
+	case vo.MethodSnap:
+		return nil, nil
+	}
+	return nil, fmt.Errorf("%w: metode %q", outbound.ErrGatewayRejected, m)
+}
+
+// Charge creates a Midtrans Snap token (POST /snap/v1/transactions). Amount and order id come from the backend only.
+// Snap expiry is in whole minutes, rounded down so the transaction never outlives the booking. Status and cancel
+// use the Core API order endpoints, which work for Snap orders.
 func (g *Gateway) Charge(ctx context.Context, req outbound.ChargeRequest) (outbound.ChargeResult, error) {
-	body, err := buildCharge(req)
+	channels, err := enabledPayments(req.Method)
 	if err != nil {
 		return outbound.ChargeResult{}, err
 	}
-	var resp chargeResponse
+	minutes := int64(req.Expiry / time.Minute)
+	if minutes < 1 {
+		return outbound.ChargeResult{}, fmt.Errorf("%w: sisa waktu pembayaran kurang dari 1 menit", outbound.ErrGatewayRejected)
+	}
+	body := snapBody{
+		TransactionDetails: txDetails{OrderID: req.OrderID, GrossAmount: req.AmountMinor},
+		Expiry:             snapExpiry{StartTime: req.OrderTime.In(vo.WIB()).Format("2006-01-02 15:04:05 -0700"), Unit: "minute", Duration: minutes},
+		EnabledPayments:    channels,
+	}
+	if req.FinishURL != "" {
+		body.Callbacks = &snapCallback{Finish: req.FinishURL}
+	}
+	var resp snapResponse
 	if err := g.charge.do(ctx, func(ctx context.Context) error {
-		return g.call(ctx, http.MethodPost, "/v2/charge", body, &resp, nil, g.overrideNotification)
+		return g.callURL(ctx, g.snapURL+"/snap/v1/transactions", http.MethodPost, body, &resp, nil, g.overrideNotification)
 	}); err != nil {
 		return outbound.ChargeResult{}, err
 	}
-	ins, err := instructionFrom(req.Method, resp)
-	if err != nil {
-		return outbound.ChargeResult{}, err
+	if resp.Token == "" || resp.RedirectURL == "" {
+		return outbound.ChargeResult{}, fmt.Errorf("%w: respons tanpa token Snap", outbound.ErrGatewayAmbiguous)
 	}
-	return outbound.ChargeResult{ProviderTxID: resp.TransactionID, Instruction: ins}, nil
-}
-
-func buildCharge(req outbound.ChargeRequest) (chargeBody, error) {
-	b := chargeBody{
-		TransactionDetails: txDetails{OrderID: req.OrderID, GrossAmount: req.AmountMinor},
-		CustomExpiry: customExpiry{
-			OrderTime:      req.OrderTime.In(vo.WIB()).Format("2006-01-02 15:04:05 -0700"),
-			ExpiryDuration: int64(req.Expiry / time.Second),
-			Unit:           "second",
-		},
-	}
-	switch req.Method {
-	case vo.MethodVABCA:
-		b.PaymentType, b.BankTransfer = "bank_transfer", &bankTransfer{Bank: "bca"}
-	case vo.MethodVABNI:
-		b.PaymentType, b.BankTransfer = "bank_transfer", &bankTransfer{Bank: "bni"}
-	case vo.MethodVABRI:
-		b.PaymentType, b.BankTransfer = "bank_transfer", &bankTransfer{Bank: "bri"}
-	case vo.MethodVAPermata:
-		b.PaymentType = "permata"
-	case vo.MethodQRIS:
-		b.PaymentType, b.Qris = "qris", &qris{Acquirer: "gopay"}
-	case vo.MethodGoPay:
-		b.PaymentType = "gopay"
-	default:
-		return chargeBody{}, fmt.Errorf("%w: metode %q", outbound.ErrGatewayRejected, req.Method)
-	}
-	if req.Expiry < time.Second {
-		return chargeBody{}, fmt.Errorf("%w: sisa waktu pembayaran habis", outbound.ErrGatewayRejected)
-	}
-	return b, nil
-}
-
-type action struct {
-	Name string `json:"name"`
-	URL  string `json:"url"`
-}
-
-type chargeResponse struct {
-	responseHeader
-	TransactionID   string     `json:"transaction_id"`
-	VANumbers       []vaNumber `json:"va_numbers"`
-	PermataVANumber string     `json:"permata_va_number"`
-	Actions         []action   `json:"actions"`
-}
-
-type vaNumber struct {
-	Bank     string `json:"bank"`
-	VANumber string `json:"va_number"`
-}
-
-func (r chargeResponse) actionURL(name string) string {
-	for _, a := range r.Actions {
-		if a.Name == name {
-			return a.URL
-		}
-	}
-	return ""
-}
-
-func instructionFrom(m vo.Method, r chargeResponse) (entity.Instruction, error) {
-	switch m {
-	case vo.MethodVABCA, vo.MethodVABNI, vo.MethodVABRI:
-		if len(r.VANumbers) == 0 || r.VANumbers[0].VANumber == "" {
-			return entity.Instruction{}, fmt.Errorf("%w: respons tanpa nomor VA", outbound.ErrGatewayAmbiguous)
-		}
-		return entity.Instruction{Type: "VA", Bank: r.VANumbers[0].Bank, VANumber: r.VANumbers[0].VANumber}, nil
-	case vo.MethodVAPermata:
-		if r.PermataVANumber == "" {
-			return entity.Instruction{}, fmt.Errorf("%w: respons tanpa nomor VA", outbound.ErrGatewayAmbiguous)
-		}
-		return entity.Instruction{Type: "VA", Bank: "permata", VANumber: r.PermataVANumber}, nil
-	case vo.MethodQRIS:
-		qr := r.actionURL("generate-qr-code")
-		if qr == "" {
-			return entity.Instruction{}, fmt.Errorf("%w: respons tanpa QR", outbound.ErrGatewayAmbiguous)
-		}
-		return entity.Instruction{Type: "QR", QRURL: qr}, nil
-	case vo.MethodGoPay:
-		ins := entity.Instruction{Type: "DEEPLINK", DeeplinkURL: r.actionURL("deeplink-redirect"), QRURL: r.actionURL("generate-qr-code")}
-		if ins.DeeplinkURL == "" && ins.QRURL == "" {
-			return entity.Instruction{}, fmt.Errorf("%w: respons tanpa tautan GoPay", outbound.ErrGatewayAmbiguous)
-		}
-		return ins, nil
-	}
-	return entity.Instruction{}, fmt.Errorf("%w: metode %q", outbound.ErrGatewayRejected, m)
+	return outbound.ChargeResult{Instruction: entity.Instruction{Type: "SNAP", SnapToken: resp.Token, RedirectURL: resp.RedirectURL}}, nil
 }
 
 // ---- status and cancel ----
@@ -322,6 +281,10 @@ func (g *Gateway) overrideNotification(req *http.Request) {
 }
 
 func (g *Gateway) call(ctx context.Context, method, path string, in any, out withHeader, tolerate4xx func() bool, opts ...func(*http.Request)) error {
+	return g.callURL(ctx, g.baseURL+path, method, in, out, tolerate4xx, opts...)
+}
+
+func (g *Gateway) callURL(ctx context.Context, fullURL, method string, in any, out withHeader, tolerate4xx func() bool, opts ...func(*http.Request)) error {
 	var body io.Reader
 	if in != nil {
 		raw, err := json.Marshal(in)
@@ -330,7 +293,7 @@ func (g *Gateway) call(ctx context.Context, method, path string, in any, out wit
 		}
 		body = bytes.NewReader(raw)
 	}
-	req, err := http.NewRequestWithContext(ctx, method, g.baseURL+path, body)
+	req, err := http.NewRequestWithContext(ctx, method, fullURL, body)
 	if err != nil {
 		return fmt.Errorf("%w: %w", outbound.ErrGatewayRejected, err)
 	}

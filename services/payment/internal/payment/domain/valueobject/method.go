@@ -11,12 +11,14 @@ const (
 	MethodVAPermata Method = "VA_PERMATA"
 	MethodQRIS      Method = "QRIS"
 	MethodGoPay     Method = "GOPAY"
+	// MethodSnap is Midtrans SNAP: one backend-created token; the payer picks the channel inside the Snap page.
+	MethodSnap Method = "SNAP"
 )
 
 // ParseMethod returns the method for s, or false when s is not a known method.
 func ParseMethod(s string) (Method, bool) {
 	switch m := Method(s); m {
-	case MethodVABCA, MethodVABNI, MethodVABRI, MethodVAPermata, MethodQRIS, MethodGoPay:
+	case MethodVABCA, MethodVABNI, MethodVABRI, MethodVAPermata, MethodQRIS, MethodGoPay, MethodSnap:
 		return m, true
 	}
 	return "", false

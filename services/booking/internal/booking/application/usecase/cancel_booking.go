@@ -2,6 +2,8 @@ package usecase
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"strings"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/clock"
@@ -75,18 +77,13 @@ func (uc *CancelBooking) Cancel(ctx context.Context, bookingID, visitorID string
 	return mapper.ToBooking(b, 0, uc.clock.Now()), nil
 }
 
-// ticketCodeFor derives a stable per-item ticket code: "TK-" plus 12 hex characters of the item id (48 bits). The code is
-// deterministic, so a collision would make every retry of the settlement fail again (public_code is UNIQUE); with 8 characters
-// (32 bits) that already had about a 1 in 4 chance at 50,000 tickets, with 12 it is about 4 in a million.
-func ticketCodeFor(bookingID string) func(itemID string) string {
-	return func(itemID string) string {
-		hex := strings.ToUpper(strings.ReplaceAll(itemID, "-", ""))
-		if hex == "" {
-			hex = strings.ToUpper(strings.ReplaceAll(bookingID, "-", ""))
-		}
-		if len(hex) > 12 {
-			hex = hex[:12]
-		}
-		return "TK-" + hex
+// NewTicketCode returns a new ticket code: "TK-" plus 20 hex characters (80 random bits). The code is also the QR payload,
+// so it must not be guessable (a 32-bit code is brute-forceable and collides at tens of thousands of tickets). A collision
+// (public_code is UNIQUE) is astronomically unlikely and a retry draws a new code.
+func NewTicketCode() string {
+	var b [10]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		panic("crypto/rand: " + err.Error()) // the platform CSPRNG failing is unrecoverable
 	}
+	return "TK-" + strings.ToUpper(hex.EncodeToString(b[:]))
 }

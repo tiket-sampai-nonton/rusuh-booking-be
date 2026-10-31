@@ -23,8 +23,11 @@ func Load() (Config, error) {
 		},
 		Log: logger.Config{Level: r.String("LOG_LEVEL", "info"), Format: r.String("LOG_FORMAT", "json")},
 		HTTP: HTTP{
-			ShutdownTimeout: r.Duration("HTTP_SHUTDOWN_TIMEOUT", 15*time.Second),
-			HealthTimeout:   r.Duration("HEALTH_TIMEOUT", 2*time.Second),
+			ShutdownTimeout:       r.Duration("HTTP_SHUTDOWN_TIMEOUT", 15*time.Second),
+			HealthTimeout:         r.Duration("HEALTH_TIMEOUT", 2*time.Second),
+			RateLimitPerIP:        r.Int("RATE_LIMIT_PER_IP", 300),
+			RateLimitWindow:       r.Duration("RATE_LIMIT_WINDOW", time.Minute),
+			RateLimitWebhookPerIP: r.Int("RATE_LIMIT_WEBHOOK_PER_IP", 600),
 		},
 		Worker: Worker{Interval: r.Duration("WORKER_INTERVAL", 5*time.Second)},
 	}

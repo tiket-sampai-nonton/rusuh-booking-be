@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/dotenv"
@@ -26,6 +27,8 @@ func Load() (Config, error) {
 		HTTP: HTTP{
 			ShutdownTimeout: r.Duration("HTTP_SHUTDOWN_TIMEOUT", 15*time.Second),
 			HealthTimeout:   r.Duration("HEALTH_TIMEOUT", 2*time.Second),
+			RateLimitPerIP:  r.Int("RATE_LIMIT_PER_IP", 300),
+			RateLimitWindow: r.Duration("RATE_LIMIT_WINDOW", time.Minute),
 		},
 		Worker: Worker{
 			Interval:           r.Duration("WORKER_INTERVAL", 5*time.Second),
@@ -66,6 +69,14 @@ func Load() (Config, error) {
 		MaxRetries:   r.Int("RABBITMQ_MAX_RETRIES", 3),
 		RetryDelays:  delays,
 		ConfirmWait:  r.Duration("RABBITMQ_CONFIRM_TIMEOUT", 5*time.Second),
+	}
+
+	cfg.Image = Image{
+		Storage:       r.String("IMAGE_STORAGE", "local"),
+		LocalDir:      r.String("IMAGE_LOCAL_DIR", "var/images"),
+		S3Bucket:      r.String("IMAGE_S3_BUCKET", ""),
+		S3Endpoint:    r.String("IMAGE_S3_ENDPOINT", ""),
+		PublicBaseURL: strings.TrimRight(r.String("IMAGE_PUBLIC_BASE_URL", "http://localhost:8082/media"), "/"),
 	}
 
 	// Kesalahan parsing dan validasi dilaporkan bersama agar semua variable yang salah terlihat sekaligus.

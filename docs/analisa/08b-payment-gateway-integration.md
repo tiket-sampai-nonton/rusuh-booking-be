@@ -12,6 +12,8 @@
 
 > Dokumen ini menjelaskan integrasi dengan Midtrans sebagai payment gateway. Payment Service bertindak sebagai abstraksi — frontend tidak langsung berinteraksi dengan Midtrans.
 
+> **Pembaruan 2026-10-31 (ADR-024):** integrasi memakai **Midtrans Snap**, bukan Core API. Backend membuat token Snap (`POST /snap/v1/transactions`) dan mengembalikan `redirectUrl`; FE membukanya (redirect/WebView) lalu **selalu memverifikasi** `GET /payments/{bookingId}/status`. Tidak ada nomor VA/QR/deeplink dari backend. Bentuk respons yang berlaku ada di §3.2 dan `docs/contracts/openapi/payment.yaml`; contoh `instructions` di bagian lain dokumen ini sudah tidak berlaku.
+
 ---
 
 ## 1. Architecture Overview
@@ -35,8 +37,7 @@
 **Environments:**
 | Environment | Midtrans Mode | Webhook URL |
 |-------------|---------------|-------------|
-| Local (simulator) | `PAYMENT_PROVIDER=simulator` | N/A |
-| Local (Midtrans) | `PAYMENT_PROVIDER=midtrans` | via cloudflared tunnel |
+| Local | Midtrans Sandbox (`MIDTRANS_ENVIRONMENT=sandbox`, server key Sandbox) | via cloudflared tunnel atau `MIDTRANS_NOTIFICATION_URL` per transaksi |
 | Staging/Demo | Midtrans Sandbox | `https://api.staging.rusuh.example/api/v1/webhooks/midtrans` |
 | Production | Midtrans Production | `https://api.rusuh.example/api/v1/webhooks/midtrans` |
 
@@ -122,39 +123,33 @@ Saat user memilih metode dan tekan "Bayar":
 - `X-Visitor-Token: <visitorToken>`
 - `Idempotency-Key: <uuid>`
 
-**Request:**
+**Request:** `method` adalah *bucket* yang membatasi channel di halaman Snap (`VA_BCA`→`bca_va`, `VA_BNI`→`bni_va`, `VA_BRI`→`bri_va`, `VA_PERMATA`→`permata_va`, `QRIS`→`qris`, `GOPAY`→`gopay`, `SNAP`→semua channel).
 ```json
-{
-  "method": "gopay"
-}
+{ "method": "VA_BCA" }
 ```
 
-**Response (201):**
+**Response (201):** jumlah dan `order_id` diambil backend dari Booking, tidak dari klien. Token Snap tidak dikirim ke klien secara terpisah.
 ```json
 {
-  "meta": { ... },
+  "meta": { "code": 201 },
   "data": {
-    "attemptId": "attempt-uuid",
+    "attemptNo": 1,
+    "method": "VA_BCA",
     "status": "PENDING",
-    "method": "gopay",
+    "bookingVersion": 4,
     "expiresAt": "2026-10-19T10:20:00Z",
-    "instructions": {
-      "type": "redirect",
-      "redirectUrl": "https://simulator.sandbox.midtrans.com/gopay/...",
-      "qrCodeUrl": null,
-      "vaNumber": null
-    }
+    "redirectUrl": "https://app.sandbox.midtrans.com/snap/v4/redirection/<token>",
+    "successReturnUrl": "https://<fe>/payment/success",
+    "failedReturnUrl": "https://<fe>/payment/failed"
   }
 }
 ```
 
-**Instruction Types:**
-
-| Type | Fields | Frontend Action |
-|------|--------|-----------------|
-| `redirect` | `redirectUrl` | Redirect/open in WebView |
-| `qr` | `qrCodeUrl` | Display QR code image |
-| `va` | `vaNumber`, `bankCode` | Display VA number for manual transfer |
+Catatan perilaku:
+- Kedaluwarsa transaksi Snap dihitung dari sisa waktu booking, dibulatkan **ke bawah** ke menit (minimum 1 menit); `expiry.unit` = `minute` (belum diverifikasi di Sandbox, task PAY-2).
+- Order Snap baru muncul di Core API setelah pembayar memilih channel. Sebelum itu `GET /v2/{order_id}/status` menjawab 404 dan backend memperlakukannya sebagai belum dibayar.
+- Token Snap yang sudah dibuat tidak bisa dibatalkan lewat API. Bila attempt diganti, pembayaran yang masih masuk lewat token lama akan dicatat sebagai pembayaran setelah pembatalan (kasus refund `SETTLED_AFTER_CANCEL`).
+- Webhook, signature (`SHA512(order_id+status_code+gross_amount+serverKey)`), idempotensi, dan status Core API tidak berubah.
 
 ### 3.3 Step 3: Handle Payment Result
 
@@ -176,16 +171,14 @@ Saat user memilih metode dan tekan "Bayar":
 
 **Endpoint:** `GET /api/v1/payments/{bookingId}/status`
 
-**Response:**
+**Response:** `bookingStatus` adalah status Booking (otoritatif); `attempt.status` adalah status attempt terakhir (`CREATED|PENDING|UNKNOWN|SUCCEEDED|FAILED|CANCELLED|EXPIRED|REFUND_REQUIRED|REFUNDED`).
 ```json
 {
-  "meta": { ... },
+  "meta": { "code": 200 },
   "data": {
-    "bookingId": "booking-uuid",
-    "status": "PAID",
-    "paidAt": "2026-10-19T10:08:00Z",
-    "method": "gopay",
-    "ticketUrl": "/tickets/booking-uuid"
+    "bookingId": "booking-uuid", "bookingStatus": "PAID", "orderId": "RB-7F3A9C21",
+    "paymentExpiresAt": "2026-10-19T10:20:00Z", "serverTime": "2026-10-19T10:08:05Z",
+    "attempt": { "attemptNo": 1, "method": "VA_BCA", "status": "SUCCEEDED", "bookingVersion": 4 }
   }
 }
 ```
@@ -194,7 +187,7 @@ Saat user memilih metode dan tekan "Bayar":
 | Status | Kondisi | Aksi Frontend |
 |--------|---------|---------------|
 | `AWAITING_PAYMENT` | Belum ada attempt | Tampilkan pilihan metode |
-| `PENDING` | Menunggu pembayaran | Tampilkan instruksi, poll |
+| `PENDING` | Menunggu pembayaran | Poll; pembayar sedang/akan membayar di halaman Snap |
 | `PAID` | Berhasil | Redirect ke halaman tiket |
 | `EXPIRED` | TTL habis | Redirect home dengan `PAYMENT_EXPIRED` |
 | `FAILED` | Gagal di gateway | Tampilkan error, allow retry method |
@@ -366,16 +359,9 @@ setInterval(() => {
 
 ## 9. Local Development
 
-### 9.1 Simulator Mode
+### 9.1 Tanpa simulator internal
 
-Untuk testing tanpa Midtrans:
-
-```bash
-# .env
-PAYMENT_PROVIDER=simulator
-```
-
-Simulator auto-settles setelah 5 detik.
+Payment hanya memakai Midtrans (Snap). Lokal dan CI memakai Sandbox; unit test memakai fake gateway. Tidak ada `PAYMENT_PROVIDER` maupun endpoint `local-simulator`. "Simulator" yang disebut di bawah adalah halaman simulator pembayaran milik Midtrans Sandbox.
 
 ### 9.2 Midtrans Sandbox
 
@@ -404,7 +390,7 @@ Lihat [Midtrans Sandbox Testing](https://docs.midtrans.com/docs/testing-payment-
 
 - [ ] Payment page dengan countdown timer
 - [ ] Display available methods dari API
-- [ ] Handle semua instruction types (redirect, QR, VA)
+- [ ] Buka `redirectUrl` Snap (redirect/WebView), lalu verifikasi status ke backend di `successReturnUrl`/`failedReturnUrl`
 - [ ] Poll status dengan interval 3 detik
 - [ ] Handle semua status transitions
 - [ ] Mobile WebView dengan page token

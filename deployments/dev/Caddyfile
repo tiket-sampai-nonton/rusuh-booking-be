@@ -1,0 +1,69 @@
+# Caddy: TLS otomatis (Let's Encrypt) + routing path ke service. Variabel dari env/compose.env:
+#   DEV_DOMAIN       mis. dev.rusuhbooking.my.id
+#   ACME_EMAIL       email untuk notifikasi sertifikat
+#   ADMIN_ALLOW_IPS  IP/CIDR yang boleh memanggil /internal/v1/admin/* (default hanya loopback = tidak ada)
+# Urutan blok `handle` penting: queue harus sebelum booking karena /api/v1/events/*/queue-entries
+# juga cocok dengan /api/v1/events/* milik booking. Tidak ada rute ke /metrics, /health service, dan
+# /internal/* selain admin yang dibatasi IP: itu hanya untuk jaringan Docker.
+{
+	email {$ACME_EMAIL}
+}
+
+{$DEV_DOMAIN} {
+	encode zstd gzip
+
+	header {
+		-Server
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+	}
+
+	# Caddy menambahkan IP klien ke X-Forwarded-For; service membaca elemen terakhir (trustProxy).
+	@queue path /api/v1/queue* /api/v1/queue-status/* /api/v1/events/*/queue-entries /api/v1/queue-entries/*
+	handle @queue {
+		reverse_proxy queue-api:8081
+	}
+
+	@payment path /api/v1/payments* /api/v1/payment-page-sessions /api/v1/webhooks/midtrans
+	handle @payment {
+		reverse_proxy payment-api:8083
+	}
+
+	@push path /api/v1/push-subscriptions*
+	handle @push {
+		reverse_proxy notification-api:8084
+	}
+
+	@user path /api/v1/auth/* /api/v1/me*
+	handle @user {
+		reverse_proxy user-api:8085
+	}
+
+	# Admin (buat event, unggah gambar): hanya dari IP yang diizinkan, dan tetap butuh token admin.
+	@admin {
+		path /internal/v1/admin/*
+		remote_ip {$ADMIN_ALLOW_IPS:127.0.0.1}
+	}
+	handle @admin {
+		reverse_proxy booking-api:8082
+	}
+
+	@booking path /api/v1/events /api/v1/events/* /api/v1/bookings* /api/v1/booking-sessions* /media/*
+	handle @booking {
+		reverse_proxy booking-api:8082
+	}
+
+	handle /healthz {
+		respond "ok" 200
+	}
+
+	handle {
+		respond "Not found" 404
+	}
+}
+
+grafana.{$DEV_DOMAIN} {
+	encode zstd gzip
+	reverse_proxy grafana:3000
+}

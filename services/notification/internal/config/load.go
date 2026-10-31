@@ -69,7 +69,7 @@ func Load() (Config, error) {
 	if from == "" && provider == EmailMailpit {
 		from = "no-reply@rusuh.example"
 	}
-	cfg.Email = Email{Provider: provider, From: from, ResendAPIKey: r.String("RESEND_API_KEY", "")}
+	cfg.Email = Email{Provider: provider, From: from, ResendAPIKey: r.String("RESEND_API_KEY", ""), TicketLinkBaseURL: r.String("TICKET_LINK_BASE_URL", "")}
 	cfg.FCM = FCM{
 		ProjectID:       r.String("FCM_PROJECT_ID", ""),
 		CredentialsPath: r.String("FCM_CREDENTIALS_PATH", ""),

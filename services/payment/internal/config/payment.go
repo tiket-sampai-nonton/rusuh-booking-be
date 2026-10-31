@@ -17,7 +17,7 @@ const (
 )
 
 // Payment methods the service can offer (CreateAttemptRequest.method in payment.yaml).
-var knownMethods = map[string]bool{"VA_BCA": true, "VA_BNI": true, "VA_BRI": true, "VA_PERMATA": true, "QRIS": true, "GOPAY": true}
+var knownMethods = map[string]bool{"VA_BCA": true, "VA_BNI": true, "VA_BRI": true, "VA_PERMATA": true, "QRIS": true, "GOPAY": true, "SNAP": true}
 
 // Breaker holds one circuit breaker + bulkhead setting (design §6).
 type Breaker struct {
@@ -31,6 +31,8 @@ type Breaker struct {
 type Midtrans struct {
 	Environment string
 	BaseURL     string
+	// SnapBaseURL is the Snap host (MIDTRANS_SNAP_BASE_URL); defaults to the Core API host with api. replaced by app.
+	SnapBaseURL string
 	ServerKey   string
 	// NotificationURL overrides the dashboard notification URL per charge (MIDTRANS_NOTIFICATION_URL). Local tests only.
 	NotificationURL string
@@ -61,8 +63,11 @@ type Payment struct {
 	Midtrans     Midtrans
 	Methods      []string
 	PageTokenTTL time.Duration
-	BookingURL   string
-	Token        Token
+	// Return URLs handed to the FE with every attempt (PAYMENT_SUCCESS_RETURN_URL, PAYMENT_FAILED_RETURN_URL).
+	SuccessReturnURL string
+	FailedReturnURL  string
+	BookingURL       string
+	Token            Token
 }
 
 func loadPayment(r *dotenv.Reader) Payment {
@@ -89,14 +94,17 @@ func loadPayment(r *dotenv.Reader) Payment {
 		Midtrans: Midtrans{
 			Environment:     env,
 			BaseURL:         r.String("MIDTRANS_BASE_URL", defaultURL),
+			SnapBaseURL:     r.String("MIDTRANS_SNAP_BASE_URL", strings.Replace(r.String("MIDTRANS_BASE_URL", defaultURL), "://api.", "://app.", 1)),
 			ServerKey:       r.String("MIDTRANS_SERVER_KEY", ""),
 			NotificationURL: r.String("MIDTRANS_NOTIFICATION_URL", ""),
 			Charge:          breaker("MIDTRANS_CHARGE", 3*time.Second, 20*time.Second, 20),
 			Status:          breaker("MIDTRANS_STATUS", 2*time.Second, 15*time.Second, 10),
 		},
-		Methods:      methods,
-		PageTokenTTL: time.Duration(r.Int("PAYMENT_PAGE_TOKEN_TTL_SECONDS", 60)) * time.Second,
-		BookingURL:   r.String("BOOKING_SERVICE_URL", "http://localhost:8082"),
+		Methods:          methods,
+		PageTokenTTL:     time.Duration(r.Int("PAYMENT_PAGE_TOKEN_TTL_SECONDS", 60)) * time.Second,
+		SuccessReturnURL: r.String("PAYMENT_SUCCESS_RETURN_URL", "http://localhost:8081/payment/success"),
+		FailedReturnURL:  r.String("PAYMENT_FAILED_RETURN_URL", "http://localhost:8081/payment/failed"),
+		BookingURL:       r.String("BOOKING_SERVICE_URL", "http://localhost:8082"),
 		Token: Token{
 			VisitorPublicKeyFile: r.String("TOKEN_PUBLIC_KEY_FILE", ""),
 			VisitorKeyID:         r.String("TOKEN_KEY_ID", "queue-1"),
@@ -123,7 +131,8 @@ func (p Payment) Validate() error {
 	default:
 		errs = append(errs, fmt.Errorf("MIDTRANS_ENVIRONMENT %q tidak dikenal (%s | %s)", p.Midtrans.Environment, MidtransSandbox, MidtransProduction))
 	}
-	errs = append(errs, validURL("MIDTRANS_BASE_URL", p.Midtrans.BaseURL), validURL("BOOKING_SERVICE_URL", p.BookingURL))
+	errs = append(errs, validURL("MIDTRANS_BASE_URL", p.Midtrans.BaseURL), validURL("MIDTRANS_SNAP_BASE_URL", p.Midtrans.SnapBaseURL), validURL("BOOKING_SERVICE_URL", p.BookingURL),
+		validURL("PAYMENT_SUCCESS_RETURN_URL", p.SuccessReturnURL), validURL("PAYMENT_FAILED_RETURN_URL", p.FailedReturnURL))
 	if u := p.Midtrans.NotificationURL; u != "" {
 		if err := validURL("MIDTRANS_NOTIFICATION_URL", u); err != nil {
 			errs = append(errs, err)

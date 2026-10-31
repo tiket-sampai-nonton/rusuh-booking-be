@@ -123,7 +123,7 @@ func newQueueModule(cfg config.Config, clients *Clients, logger *slog.Logger) (*
 		queuehttp.NewLeaveHandler(leaveUC, visitorAuth),
 	}
 
-	promoter := worker.NewPromoter(store, settingsRepo, booking, publisher, auditRepo, clk, logger, cfg.WorkerTuning.PromoteBatchMax)
+	promoter := worker.NewPromoter(store, settingsRepo, booking, publisher, auditRepo, pii, clk, logger, cfg.WorkerTuning.PromoteBatchMax)
 	sweeper := worker.NewSweeper(store, settingsRepo, clk)
 	statusPub := worker.NewStatusPublisher(store, settingsRepo, booking, clk, cfg.WorkerTuning.StatusInterval)
 	jobs := []Job{

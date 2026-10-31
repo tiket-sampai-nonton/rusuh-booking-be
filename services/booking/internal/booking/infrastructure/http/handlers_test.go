@@ -7,11 +7,13 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/httpx"
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/token"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/domain/dto"
 	bookinghttp "github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/infrastructure/http"
@@ -56,9 +58,13 @@ func (f fakeEdit) ReplaceItems(context.Context, inbound.EditCommand) (dto.Bookin
 type fakeTickets struct {
 	resp dto.TicketList
 	err  error
+	got  *inbound.TicketAccess
 }
 
-func (f fakeTickets) GetTickets(context.Context, string) (dto.TicketList, error) {
+func (f fakeTickets) GetTickets(_ context.Context, _ string, a inbound.TicketAccess) (dto.TicketList, error) {
+	if f.got != nil {
+		*f.got = a
+	}
 	return f.resp, f.err
 }
 
@@ -80,11 +86,21 @@ func (f fakeCancel) Cancel(context.Context, string, string) (dto.Booking, error)
 	return f.resp, f.err
 }
 
+// fakeVisitors accepts any token as a valid visitor token whose subject is the token text ("bad" is rejected).
+type fakeVisitors struct{}
+
+func (fakeVisitors) Verify(tok string, _ time.Time) (token.Claims, error) {
+	if tok == "bad" {
+		return token.Claims{}, token.ErrSignature
+	}
+	return token.Claims{Subject: tok, Scope: "visitor"}, nil
+}
+
 func serve(t *testing.T, reg interface{ Register(*http.ServeMux) }, method, target string, body string, headers map[string]string) *httptest.ResponseRecorder {
 	t.Helper()
 	mux := http.NewServeMux()
 	reg.Register(mux)
-	h := httpx.Chain(mux, httpx.RequestID())
+	h := httpx.Chain(bookinghttp.ResolveVisitor(fakeVisitors{}, time.Now)(mux), httpx.RequestID())
 	var r *http.Request
 	if body != "" {
 		r = httptest.NewRequest(method, target, strings.NewReader(body))

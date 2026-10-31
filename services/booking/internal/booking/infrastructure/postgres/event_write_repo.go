@@ -131,6 +131,28 @@ func mapEventWriteErr(err error, op string) error {
 		return inbound.Validation("slug", "slug atau kode kategori sudah dipakai")
 	case pkgpg.IsCode(err, "22P02"):
 		return inbound.ErrNotFound
+	case pkgpg.IsCode(err, pkgpg.CodeCheckViolation):
+		// A value outside the table's limits (e.g. payment TTL below 120 s) is the caller's mistake, not a server fault.
+		return inbound.Validation("config", "nilai di luar batas yang diizinkan ("+pkgpg.ConstraintName(err)+")")
 	}
 	return fmt.Errorf("%s: %w", op, err)
+}
+
+// imageColumns maps an upload kind to its events column (fixed set: never built from input).
+var imageColumns = map[string]string{"image": "image_url", "banner": "banner_url", "thumbnail": "thumbnail_url"}
+
+// SetImageURL stores the public URL of an uploaded image on the event.
+func (r *EventWriteRepo) SetImageURL(ctx context.Context, eventID, kind, url string) error {
+	col, ok := imageColumns[kind]
+	if !ok {
+		return inbound.Validation("kind", "harus image, banner, atau thumbnail")
+	}
+	tag, err := r.pool.Exec(ctx, "UPDATE booking.events SET "+col+" = $2 WHERE id = $1::uuid", eventID, url)
+	if pkgpg.IsCode(err, "22P02") || (err == nil && tag.RowsAffected() == 0) {
+		return inbound.ErrNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("events: set image url: %w", err)
+	}
+	return nil
 }

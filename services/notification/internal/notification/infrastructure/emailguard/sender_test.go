@@ -14,6 +14,7 @@ import (
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/resilience"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/notification/internal/notification/infrastructure/emailguard"
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/notification/internal/notification/port/outbound"
 )
 
 // fakeSender records calls and returns the scripted error.
@@ -24,7 +25,7 @@ type fakeSender struct {
 	block chan struct{}
 }
 
-func (f *fakeSender) SendEmail(ctx context.Context, _, _, _, _, _ string) (string, error) {
+func (f *fakeSender) SendEmail(ctx context.Context, _, _, _, _, _ string, _ ...outbound.InlineImage) (string, error) {
 	f.mu.Lock()
 	f.calls++
 	err, block := f.err, f.block

@@ -1,0 +1,10 @@
+[Unit]
+Description=Jadwal harian: Pembersihan harian VPS dev
+
+[Timer]
+OnCalendar=*-*-* 03:00:00
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

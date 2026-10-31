@@ -54,6 +54,8 @@ type Email struct {
 	Provider     string // mailpit (local, CI) | resend (demo)
 	From         string
 	ResendAPIKey string
+	// TicketLinkBaseURL is the public page for e-tickets (TICKET_LINK_BASE_URL); empty = the email has no link.
+	TicketLinkBaseURL string
 }
 
 // FCM holds the push sender settings (FCM HTTP v1).

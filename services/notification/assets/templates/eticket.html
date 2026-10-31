@@ -1,35 +1,48 @@
-{{template "top" .}}
-    <tr><td style="padding:0 4px 12px;font-size:13px;color:#6b6585;">Pembayaran berhasil &middot; Ref <strong style="color:#1b1535;">{{.PublicRef}}</strong></td></tr>
-
-    <tr><td style="background:#2a1f6b;border-radius:14px 14px 0 0;padding:26px 28px;color:#ffffff;">
-      <div style="font-size:11px;letter-spacing:2px;text-transform:uppercase;color:#f5b94a;font-weight:bold;">E-Tiket</div>
-      <div style="font-size:26px;line-height:1.2;font-weight:bold;margin-top:6px;">{{.EventName}}</div>
-      <div style="font-size:14px;margin-top:10px;color:#d9d4f5;">{{formatStart .EventStartsAt}}<br>{{.EventVenue}}</div>
+<!doctype html>
+<html lang="id">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>E-Tiket {{.EventName}}</title></head>
+<body style="margin:0;padding:0;background:#0a0a0c;font-family:'Plus Jakarta Sans',Helvetica,Arial,sans-serif;color:#0a0a0c;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#0a0a0c;">
+<tr><td align="center" style="padding:32px 14px;">
+  <table role="presentation" width="440" cellpadding="0" cellspacing="0" style="width:100%;max-width:440px;">
+    <tr><td align="center" style="padding:0 0 6px;">
+      <table role="presentation" cellpadding="0" cellspacing="0"><tr><td align="center" width="64" height="64" style="width:64px;height:64px;border-radius:32px;background:#17a34a;color:#ffffff;font-size:34px;font-weight:bold;line-height:64px;">&#10003;</td></tr></table>
     </td></tr>
+    <tr><td align="center" style="padding:14px 0 4px;font-size:24px;font-weight:800;color:#ffffff;">Pembayaran Berhasil!</td></tr>
+    <tr><td align="center" style="padding:0 12px 22px;font-size:14px;line-height:1.5;color:#a8a8b0;">E-tiket sudah terbit. Tunjukkan QR di bawah saat masuk venue.<br>Ref <strong style="color:#ffffff;">{{.PublicRef}}</strong></td></tr>
     {{range .Tickets}}
-    <tr><td style="background:#ffffff;border-top:2px dashed #cfc9e6;padding:0;">
-      <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
-        <tr>
-          <td style="padding:20px 28px;vertical-align:top;">
-            <div style="font-size:11px;color:#8b86a3;text-transform:uppercase;letter-spacing:1px;">Pemegang tiket</div>
-            <div style="font-size:17px;font-weight:bold;margin-top:2px;">{{.AttendeeName}}</div>
-            <div style="font-size:13px;color:#6b6585;margin-top:2px;">NIK {{.AttendeeNikMasked}}</div>
-          </td>
-          <td align="right" style="padding:20px 28px;vertical-align:top;">
-            <div style="display:inline-block;background:#f5b94a;color:#2a1f6b;font-weight:bold;font-size:12px;letter-spacing:1px;padding:4px 12px;border-radius:12px;">{{.CategoryCode}}</div>
-          </td>
-        </tr>
-        <tr><td colspan="2" style="padding:0 28px 22px;">
-          <div style="background:#f2f0f7;border-radius:10px;padding:14px 16px;text-align:center;">
-            <div style="font-size:11px;color:#8b86a3;text-transform:uppercase;letter-spacing:1px;">Kode tiket</div>
-            <div style="font-family:'Courier New',monospace;font-size:24px;font-weight:bold;letter-spacing:3px;color:#2a1f6b;margin-top:4px;">{{.TicketCode}}</div>
-          </div>
+    <tr><td style="padding:0 0 16px;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:24px;overflow:hidden;">
+        <tr><td bgcolor="#EC1C24" style="background-color:#EC1C24;background-image:linear-gradient(135deg,#ff5a2d,#EC1C24);padding:34px 18px 14px;color:#ffffff;font-size:17px;font-weight:800;line-height:1.3;">{{$.EventName}}</td></tr>
+        <tr><td style="padding:18px 18px 4px;">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+            <tr>
+              <td style="padding-bottom:12px;vertical-align:top;"><div style="font-size:10px;letter-spacing:1.5px;text-transform:uppercase;color:#9a9aa2;">Penonton</div><div style="font-size:14px;font-weight:700;margin-top:3px;">{{.AttendeeName}}</div></td>
+              <td align="right" style="padding-bottom:12px;vertical-align:top;"><div style="font-size:10px;letter-spacing:1.5px;text-transform:uppercase;color:#9a9aa2;">NIK</div><div style="font-size:14px;font-weight:700;margin-top:3px;">{{.AttendeeNikMasked}}</div></td>
+            </tr>
+            <tr>
+              <td style="padding-bottom:12px;vertical-align:top;"><div style="font-size:10px;letter-spacing:1.5px;text-transform:uppercase;color:#9a9aa2;">Kategori</div><div style="font-size:14px;font-weight:700;margin-top:3px;">{{.CategoryCode}}</div></td>
+              <td align="right" style="padding-bottom:12px;vertical-align:top;"><div style="font-size:10px;letter-spacing:1.5px;text-transform:uppercase;color:#9a9aa2;">Tanggal</div><div style="font-size:14px;font-weight:700;margin-top:3px;">{{startDate $.EventStartsAt}}</div></td>
+            </tr>
+            <tr>
+              <td style="padding-bottom:12px;vertical-align:top;"><div style="font-size:10px;letter-spacing:1.5px;text-transform:uppercase;color:#9a9aa2;">Waktu</div><div style="font-size:14px;font-weight:700;margin-top:3px;">{{startClock $.EventStartsAt}}</div></td>
+              <td align="right" style="padding-bottom:12px;vertical-align:top;"><div style="font-size:10px;letter-spacing:1.5px;text-transform:uppercase;color:#9a9aa2;">Venue</div><div style="font-size:14px;font-weight:700;margin-top:3px;">{{$.EventVenue}}</div></td>
+            </tr>
+          </table>
+        </td></tr>
+        <tr><td style="padding:0 18px;"><div style="border-top:2px dashed #d9d9de;height:1px;line-height:1px;font-size:1px;">&nbsp;</div></td></tr>
+        <tr><td align="center" style="padding:16px 18px 20px;">
+          {{if .QRCID}}<img src="cid:{{.QRCID}}" width="140" height="140" alt="QR tiket {{.TicketCode}}" style="display:block;margin:0 auto;border:6px solid #ffffff;border-radius:12px;outline:1px solid #e6e6ea;">{{end}}
+          <div style="font-weight:800;letter-spacing:3px;margin-top:12px;font-size:14px;font-family:'Courier New',monospace;">{{.TicketCode}}</div>
+          <div style="font-size:9px;color:#9a9aa2;margin-top:6px;font-family:'Courier New',monospace;word-break:break-all;">{{.QRPayload}}</div>
         </td></tr>
       </table>
     </td></tr>
     {{end}}
-    <tr><td style="background:#ffffff;border-top:2px dashed #cfc9e6;border-radius:0 0 14px 14px;padding:20px 28px;font-size:13px;line-height:1.6;color:#4a4468;">
-      {{if .TicketLinkToken}}<p style="margin:0 0 10px;">Lihat e-tiket: {{.TicketLinkToken}}</p>{{end}}
-      Tunjukkan kode tiket di pintu masuk. Terima kasih &mdash; Tim Rusuh Booking Tiket
-    </td></tr>
-{{template "bottom" .}}
+    {{if .TicketURL}}<tr><td align="center" style="padding:6px 0 4px;"><a href="{{.TicketURL}}" style="display:inline-block;background:#ffffff;color:#0a0a0c;font-weight:700;font-size:14px;text-decoration:none;padding:14px 28px;border-radius:999px;">Buka e-tiket</a></td></tr>{{end}}
+    <tr><td align="center" style="padding:18px 0 0;font-size:12px;line-height:1.6;color:#8a8a92;">Tunjukkan QR atau kode tiket di pintu masuk.<br>Rusuh Booking Tiket &middot; email otomatis, mohon tidak membalas</td></tr>
+  </table>
+</td></tr>
+</table>
+</body>
+</html>

@@ -1,12 +1,11 @@
 //go:build integration
 
-package postgres_test
+package postgres
 
 import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -20,39 +19,11 @@ import (
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/eventstore"
 	pkgpg "github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/postgres"
 	domevent "github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/domain/event"
-	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/infrastructure/postgres"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/port/outbound"
 )
 
-// testPool opens a pgx pool for integration tests. Uses TEST_POSTGRES_DSN or Makefile env vars.
-func testPool(t *testing.T) *pgxpool.Pool {
-	t.Helper()
-	dsn := os.Getenv("TEST_POSTGRES_DSN")
-	if dsn == "" {
-		dsn = fmt.Sprintf(
-			"host=%s port=%s user=%s password=%s dbname=%s sslmode=disable search_path=booking",
-			envOr("TEST_POSTGRES_HOST", "localhost"),
-			envOr("TEST_POSTGRES_PORT", "5432"),
-			envOr("TEST_POSTGRES_USER", "rbt"),
-			envOr("TEST_POSTGRES_PASSWORD", "rbt-local-only"),
-			envOr("TEST_POSTGRES_DATABASE", "rbt"),
-		)
-	}
-	cfg, err := pgxpool.ParseConfig(dsn)
-	require.NoError(t, err, "parse TEST_POSTGRES_DSN")
-	cfg.MaxConns = 30
-	pool, err := pgxpool.NewWithConfig(context.Background(), cfg)
-	require.NoError(t, err, "pgxpool.New")
-	t.Cleanup(pool.Close)
-	return pool
-}
-
-func envOr(key, def string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return def
-}
+// testPool returns a pool on a throw-away database (see setup), so these tests never leave events in the dev database.
+func testPool(t *testing.T) *pgxpool.Pool { return setup(t) }
 
 // seedTestEvent inserts a minimal event + 1 category + supply with the given capacity.
 func seedTestEvent(t *testing.T, pool *pgxpool.Pool, suffix string, capacity int) (eventID, catID string) {
@@ -84,31 +55,31 @@ func seedTestEvent(t *testing.T, pool *pgxpool.Pool, suffix string, capacity int
 	require.NoError(t, err)
 
 	_, err = pool.Exec(ctx, `
-		INSERT INTO booking.event_supply (event_id, total_capacity)
-		VALUES ($1::uuid, $2)
-		ON CONFLICT (event_id) DO UPDATE SET total_capacity=$2`, eventID, capacity)
+		INSERT INTO booking.event_supply (event_id, total_capacity, allocated_units)
+		VALUES ($1::uuid, $2, $2)
+		ON CONFLICT (event_id) DO UPDATE SET total_capacity=$2, allocated_units=$2`, eventID, capacity)
 	require.NoError(t, err)
 
 	return eventID, catID
 }
 
 // seedActiveAdmission inserts an ACTIVE admission for use in a hold test goroutine.
-func seedActiveAdmission(t *testing.T, pool *pgxpool.Pool, admID, eventID, visitorID string) {
+func seedActiveAdmission(t *testing.T, pool *pgxpool.Pool, admID, eventID, visitorID string, nikHash []byte) {
 	t.Helper()
 	_, err := pool.Exec(context.Background(), `
 		INSERT INTO booking.admissions
 			(id, event_id, queue_entry_id, queue_seq, visitor_id,
-			 buyer_nik_hash, buyer_email,
+			 buyer_nik_hash, buyer_email_enc,
 			 units, status, admission_jti,
 			 cfg_selection_ttl_seconds, cfg_payment_ttl_seconds, cfg_submit_grace_seconds,
 			 cfg_edit_enabled, cfg_max_edits, cfg_allow_mixed_categories,
 			 reserved_at, expires_at)
 		VALUES ($1::uuid, $2::uuid, gen_random_uuid(), 1, $3::uuid,
-			'\xdeadbeef', 'test@test.id',
+			$4, 'test@test.id',
 			1, 'ACTIVE', gen_random_uuid(),
 			300, 600, 5, true, 3, true,
 			now(), now()+interval '10 minutes')
-		ON CONFLICT (id) DO NOTHING`, admID, eventID, visitorID)
+		ON CONFLICT (id) DO NOTHING`, admID, eventID, visitorID, nikHash)
 	require.NoError(t, err)
 }
 
@@ -121,8 +92,14 @@ func TestTC_BKG07_NoOversell(t *testing.T) {
 	pool := testPool(t)
 	suffix := fmt.Sprintf("%012d", time.Now().UnixNano()%1e12)
 	eventID, catID := seedTestEvent(t, pool, suffix, totalTickets)
+	// The seeded admissions outnumber the stock on purpose; end the unused ones so the dev DB's session sweeper
+	// does not try to release stock that was never allocated to them.
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(),
+			`UPDATE booking.admissions SET status='EXPIRED', ended_at=now(), end_reason='SESSION_EXPIRED' WHERE event_id=$1::uuid AND status='ACTIVE'`, eventID)
+	})
 
-	uow, err := postgres.NewUnitOfWork(pool)
+	uow, err := NewUnitOfWork(pool)
 	require.NoError(t, err)
 
 	var success, failed int64
@@ -134,21 +111,21 @@ func TestTC_BKG07_NoOversell(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			ctx := context.Background()
-			admID := fmt.Sprintf("adm00000-0000-0000-%04d-%s", i, suffix)
-			visitorID := fmt.Sprintf("vis00000-0000-0000-%04d-%s", i, suffix)
-			bookingID := fmt.Sprintf("bkg00000-0000-0000-%04d-%s", i, suffix)
+			admID := fmt.Sprintf("ad000000-0000-0000-%04d-%s", i, suffix)
+			visitorID := fmt.Sprintf("b1500000-0000-0000-%04d-%s", i, suffix)
+			bookingID := fmt.Sprintf("b0000000-0000-0000-%04d-%s", i, suffix)
 			nikHash := []byte(fmt.Sprintf("nik%08d", i))
 
-			seedActiveAdmission(t, pool, admID, eventID, visitorID)
+			seedActiveAdmission(t, pool, admID, eventID, visitorID, nikHash)
 
 			spec := outbound.HoldSpec{
 				BookingID:        bookingID,
-				PublicRef:        fmt.Sprintf("RB%08d", i),
+				PublicRef:        fmt.Sprintf("RB%08d", (time.Now().UnixNano()/1e3%1e6)*100+int64(i)), // unique across runs
 				EventID:          eventID,
 				AdmissionID:      admID,
 				VisitorID:        visitorID,
 				BuyerNIKHash:     nikHash,
-				BuyerEmail:       fmt.Sprintf("u%d@t.id", i),
+				BuyerEmailEnc:    sealedEmail,
 				AmountMinor:      10000,
 				PaymentExpiresAt: time.Now().Add(10 * time.Minute),
 				Lines: []outbound.HoldLine{{
@@ -198,7 +175,7 @@ func TestEventSourcing_ConcurrencyGuard(t *testing.T) {
 	pool := testPool(t)
 
 	suffix := fmt.Sprintf("%012d", time.Now().UnixNano()%1e12)
-	bookingID := fmt.Sprintf("es000000-0000-0000-0000-%s", suffix)
+	bookingID := fmt.Sprintf("e5000000-0000-0000-0000-%s", suffix)
 
 	store, err := eventstore.New("booking_events")
 	require.NoError(t, err)

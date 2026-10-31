@@ -105,7 +105,7 @@ Envelope `{meta, data}`; error `ErrorEnvelope` tanpa SQL/stack/secret/payload pr
 ## 3. Data Model (migrasi nyata)
 
 ### 3.1 `payment_attempts` (sumber kebenaran status, 0001)
-`id`, `booking_id`, `attempt_no > 0`, `method` (6 enum), `provider` (`MIDTRANS|SIMULATOR`),
+`id`, `booking_id`, `attempt_no > 0`, `method` (6 enum), `provider` (`MIDTRANS`; CHECK DB masih mengizinkan `SIMULATOR`, tidak dipakai),
 `provider_order_id UNIQUE`, `provider_transaction_id`, `status` ∈ {`CREATED, PENDING, UNKNOWN,
 SUCCEEDED, FAILED, CANCELLED, EXPIRED, REFUND_REQUIRED, REFUNDED`}, `amount_minor`, `currency`,
 `expires_at`, `instruction jsonb`, `settlement_time`, `last_provider_status`. `provider` selalu `MIDTRANS`;

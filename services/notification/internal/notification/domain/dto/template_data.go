@@ -4,12 +4,21 @@ import "time"
 
 // EticketData is the render data for the eticket template.
 type EticketData struct {
-	PublicRef       string
-	EventName       string
-	EventStartsAt   string
-	EventVenue      string
-	Tickets         []TicketInfo
-	TicketLinkToken string
+	PublicRef     string
+	EventName     string
+	EventStartsAt string
+	EventVenue    string
+	Tickets       []EticketTicket
+	// TicketURL opens the tickets without logging in (ticket-link token inside); empty when no link base is configured.
+	TicketURL string
+}
+
+// EticketTicket is one ticket as the e-ticket template shows it. QRCID names the inline image (empty when the QR could
+// not be made; the ticket code is still shown), QRPayload is the text the QR encodes (same as Booking's qrPayload).
+type EticketTicket struct {
+	TicketInfo
+	QRCID     string
+	QRPayload string
 }
 
 // ExpiredData is the render data for the expired template.

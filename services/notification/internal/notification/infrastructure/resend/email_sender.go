@@ -5,6 +5,7 @@ package resend
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -13,6 +14,8 @@ import (
 	"time"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/rabbitmq"
+
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/notification/internal/notification/port/outbound"
 )
 
 const (
@@ -53,6 +56,15 @@ type request struct {
 	Subject string   `json:"subject"`
 	Text    string   `json:"text"`
 	HTML    string   `json:"html,omitempty"`
+	// Attachments carry inline images: content_id is the CID the HTML refers to.
+	Attachments []attachment `json:"attachments,omitempty"`
+}
+
+type attachment struct {
+	Filename    string `json:"filename"`
+	Content     string `json:"content"` // base64
+	ContentType string `json:"content_type"`
+	ContentID   string `json:"content_id"`
 }
 
 type response struct {
@@ -67,8 +79,12 @@ var errName = regexp.MustCompile(`^[a-z_]{1,40}$`)
 // SendEmail posts one plain-text email and returns the Resend email id. idempotencyKey makes a retry
 // within 24 hours a no-op on the provider side. 400/401/403/422 are permanent (rabbitmq.Permanent);
 // 429, 5xx, timeouts and network errors are transient.
-func (s *Sender) SendEmail(ctx context.Context, to, subject, body, html, idempotencyKey string) (string, error) {
-	payload, err := json.Marshal(request{From: s.cfg.From, To: []string{to}, Subject: subject, Text: body, HTML: html})
+func (s *Sender) SendEmail(ctx context.Context, to, subject, body, html, idempotencyKey string, images ...outbound.InlineImage) (string, error) {
+	r := request{From: s.cfg.From, To: []string{to}, Subject: subject, Text: body, HTML: html}
+	for _, im := range images {
+		r.Attachments = append(r.Attachments, attachment{Filename: im.CID + ".png", Content: base64.StdEncoding.EncodeToString(im.Data), ContentType: im.ContentType, ContentID: im.CID})
+	}
+	payload, err := json.Marshal(r)
 	if err != nil {
 		return "", fmt.Errorf("resend: encode: %w", err)
 	}

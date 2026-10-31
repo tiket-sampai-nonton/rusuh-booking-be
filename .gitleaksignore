@@ -1,0 +1,10 @@
+# Temuan gitleaks yang sudah ditriase: fixture header Idempotency-Key di test (nilai 'idem-key-*', bukan kredensial)
+# dan satu baris spec lama (design.md) yang menyebut nama konfigurasi. Tidak ada rahasia nyata, rotasi tidak diperlukan.
+# Hanya fingerprint ini yang dikecualikan; rule generic-api-key tetap aktif untuk temuan baru.
+e795b45aa2619e0700a46f050d478a751ce23228:services/payment/internal/delivery/payment_journey_integration_test.go:generic-api-key:322
+e795b45aa2619e0700a46f050d478a751ce23228:services/payment/internal/payment/application/usecase/helpers_test.go:generic-api-key:23
+e795b45aa2619e0700a46f050d478a751ce23228:services/payment/internal/payment/infrastructure/bookingclient/client_test.go:generic-api-key:77
+e795b45aa2619e0700a46f050d478a751ce23228:services/payment/internal/payment/infrastructure/http/handlers_test.go:generic-api-key:30
+e795b45aa2619e0700a46f050d478a751ce23228:services/payment/internal/payment/infrastructure/postgres/repositories_integration_test.go:generic-api-key:318
+e52f3e5812405ba873a81370ce9c4dd3abdcab8c:specs/payment-service/design.md:generic-api-key:332
+ad2d5f938b3ed2cc2d1f0fce60b3ce80c25123be:services/booking/internal/booking/application/usecase/hold_test.go:generic-api-key:25

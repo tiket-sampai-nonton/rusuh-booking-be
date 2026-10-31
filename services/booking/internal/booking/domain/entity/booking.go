@@ -15,13 +15,15 @@ type Booking struct {
 	AdmissionID  string
 	VisitorID    string
 	BuyerNIKHash []byte
-	BuyerEmail   string
-	Status       vo.BookingStatus
-	Currency     string
-	AmountMinor  int64
-	ItemQuantity int
-	Version      vo.Version
-	AccountID    string // empty when guest
+	// BuyerNIKMasked comes from the admission; plaintext NIK is never exposed.
+	BuyerNIKMasked string
+	BuyerEmailEnc  string
+	Status         vo.BookingStatus
+	Currency       string
+	AmountMinor    int64
+	ItemQuantity   int
+	Version        vo.Version
+	AccountID      string // empty when guest
 
 	CreatedAt          time.Time
 	PaymentExpiresAt   time.Time

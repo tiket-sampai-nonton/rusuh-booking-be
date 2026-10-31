@@ -1,0 +1,293 @@
+# Docker Compose DEV (VPS): image dari GHCR, Caddy sebagai satu-satunya pintu masuk (80/443), observability ikut.
+# Dijalankan oleh deploy.sh di server: IMAGE_PREFIX, IMAGE_TAG, RUSUH_UID, RUSUH_GID diisi skrip itu.
+# Rahasia dan konfigurasi ada di ${RUSUH_DIR:-/opt/rusuh}/env/*.env (dibuat gen-secrets.sh), tidak di repo.
+# Tidak ada port selain 80/443 yang dipublikasikan: semua service saling bicara lewat jaringan Docker.
+name: rusuh-dev
+
+x-logging: &logging
+  driver: json-file
+  options: { max-size: "10m", max-file: "3" }
+
+# Service Go berjalan sebagai user deploy (bukan nonroot bawaan image) agar bisa membaca kunci 0600 dan menulis
+# gambar di ${RUSUH_DIR}/data/images tanpa chmod longgar.
+x-service: &service
+  restart: unless-stopped
+  user: "${RUSUH_UID:-1000}:${RUSUH_GID:-1000}"
+  # Bawaan image adalah /home/nonroot (0700, milik uid 65532): uid lain tidak bisa membaca .env di sana (permission denied).
+  working_dir: /
+  logging: *logging
+  volumes:
+    - ${RUSUH_DIR:-/opt/rusuh}/keys:/run/keys:ro
+
+x-depends-infra: &depends-infra
+  postgres: { condition: service_healthy }
+  valkey: { condition: service_healthy }
+  rabbitmq: { condition: service_healthy }
+
+services:
+  # ------------------------------------------------------------------ pintu masuk
+  caddy:
+    image: caddy:2.10-alpine
+    restart: unless-stopped
+    ports: ["80:80", "443:443"]
+    env_file: ["${RUSUH_DIR:-/opt/rusuh}/env/compose.env"]
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    mem_limit: 128m
+    logging: *logging
+    depends_on: [grafana, queue-api, booking-api, payment-api, notification-api, user-api]
+
+  # ------------------------------------------------------------------ infra (tanpa port ke host)
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    env_file: ["${RUSUH_DIR:-/opt/rusuh}/env/postgres.env"]
+    volumes:
+      - ../compose/postgres-init.sql:/docker-entrypoint-initdb.d/00-init.sql:ro
+      - ./postgres-passwords.sh:/docker-entrypoint-initdb.d/01-passwords.sh:ro
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    mem_limit: 1g
+    logging: *logging
+
+  valkey:
+    image: valkey/valkey:8.1-alpine
+    restart: unless-stopped
+    env_file: ["${RUSUH_DIR:-/opt/rusuh}/env/valkey.env"]
+    # noeviction: Valkey memegang state antrean; lebih baik menolak tulis daripada membuang data.
+    command: ["sh", "-c", "exec valkey-server --requirepass \"$$VALKEY_PASSWORD\" --maxmemory 200mb --maxmemory-policy noeviction --appendonly yes"]
+    volumes: [valkeydata:/data]
+    healthcheck:
+      test: ["CMD-SHELL", "valkey-cli -a \"$$VALKEY_PASSWORD\" --no-auth-warning ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    mem_limit: 320m
+    logging: *logging
+
+  rabbitmq:
+    image: rabbitmq:3.13-alpine
+    restart: unless-stopped
+    env_file: ["${RUSUH_DIR:-/opt/rusuh}/env/rabbitmq.env"]
+    volumes: [rabbitdata:/var/lib/rabbitmq]
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    mem_limit: 768m
+    logging: *logging
+
+  # ------------------------------------------------------------------ queue
+  queue-migrate:
+    <<: *service
+    image: ${IMAGE_PREFIX}/queue:${IMAGE_TAG}
+    command: ["migrate", "up"]
+    env_file: ["${RUSUH_DIR:-/opt/rusuh}/env/queue.env"]
+    depends_on: { postgres: { condition: service_healthy } }
+    restart: "no"
+    mem_limit: 256m
+
+  queue-api:
+    <<: *service
+    image: ${IMAGE_PREFIX}/queue:${IMAGE_TAG}
+    command: ["api"]
+    env_file: ["${RUSUH_DIR:-/opt/rusuh}/env/queue.env"]
+    expose: ["8081"]
+    depends_on:
+      <<: *depends-infra
+      queue-migrate: { condition: service_completed_successfully }
+    mem_limit: 384m
+
+  queue-worker:
+    <<: *service
+    image: ${IMAGE_PREFIX}/queue:${IMAGE_TAG}
+    command: ["worker"]
+    env_file: ["${RUSUH_DIR:-/opt/rusuh}/env/queue.env"]
+    depends_on:
+      <<: *depends-infra
+      queue-migrate: { condition: service_completed_successfully }
+    mem_limit: 256m
+
+  # ------------------------------------------------------------------ booking
+  booking-migrate:
+    <<: *service
+    image: ${IMAGE_PREFIX}/booking:${IMAGE_TAG}
+    command: ["migrate", "up"]
+    env_file: ["${RUSUH_DIR:-/opt/rusuh}/env/booking.env"]
+    depends_on: { postgres: { condition: service_healthy } }
+    restart: "no"
+    mem_limit: 256m
+
+  booking-api:
+    <<: *service
+    image: ${IMAGE_PREFIX}/booking:${IMAGE_TAG}
+    command: ["api"]
+    env_file: ["${RUSUH_DIR:-/opt/rusuh}/env/booking.env"]
+    expose: ["8082"]
+    volumes:
+      - ${RUSUH_DIR:-/opt/rusuh}/keys:/run/keys:ro
+      - ${RUSUH_DIR:-/opt/rusuh}/data/images:/data/images
+    depends_on:
+      <<: *depends-infra
+      booking-migrate: { condition: service_completed_successfully }
+    mem_limit: 384m
+
+  booking-worker:
+    <<: *service
+    image: ${IMAGE_PREFIX}/booking:${IMAGE_TAG}
+    command: ["worker"]
+    env_file: ["${RUSUH_DIR:-/opt/rusuh}/env/booking.env"]
+    volumes:
+      - ${RUSUH_DIR:-/opt/rusuh}/keys:/run/keys:ro
+      - ${RUSUH_DIR:-/opt/rusuh}/data/images:/data/images
+    depends_on:
+      <<: *depends-infra
+      booking-migrate: { condition: service_completed_successfully }
+    mem_limit: 256m
+
+  # ------------------------------------------------------------------ payment
+  payment-migrate:
+    <<: *service
+    image: ${IMAGE_PREFIX}/payment:${IMAGE_TAG}
+    command: ["migrate", "up"]
+    env_file: ["${RUSUH_DIR:-/opt/rusuh}/env/payment.env"]
+    depends_on: { postgres: { condition: service_healthy } }
+    restart: "no"
+    mem_limit: 256m
+
+  payment-api:
+    <<: *service
+    image: ${IMAGE_PREFIX}/payment:${IMAGE_TAG}
+    command: ["api"]
+    env_file: ["${RUSUH_DIR:-/opt/rusuh}/env/payment.env"]
+    expose: ["8083"]
+    depends_on:
+      <<: *depends-infra
+      payment-migrate: { condition: service_completed_successfully }
+    mem_limit: 384m
+
+  payment-worker:
+    <<: *service
+    image: ${IMAGE_PREFIX}/payment:${IMAGE_TAG}
+    command: ["worker"]
+    env_file: ["${RUSUH_DIR:-/opt/rusuh}/env/payment.env"]
+    depends_on:
+      <<: *depends-infra
+      payment-migrate: { condition: service_completed_successfully }
+    mem_limit: 256m
+
+  # ------------------------------------------------------------------ notification
+  notification-migrate:
+    <<: *service
+    image: ${IMAGE_PREFIX}/notification:${IMAGE_TAG}
+    command: ["migrate", "up"]
+    env_file: ["${RUSUH_DIR:-/opt/rusuh}/env/notification.env"]
+    depends_on: { postgres: { condition: service_healthy } }
+    restart: "no"
+    mem_limit: 256m
+
+  notification-api:
+    <<: *service
+    image: ${IMAGE_PREFIX}/notification:${IMAGE_TAG}
+    command: ["api"]
+    env_file: ["${RUSUH_DIR:-/opt/rusuh}/env/notification.env"]
+    expose: ["8084"]
+    depends_on:
+      <<: *depends-infra
+      notification-migrate: { condition: service_completed_successfully }
+    mem_limit: 384m
+
+  notification-worker:
+    <<: *service
+    image: ${IMAGE_PREFIX}/notification:${IMAGE_TAG}
+    command: ["worker"]
+    env_file: ["${RUSUH_DIR:-/opt/rusuh}/env/notification.env"]
+    depends_on:
+      <<: *depends-infra
+      notification-migrate: { condition: service_completed_successfully }
+    mem_limit: 256m
+
+  # ------------------------------------------------------------------ user
+  user-migrate:
+    <<: *service
+    image: ${IMAGE_PREFIX}/user:${IMAGE_TAG}
+    command: ["migrate", "up"]
+    env_file: ["${RUSUH_DIR:-/opt/rusuh}/env/user.env"]
+    depends_on: { postgres: { condition: service_healthy } }
+    restart: "no"
+    mem_limit: 256m
+
+  user-api:
+    <<: *service
+    image: ${IMAGE_PREFIX}/user:${IMAGE_TAG}
+    command: ["api"]
+    env_file: ["${RUSUH_DIR:-/opt/rusuh}/env/user.env"]
+    expose: ["8085"]
+    depends_on:
+      <<: *depends-infra
+      user-migrate: { condition: service_completed_successfully }
+    mem_limit: 384m
+
+  # ------------------------------------------------------------------ observability
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=7d
+      - --storage.tsdb.retention.size=3GB
+    volumes:
+      - ./prometheus.dev.yml:/etc/prometheus/prometheus.yml:ro
+      - promdata:/prometheus
+    mem_limit: 512m
+    logging: *logging
+
+  loki:
+    image: grafana/loki:3.5.7
+    restart: unless-stopped
+    command: ["-config.file=/etc/loki/loki.yaml"]
+    volumes:
+      - ./loki.dev.yaml:/etc/loki/loki.yaml:ro
+      - lokidata:/loki
+    mem_limit: 512m
+    logging: *logging
+
+  alloy:
+    image: grafana/alloy:v1.10.0
+    restart: unless-stopped
+    command: ["run", "--server.http.listen-addr=0.0.0.0:12345", "--storage.path=/var/lib/alloy/data", "/etc/alloy/config.alloy"]
+    volumes:
+      - ./alloy.dev.alloy:/etc/alloy/config.alloy:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on: [loki]
+    mem_limit: 384m
+    logging: *logging
+
+  grafana:
+    image: grafana/grafana:12.0.0
+    restart: unless-stopped
+    env_file: ["${RUSUH_DIR:-/opt/rusuh}/env/grafana.env"]
+    volumes:
+      - ../observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ../observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafanadata:/var/lib/grafana
+    depends_on: [prometheus, loki]
+    mem_limit: 512m
+    logging: *logging
+
+volumes:
+  caddy_data:
+  caddy_config:
+  pgdata:
+  valkeydata:
+  rabbitdata:
+  promdata:
+  lokidata:
+  grafanadata:

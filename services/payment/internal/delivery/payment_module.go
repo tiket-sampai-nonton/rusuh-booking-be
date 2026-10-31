@@ -66,7 +66,7 @@ func newPaymentRegistrars(cfg config.Config, clients *Clients) ([]registrar, err
 	}
 
 	gateway, err := midtrans.New(midtrans.Config{
-		BaseURL: p.Midtrans.BaseURL, ServerKey: p.Midtrans.ServerKey, NotificationURL: p.Midtrans.NotificationURL,
+		BaseURL: p.Midtrans.BaseURL, SnapBaseURL: p.Midtrans.SnapBaseURL, ServerKey: p.Midtrans.ServerKey, NotificationURL: p.Midtrans.NotificationURL,
 		Charge: limits(p.Midtrans.Charge), Status: limits(p.Midtrans.Status),
 	}, now)
 	if err != nil {
@@ -90,7 +90,7 @@ func newPaymentRegistrars(cfg config.Config, clients *Clients) ([]registrar, err
 		paymenthttp.NewPaymentHandler(
 			usecase.NewGetPaymentPage(bookingClient, attempts, p.Methods, clk),
 			usecase.NewGetPaymentStatus(bookingClient, attempts, clk),
-			usecase.NewCreateAttempt(bookingClient, attempts, idem, gateway, clk, p.Methods),
+			usecase.NewCreateAttempt(bookingClient, attempts, idem, gateway, clk, p.Methods, usecase.ReturnURLs{Success: p.SuccessReturnURL, Failed: p.FailedReturnURL}),
 			usecase.NewCreatePageToken(bookingClient, pageTokens, clk, p.PageTokenTTL),
 			usecase.NewExchangePageToken(pageTokens, session, clk),
 			auth, secureCookie,

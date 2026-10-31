@@ -10,13 +10,13 @@ import (
 // Provider is the only payment provider (Midtrans is mandatory).
 const Provider = "MIDTRANS"
 
-// Instruction tells the customer how to pay. Type is VA, QR, or DEEPLINK (payment.yaml).
+// Instruction is the Snap hand-off stored with an attempt (Type is always SNAP). The token never leaves the backend response.
 type Instruction struct {
-	Type        string `json:"type"`
-	Bank        string `json:"bank,omitempty"`
-	VANumber    string `json:"vaNumber,omitempty"`
-	QRURL       string `json:"qrUrl,omitempty"`
-	DeeplinkURL string `json:"deeplinkUrl,omitempty"`
+	Type             string `json:"type"`
+	SnapToken        string `json:"snapToken,omitempty"`
+	RedirectURL      string `json:"redirectUrl,omitempty"`
+	SuccessReturnURL string `json:"successReturnUrl,omitempty"`
+	FailedReturnURL  string `json:"failedReturnUrl,omitempty"`
 }
 
 // Attempt is one try to pay a booking with one method. payment_attempts is the source of truth for its status.

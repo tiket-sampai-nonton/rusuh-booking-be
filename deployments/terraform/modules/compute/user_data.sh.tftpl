@@ -1,0 +1,20 @@
+#!/bin/bash
+# Instance aplikasi stateless. Satu verb per container (api/worker); migrasi dulu (dikunci advisory lock).
+set -euo pipefail
+dnf install -y docker awscli >/dev/null
+systemctl enable --now docker
+mkdir -p /etc/rusuh
+
+param() { aws ssm get-parameter --region "${region}" --with-decryption --name "/${name}/$1" --query Parameter.Value --output text; }
+aws ecr get-login-password --region "${region}" | docker login --username AWS --password-stdin "${registry}"
+LOG="--log-driver awslogs --log-opt awslogs-region=${region} --log-opt awslogs-group=${log_group}"
+
+%{ for svc in services ~}
+param ${svc}.env | sed "s/__DATA_HOST__/${data_host_ip}/g" > /etc/rusuh/${svc}.env
+chmod 600 /etc/rusuh/${svc}.env
+docker run --rm --env-file /etc/rusuh/${svc}.env "${registry}/${name}/${svc}:${image_tag}" migrate up
+docker run -d --restart unless-stopped $LOG --env-file /etc/rusuh/${svc}.env -p ${ports[svc]}:${ports[svc]} --name ${svc}-api "${registry}/${name}/${svc}:${image_tag}" api
+%{ if has_worker[svc] ~}
+docker run -d --restart unless-stopped $LOG --env-file /etc/rusuh/${svc}.env -e APP_PORT=${ports[svc] + 10} --name ${svc}-worker "${registry}/${name}/${svc}:${image_tag}" worker
+%{ endif ~}
+%{ endfor ~}

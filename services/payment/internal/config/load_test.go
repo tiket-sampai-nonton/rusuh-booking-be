@@ -50,6 +50,7 @@ func TestLoad_PaymentDefaultsAndRanges(t *testing.T) {
 	cfg, err := Load()
 	require.NoError(t, err)
 	assert.Equal(t, "https://api.sandbox.midtrans.com", cfg.Payment.Midtrans.BaseURL)
+	assert.Equal(t, "https://app.sandbox.midtrans.com", cfg.Payment.Midtrans.SnapBaseURL)
 	assert.Equal(t, []string{"VA_BCA", "VA_BNI", "VA_BRI", "QRIS", "GOPAY"}, cfg.Payment.Methods)
 	assert.Equal(t, 60*time.Second, cfg.Payment.PageTokenTTL)
 	assert.Equal(t, 5, cfg.Payment.Midtrans.Charge.FailureThreshold)
@@ -59,6 +60,7 @@ func TestLoad_PaymentDefaultsAndRanges(t *testing.T) {
 	cfg, err = Load()
 	require.NoError(t, err)
 	assert.Equal(t, "https://api.midtrans.com", cfg.Payment.Midtrans.BaseURL)
+	assert.Equal(t, "https://app.midtrans.com", cfg.Payment.Midtrans.SnapBaseURL)
 }
 
 func TestLoad_ReportsInvalidPaymentValues(t *testing.T) {
@@ -99,4 +101,26 @@ func TestPayment_ValidateForServeRequiresSecretsAndKeys(t *testing.T) {
 	p.Midtrans.ServerKey = "SB-Mid-server-test"
 	p.Token.VisitorPublicKeyFile, p.Token.ServicePrivateKeyFile, p.Token.BookingPublicKeyFile = "a", "b", "c"
 	assert.NoError(t, p.ValidateForServe())
+}
+
+func TestLoad_RateLimitFromEnv(t *testing.T) {
+	setBase(t)
+	cfg, err := Load()
+	require.NoError(t, err)
+	assert.Equal(t, 300, cfg.HTTP.RateLimitPerIP)
+	assert.Equal(t, time.Minute, cfg.HTTP.RateLimitWindow)
+	assert.Equal(t, 600, cfg.HTTP.RateLimitWebhookPerIP)
+
+	t.Setenv("RATE_LIMIT_PER_IP", "7")
+	t.Setenv("RATE_LIMIT_WINDOW", "10s")
+	t.Setenv("RATE_LIMIT_WEBHOOK_PER_IP", "9")
+	cfg, err = Load()
+	require.NoError(t, err)
+	assert.Equal(t, 7, cfg.HTTP.RateLimitPerIP)
+	assert.Equal(t, 10*time.Second, cfg.HTTP.RateLimitWindow)
+	assert.Equal(t, 9, cfg.HTTP.RateLimitWebhookPerIP)
+
+	t.Setenv("RATE_LIMIT_WINDOW", "0s")
+	_, err = Load()
+	assert.ErrorContains(t, err, "RATE_LIMIT_WINDOW")
 }

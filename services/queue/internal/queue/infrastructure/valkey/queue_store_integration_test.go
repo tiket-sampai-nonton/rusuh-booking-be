@@ -108,3 +108,23 @@ func TestQueueStore_JoinNIKConstraint(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, outbound.JoinExistingNIK, res2.Outcome, "second join with same NIK should be rejected")
 }
+
+// The buyer's masked NIK and encrypted email ride on the entry so the Promotor can send them to Booking later.
+func TestQueueStore_JoinKeepsMaskedNIKAndEmailOnTheEntry(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	res, err := store.Join(ctx, outbound.JoinParams{
+		EventID: "evt-masked", EntryID: "e-masked", VisitorID: "v-masked", NikHash: fmt.Sprintf("%064x", 1),
+		EmailHashHex: fmt.Sprintf("%064x", 2), EmailEnc: []byte("sealed"), NikMasked: "3174********0001", AccountID: "acc-1",
+		NowMs: time.Now().UnixMilli(), OneActivePerVisitor: true, OneActivePerEmail: true,
+	})
+	require.NoError(t, err)
+	require.Equal(t, outbound.JoinOK, res.Outcome)
+
+	ent, found, err := store.GetEntry(ctx, "evt-masked", "e-masked")
+	require.NoError(t, err)
+	require.True(t, found)
+	assert.Equal(t, "3174********0001", ent.BuyerNikMasked)
+	assert.Equal(t, []byte("sealed"), ent.EmailEnc)
+	assert.Equal(t, "acc-1", ent.AccountID)
+}

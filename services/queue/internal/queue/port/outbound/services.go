@@ -47,5 +47,7 @@ type IPIIProtector interface {
 	HashNIK(nik string) []byte
 	HashEmail(email string) []byte
 	SealEmail(email string) ([]byte, error)
+	// SealBuyerEmail returns the base64 ciphertext sent to Booking (never the plaintext).
+	SealBuyerEmail(email string) (string, error)
 	UnsealEmail(enc []byte) (string, error)
 }

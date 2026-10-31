@@ -68,16 +68,19 @@ func TestCheckAttendee_AvailableAndRegistered(t *testing.T) {
 
 func TestSettle_DelegatesToUoW(t *testing.T) {
 	uow := &fakeUoW{settled: true}
-	uc := usecase.NewSettle(uow, &fakeIDs{})
+	uc := usecase.NewSettle(uow, func(id string) string { return "link-for-" + id })
 	err := uc.Settle(context.Background(), inbound.SettleCommand{BookingID: eventID, Method: "card"})
 	require.NoError(t, err)
 	assert.Equal(t, "card", uow.settleSpec.Method)
-	assert.NotNil(t, uow.settleSpec.TicketCodeFn)
+	require.NotNil(t, uow.settleSpec.TicketCodeFn)
+	assert.Regexp(t, `^TK-[0-9A-F]{20}$`, uow.settleSpec.TicketCodeFn("item"))
+	require.NotNil(t, uow.settleSpec.TicketLinkTokenFn, "token tautan e-tiket diterbitkan saat settle")
+	assert.Equal(t, "link-for-"+eventID, uow.settleSpec.TicketLinkTokenFn(eventID))
 }
 
 func TestSettle_PassesSettlementTime(t *testing.T) {
 	uow := &fakeUoW{settled: true}
-	uc := usecase.NewSettle(uow, &fakeIDs{})
+	uc := usecase.NewSettle(uow, nil)
 	st := time.Date(2026, 10, 26, 9, 30, 0, 0, time.UTC)
 	err := uc.Settle(context.Background(), inbound.SettleCommand{
 		BookingID:      eventID,
@@ -175,13 +178,13 @@ func TestListEvents_Normalises(t *testing.T) {
 }
 
 func TestGetEventDetail_InvalidUUID(t *testing.T) {
-	uc := usecase.NewGetEventDetail(&fakeEventRepo{})
+	uc := usecase.NewGetEventDetail(&fakeEventRepo{}, fixedClock{t: time.Now()})
 	_, err := uc.GetEventDetail(context.Background(), "nope")
 	assert.Error(t, err)
 }
 
 func TestGetEventDetail_OK(t *testing.T) {
-	uc := usecase.NewGetEventDetail(&fakeEventRepo{detail: detailWith(true, 3)})
+	uc := usecase.NewGetEventDetail(&fakeEventRepo{detail: detailWith(true, 3)}, fixedClock{t: time.Now()})
 	out, err := uc.GetEventDetail(context.Background(), eventID)
 	require.NoError(t, err)
 	assert.Len(t, out.Categories, 2)
@@ -199,12 +202,13 @@ func TestListMyBookings_Ownership(t *testing.T) {
 }
 
 func TestGetTickets_RequiresPaid(t *testing.T) {
-	uc := usecase.NewGetTickets(&fakeBookingRepo{booking: entity.Booking{ID: eventID, Status: vo.BookingPendingPayment}}, &fakeTicketRepo{})
-	_, err := uc.GetTickets(context.Background(), eventID)
+	owner := inbound.TicketAccess{VisitorID: visitor}
+	uc := usecase.NewGetTickets(&fakeBookingRepo{booking: entity.Booking{ID: eventID, Status: vo.BookingPendingPayment, VisitorID: visitor}}, &fakeTicketRepo{}, nil)
+	_, err := uc.GetTickets(context.Background(), eventID, owner)
 	assert.ErrorIs(t, err, inbound.ErrNotPayable)
 
-	uc2 := usecase.NewGetTickets(&fakeBookingRepo{booking: entity.Booking{ID: eventID, Status: vo.BookingPaid}}, &fakeTicketRepo{tickets: []entity.Ticket{{PublicCode: "TK-1"}}})
-	out, err := uc2.GetTickets(context.Background(), eventID)
+	uc2 := usecase.NewGetTickets(&fakeBookingRepo{booking: entity.Booking{ID: eventID, Status: vo.BookingPaid, VisitorID: visitor}}, &fakeTicketRepo{tickets: []entity.Ticket{{PublicCode: "TK-1"}}}, nil)
+	out, err := uc2.GetTickets(context.Background(), eventID, owner)
 	require.NoError(t, err)
 	assert.Len(t, out.Tickets, 1)
 }

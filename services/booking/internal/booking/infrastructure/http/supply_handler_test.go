@@ -3,6 +3,7 @@ package http_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -34,12 +35,13 @@ func TestInternalHandler_GetSupply_OK(t *testing.T) {
 			{Code: "REG", Name: "Regular", Sold: 0, Total: 5},
 		},
 	}
-	h := bookinghttp.NewInternalHandler(nil, nil).WithSupply(&stubSupply{snap: snap})
+	h := bookinghttp.NewInternalHandler(nil, allowAll{}).WithSupply(&stubSupply{snap: snap})
 
 	mux := http.NewServeMux()
 	h.Register(mux)
 
 	req := httptest.NewRequest(http.MethodGet, "/internal/v1/events/evt-1/supply", nil)
+	req.Header.Set("Authorization", "Bearer t")
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
 
@@ -54,14 +56,47 @@ func TestInternalHandler_GetSupply_OK(t *testing.T) {
 }
 
 func TestInternalHandler_GetSupply_NotFound(t *testing.T) {
-	h := bookinghttp.NewInternalHandler(nil, nil).WithSupply(&stubSupply{err: inbound.ErrNotFound})
+	h := bookinghttp.NewInternalHandler(nil, allowAll{}).WithSupply(&stubSupply{err: inbound.ErrNotFound})
 
 	mux := http.NewServeMux()
 	h.Register(mux)
 
 	req := httptest.NewRequest(http.MethodGet, "/internal/v1/events/unknown/supply", nil)
+	req.Header.Set("Authorization", "Bearer t")
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+// allowAll stands in for a verifier that accepts the Queue's service token.
+type allowAll struct{}
+
+func (allowAll) VerifyAccess(string) (string, error) { return "queue-service", nil }
+
+type denyAllVerifier struct{}
+
+func (denyAllVerifier) VerifyAccess(string) (string, error) {
+	return "", errors.New("bukan service token")
+}
+
+// Internal endpoints never run open: without a verifier, or with a token the verifier refuses, they answer 401.
+func TestInternalHandler_Supply_RefusesWithoutAServiceToken(t *testing.T) {
+	for name, h := range map[string]*bookinghttp.InternalHandler{
+		"tanpa verifier":      bookinghttp.NewInternalHandler(nil, nil).WithSupply(&stubSupply{}),
+		"token ditolak":       bookinghttp.NewInternalHandler(nil, denyAllVerifier{}).WithSupply(&stubSupply{}),
+		"tanpa header bearer": bookinghttp.NewInternalHandler(nil, allowAll{}).WithSupply(&stubSupply{}),
+	} {
+		t.Run(name, func(t *testing.T) {
+			mux := http.NewServeMux()
+			h.Register(mux)
+			req := httptest.NewRequest(http.MethodGet, "/internal/v1/events/evt-1/supply", nil)
+			if name != "tanpa header bearer" {
+				req.Header.Set("Authorization", "Bearer t")
+			}
+			w := httptest.NewRecorder()
+			mux.ServeHTTP(w, req)
+			assert.Equal(t, http.StatusUnauthorized, w.Code)
+		})
+	}
 }

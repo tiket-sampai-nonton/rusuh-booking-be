@@ -25,7 +25,7 @@ type AdmissionRepo struct{ pool *pgxpool.Pool }
 func NewAdmissionRepo(pool *pgxpool.Pool) *AdmissionRepo { return &AdmissionRepo{pool: pool} }
 
 const admissionCols = `id::text, event_id::text, queue_entry_id::text, queue_seq, visitor_id::text,
-	buyer_nik_hash, buyer_email, COALESCE(buyer_nik_masked, ''), units, status,
+	buyer_nik_hash, COALESCE(buyer_email_enc, ''), COALESCE(buyer_nik_masked, ''), units, status,
 	COALESCE(admission_jti::text, ''), attendee_checks, edit_count, COALESCE(account_id::text, ''),
 	cfg_selection_ttl_seconds, cfg_payment_ttl_seconds, cfg_submit_grace_seconds,
 	cfg_edit_enabled, cfg_max_edits, cfg_allow_mixed_categories,
@@ -35,7 +35,7 @@ func scanAdmission(row pgx.Row) (entity.Admission, error) {
 	var a entity.Admission
 	err := row.Scan(
 		&a.ID, &a.EventID, &a.QueueEntryID, &a.QueueSeq, &a.VisitorID,
-		&a.BuyerNIKHash, &a.BuyerEmail, &a.BuyerNIKMasked, &a.Units, &a.Status,
+		&a.BuyerNIKHash, &a.BuyerEmailEnc, &a.BuyerNIKMasked, &a.Units, &a.Status,
 		&a.AdmissionJTI, &a.AttendeeChecks, &a.EditCount, &a.AccountID,
 		&a.CfgSelectionTTLSeconds, &a.CfgPaymentTTLSeconds, &a.CfgSubmitGraceSeconds,
 		&a.CfgEditEnabled, &a.CfgMaxEdits, &a.CfgAllowMixedCategories,
@@ -104,6 +104,24 @@ func (r *AdmissionRepo) reserveOne(ctx context.Context, tx pgx.Tx, eventID strin
 	// Use a savepoint so a per-entry failure does not abort the whole batch transaction.
 	if _, err := tx.Exec(ctx, "SAVEPOINT entry"); err != nil {
 		res.Outcome = "NO_SUPPLY_NOW"
+		return res
+	}
+
+	// Idempotent replay: an entry that already holds a reservation gets that same grant back, even when the
+	// stock it holds is the reason nothing is free now (the Promotor may have failed to promote it last tick).
+	var prevID, prevStatus string
+	var prevUnits int
+	var prevExpires time.Time
+	if err := tx.QueryRow(ctx, `SELECT id::text, status, units, expires_at FROM booking.admissions WHERE queue_entry_id = $1::uuid`, e.QueueEntryID).
+		Scan(&prevID, &prevStatus, &prevUnits, &prevExpires); err == nil {
+		_, _ = tx.Exec(ctx, "RELEASE SAVEPOINT entry")
+		res.AllocationID = prevID
+		if prevStatus == "RESERVED" {
+			res.Outcome, res.Units = "GRANTED", prevUnits
+			res.ClaimDeadline = &prevExpires
+		} else {
+			res.Outcome = "ALREADY_ACTIVE"
+		}
 		return res
 	}
 
@@ -198,7 +216,7 @@ func (r *AdmissionRepo) reserveOne(ctx context.Context, tx pgx.Tx, eventID strin
 	var expiresAt time.Time
 	err := tx.QueryRow(ctx, `
 		INSERT INTO booking.admissions (
-			event_id, queue_entry_id, queue_seq, visitor_id, buyer_nik_hash, buyer_email, buyer_nik_masked,
+			event_id, queue_entry_id, queue_seq, visitor_id, buyer_nik_hash, buyer_email_enc, buyer_nik_masked,
 			units, status, admission_jti, attendee_checks, edit_count,
 			cfg_selection_ttl_seconds, cfg_payment_ttl_seconds, cfg_submit_grace_seconds,
 			cfg_edit_enabled, cfg_max_edits, cfg_allow_mixed_categories,
@@ -211,7 +229,7 @@ func (r *AdmissionRepo) reserveOne(ctx context.Context, tx pgx.Tx, eventID strin
 			NULLIF($11,'')::uuid
 		  FROM booking.events ev WHERE ev.id = $1::uuid
 		RETURNING id::text, expires_at`,
-		eventID, e.QueueEntryID, e.Seq, e.VisitorID, e.BuyerNIKHash, e.BuyerEmail, e.BuyerNIKMasked,
+		eventID, e.QueueEntryID, e.Seq, e.VisitorID, e.BuyerNIKHash, e.BuyerEmailEnc, e.BuyerNIKMasked,
 		units, e.AdmissionJTI, at, e.AccountID).Scan(&allocationID, &expiresAt)
 	if err != nil {
 		_, _ = tx.Exec(ctx, "ROLLBACK TO SAVEPOINT entry")
@@ -368,29 +386,19 @@ func (r *AdmissionRepo) ExpireSession(ctx context.Context, admissionID string, n
 			}
 		}
 
-		if _, err := tx.Exec(ctx, `
-			UPDATE booking.admissions
-			   SET status = $2, ended_at = $3, end_reason = $4
-			 WHERE id = $1::uuid`,
-			admissionID,
-			func() string {
-				if status == vo.AdmissionEditable {
-					return "CONVERTED"
-				}
-				return "EXPIRED"
-			}(),
-			now, endReason); err != nil {
+		// CONVERTED requires lock_reason (admissions_check2), so it is set in the same statement.
+		if status == vo.AdmissionEditable {
+			// No journey.ended outbox: the booking is still PENDING_PAYMENT and its expiry sweeper publishes it later.
+			_, err := tx.Exec(ctx, `
+				UPDATE booking.admissions
+				   SET status = 'CONVERTED', ended_at = $2, end_reason = $3, lock_reason = 'SELECTION_EXPIRED', locked_at = $2
+				 WHERE id = $1::uuid`, admissionID, now, endReason)
 			return err
 		}
-		if status == vo.AdmissionEditable {
-			// CONVERTED: also set lock_reason (no journey.ended — booking still PENDING_PAYMENT).
-			if _, err := tx.Exec(ctx, `
-				UPDATE booking.admissions SET lock_reason='SELECTION_EXPIRED', locked_at=$2 WHERE id=$1::uuid`,
-				admissionID, now); err != nil {
-				return err
-			}
-			// No journey.ended outbox — the booking expiry sweeper publishes it when the booking expires.
-			return nil
+		if _, err := tx.Exec(ctx, `
+			UPDATE booking.admissions SET status = 'EXPIRED', ended_at = $2, end_reason = $3 WHERE id = $1::uuid`,
+			admissionID, now, endReason); err != nil {
+			return err
 		}
 
 		// Publish journey.ended so Queue releases the slot (RESERVED/ACTIVE only).

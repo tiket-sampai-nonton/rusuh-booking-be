@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -47,4 +48,23 @@ func TestNewAPIHandler_FailsFastWithoutSecretsOrKeys(t *testing.T) {
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "baca kunci", "file kunci yang hilang menghentikan start")
 	assert.NotContains(t, err.Error(), "SB-Mid-server-x", "rahasia tidak pernah muncul di error")
+}
+
+func TestNewHandler_RateLimitsPerIPButNotHealth(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.HTTP.RateLimitWindow = time.Minute
+	cfg.HTTP.RateLimitPerIP = 1
+	cfg.HTTP.RateLimitWebhookPerIP = 1
+	h, err := NewHandler(cfg, &Clients{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	require.NoError(t, err)
+	do := func(method, path string) int {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(method, path, nil))
+		return rec.Code
+	}
+	for i := 0; i < 3; i++ {
+		assert.Equal(t, http.StatusOK, do(http.MethodGet, "/health"), "health tidak dibatasi")
+	}
+	assert.Equal(t, http.StatusNotFound, do(http.MethodPost, "/api/v1/webhooks/midtrans"))
+	assert.Equal(t, http.StatusTooManyRequests, do(http.MethodPost, "/api/v1/webhooks/midtrans"))
 }

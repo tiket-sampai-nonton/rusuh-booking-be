@@ -34,7 +34,7 @@ func (u *GetPaymentStatus) GetStatus(ctx context.Context, payer inbound.Payer, b
 	if err != nil {
 		return dto.PaymentStatus{}, fmt.Errorf("%w: %w", inbound.ErrDependency, err)
 	}
-	out := dto.PaymentStatus{BookingID: p.BookingID, BookingStatus: p.Status, ServerTime: u.clock.Now().UTC()}
+	out := dto.PaymentStatus{BookingID: p.BookingID, BookingStatus: p.Status, OrderID: p.PublicRef, PaymentExpiresAt: p.PaymentExpiresAt.UTC(), ServerTime: u.clock.Now().UTC()}
 	if found {
 		out.Attempt = mapper.AttemptPtrToDTO(&latest)
 	}

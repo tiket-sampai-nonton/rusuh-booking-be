@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -41,6 +42,9 @@ func NewClient(baseURL string, timeout time.Duration, breaker *resilience.Breake
 func (c *Client) ReserveBatch(ctx context.Context, req outbound.AllocationBatchRequest) (outbound.AllocationBatchResponse, error) {
 	var resp outbound.AllocationBatchResponse
 	err := c.do(ctx, http.MethodPost, "/internal/v1/allocations:batch", req, &resp)
+	if errors.Is(err, errNotFound) {
+		err = wrapDependency(err)
+	}
 	if err != nil {
 		return outbound.AllocationBatchResponse{}, err
 	}
@@ -51,6 +55,9 @@ func (c *Client) ReserveBatch(ctx context.Context, req outbound.AllocationBatchR
 func (c *Client) Supply(ctx context.Context, eventID string) (outbound.SupplySnapshot, error) {
 	var resp outbound.SupplySnapshot
 	err := c.do(ctx, http.MethodGet, "/internal/v1/events/"+eventID+"/supply", nil, &resp)
+	if errors.Is(err, errNotFound) {
+		return outbound.SupplySnapshot{}, entity.ErrEventNotFound
+	}
 	if err != nil {
 		return outbound.SupplySnapshot{}, err
 	}
@@ -60,10 +67,19 @@ func (c *Client) Supply(ctx context.Context, eventID string) (outbound.SupplySna
 // ReleaseAllocation releases an admitted allocation as saga compensation (spec 14.R1, ADR-018).
 func (c *Client) ReleaseAllocation(ctx context.Context, allocationID string, reason string) error {
 	body := map[string]string{"reason": reason}
-	return c.do(ctx, http.MethodPost, "/internal/v1/allocations/"+allocationID+":release", body, nil)
+	err := c.do(ctx, http.MethodPost, "/internal/v1/allocations/"+allocationID+":release", body, nil)
+	if errors.Is(err, errNotFound) {
+		err = wrapDependency(err)
+	}
+	return err
 }
 
+// errNotFound is Booking's 404. It is not a dependency failure, so it must not count against the breaker
+// (anyone can ask about made-up event ids).
+var errNotFound = errors.New("bookingclient: 404")
+
 func (c *Client) do(ctx context.Context, method, path string, body, out any) error {
+	notFound := false
 	call := func(ctx context.Context) error {
 		var rdr io.Reader
 		if body != nil {
@@ -90,6 +106,10 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 			return fmt.Errorf("bookingclient: %s %s: %w", method, path, err)
 		}
 		defer func() { _ = res.Body.Close() }()
+		if res.StatusCode == http.StatusNotFound {
+			notFound = true
+			return nil
+		}
 		if res.StatusCode >= http.StatusInternalServerError {
 			return fmt.Errorf("bookingclient: %s %s: status %d", method, path, res.StatusCode)
 		}
@@ -117,10 +137,11 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 		if err := call(ctx); err != nil {
 			return wrapDependency(err)
 		}
-		return nil
-	}
-	if err := c.breaker.Do(ctx, call); err != nil {
+	} else if err := c.breaker.Do(ctx, call); err != nil {
 		return wrapDependency(err)
+	}
+	if notFound {
+		return errNotFound
 	}
 	return nil
 }

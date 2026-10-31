@@ -44,12 +44,31 @@ Coba login OTP: `POST localhost:8085/api/v1/auth/otp/request {"email":"kamu@cont
 |---|---|
 | `make build` / `make test` / `make lint` | build, unit test (race), lint semua modul |
 | `make test-integration` | unit + integration test (PostgreSQL, Valkey, RabbitMQ dari `make infra`) |
-| `make cover` | sama dengan stage `case-coverage` CI (ambang 80%) |
+| `make cover` | sama dengan stage `case-coverage` CI (ambang 80%, tanpa pengecualian paket) |
+| `make test-e2e` | E2E lintas service: membangun dan menjalankan 5 service di host terhadap infra Compose (`make infra`), lalu `tests/e2e` (login OTP → event → antre → klaim → sesi → hold → token Snap Sandbox → webhook → PAID → tiket → email) dan memvalidasi setiap respons terhadap OpenAPI. `E2E_SLOW=1` menambah skenario expiry (±5 menit). Butuh `MIDTRANS_SERVER_KEY` di `services/payment/.env` |
+| `make docs` | Swagger UI untuk semua spesifikasi di `docs/contracts/openapi` (Booking, Queue, Payment, User, Notification, internal/admin) di http://localhost:8089 |
 | `make mock` | generate mock (`go tool mockgen`, versi dikunci `go.mod`) ke `_mock/` |
 | `make tidy` | `go mod tidy` semua modul |
 | `make isolation` | build tiap service tanpa `go.work` |
 | `make migrate-<svc>` / `make run-<svc>` | migrasi atau jalankan API satu service lokal |
 | `make ci` | semua pemeriksaan CI lokal |
+
+## Konfigurasi keamanan yang wajib (di luar `APP_ENV=local`)
+
+| Variabel | Service | Fungsi |
+|---|---|---|
+| `ADMIN_EMAILS` | booking | email (atau `@domain`) pemilik token pembeli yang boleh memakai `/internal/v1/admin/*`; kosong = tidak ada |
+| `TICKET_LINK_KEY` | booking | kunci HMAC token tautan e-tiket (32 byte hex) |
+| `PII_HASH_KEY`, `PII_ENC_KEY` | queue, booking, notification, user | **sama di semua service**: hash NIK cocok, dan email pembeli yang dienkripsi Queue bisa dibuka Notification (ADR-026) |
+| `RATE_LIMIT_PER_IP`, `RATE_LIMIT_WINDOW`, `RATE_LIMIT_WEBHOOK_PER_IP` | booking, payment (webhook hanya payment) | batas request per IP per jendela (default 300 / 1m; webhook 600), dalam-memori per instance, 0 = nonaktif; lewat batas → 429 `RATE_LIMITED` + `Retry-After`. `/health`, `/metrics` dikecualikan |
+| `IMAGE_STORAGE`, `IMAGE_LOCAL_DIR`, `IMAGE_S3_BUCKET`, `IMAGE_S3_ENDPOINT`, `IMAGE_PUBLIC_BASE_URL` | booking | penyimpanan gambar event: `local` (default; direktori git-ignored, dilayani di `/media`, hanya `APP_ENV=local`) atau `s3` (bucket dari Terraform `images_bucket`; `IMAGE_PUBLIC_BASE_URL` menunjuk CloudFront). Upload: `POST /internal/v1/admin/events/{eventId}/images?kind=image\|banner\|thumbnail` (admin, multipart `file`, JPEG/PNG/WebP ≤ 5 MB) |
+| `TICKET_LINK_BASE_URL` | notification | halaman e-tiket; email memuat `{base}/{bookingId}?t={token}` (kosong = tanpa tautan) |
+| `MIDTRANS_SERVER_KEY`, `MIDTRANS_SNAP_BASE_URL`, `PAYMENT_SUCCESS_RETURN_URL`, `PAYMENT_FAILED_RETURN_URL` | payment | Snap Sandbox/produksi dan halaman FE tujuan |
+| `SERVICE_TOKEN_PRIVATE_KEY_PATH`, `PAYMENT_TOKEN_PUBLIC_KEY_PATH` | booking | panggilan Booking → Payment (expiry, batal) |
+
+Migrasi Booking 0005 menghapus kolom email plaintext dan menolak berjalan bila masih ada baris plaintext (data dari sebelum PDP-1 harus dienkripsi dulu dengan versi sebelum 0005; perintah `pii-backfill` sudah dihapus).
+
+Detail dan alasan: ADR-025/026 (`docs/analisa/05-ADR-RBT.md`). Hasil audit: `docs/engineering/AUDIT-FINAL.md`.
 
 ## Struktur
 
@@ -61,7 +80,7 @@ pkg/                   utilitas lintas service tanpa logika bisnis: apperror, ht
 deployments/           compose (init schema/role), terraform, observability
 docs/                  PRD, SRS, HLD, SDD, ADR, Test Plan, Handbook, kontrak OpenAPI dan event, evidence, ai-log
 .kiro/steering, specs/ steering dan spec Kiro
-tests/                 test lintas service (BDD, k6, contract)
+tests/                 test lintas service: e2e (Go, `-tags e2e`), BDD, k6, contract
 ```
 
 Aturan struktur: `.kiro/steering/structure.md` dan Handbook §0. Lapisan ditegakkan `depguard` di `.golangci.yml`; import lintas service dicegah Go `internal/`.
@@ -77,10 +96,11 @@ Satu pipeline `.github/workflows/ci.yml` dengan stage berurutan (matrix per modu
 | `case-coverage` | unit + integration test `-race` (PostgreSQL, Valkey, RabbitMQ sebagai service container) + ambang coverage logika **80%** (`COVERAGE_MIN`) |
 | `code-rank` | SonarCloud (quality gate) |
 | `build` | compile + isolation build `GOWORK=off` |
-| `package` | docker build per service, **linux/arm64** (runner ARM GitHub; ganti lewat variable `ARM_RUNNER`) |
+| `package` | docker build per service dan per arsitektur, native tanpa emulasi: **linux/amd64** (runner `ubuntu-latest`, VPS dev) dan **linux/arm64** (runner ARM GitHub; ganti lewat variable `ARM_RUNNER`; AWS Graviton) |
 | `scan-package` | Trivy scan image + **SBOM CycloneDX** (artifact `sbom-<service>`), lalu `scan-package-verify` (gagal bila severity `IMAGE_FAIL_SEVERITY`, default CRITICAL) |
-| `publish` | push image ke GHCR, hanya dari `main`; digest dicatat di ringkasan run |
-| `deployment-dev`, `deployment-prod` | **manual** (Run workflow, pilih `deploy_env`); sementara placeholder |
+| `publish` | push image per arsitektur ke GHCR lalu gabung jadi manifest multi-arch (`<sha>` dan `main`), hanya dari `main`; digest dicatat di ringkasan run |
+| `deployment-dev` | **manual** (Run workflow, `deploy_env=dev`): SSH ke VPS dev, kirim `deployments/dev`, lalu `deploy.sh` (pull image, migrasi, `up -d`, smoke test). Dilewati dengan peringatan bila environment `dev` belum lengkap. Lihat `deployments/dev/README.md` |
+| `deployment-prod` | **manual**; masih placeholder (menunggu Terraform/AWS) |
 
 `ci-ok` adalah satu-satunya check yang perlu diwajibkan di ruleset `main`; ia lulus bila semua stage lulus atau dilewati.
 
@@ -94,11 +114,13 @@ Coverage dihitung atas kode logika. `cmd/`, `internal/delivery/`, `internal/conf
 |---|---|---|
 | `SONAR_ENABLED=true`, `SONAR_ORGANIZATION`, `SONAR_PROJECT_KEY` | repo variables | `code-rank` (dilewati bila `SONAR_ENABLED` bukan `true`) |
 | `SONAR_TOKEN` | repo secret | `code-rank` |
-| `AWS_REGION`, `AWS_ROLE_ARN_DEV`, `AWS_ROLE_ARN_PROD` | repo variables (OIDC) | `deployment-*` |
+| `DEV_HOST`, `DEV_USER` | variables environment `dev` | `deployment-dev` |
+| `DEV_SSH_KEY`, `DEV_SSH_KNOWN_HOSTS` | secrets environment `dev` | `deployment-dev` |
+| `AWS_REGION`, `AWS_ROLE_ARN_PROD` | repo variables (OIDC) | `deployment-prod` |
 | Environment `dev` dan `prod` (prod: Required reviewers) | Settings > Environments | `deployment-*` |
 | Perintah migrasi dan deploy | langkah bertanda `GANTI` di `ci.yml` | `deployment-*` |
 
-Deployment belum melakukan deploy nyata: langkahnya hanya mencetak peringatan `PLACEHOLDER` sampai Terraform dan role AWS siap.
+`deployment-dev` melakukan deploy nyata ke VPS begitu environment `dev` terisi. `deployment-prod` belum melakukan deploy nyata: langkahnya hanya mencetak peringatan `PLACEHOLDER` sampai Terraform dan role AWS siap.
 
 ## Repo terkait
 

@@ -1,0 +1,10 @@
+[Unit]
+Description=Rusuh dev: Pembersihan harian VPS dev
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=deploy
+Environment=RUSUH_DIR=/opt/rusuh
+ExecStart=/opt/rusuh/repo/deployments/dev/housekeeping.sh

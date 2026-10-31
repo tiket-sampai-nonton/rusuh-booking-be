@@ -1,0 +1,10 @@
+# Salin ke backend.tf setelah bucket state dibuat (lihat README, "Bootstrap state").
+terraform {
+  backend "s3" {
+    bucket       = "rusuh-tfstate-<account-id>"
+    key          = "rusuh/staging/terraform.tfstate"
+    region       = "ap-southeast-3"
+    encrypt      = true
+    use_lockfile = true
+  }
+}

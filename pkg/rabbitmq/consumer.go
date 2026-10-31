@@ -140,7 +140,7 @@ func (c *Connection) handle(ctx context.Context, pub republisher, sub Subscripti
 		for k, v := range msg.Headers {
 			headers[k] = v
 		}
-		headers[HeaderAttempt] = int32(attempt + 1) //nolint:gosec // attempt dibatasi MaxRetries ≤ 10
+		headers[HeaderAttempt] = int32(attempt + 1) // #nosec G115 -- attempt dibatasi MaxRetries ≤ 10 //nolint:gosec
 		headers[HeaderLastError] = truncate(herr.Error(), 512)
 		headers[HeaderOrigQueue] = sub.Queue
 		out := amqp.Publishing{

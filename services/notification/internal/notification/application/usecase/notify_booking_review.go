@@ -35,7 +35,11 @@ func (u *NotifyBookingReview) NotifyBookingReview(ctx context.Context, sourceMes
 		return rabbitmq.Permanent(err)
 	}
 
-	claim := mapper.NewEmailDelivery(sourceMessageID, entity.TypeBookingReview, p.BookingID, u.pii.HMACRecipient(p.BuyerEmail))
+	to, rerr := recipient(u.pii, p.BuyerEmail, p.BuyerEmailEnc)
+	if rerr != nil {
+		return rerr
+	}
+	claim := mapper.NewEmailDelivery(sourceMessageID, entity.TypeBookingReview, p.BookingID, u.pii.HMACRecipient(to))
 	claimed, err := u.repo.ClaimDelivery(ctx, claim)
 	if err != nil {
 		return fmt.Errorf("claim delivery: %w", err)
@@ -51,7 +55,7 @@ func (u *NotifyBookingReview) NotifyBookingReview(ctx context.Context, sourceMes
 		return rabbitmq.Permanent(fmt.Errorf("render review: %w", rerr))
 	}
 
-	providerID, serr := u.email.SendEmail(ctx, p.BuyerEmail, "[RBT] Pembayaran Perlu Ditinjau", body, html, idempotencyKey(sourceMessageID, entity.TypeBookingReview))
+	providerID, serr := u.email.SendEmail(ctx, to, "[RBT] Pembayaran Perlu Ditinjau", body, html, idempotencyKey(sourceMessageID, entity.TypeBookingReview))
 	if serr != nil {
 		recordSendFailure(ctx, u.repo, sourceMessageID, entity.TypeBookingReview, u.clock.Now(), serr)
 		return fmt.Errorf("send review email: %w", serr)

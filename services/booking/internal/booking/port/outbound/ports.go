@@ -24,6 +24,13 @@ type IEventRepo interface {
 type IEventWriteRepo interface {
 	CreateEvent(ctx context.Context, id string, req dto.CreateEventRequest) error
 	UpdateConfig(ctx context.Context, eventID string, req dto.UpdateEventConfigRequest) error
+	// SetImageURL stores url in the column for kind (image | banner | thumbnail); ErrNotFound for an unknown event.
+	SetImageURL(ctx context.Context, eventID, kind, url string) error
+}
+
+// IImageStore saves an uploaded image under key and returns its public URL.
+type IImageStore interface {
+	Put(ctx context.Context, key, contentType string, body []byte) (string, error)
 }
 
 // IAdmissionRepo manages admissions (allocations + sessions).
@@ -52,7 +59,7 @@ type ReserveEntry struct {
 	VisitorID      string
 	BuyerNIKHash   []byte
 	BuyerNIKMasked string
-	BuyerEmail     string
+	BuyerEmailEnc  string // sealed by Queue
 	AccountID      string
 	Units          int
 	AdmissionJTI   string
@@ -148,6 +155,13 @@ type CategoryAvailabilitySnap struct {
 // after each hold/settle/expire) and tracks SSE connection count per instance.
 type IAvailabilityCache interface {
 	GetAvailability(ctx context.Context, eventID string) ([]CategoryAvailabilitySnap, error)
+	SetAvailability(ctx context.Context, eventID string, snaps []CategoryAvailabilitySnap, ttl time.Duration) error
 	IncrConn(ctx context.Context, instance string) (int, error)
 	DecrConn(ctx context.Context, instance string) error
+}
+
+// IAvailabilitySource lists the live availability of every event whose sales window is open at now,
+// keyed by event ID (the source of the SSE snapshot written by ProjectAvailability).
+type IAvailabilitySource interface {
+	OnSaleAvailability(ctx context.Context, now time.Time) (map[string][]CategoryAvailabilitySnap, error)
 }

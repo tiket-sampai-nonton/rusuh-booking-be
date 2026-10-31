@@ -102,7 +102,7 @@ func (h *InternalHandler) paymentOnly(next stdhttp.HandlerFunc) stdhttp.Handler 
 // service guards internal endpoints with the service bearer token.
 func (h *InternalHandler) service(next stdhttp.HandlerFunc) stdhttp.Handler {
 	if h.verifier == nil {
-		return next
+		return denyAll // no key configured: fail closed, never open
 	}
 	return withUser(h.verifier, next)
 }

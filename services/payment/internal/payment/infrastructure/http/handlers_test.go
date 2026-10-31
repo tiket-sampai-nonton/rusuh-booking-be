@@ -189,7 +189,7 @@ func TestPageTokens_RequireVisitorTokenNotAPageSession(t *testing.T) {
 func TestCreateAttempt_PassesIdempotencyKeyAndBodyAndReturns201Envelope(t *testing.T) {
 	e := newEnv(t, true)
 	e.attempt.EXPECT().CreateAttempt(gomock.Any(), inbound.Payer{VisitorID: visitorID}, bookingID, idemKey, dto.CreateAttemptRequest{Method: "VA_BCA"}).
-		Return(dto.Attempt{AttemptNo: 1, Method: "VA_BCA", Status: "PENDING", Instruction: &dto.Instruction{Type: "VA", VANumber: "812"}}, nil)
+		Return(dto.Attempt{AttemptNo: 1, Method: "VA_BCA", Status: "PENDING", RedirectURL: "https://snap/r/812"}, nil)
 
 	r := jsonReq(stdhttp.MethodPost, "/api/v1/payments/"+bookingID+"/attempts", `{"method":"VA_BCA"}`)
 	r.Header.Set("Idempotency-Key", idemKey)
@@ -203,7 +203,7 @@ func TestCreateAttempt_PassesIdempotencyKeyAndBodyAndReturns201Envelope(t *testi
 	}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
 	assert.Equal(t, 201, body.Meta.Code)
-	assert.Equal(t, "812", body.Data.Instruction.VANumber)
+	assert.Equal(t, "https://snap/r/812", body.Data.RedirectURL)
 }
 
 func TestCreateAttempt_RejectsUnknownFieldsAndMapsUsecaseErrors(t *testing.T) {

@@ -2,24 +2,18 @@ package dto
 
 import "time"
 
-// Instruction is how to pay (payment.yaml Attempt.instruction). qrUrl is an additive field: Midtrans
-// returns the QR as an image URL, not as a string to encode.
-type Instruction struct {
-	Type        string `json:"type"`
-	Bank        string `json:"bank,omitempty"`
-	VANumber    string `json:"vaNumber,omitempty"`
-	QRURL       string `json:"qrUrl,omitempty"`
-	DeeplinkURL string `json:"deeplinkUrl,omitempty"`
-}
-
 // Attempt is payment.yaml Attempt.
 type Attempt struct {
-	AttemptNo      int          `json:"attemptNo"`
-	Method         string       `json:"method"`
-	Status         string       `json:"status"`
-	BookingVersion int          `json:"bookingVersion"`
-	ExpiresAt      *time.Time   `json:"expiresAt,omitempty"`
-	Instruction    *Instruction `json:"instruction,omitempty"`
+	AttemptNo      int        `json:"attemptNo"`
+	Method         string     `json:"method"`
+	Status         string     `json:"status"`
+	BookingVersion int        `json:"bookingVersion"`
+	ExpiresAt      *time.Time `json:"expiresAt,omitempty"`
+	// Snap hand-off: the FE opens RedirectURL; Snap returns the payer to SuccessReturnURL or FailedReturnURL,
+	// and the FE then verifies the result with GET /payments/{bookingId}/status.
+	RedirectURL      string `json:"redirectUrl,omitempty"`
+	SuccessReturnURL string `json:"successReturnUrl,omitempty"`
+	FailedReturnURL  string `json:"failedReturnUrl,omitempty"`
 }
 
 // PaymentPage is payment.yaml PaymentPage.
@@ -35,10 +29,12 @@ type PaymentPage struct {
 
 // PaymentStatus is payment.yaml PaymentStatus.
 type PaymentStatus struct {
-	BookingID     string    `json:"bookingId"`
-	BookingStatus string    `json:"bookingStatus"`
-	Attempt       *Attempt  `json:"attempt"`
-	ServerTime    time.Time `json:"serverTime"`
+	BookingID        string    `json:"bookingId"`
+	BookingStatus    string    `json:"bookingStatus"`
+	OrderID          string    `json:"orderId,omitempty"`
+	PaymentExpiresAt time.Time `json:"paymentExpiresAt"`
+	Attempt          *Attempt  `json:"attempt"`
+	ServerTime       time.Time `json:"serverTime"`
 }
 
 // PageToken is payment.yaml PageToken.

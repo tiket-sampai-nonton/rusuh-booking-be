@@ -1,11 +1,14 @@
 package delivery
 
 import (
+	"context"
 	"crypto/ed25519"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/clock"
@@ -31,9 +34,11 @@ func (noRoutes) Register(*http.ServeMux) {}
 
 // module bundles the wired usecases so both the HTTP router and the worker can reuse them.
 type module struct {
+	visitors   httpx.Middleware
 	registrars []registrar
 	sweepSess  *usecase.SweepSessions
 	sweepExp   *usecase.SweepExpiries
+	projAvail  *usecase.ProjectAvailability
 	settle     *usecase.Settle
 	outbox     *bookingpg.OutboxWriter
 }
@@ -66,13 +71,14 @@ func newBookingModule(cfg config.Config, clients *Clients, logger *slog.Logger) 
 	if err != nil {
 		return nil, err
 	}
-	admissionVerifier, bearerVerifier := buildTokenVerifiers(clk.Now)
+	tv := buildTokenVerifiers(clk.Now)
+	admissionVerifier, visitorVerifier := tv.admission, tv.queue
 	paymentClient := paymentclient.New(os.Getenv("PAYMENT_SERVICE_URL"), buildPaymentAuthorizer(logger, clk.Now))
 	paymentAuth := buildPaymentAuth(logger, clk.Now)
 
 	// Usecases.
 	listEvents := usecase.NewListEvents(eventRepo, clk)
-	getDetail := usecase.NewGetEventDetail(eventRepo)
+	getDetail := usecase.NewGetEventDetail(eventRepo, clk)
 	createEvent := usecase.NewCreateEvent(eventWriteRepo, idGen)
 	updateConfig := usecase.NewUpdateEventConfig(eventWriteRepo)
 	allocate := usecase.NewAllocateBatch(admissionRepo, idGen, clk)
@@ -82,7 +88,11 @@ func newBookingModule(cfg config.Config, clients *Clients, logger *slog.Logger) 
 	cancelSess := usecase.NewCancelSession(admissionRepo)
 	hold := usecase.NewHold(admissionRepo, eventRepo, idemStore, uow, pii, idGen, clk)
 	edit := usecase.NewEdit(bookingRepo, admissionRepo, eventRepo, uow, pii, clk)
-	tickets := usecase.NewGetTickets(bookingRepo, ticketRepo)
+	links, err := buildTicketLinks()
+	if err != nil {
+		return nil, err
+	}
+	tickets := usecase.NewGetTickets(bookingRepo, ticketRepo, links)
 	history := usecase.NewListMyBookings(bookingRepo)
 	getBooking := usecase.NewGetBooking(bookingRepo, clk)
 	payable := usecase.NewGetPayable(bookingRepo, clk)
@@ -94,35 +104,57 @@ func newBookingModule(cfg config.Config, clients *Clients, logger *slog.Logger) 
 		paymentClient,
 		uow,
 		cfg.Worker.VerifyGraceSeconds,
-		func(string) string { return idGen.NewPublicRef() },
-		nil, // ticketLinkTokenFn: nil → empty token (ticket-link signing not needed on expiry path)
+		func(string) string { return usecase.NewTicketCode() },
+		links.Token,
 	)
 	cancelBook := usecase.NewCancelBooking(bookingRepo, paymentClient, uow, clk)
 
 	// Handlers.
+	store, media, err := newImageStore(context.Background(), cfg.Image)
+	if err != nil {
+		return nil, err
+	}
+	adminHandler := bookinghttp.NewAdminHandler(createEvent, updateConfig, tv.admin).WithImages(usecase.NewUploadEventImage(eventWriteRepo, store))
 	regs := []registrar{
 		bookinghttp.NewCatalogHandler(listEvents, getDetail),
 		bookinghttp.NewSessionHandler(sessions, attendee, cancelSess),
-		bookinghttp.NewBookingHandler(hold, edit, tickets, getBooking, cancelBook),
-		bookinghttp.NewMyBookingsHandler(history, bearerVerifier),
-		bookinghttp.NewInternalHandler(allocate, bearerVerifier).WithSupply(supply).WithPayable(payable).WithDeadlineExtension(deadlineUC).WithPaymentLock(lockUC).WithReleaseAllocation(releaseAlloc).WithPaymentAuth(paymentAuth),
-		bookinghttp.NewAdminHandler(createEvent, updateConfig, bearerVerifier),
+		bookinghttp.NewBookingHandler(hold, edit, tickets, getBooking, cancelBook).WithBuyerAuth(tv.buyer),
+		bookinghttp.NewMyBookingsHandler(history, tv.buyer),
+		bookinghttp.NewInternalHandler(allocate, tv.service).WithSupply(supply).WithPayable(payable).WithDeadlineExtension(deadlineUC).WithPaymentLock(lockUC).WithReleaseAllocation(releaseAlloc).WithPaymentAuth(paymentAuth),
+		adminHandler,
+		media,
 	}
 
+	var projAvail *usecase.ProjectAvailability
 	// SSE availability + timer stream (requires Valkey; skipped when it is not wired).
 	if clients.VK != nil {
 		cache := bookingvalkey.NewAvailabilityCache(clients.VK.VK())
 		streamUC := usecase.NewStreamSession(admissionRepo, cache, clk, 3*time.Second, 1000)
 		regs = append(regs, bookinghttp.NewSSEHandler(streamUC))
+		projAvail = usecase.NewProjectAvailability(eventRepo, cache, clk)
 	}
 
+	var visitors httpx.TokenVerifier // nil interface (not a typed nil) when the Queue key is not configured
+	if visitorVerifier != nil {
+		visitors = visitorVerifier
+	}
 	return &module{
+		visitors:   bookinghttp.ResolveVisitor(visitors, clk.Now),
 		registrars: regs,
 		sweepSess:  usecase.NewSweepSessions(admissionRepo, clk),
 		sweepExp:   usecase.NewSweepExpiries(bookingRepo, expiry, clk),
-		settle:     usecase.NewSettle(uow, idGen),
+		projAvail:  projAvail,
+		settle:     usecase.NewSettle(uow, links.Token),
 		outbox:     outboxWriter,
 	}, nil
+}
+
+// WrapVisitor puts visitor-token verification in front of the routes.
+func (m *module) WrapVisitor(h http.Handler) http.Handler {
+	if m.visitors == nil { // no database: only /health is mounted
+		return h
+	}
+	return m.visitors(h)
 }
 
 // Register mounts every handler of the module.
@@ -133,19 +165,59 @@ func (m *module) Register(mux *http.ServeMux) {
 }
 
 func buildPII() (*security.PII, error) {
-	hashKey, err := crypto.ParseKey(getenvOr("PII_HASH_KEY", devKeyHex))
+	hashKey, err := piiKey("PII_HASH_KEY")
 	if err != nil {
 		return nil, err
 	}
-	encKey, err := crypto.ParseKey(getenvOr("PII_ENC_KEY", devKeyHex))
+	encKey, err := piiKey("PII_ENC_KEY")
 	if err != nil {
 		return nil, err
 	}
 	return security.NewPII(hashKey, encKey)
 }
 
-func buildTokenVerifiers(now func() time.Time) (*security.AdmissionVerifier, bookinghttp.IUserTokenVerifier) {
-	// Queue public key: verifies admission tokens + service bearer (internal allocations).
+// buildTicketLinks keys the e-ticket email link. Like the PII keys it may use a dev key only in a local run.
+func buildTicketLinks() (*security.TicketLinks, error) {
+	key := os.Getenv("TICKET_LINK_KEY")
+	if key == "" {
+		if env := os.Getenv("APP_ENV"); env != "" && env != "local" {
+			return nil, fmt.Errorf("booking: TICKET_LINK_KEY wajib diisi di APP_ENV=%s", env)
+		}
+		key = devKeyHex
+	}
+	raw, err := crypto.ParseKey(key)
+	if err != nil {
+		return nil, fmt.Errorf("booking: TICKET_LINK_KEY: %w", err)
+	}
+	return security.NewTicketLinks(raw)
+}
+
+// piiKey reads a 32-byte hex key. Only a local run (APP_ENV local or unset) may fall back to the all-zero dev key;
+// anywhere else a missing key is a start-up error, never a silent weak key that also disagrees with Queue and User.
+func piiKey(name string) ([]byte, error) {
+	v := os.Getenv(name)
+	if v == "" {
+		if env := os.Getenv("APP_ENV"); env != "" && env != "local" {
+			return nil, fmt.Errorf("booking: %s wajib diisi di APP_ENV=%s", name, env)
+		}
+		v = devKeyHex
+	}
+	return crypto.ParseKey(v)
+}
+
+// tokenVerifiers holds one verifier per kind of token Booking accepts. The Queue key signs admission, visitor,
+// queue, and service tokens, so each guard checks the scope it expects (a visitor token is public: anyone who joins
+// a queue gets one).
+type tokenVerifiers struct {
+	queue     *token.Verifier
+	admission *security.AdmissionVerifier
+	service   *security.BearerVerifier // Queue -> Booking internal calls
+	buyer     *security.BearerVerifier // /me/bookings
+	admin     *security.BearerVerifier // buyer token of an allow-listed email (ADMIN_EMAILS)
+}
+
+func buildTokenVerifiers(now func() time.Time) tokenVerifiers {
+	// Queue public key: verifies admission tokens, visitor tokens, and the Queue's service token.
 	queueVerifier := loadVerifier(
 		os.Getenv("TOKEN_PUBLIC_KEY_PATH"),
 		getenvOr("TOKEN_KEY_ID", "queue-1"),
@@ -153,7 +225,7 @@ func buildTokenVerifiers(now func() time.Time) (*security.AdmissionVerifier, boo
 		getenvOr("TOKEN_AUDIENCE", "rbt"),
 		now,
 	)
-	// User public key: verifies buyer bearer tokens (/me/bookings).
+	// User public key: verifies buyer bearer tokens.
 	userVerifier := loadVerifier(
 		os.Getenv("USER_TOKEN_PUBLIC_KEY_PATH"),
 		getenvOr("USER_TOKEN_KEY_ID", "user-1"),
@@ -161,8 +233,13 @@ func buildTokenVerifiers(now func() time.Time) (*security.AdmissionVerifier, boo
 		getenvOr("TOKEN_AUDIENCE", "rbt"),
 		now,
 	)
-	return security.NewAdmissionVerifier(queueVerifier, now),
-		security.NewMultiBearerVerifier(userVerifier, queueVerifier, now)
+	return tokenVerifiers{
+		queue:     queueVerifier,
+		admission: security.NewAdmissionVerifier(queueVerifier, now),
+		service:   security.NewBearerVerifier(queueVerifier, now, security.ScopeService),
+		buyer:     security.NewBearerVerifier(userVerifier, now, security.ScopeBuyer),
+		admin:     security.NewAdminVerifier(userVerifier, now, strings.Split(os.Getenv("ADMIN_EMAILS"), ",")),
+	}
 }
 
 // buildPaymentAuthorizer makes the short-lived service token (5 minutes, cached) Booking sends to Payment's

@@ -31,7 +31,7 @@ type IOTPPublisher interface {
 
 // ITokenIssuer signs access tokens.
 type ITokenIssuer interface {
-	IssueAccess(accountID, email string, nikHash []byte, now time.Time) (token string, expiresAt time.Time, err error)
+	IssueAccess(accountID, email string, nikHash []byte, nikMasked string, now time.Time) (token string, expiresAt time.Time, err error)
 }
 
 // ISecretGenerator produces random secrets.

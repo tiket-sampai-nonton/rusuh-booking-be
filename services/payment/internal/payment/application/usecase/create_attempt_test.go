@@ -21,7 +21,7 @@ import (
 )
 
 func newCreate(m mocks) *usecase.CreateAttempt {
-	return usecase.NewCreateAttempt(m.booking, m.attempts, m.idem, m.gateway, clk, methods)
+	return usecase.NewCreateAttempt(m.booking, m.attempts, m.idem, m.gateway, clk, methods, usecase.ReturnURLs{Success: "https://fe/ok", Failed: "https://fe/fail"})
 }
 
 func req(method string) dto.CreateAttemptRequest { return dto.CreateAttemptRequest{Method: method} }
@@ -48,10 +48,12 @@ func TestCreateAttempt_HappyPath(t *testing.T) {
 		BookingID: bookingID, PublicRef: "RB-7F3A9C21", Method: vo.MethodVABCA, AmountMinor: 1500000,
 		ExpiresAt: now.Add(8 * time.Minute), BookingVersion: 4,
 	}).Return(attempt(vo.AttemptCreated), nil)
-	ins := entity.Instruction{Type: "VA", Bank: "bca", VANumber: "812785002530231"}
+	ins := entity.Instruction{Type: "SNAP", SnapToken: "tok-1", RedirectURL: "https://snap/r/tok-1"}
 	m.gateway.EXPECT().Charge(gomock.Any(), gomock.Any()).Return(outbound.ChargeResult{ProviderTxID: "tx-1", Instruction: ins}, nil)
+	stored := ins
+	stored.SuccessReturnURL, stored.FailedReturnURL = "https://fe/ok", "https://fe/fail"
 	m.attempts.EXPECT().Transition(gomock.Any(), outbound.TransitionSpec{
-		AttemptID: attemptID, To: vo.AttemptPending, ProviderTxID: "tx-1", Instruction: &ins, LastProviderStatus: "pending",
+		AttemptID: attemptID, To: vo.AttemptPending, ProviderTxID: "tx-1", Instruction: &stored, LastProviderStatus: "pending",
 	}).Return(true, nil)
 	m.idem.EXPECT().Complete(gomock.Any(), "create_attempt", visitorID, idemKey, 201, gomock.Any()).Return(nil)
 
@@ -59,8 +61,9 @@ func TestCreateAttempt_HappyPath(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "PENDING", got.Status)
 	assert.Equal(t, 4, got.BookingVersion)
-	require.NotNil(t, got.Instruction)
-	assert.Equal(t, "812785002530231", got.Instruction.VANumber)
+	assert.Equal(t, "https://snap/r/tok-1", got.RedirectURL)
+	assert.Equal(t, "https://fe/ok", got.SuccessReturnURL)
+	assert.Equal(t, "https://fe/fail", got.FailedReturnURL)
 }
 
 // Property 2 dan 5: tidak ada charge sebelum lock OK; nominal dan expiry berasal dari hasil lock.
@@ -83,7 +86,7 @@ func TestCreateAttempt_ChargeUsesLockedAmountAndBookingDeadline(t *testing.T) {
 			assert.EqualValues(t, 1200000, r.AmountMinor, "nominal = versi terkunci")
 			assert.Equal(t, 4*time.Minute+20*time.Second, r.Expiry, "expiry gateway tidak melewati deadline booking")
 			assert.Equal(t, now, r.OrderTime)
-			return outbound.ChargeResult{Instruction: entity.Instruction{Type: "VA"}}, nil
+			return outbound.ChargeResult{Instruction: entity.Instruction{Type: "SNAP", RedirectURL: "https://snap/r"}}, nil
 		}),
 		m.attempts.EXPECT().Transition(gomock.Any(), gomock.Any()).Return(true, nil),
 	)
@@ -161,7 +164,7 @@ func TestCreateAttempt_OwnershipAndPayableChecks(t *testing.T) {
 }
 
 func TestCreateAttempt_IdempotentReplay(t *testing.T) {
-	stored := dto.Attempt{AttemptNo: 1, Method: "VA_BCA", Status: "PENDING", BookingVersion: 4, Instruction: &dto.Instruction{Type: "VA", VANumber: "812"}}
+	stored := dto.Attempt{AttemptNo: 1, Method: "VA_BCA", Status: "PENDING", BookingVersion: 4, RedirectURL: "https://snap/r/812"}
 	body, _ := json.Marshal(stored)
 	uc := func(m mocks) *usecase.CreateAttempt { return newCreate(m) }
 
@@ -235,13 +238,13 @@ func TestCreateAttempt_SameMethodReturnsExistingInstructionWithoutCharging(t *te
 	expectFresh(m)
 	m.booking.EXPECT().Lock(gomock.Any(), bookingID, idemKey).Return(lockOK(), nil)
 	open := attempt(vo.AttemptPending)
-	open.Instruction = &entity.Instruction{Type: "VA", Bank: "bca", VANumber: "812"}
+	open.Instruction = &entity.Instruction{Type: "SNAP", RedirectURL: "https://snap/r/812"}
 	m.attempts.EXPECT().FindOpen(gomock.Any(), bookingID).Return(open, true, nil)
 	m.idem.EXPECT().Complete(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), 201, gomock.Any()).Return(nil)
 
 	got, err := newCreate(m).CreateAttempt(ctx(), payer, bookingID, idemKey, req("VA_BCA"))
 	require.NoError(t, err)
-	assert.Equal(t, "812", got.Instruction.VANumber)
+	assert.Equal(t, "https://snap/r/812", got.RedirectURL)
 }
 
 func TestCreateAttempt_ChangingMethodCancelsTheOldOrderFirst(t *testing.T) {
@@ -265,7 +268,7 @@ func TestCreateAttempt_ChangingMethodCancelsTheOldOrderFirst(t *testing.T) {
 		m.attempts.EXPECT().CreateNext(gomock.Any(), gomock.Any()).Return(next, nil),
 		m.gateway.EXPECT().Charge(gomock.Any(), gomock.Any()).DoAndReturn(func(_ any, r outbound.ChargeRequest) (outbound.ChargeResult, error) {
 			assert.Equal(t, "RB-7F3A9C21-2", r.OrderID, "order baru, bukan order lama")
-			return outbound.ChargeResult{Instruction: entity.Instruction{Type: "QR", QRURL: "https://qr"}}, nil
+			return outbound.ChargeResult{Instruction: entity.Instruction{Type: "SNAP", RedirectURL: "https://snap/r/qr"}}, nil
 		}),
 		m.attempts.EXPECT().Transition(gomock.Any(), gomock.Any()).Return(true, nil),
 	)
@@ -274,7 +277,7 @@ func TestCreateAttempt_ChangingMethodCancelsTheOldOrderFirst(t *testing.T) {
 	got, err := newCreate(m).CreateAttempt(ctx(), payer, bookingID, idemKey, req("QRIS"))
 	require.NoError(t, err)
 	assert.Equal(t, 2, got.AttemptNo)
-	assert.Equal(t, "QR", got.Instruction.Type)
+	assert.Equal(t, "https://snap/r/qr", got.RedirectURL)
 }
 
 func TestCreateAttempt_OldOrderAlreadyPaidBlocksNewAttempt(t *testing.T) {

@@ -1,0 +1,14 @@
+# Konteks build = root repo. Jangan masukkan rahasia lokal atau artefak ke konteks/cache build.
+**/.env
+**/*.pem
+.git
+.github
+coverage
+logs
+dump.rdb
+bin
+scan-reports
+reports
+tests/e2e/go.sum
+**/.terraform
+deployments/terraform

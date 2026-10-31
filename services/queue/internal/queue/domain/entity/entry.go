@@ -13,6 +13,7 @@ type Entry struct {
 	AccountID       string // "" for guest (ADR-020)
 	Seq             valueobject.Seq
 	BuyerNikHash    []byte
+	BuyerNikMasked  string
 	EmailEnc        []byte
 	EmailHash       []byte // HMAC of email, hex-stored; used to rebuild the email constraint key
 	Status          valueobject.Status

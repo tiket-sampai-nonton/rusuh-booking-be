@@ -23,7 +23,7 @@ type HoldSpec struct {
 	AdmissionID      string
 	VisitorID        string
 	BuyerNIKHash     []byte
-	BuyerEmail       string
+	BuyerEmailEnc    string
 	AccountID        string
 	AmountMinor      int64
 	PaymentExpiresAt time.Time
@@ -103,7 +103,7 @@ type PaymentLockResult struct {
 type IUnitOfWork interface {
 	Hold(ctx context.Context, spec HoldSpec) (HoldResult, error)
 	ReplaceItems(ctx context.Context, spec ReplaceSpec) (int, error)
-	Settle(ctx context.Context, spec SettleSpec) (bool, error) // settled=false when already PAID (idempotent no-op)
+	Settle(ctx context.Context, spec SettleSpec) (bool, error) // settled=true only when the booking became PAID (REVIEW and already-PAID are false)
 	Expire(ctx context.Context, spec ExpireSpec) (bool, error) // acted=false when the booking was already terminal
 	ExtendDeadline(ctx context.Context, spec DeadlineSpec) error
 	PaymentLock(ctx context.Context, spec PaymentLockSpec) (PaymentLockResult, error)

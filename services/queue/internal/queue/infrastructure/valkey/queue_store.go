@@ -81,7 +81,7 @@ func (s *QueueStore) Join(ctx context.Context, p outbound.JoinParams) (outbound.
 	}
 	args := []string{
 		p.EntryID, p.VisitorID, p.NikHash, string(p.EmailEnc), p.AccountID,
-		strconv.FormatInt(p.NowMs, 10), bstr(p.OneActivePerVisitor), bstr(p.OneActivePerEmail), p.EmailHashHex,
+		strconv.FormatInt(p.NowMs, 10), bstr(p.OneActivePerVisitor), bstr(p.OneActivePerEmail), p.EmailHashHex, p.NikMasked,
 	}
 	arr, err := s.join.Exec(ctx, s.c, keys, args).ToArray()
 	if err != nil {
@@ -372,7 +372,7 @@ func (s *QueueStore) WasNotifiedSoon(ctx context.Context, eventID, entryID strin
 // MarkNotifiedSoon records that a pre-turn notification was sent (idempotent SETNX, TTL=600s).
 func (s *QueueStore) MarkNotifiedSoon(ctx context.Context, eventID, entryID string) error {
 	key := s.keyer.Key(s.tag(eventID) + ":notified_soon:" + entryID)
-	return s.c.Do(ctx, s.c.B().Set().Key(key).Value("1").Nx().Ex(600).Build()).Error()
+	return s.c.Do(ctx, s.c.B().Set().Key(key).Value("1").Nx().Ex(600*time.Second).Build()).Error()
 }
 
 // AddQuotaExhausted records a NIK hash in the quota_exhausted set (idempotent SADD).
@@ -428,6 +428,7 @@ func hashToEntry(id string, m map[string]string) entity.Entry {
 		e.EmailHash = b
 	}
 	e.EmailEnc = []byte(m["emailEnc"])
+	e.BuyerNikMasked = m["nikMasked"]
 	e.Status = valueobject.Status(m["status"])
 	e.JoinedAtMs = parseMs(m["joinedAtMs"])
 	e.AdmittedAtMs = parseMs(m["admittedAtMs"])

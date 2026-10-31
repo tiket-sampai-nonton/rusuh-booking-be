@@ -7,8 +7,8 @@ Tanggal: {{formatStart .EventStartsAt}}
 Venue  : {{.EventVenue}}
 
 Tiket:
-{{range .Tickets}}- {{.CategoryCode}} | {{.TicketCode}} | {{.AttendeeName}} | {{.AttendeeNikMasked}}
+{{range .Tickets}}- {{.CategoryCode}} | {{.TicketCode}} | {{.AttendeeName}} | {{.AttendeeNikMasked}} | QR: {{.QRPayload}}
 {{end}}
-{{if .TicketLinkToken}}Lihat e-tiket: {{.TicketLinkToken}}
+{{if .TicketURL}}Lihat e-tiket: {{.TicketURL}}
 
 {{end}}Tunjukkan kode tiket di pintu masuk. Terima kasih — Tim Rusuh Booking Tiket

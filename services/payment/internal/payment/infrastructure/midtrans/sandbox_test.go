@@ -5,7 +5,9 @@ package midtrans_test
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -38,57 +40,57 @@ func sandboxGateway(t *testing.T) *midtrans.Gateway {
 
 func orderID() string { return fmt.Sprintf("RB-SBX%s-1", rabbitmq.NewID()[:8]) }
 
-func charge(t *testing.T, g *midtrans.Gateway, id string, expiry time.Duration) {
-	t.Helper()
-	res, err := g.Charge(context.Background(), outbound.ChargeRequest{OrderID: id, Method: vo.MethodVABCA, AmountMinor: 150000, OrderTime: time.Now(), Expiry: expiry})
-	require.NoError(t, err)
-	assert.Equal(t, "VA", res.Instruction.Type)
-	assert.NotEmpty(t, res.Instruction.VANumber)
-	assert.NotEmpty(t, res.ProviderTxID)
-}
-
-func TestSandbox_ChargeStatusCancel(t *testing.T) {
+// A Snap token creates no Core API order until the payer picks a channel on the Snap page, so before payment the
+// status of a fresh order is "not found" (the usecase treats that as NOT_PAID). Paying needs the Snap page and is manual.
+func TestSandbox_SnapTokenThenUnpaidStatus(t *testing.T) {
 	g := sandboxGateway(t)
 	ctx := context.Background()
 	id := orderID()
-	charge(t, g, id, 5*time.Minute)
+
+	res, err := g.Charge(ctx, outbound.ChargeRequest{OrderID: id, Method: vo.MethodVABCA, AmountMinor: 150000, OrderTime: time.Now(), Expiry: 5 * time.Minute})
+	require.NoError(t, err)
+	assert.Equal(t, "SNAP", res.Instruction.Type)
+	assert.NotEmpty(t, res.Instruction.SnapToken)
+	assert.Contains(t, res.Instruction.RedirectURL, res.Instruction.SnapToken)
+
+	_, err = g.Status(ctx, id)
+	assert.ErrorIs(t, err, outbound.ErrOrderNotFound)
+	_, err = g.Status(ctx, orderID())
+	assert.ErrorIs(t, err, outbound.ErrOrderNotFound)
+}
+
+// Every payment-page bucket must be accepted by Snap (enabled_payments names are valid).
+func TestSandbox_AllMethodBucketsAreAccepted(t *testing.T) {
+	g := sandboxGateway(t)
+	for _, m := range []vo.Method{vo.MethodVABCA, vo.MethodVABNI, vo.MethodVABRI, vo.MethodQRIS, vo.MethodGoPay, vo.MethodSnap} {
+		res, err := g.Charge(context.Background(), outbound.ChargeRequest{OrderID: orderID(), Method: m, AmountMinor: 150000, OrderTime: time.Now(), Expiry: 5 * time.Minute})
+		require.NoError(t, err, m)
+		assert.NotEmpty(t, res.Instruction.SnapToken, m)
+	}
+}
+
+// Picking a channel on the Snap page is what creates the Core API order; this does the same call headlessly
+// (the public /pay endpoint Snap's own page uses). Before it the order is unknown (404), after it PENDING.
+func TestSandbox_ChannelSelectionMakesOrderVisibleAsPending(t *testing.T) {
+	g := sandboxGateway(t)
+	ctx := context.Background()
+	id := orderID()
+	res, err := g.Charge(ctx, outbound.ChargeRequest{OrderID: id, Method: vo.MethodVABCA, AmountMinor: 150000, OrderTime: time.Now(), Expiry: 5 * time.Minute})
+	require.NoError(t, err)
+	_, err = g.Status(ctx, id)
+	require.ErrorIs(t, err, outbound.ErrOrderNotFound)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://app.sandbox.midtrans.com/snap/v1/transactions/"+res.Instruction.SnapToken+"/pay",
+		strings.NewReader(`{"payment_type":"bca_va"}`))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	_ = resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
 
 	st, err := g.Status(ctx, id)
 	require.NoError(t, err)
 	assert.Equal(t, vo.AttemptPending, st.Status)
-
 	require.NoError(t, g.Cancel(ctx, id))
-	st, err = g.Status(ctx, id)
-	require.NoError(t, err)
-	assert.Equal(t, vo.AttemptCancelled, st.Status)
-
-	// Midtrans answers HTTP 200 with status_code 412 when the order can no longer change.
-	assert.ErrorIs(t, g.Cancel(ctx, id), outbound.ErrGatewayRejected)
-
-	_, err = g.Status(ctx, orderID())
-	assert.ErrorIs(t, err, outbound.ErrOrderNotFound, "Midtrans menjawab HTTP 200 dengan status_code 404")
-	assert.ErrorIs(t, g.Cancel(ctx, orderID()), outbound.ErrOrderNotFound)
-}
-
-// A real expiry: the smallest custom_expiry accepted everywhere is 30 s (20 s is rejected for VA BCA); Midtrans answers the status with status_code 407 and transaction_status expire.
-func TestSandbox_RealExpiry(t *testing.T) {
-	g := sandboxGateway(t)
-	ctx := context.Background()
-	id := orderID()
-	charge(t, g, id, 30*time.Second)
-
-	deadline := time.Now().Add(120 * time.Second)
-	var last vo.AttemptStatus
-	for time.Now().Before(deadline) {
-		st, err := g.Status(ctx, id)
-		require.NoError(t, err, "status 407 + transaction_status expire bukan penolakan")
-		if last = st.Status; last == vo.AttemptExpired {
-			break
-		}
-		time.Sleep(5 * time.Second)
-	}
-	assert.Equal(t, vo.AttemptExpired, last, "order tidak kedaluwarsa dalam 120 detik")
-
-	// An expired order cannot be cancelled any more.
-	assert.ErrorIs(t, g.Cancel(ctx, id), outbound.ErrGatewayRejected)
 }

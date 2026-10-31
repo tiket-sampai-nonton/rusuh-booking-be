@@ -22,7 +22,7 @@ func TestGetPage(t *testing.T) {
 	m := newMocks(t)
 	m.booking.EXPECT().GetPayable(gomock.Any(), bookingID).Return(payable(), nil)
 	open := attempt(vo.AttemptPending)
-	open.Instruction = &entity.Instruction{Type: "VA", VANumber: "812"}
+	open.Instruction = &entity.Instruction{Type: "SNAP", RedirectURL: "https://snap/r/812"}
 	m.attempts.EXPECT().FindOpen(gomock.Any(), bookingID).Return(open, true, nil)
 
 	got, err := usecase.NewGetPaymentPage(m.booking, m.attempts, methods, clk).GetPage(ctx(), payer, bookingID)
@@ -32,7 +32,7 @@ func TestGetPage(t *testing.T) {
 	assert.Equal(t, now.Add(8*time.Minute), got.PaymentExpiresAt)
 	assert.Equal(t, now, got.ServerTime)
 	require.NotNil(t, got.CurrentAttempt)
-	assert.Equal(t, "812", got.CurrentAttempt.Instruction.VANumber)
+	assert.Equal(t, "https://snap/r/812", got.CurrentAttempt.RedirectURL)
 
 	got.Methods[0] = "DIUBAH"
 	assert.Equal(t, "VA_BCA", methods[0], "daftar metode dikloning")
@@ -150,4 +150,15 @@ func TestExchangePageToken(t *testing.T) {
 		_, err := usecase.NewExchangePageToken(m.tokens, m.signer, clk).ExchangePageToken(ctx(), "token")
 		assert.Equal(t, apperror.CodeDependencyUnavailable, codeOf(t, err))
 	})
+}
+
+func TestGetPage_AttemptWithoutRedirectIsNotExposed(t *testing.T) {
+	for _, st := range []vo.AttemptStatus{vo.AttemptCreated, vo.AttemptUnknown} {
+		m := newMocks(t)
+		m.booking.EXPECT().GetPayable(gomock.Any(), bookingID).Return(payable(), nil)
+		m.attempts.EXPECT().FindOpen(gomock.Any(), bookingID).Return(attempt(st), true, nil)
+		got, err := usecase.NewGetPaymentPage(m.booking, m.attempts, methods, clk).GetPage(ctx(), payer, bookingID)
+		require.NoError(t, err)
+		assert.Nil(t, got.CurrentAttempt, string(st))
+	}
 }

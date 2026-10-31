@@ -73,6 +73,20 @@ services:
     image: axllent/mailpit:v1.21
     ports: ["1025:1025", "8025:8025"]
 
+  # Swagger UI atas spesifikasi OpenAPI di docs/contracts/openapi (profile docs): `make docs`, http://localhost:8089
+  swagger:
+    profiles: ["docs"]
+    image: swaggerapi/swagger-ui:v5.17.14
+    ports: ["8089:8080"]
+    environment:
+      URLS: >-
+        [{"url":"/spec/booking.yaml","name":"Booking (FE)"},{"url":"/spec/queue.yaml","name":"Queue (FE)"},
+        {"url":"/spec/payment.yaml","name":"Payment (FE)"},{"url":"/spec/user.yaml","name":"User (FE)"},
+        {"url":"/spec/notification.yaml","name":"Notification"},{"url":"/spec/internal-booking.yaml","name":"Booking internal/admin"},
+        {"url":"/spec/internal-payment.yaml","name":"Payment internal"}]
+      URLS_PRIMARY_NAME: "Booking (FE)"
+    volumes: ["./docs/contracts/openapi:/usr/share/nginx/html/spec:ro"]
+
   # ------------------------------------------------------------------ migrasi (sekali jalan, per service dengan role-nya sendiri)
   queue-migrate:
     build: { context: ., dockerfile: services/queue/deployments/Dockerfile }
@@ -96,11 +110,20 @@ services:
     image: rusuh-booking-booking:local
     command: ["migrate", "up"]
     environment: &booking-env
-      <<: *go-env
+      <<: [*go-env, *pii-env]
       APP_PORT: "8082"
       POSTGRES_USER: svc_booking
       POSTGRES_PASSWORD: booking-local-only
       POSTGRES_SCHEMA: booking
+      # Queue key: admission + visitor + service tokens. User key: buyer tokens (/me/bookings, admin).
+      TOKEN_PUBLIC_KEY_PATH: /run/keys/queue-token.pub.pem
+      USER_TOKEN_PUBLIC_KEY_PATH: /run/keys/user-token.pub.pem
+      # Calls to Payment (expiry, cancel) and Payment's calls to /internal/v1/bookings/*.
+      PAYMENT_SERVICE_URL: http://payment-api:8083
+      SERVICE_TOKEN_PRIVATE_KEY_PATH: /run/keys/booking-token.pem
+      PAYMENT_TOKEN_PUBLIC_KEY_PATH: /run/keys/payment-token.pub.pem
+      # Admin endpoints: buyer tokens of these emails only; empty = nobody (fail closed).
+      ADMIN_EMAILS: ${ADMIN_EMAILS:-}
     depends_on: { postgres: { condition: service_healthy } }
     restart: "no"
 
@@ -114,6 +137,14 @@ services:
       POSTGRES_USER: svc_payment
       POSTGRES_PASSWORD: payment-local-only
       POSTGRES_SCHEMA: payment
+      BOOKING_SERVICE_URL: http://booking-api:8082
+      TOKEN_PUBLIC_KEY_FILE: /run/keys/queue-token.pub.pem
+      SERVICE_TOKEN_PRIVATE_KEY_FILE: /run/keys/payment-token.pem
+      BOOKING_TOKEN_PUBLIC_KEY_FILE: /run/keys/booking-token.pub.pem
+      # Midtrans Snap Sandbox. The server key is a secret: export it (or put it in an ignored .env); never commit it.
+      MIDTRANS_SERVER_KEY: ${MIDTRANS_SERVER_KEY:-}
+      PAYMENT_SUCCESS_RETURN_URL: ${PAYMENT_SUCCESS_RETURN_URL:-http://localhost:8081/payment/success}
+      PAYMENT_FAILED_RETURN_URL: ${PAYMENT_FAILED_RETURN_URL:-http://localhost:8081/payment/failed}
     depends_on: { postgres: { condition: service_healthy } }
     restart: "no"
 
@@ -133,6 +164,8 @@ services:
       TOKEN_AUDIENCE: rbt
       SMTP_HOST: mailpit
       SMTP_PORT: "1025"
+      # Page that shows e-tickets; the e-ticket email links to {base}/{bookingId}?t={token}. Empty = no link in the email.
+      TICKET_LINK_BASE_URL: ${TICKET_LINK_BASE_URL:-}
     depends_on: { postgres: { condition: service_healthy } }
     volumes: *keys-volume
     restart: "no"
@@ -181,6 +214,7 @@ services:
     image: rusuh-booking-booking:local
     command: ["api"]
     environment: *booking-env
+    volumes: *keys-volume
     ports: ["8082:8082"]
     depends_on:
       <<: *depends-infra
@@ -191,6 +225,7 @@ services:
     image: rusuh-booking-booking:local
     command: ["worker"]
     environment: *booking-env
+    volumes: *keys-volume
     depends_on:
       <<: *depends-infra
       booking-migrate: { condition: service_completed_successfully }
@@ -200,6 +235,7 @@ services:
     image: rusuh-booking-payment:local
     command: ["api"]
     environment: *payment-env
+    volumes: *keys-volume
     ports: ["8083:8083"]
     depends_on:
       <<: *depends-infra
@@ -210,6 +246,7 @@ services:
     image: rusuh-booking-payment:local
     command: ["worker"]
     environment: *payment-env
+    volumes: *keys-volume
     depends_on:
       <<: *depends-infra
       payment-migrate: { condition: service_completed_successfully }

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"net/http"
 	"os"
 	"testing"
 	"time"
@@ -15,8 +16,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/apperror"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/contract"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/migrate"
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/domain/dto"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/deployments/migrations"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/port/outbound"
@@ -94,6 +97,9 @@ func (f fixture) n(t *testing.T, sql string, args ...any) int {
 
 const visitor = "22222222-2222-2222-2222-222222222222"
 
+// sealedEmail stands in for the ciphertext Queue produces; Booking never opens it.
+const sealedEmail = "c2VhbGVkLWVtYWls"
+
 // seed creates one AVAILABLE event with 10 VIP tickets at Rp 150.000 and an ACTIVE admission for one unit.
 func seed(t *testing.T) fixture {
 	t.Helper()
@@ -119,10 +125,10 @@ func seed(t *testing.T) fixture {
 	_, err = tx.Exec(ctx, `INSERT INTO booking.event_supply (event_id, total_capacity, allocated_units) VALUES ($1::uuid, 10, 1)`, f.eventID)
 	require.NoError(t, err)
 	require.NoError(t, tx.QueryRow(ctx, `
-		INSERT INTO booking.admissions (event_id, queue_entry_id, queue_seq, visitor_id, buyer_nik_hash, buyer_email, units, status,
+		INSERT INTO booking.admissions (event_id, queue_entry_id, queue_seq, visitor_id, buyer_nik_hash, buyer_email_enc, units, status,
 			cfg_selection_ttl_seconds, cfg_payment_ttl_seconds, cfg_submit_grace_seconds, cfg_edit_enabled, cfg_max_edits, cfg_allow_mixed_categories,
 			claimed_at, expires_at)
-		VALUES ($1::uuid, gen_random_uuid(), 1, $2::uuid, $3, 'pembeli@contoh.id', 1, 'ACTIVE', 300, 600, 5, true, 3, true, now(), now() + interval '5 minutes')
+		VALUES ($1::uuid, gen_random_uuid(), 1, $2::uuid, $3, 'c2VhbGVkLWVtYWls', 1, 'ACTIVE', 300, 600, 5, true, 3, true, now(), now() + interval '5 minutes')
 		RETURNING id::text`, f.eventID, visitor, []byte(f.nikH)).Scan(&f.admissionID))
 	require.NoError(t, tx.Commit(ctx))
 	return f
@@ -134,7 +140,7 @@ func (f fixture) hold(t *testing.T) string {
 	id := f.q(t, `SELECT gen_random_uuid()::text`)
 	_, err := f.uow.Hold(context.Background(), outbound.HoldSpec{
 		BookingID: id, PublicRef: "RB-7F3A9C21", EventID: f.eventID, AdmissionID: f.admissionID, VisitorID: visitor,
-		BuyerNIKHash: []byte(f.nikH), BuyerEmail: "pembeli@contoh.id", AmountMinor: 150000, PaymentExpiresAt: time.Now().Add(10 * time.Minute),
+		BuyerNIKHash: []byte(f.nikH), BuyerEmailEnc: sealedEmail, AmountMinor: 150000, CfgEditEnabled: true, PaymentExpiresAt: time.Now().Add(10 * time.Minute),
 		Lines: []outbound.HoldLine{{
 			CategoryID: f.categoryID, UnitPriceMinor: 150000, AttendeeNIKHash: []byte("attendee-1"), AttendeeNIKEnc: []byte("enc"),
 			AttendeeNIKMasked: "3174********0001", AttendeeName: "Budi Santoso",
@@ -143,6 +149,30 @@ func (f fixture) hold(t *testing.T) string {
 	})
 	require.NoError(t, err)
 	return id
+}
+
+// Regression: a hold that locks at once (edit disabled) appends BookingHeld + BookingLocked, so the read model must
+// be at version 2; otherwise the next transition (payment-lock, settle, expire) hits an event-store version conflict.
+func TestHold_LockedAtOnceKeepsReadModelInStepWithTheStream(t *testing.T) {
+	f := seed(t)
+	ctx := context.Background()
+	id := f.q(t, `SELECT gen_random_uuid()::text`)
+	res, err := f.uow.Hold(ctx, outbound.HoldSpec{
+		BookingID: id, PublicRef: "RB-7F3A9C22", EventID: f.eventID, AdmissionID: f.admissionID, VisitorID: visitor,
+		BuyerNIKHash: []byte(f.nikH), BuyerEmailEnc: sealedEmail, AmountMinor: 150000, CfgEditEnabled: false,
+		PaymentExpiresAt: time.Now().Add(10 * time.Minute), CorrelationID: id,
+		Lines: []outbound.HoldLine{{
+			CategoryID: f.categoryID, UnitPriceMinor: 150000, AttendeeNIKHash: []byte("attendee-1"), AttendeeNIKEnc: []byte("enc"),
+			AttendeeNIKMasked: "3174********0001", AttendeeName: "Budi Santoso",
+		}},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 2, res.Version)
+	assert.Equal(t, 2, f.n(t, `SELECT version FROM booking.bookings WHERE id=$1::uuid`, id))
+
+	lock, err := f.uow.PaymentLock(ctx, outbound.PaymentLockSpec{BookingID: id, AttemptKey: "attempt-1", CorrelationID: id})
+	require.NoError(t, err)
+	assert.Equal(t, "OK", lock.Outcome)
 }
 
 func (f fixture) status(t *testing.T, id string) string {
@@ -230,14 +260,17 @@ func TestSettle_PublishesATicketPayloadThatFollowsTheContract(t *testing.T) {
 	raw := f.outboxPayload(t, "booking.paid")
 	require.NoError(t, contract.ValidateFile(eventContract+"booking.paid.v1.schema.json", raw), "payload sesuai kontrak")
 	var p struct {
-		BookingID, PublicRef, BuyerEmail string
-		Event                            struct{ EventID, Name, StartsAt, Venue string }
-		Tickets                          []struct{ TicketCode, AttendeeName, AttendeeNikMasked, CategoryCode string }
+		BookingID, PublicRef, BuyerEmailEnc string
+		BuyerEmail                          *string
+		Event                               struct{ EventID, Name, StartsAt, Venue string }
+		Tickets                             []struct{ TicketCode, AttendeeName, AttendeeNikMasked, CategoryCode string }
 	}
 	require.NoError(t, json.Unmarshal(raw, &p))
 	assert.Equal(t, id, p.BookingID)
 	assert.Equal(t, "RB-7F3A9C21", p.PublicRef)
-	assert.Equal(t, "pembeli@contoh.id", p.BuyerEmail)
+	assert.Equal(t, sealedEmail, p.BuyerEmailEnc, "email hanya sebagai ciphertext")
+	assert.Nil(t, p.BuyerEmail, "tidak ada email plaintext di event")
+	assert.NotContains(t, string(raw), "pembeli@contoh.id")
 	assert.Equal(t, f.eventID, p.Event.EventID)
 	assert.Equal(t, "Konser A", p.Event.Name)
 	assert.Equal(t, "GBK", p.Event.Venue)
@@ -305,4 +338,32 @@ func TestSettle_AfterAReviewDecisionIsANoOp(t *testing.T) {
 	assert.False(t, settled)
 	assert.Equal(t, "REVIEW", f.status(t, id))
 	assert.Equal(t, 0, f.n(t, `SELECT count(*) FROM booking.tickets`))
+}
+
+// Regression: the session sweeper must be able to end an EDITABLE admission whose selection time lapsed. CONVERTED
+// needs lock_reason in the same statement (admissions_check2); it used to fail on every tick, forever.
+func TestExpireSession_EditableAdmissionBecomesConverted(t *testing.T) {
+	f := seed(t)
+	ctx := context.Background()
+	id := f.hold(t)
+	require.Equal(t, "EDITABLE", f.q(t, `SELECT status FROM booking.admissions WHERE id=$1::uuid`, f.admissionID))
+	held := f.n(t, `SELECT held_units FROM booking.event_supply WHERE event_id=$1::uuid`, f.eventID)
+
+	require.NoError(t, NewAdmissionRepo(f.pool).ExpireSession(ctx, f.admissionID, time.Now()))
+
+	assert.Equal(t, "CONVERTED", f.q(t, `SELECT status FROM booking.admissions WHERE id=$1::uuid`, f.admissionID))
+	assert.Equal(t, "SELECTION_EXPIRED", f.q(t, `SELECT lock_reason FROM booking.admissions WHERE id=$1::uuid`, f.admissionID))
+	assert.Equal(t, held, f.n(t, `SELECT held_units FROM booking.event_supply WHERE event_id=$1::uuid`, f.eventID), "stok yang di-hold booking tidak dilepas")
+	assert.Equal(t, "PENDING_PAYMENT", f.status(t, id), "booking tetap menunggu pembayaran")
+	require.NoError(t, NewAdmissionRepo(f.pool).ExpireSession(ctx, f.admissionID, time.Now()), "idempoten")
+}
+
+// A config value outside the table limits is the caller's mistake (400), not an internal error.
+func TestUpdateConfig_OutOfRangeValueIsAValidationError(t *testing.T) {
+	f := seed(t)
+	ttl := 30 // payment TTL minimum is 120 s
+	err := NewEventWriteRepo(f.pool).UpdateConfig(context.Background(), f.eventID, dto.UpdateEventConfigRequest{PaymentTTLSeconds: &ttl})
+	var ae *apperror.Error
+	require.ErrorAs(t, err, &ae)
+	assert.Equal(t, http.StatusBadRequest, ae.HTTPStatus)
 }
