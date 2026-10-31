@@ -109,7 +109,7 @@ func ToBooking(b entity.Booking, editsRemaining int, now time.Time) dto.Booking 
 		BookingID:        b.ID,
 		PublicRef:        b.PublicRef,
 		OrderID:          b.PublicRef,
-		TicketQuantity:   len(items),
+		TicketQuantity:   b.ItemQuantity, // stays set after the items are released (EXPIRED/CANCELLED)
 		BuyerNIKMasked:   b.BuyerNIKMasked,
 		Status:           string(b.Status),
 		AmountMinor:      b.AmountMinor,
@@ -138,6 +138,6 @@ func ToTicketList(b entity.Booking, tickets []entity.Ticket, qrPayloadFn func(en
 	}
 	return dto.TicketList{
 		BookingID: b.ID, OrderID: b.PublicRef, PublicRef: b.PublicRef, AmountMinor: b.AmountMinor,
-		TicketQuantity: len(views), BuyerNIKMasked: b.BuyerNIKMasked, Tickets: views,
+		TicketQuantity: b.ItemQuantity, BuyerNIKMasked: b.BuyerNIKMasked, Tickets: views,
 	}
 }
