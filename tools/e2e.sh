@@ -22,7 +22,7 @@ done
 
 # Booking butuh kunci service ke Payment dan allow-list admin (hanya domain uji lokal).
 booking_env=(SERVICE_TOKEN_PRIVATE_KEY_PATH="$keys/booking-token.pem" PAYMENT_TOKEN_PUBLIC_KEY_PATH="$keys/payment-token.pub.pem"
-  ADMIN_EMAILS="@admin.e2e.test")
+  ADMIN_EMAILS="@admin.e2e.test" IMAGE_LOCAL_DIR="$work/images")
 
 start() { # svc verb port [ENV=val...]
   local svc=$1 verb=$2 port=$3; shift 3

@@ -27,6 +27,14 @@ type ICreateEventUsecase interface {
 	Create(ctx context.Context, req dto.CreateEventRequest) (string, error)
 }
 
+// MaxImageBytes is the largest accepted image upload.
+const MaxImageBytes = 5 << 20
+
+// IUploadEventImageUsecase validates and stores an event image and returns its public URL.
+type IUploadEventImageUsecase interface {
+	Upload(ctx context.Context, eventID, kind string, data []byte) (string, error)
+}
+
 // IUpdateEventConfigUsecase updates mutable event configuration.
 type IUpdateEventConfigUsecase interface {
 	Update(ctx context.Context, eventID string, req dto.UpdateEventConfigRequest) error

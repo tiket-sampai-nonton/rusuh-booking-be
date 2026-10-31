@@ -24,6 +24,13 @@ type IEventRepo interface {
 type IEventWriteRepo interface {
 	CreateEvent(ctx context.Context, id string, req dto.CreateEventRequest) error
 	UpdateConfig(ctx context.Context, eventID string, req dto.UpdateEventConfigRequest) error
+	// SetImageURL stores url in the column for kind (image | banner | thumbnail); ErrNotFound for an unknown event.
+	SetImageURL(ctx context.Context, eventID, kind, url string) error
+}
+
+// IImageStore saves an uploaded image under key and returns its public URL.
+type IImageStore interface {
+	Put(ctx context.Context, key, contentType string, body []byte) (string, error)
 }
 
 // IAdmissionRepo manages admissions (allocations + sessions).

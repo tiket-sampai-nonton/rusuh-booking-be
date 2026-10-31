@@ -363,3 +363,21 @@ func TestEventRepo_OnSaleAvailability_ClampsAndHonoursTheSalesWindow(t *testing.
 	require.NoError(t, err)
 	assert.Empty(t, got, "event CLOSED tidak diproyeksikan")
 }
+
+func TestEventWriteRepo_SetImageURL(t *testing.T) {
+	f := seed(t)
+	ctx := context.Background()
+	w := NewEventWriteRepo(f.pool)
+	for kind, url := range map[string]string{"image": "https://cdn.test/i.png", "banner": "https://cdn.test/b.png", "thumbnail": "https://cdn.test/t.png"} {
+		require.NoError(t, w.SetImageURL(ctx, f.eventID, kind, url))
+	}
+	e, err := NewEventRepo(f.pool).GetByID(ctx, f.eventID)
+	require.NoError(t, err)
+	assert.Equal(t, "https://cdn.test/i.png", e.ImageURL)
+	assert.Equal(t, "https://cdn.test/b.png", e.BannerURL)
+	assert.Equal(t, "https://cdn.test/t.png", e.ThumbnailURL)
+
+	assert.ErrorIs(t, w.SetImageURL(ctx, "00000000-0000-0000-0000-000000000000", "image", "u"), inbound.ErrNotFound)
+	assert.ErrorIs(t, w.SetImageURL(ctx, "bukan-uuid", "image", "u"), inbound.ErrNotFound)
+	assert.Error(t, w.SetImageURL(ctx, f.eventID, "poster", "u"), "kind di luar daftar")
+}

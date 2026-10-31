@@ -3,6 +3,7 @@ variable "env" { type = string }
 variable "region" { type = string }
 variable "ecr_repository_arns" { type = list(string) }
 variable "backup_bucket_arn" { type = string }
+variable "images_bucket_arn" { type = string }
 variable "github_repo" { type = string }
 variable "create_github_oidc_provider" { type = bool }
 
@@ -51,6 +52,11 @@ data "aws_iam_policy_document" "instance" {
     sid       = "Backups"
     actions   = ["s3:PutObject", "s3:GetObject", "s3:ListBucket"]
     resources = [var.backup_bucket_arn, "${var.backup_bucket_arn}/*"]
+  }
+  statement {
+    sid       = "EventImages"
+    actions   = ["s3:PutObject"]
+    resources = ["${var.images_bucket_arn}/events/*"]
   }
   statement {
     sid       = "Logs"

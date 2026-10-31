@@ -127,6 +127,20 @@ func (mr *MockIEventWriteRepoMockRecorder) CreateEvent(ctx, id, req any) *gomock
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateEvent", reflect.TypeOf((*MockIEventWriteRepo)(nil).CreateEvent), ctx, id, req)
 }
 
+// SetImageURL mocks base method.
+func (m *MockIEventWriteRepo) SetImageURL(ctx context.Context, eventID, kind, url string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "SetImageURL", ctx, eventID, kind, url)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// SetImageURL indicates an expected call of SetImageURL.
+func (mr *MockIEventWriteRepoMockRecorder) SetImageURL(ctx, eventID, kind, url any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetImageURL", reflect.TypeOf((*MockIEventWriteRepo)(nil).SetImageURL), ctx, eventID, kind, url)
+}
+
 // UpdateConfig mocks base method.
 func (m *MockIEventWriteRepo) UpdateConfig(ctx context.Context, eventID string, req dto.UpdateEventConfigRequest) error {
 	m.ctrl.T.Helper()
@@ -139,6 +153,45 @@ func (m *MockIEventWriteRepo) UpdateConfig(ctx context.Context, eventID string, 
 func (mr *MockIEventWriteRepoMockRecorder) UpdateConfig(ctx, eventID, req any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateConfig", reflect.TypeOf((*MockIEventWriteRepo)(nil).UpdateConfig), ctx, eventID, req)
+}
+
+// MockIImageStore is a mock of IImageStore interface.
+type MockIImageStore struct {
+	ctrl     *gomock.Controller
+	recorder *MockIImageStoreMockRecorder
+	isgomock struct{}
+}
+
+// MockIImageStoreMockRecorder is the mock recorder for MockIImageStore.
+type MockIImageStoreMockRecorder struct {
+	mock *MockIImageStore
+}
+
+// NewMockIImageStore creates a new mock instance.
+func NewMockIImageStore(ctrl *gomock.Controller) *MockIImageStore {
+	mock := &MockIImageStore{ctrl: ctrl}
+	mock.recorder = &MockIImageStoreMockRecorder{mock}
+	return mock
+}
+
+// EXPECT returns an object that allows the caller to indicate expected use.
+func (m *MockIImageStore) EXPECT() *MockIImageStoreMockRecorder {
+	return m.recorder
+}
+
+// Put mocks base method.
+func (m *MockIImageStore) Put(ctx context.Context, key, contentType string, body []byte) (string, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Put", ctx, key, contentType, body)
+	ret0, _ := ret[0].(string)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// Put indicates an expected call of Put.
+func (mr *MockIImageStoreMockRecorder) Put(ctx, key, contentType, body any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Put", reflect.TypeOf((*MockIImageStore)(nil).Put), ctx, key, contentType, body)
 }
 
 // MockIAdmissionRepo is a mock of IAdmissionRepo interface.

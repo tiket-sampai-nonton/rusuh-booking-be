@@ -46,6 +46,17 @@ type Config struct {
 	Postgres postgres.Config
 	Valkey   valkey.Config
 	RabbitMQ rabbitmq.Config
+	Image    Image
+}
+
+// Image configures where uploaded event images are stored. Storage is "local" (a git-ignored
+// directory served under /media) or "s3" (a bucket fronted by PublicBaseURL, e.g. CloudFront).
+type Image struct {
+	Storage       string
+	LocalDir      string
+	S3Bucket      string
+	S3Endpoint    string // opsional: S3-compatible endpoint (pengujian / LocalStack)
+	PublicBaseURL string // awalan URL publik gambar, tanpa slash akhir
 }
 
 // Validate checks cross-field rules.
@@ -64,6 +75,21 @@ func (c Config) Validate() error {
 	}
 	if c.Worker.VerifyGraceSeconds < 60 || c.Worker.VerifyGraceSeconds > 600 {
 		errs = append(errs, fmt.Errorf("VERIFY_GRACE_SECONDS %d di luar rentang [60, 600]", c.Worker.VerifyGraceSeconds))
+	}
+	switch c.Image.Storage {
+	case "local":
+		if c.App.Env != "local" {
+			errs = append(errs, errors.New("IMAGE_STORAGE=local hanya untuk APP_ENV=local; pakai s3"))
+		}
+		if c.Image.LocalDir == "" {
+			errs = append(errs, errors.New("IMAGE_LOCAL_DIR wajib untuk IMAGE_STORAGE=local"))
+		}
+	case "s3":
+		if c.Image.S3Bucket == "" || c.Image.PublicBaseURL == "" {
+			errs = append(errs, errors.New("IMAGE_S3_BUCKET dan IMAGE_PUBLIC_BASE_URL wajib untuk IMAGE_STORAGE=s3"))
+		}
+	default:
+		errs = append(errs, fmt.Errorf("IMAGE_STORAGE %q tidak dikenal (local | s3)", c.Image.Storage))
 	}
 	errs = append(errs, c.Log.Validate())
 	errs = append(errs, c.Postgres.Validate())

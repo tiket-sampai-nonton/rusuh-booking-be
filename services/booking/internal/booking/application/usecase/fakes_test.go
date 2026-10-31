@@ -306,6 +306,14 @@ func (f *fakeAvailCache) DecrConn(_ context.Context, _ string) error { return ni
 type fakeEventWriteRepo struct {
 	createErr error
 	updateErr error
+	imageErr  error
+	imageKind string
+	imageURL  string
+}
+
+func (f *fakeEventWriteRepo) SetImageURL(_ context.Context, _, kind, url string) error {
+	f.imageKind, f.imageURL = kind, url
+	return f.imageErr
 }
 
 func (f *fakeEventWriteRepo) CreateEvent(_ context.Context, _ string, _ dto.CreateEventRequest) error {

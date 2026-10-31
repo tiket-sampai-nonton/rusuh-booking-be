@@ -47,6 +47,7 @@ Status: Backlog / Ready / In Progress / Blocked / In Review / Done. Story point 
 | INF-1 | Terraform staging (HLD §4.5) | 8 | `fmt`/`validate`/Trivy |
 | AUD-1 | traceability matrix SRS | 13 | AUDIT-FINAL §9 |
 | AUD-2 | audit keamanan/keandalan/CI/privasi | 13 | AUDIT-FINAL §2, §5–§7 |
+| IMG-1 | API unggah gambar event (`POST /internal/v1/admin/events/{id}/images`; local git-ignored / S3 + bucket Terraform; validasi isi file, ≤ 5 MB) | 8 | unit + integration + E2E + OpenAPI; URL belum ada di kontrak katalog FE (perlu keputusan kontrak mobile) |
 | RL-1 | Rate limit per IP configurable, dalam-memori (`httpx.RateLimit`; Booking, Payment, webhook terpisah) | 5 | unit + handler |
 | R1 | Proyektor ketersediaan SSE (`availability-projector`, `SetAvailability`, `OnSaleAvailability`) | 5 | unit + integration |
 | DOC-1 | sinkron dokumen root dengan salinan mobile | 2 | – |
@@ -57,7 +58,6 @@ Status: Backlog / Ready / In Progress / Blocked / In Review / Done. Story point 
 | ID | Task | Prio | SP | Status | Catatan / desain singkat |
 |---|---|---|---|---|---|
 | PDP-1 | **Enkripsi `buyerEmail` di Booking** (UU PDP Pasal 39) | P1 | 8 | Backlog | AES-GCM (kunci `PII_ENC_KEY`, AAD per kolom) di `admissions`/`bookings`, kolom hash untuk pencarian, migrasi backfill + hapus kolom plaintext. Payload event (`booking.paid/review/expired`) dan `outbox_events` berisi email plaintext: kirim ciphertext, Notification membuka dengan kunci bersama (pola `otp.requested`). Dekripsi hanya di jalur kirim notifikasi |
-| IMG-1 | **API upload gambar event** (internal/admin, bukan kontrak FE) | P2 | 8 | Backlog | `POST /internal/v1/admin/events/{id}/images` (multipart, JPEG/PNG/WebP ≤ 5 MB, validasi tipe isi); penyimpanan: S3 di AWS (Terraform: bucket + izin role), direktori lokal yang di-ignore git di lokal (`IMAGE_STORAGE=local|s3`, `IMAGE_LOCAL_DIR`); mengisi `image_url/banner_url/thumbnail_url` yang sudah ada |
 | INF-3 | `terraform plan/apply` ke AWS | P2 | 2 | **Blocked** | butuh akses AWS; ditunda sesuai keputusan pemilik |
 | INF-2 | CloudFront+WAF, Route 53, ACM, web Next.js, Prometheus/Grafana, scheduled scaling | P2 | 8 | Backlog | digabung dengan penyiapan Terraform nanti; butuh domain |
 | PERF-1 | Load test (k6), EXPLAIN, pen-test | P2 | 13 | Backlog | dikerjakan bersama penyiapan infra/Terraform nanti |

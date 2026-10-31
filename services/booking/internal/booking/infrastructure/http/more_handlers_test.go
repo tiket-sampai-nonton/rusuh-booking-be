@@ -1,12 +1,15 @@
 package http_test
 
 import (
+	"bytes"
 	"context"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/domain/dto"
 	bookinghttp "github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/infrastructure/http"
@@ -239,4 +242,60 @@ func TestBookingHandler_GetTicketsPassesVerifiedIdentity(t *testing.T) {
 
 	notFound := bookinghttp.NewBookingHandler(&fakeHold{}, &recEdit{}, fakeTickets{err: inbound.ErrNotFound}, fakeGet{}, fakeCancel{})
 	assert.Equal(t, http.StatusNotFound, do(t, notFound, http.MethodGet, "/api/v1/bookings/b1/tickets", "", nil).Code)
+}
+
+type fakeImageUC struct {
+	url, kind string
+	data      []byte
+	err       error
+}
+
+func (f *fakeImageUC) Upload(_ context.Context, _, kind string, data []byte) (string, error) {
+	f.kind, f.data = kind, data
+	return f.url, f.err
+}
+
+func multipartUpload(t *testing.T, h interface{ Register(*http.ServeMux) }, path, field string, content []byte, auth map[string]string) *httptest.ResponseRecorder {
+	t.Helper()
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	part, err := mw.CreateFormFile(field, "x.png")
+	require.NoError(t, err)
+	_, _ = part.Write(content)
+	require.NoError(t, mw.Close())
+	mux := http.NewServeMux()
+	h.Register(mux)
+	req := httptest.NewRequest(http.MethodPost, path, &buf)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	for k, v := range auth {
+		req.Header.Set(k, v)
+	}
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	return rec
+}
+
+func TestAdminHandler_UploadImage(t *testing.T) {
+	uc := &fakeAdminUC{id: "ev-1"}
+	img := &fakeImageUC{url: "https://cdn.test/a.png"}
+	h := bookinghttp.NewAdminHandler(uc, uc, allowAll{}).WithImages(img)
+	auth := map[string]string{"Authorization": "Bearer t"}
+
+	w := multipartUpload(t, h, "/internal/v1/admin/events/ev-1/images", "file", []byte("DATA"), auth)
+	assert.Equal(t, http.StatusCreated, w.Code)
+	assert.Contains(t, w.Body.String(), `"url":"https://cdn.test/a.png"`)
+	assert.Equal(t, "image", img.kind, "default kind")
+	assert.Equal(t, []byte("DATA"), img.data)
+
+	multipartUpload(t, h, "/internal/v1/admin/events/ev-1/images?kind=thumbnail", "file", []byte("DATA"), auth)
+	assert.Equal(t, "thumbnail", img.kind)
+
+	assert.Equal(t, http.StatusBadRequest, multipartUpload(t, h, "/internal/v1/admin/events/ev-1/images", "salah", []byte("DATA"), auth).Code, "field file wajib")
+	assert.Equal(t, http.StatusUnauthorized, multipartUpload(t, h, "/internal/v1/admin/events/ev-1/images", "file", []byte("DATA"), nil).Code)
+
+	bad := bookinghttp.NewAdminHandler(uc, uc, allowAll{}).WithImages(&fakeImageUC{err: inbound.ErrNotFound})
+	assert.Equal(t, http.StatusNotFound, multipartUpload(t, bad, "/internal/v1/admin/events/ev-1/images", "file", []byte("DATA"), auth).Code)
+
+	none := bookinghttp.NewAdminHandler(uc, uc, allowAll{})
+	assert.Equal(t, http.StatusNotFound, multipartUpload(t, none, "/internal/v1/admin/events/ev-1/images", "file", []byte("DATA"), auth).Code, "rute tidak ada tanpa penyimpanan")
 }

@@ -20,3 +20,8 @@ output "data_host_instance_id" {
   description = "Target SSM Session Manager untuk administrasi (tanpa SSH)."
   value       = module.data_host.instance_id
 }
+
+output "images_bucket" {
+  value       = module.storage.images_bucket
+  description = "Bucket gambar event; isi IMAGE_S3_BUCKET dan arahkan IMAGE_PUBLIC_BASE_URL ke CloudFront di depannya."
+}

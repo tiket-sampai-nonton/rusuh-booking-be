@@ -66,3 +66,64 @@ resource "aws_s3_bucket_policy" "backup" {
 
 output "backup_bucket" { value = aws_s3_bucket.backup.bucket }
 output "backup_bucket_arn" { value = aws_s3_bucket.backup.arn }
+
+# Gambar event hasil upload admin (IMAGE_STORAGE=s3). Bucket privat: akses publik lewat CloudFront (OAC) di INF-2,
+# sehingga IMAGE_PUBLIC_BASE_URL menunjuk ke CloudFront, bukan ke bucket.
+#trivy:ignore:AVD-AWS-0089
+resource "aws_s3_bucket" "images" {
+  bucket        = "${var.name}-images-${data.aws_caller_identity.this.account_id}"
+  force_destroy = false
+}
+
+resource "aws_s3_bucket_public_access_block" "images" {
+  bucket                  = aws_s3_bucket.images.id
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+#trivy:ignore:AVD-AWS-0132
+resource "aws_s3_bucket_server_side_encryption_configuration" "images" {
+  bucket = aws_s3_bucket.images.id
+  rule {
+    apply_server_side_encryption_by_default { sse_algorithm = "AES256" }
+  }
+}
+
+# Objek bernama acak dan tidak pernah ditimpa, jadi versioning tidak diperlukan; unggahan yang tak selesai dibersihkan.
+resource "aws_s3_bucket_lifecycle_configuration" "images" {
+  bucket = aws_s3_bucket.images.id
+  rule {
+    id     = "abort-incomplete"
+    status = "Enabled"
+    filter {}
+    abort_incomplete_multipart_upload { days_after_initiation = 1 }
+  }
+}
+
+data "aws_iam_policy_document" "images_tls_only" {
+  statement {
+    sid       = "DenyInsecureTransport"
+    effect    = "Deny"
+    actions   = ["s3:*"]
+    resources = [aws_s3_bucket.images.arn, "${aws_s3_bucket.images.arn}/*"]
+    principals {
+      type        = "*"
+      identifiers = ["*"]
+    }
+    condition {
+      test     = "Bool"
+      variable = "aws:SecureTransport"
+      values   = ["false"]
+    }
+  }
+}
+
+resource "aws_s3_bucket_policy" "images" {
+  bucket = aws_s3_bucket.images.id
+  policy = data.aws_iam_policy_document.images_tls_only.json
+}
+
+output "images_bucket" { value = aws_s3_bucket.images.bucket }
+output "images_bucket_arn" { value = aws_s3_bucket.images.arn }

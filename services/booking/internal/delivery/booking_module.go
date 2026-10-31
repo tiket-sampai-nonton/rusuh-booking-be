@@ -1,6 +1,7 @@
 package delivery
 
 import (
+	"context"
 	"crypto/ed25519"
 	"errors"
 	"fmt"
@@ -110,13 +111,19 @@ func newBookingModule(cfg config.Config, clients *Clients, logger *slog.Logger) 
 	cancelBook := usecase.NewCancelBooking(bookingRepo, paymentClient, uow, clk)
 
 	// Handlers.
+	store, media, err := newImageStore(context.Background(), cfg.Image)
+	if err != nil {
+		return nil, err
+	}
+	adminHandler := bookinghttp.NewAdminHandler(createEvent, updateConfig, tv.admin).WithImages(usecase.NewUploadEventImage(eventWriteRepo, store))
 	regs := []registrar{
 		bookinghttp.NewCatalogHandler(listEvents, getDetail),
 		bookinghttp.NewSessionHandler(sessions, attendee, cancelSess),
 		bookinghttp.NewBookingHandler(hold, edit, tickets, getBooking, cancelBook).WithBuyerAuth(tv.buyer),
 		bookinghttp.NewMyBookingsHandler(history, tv.buyer),
 		bookinghttp.NewInternalHandler(allocate, tv.service).WithSupply(supply).WithPayable(payable).WithDeadlineExtension(deadlineUC).WithPaymentLock(lockUC).WithReleaseAllocation(releaseAlloc).WithPaymentAuth(paymentAuth),
-		bookinghttp.NewAdminHandler(createEvent, updateConfig, tv.admin),
+		adminHandler,
+		media,
 	}
 
 	var projAvail *usecase.ProjectAvailability

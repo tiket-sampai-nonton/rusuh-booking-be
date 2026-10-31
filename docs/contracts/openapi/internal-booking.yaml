@@ -328,6 +328,84 @@ paths:
           description: Missing or invalid user bearer token
         '409':
           description: Rules locked after sale started
+  "/internal/v1/admin/events/{eventId}/images":
+    post:
+      tags:
+      - admin
+      summary: Unggah gambar event (API admin; belum dipakai FE). URL hasil unggah disimpan
+        di image_url / banner_url / thumbnail_url event
+      operationId: adminUploadEventImage
+      security:
+      - adminBearer: []
+      parameters:
+      - name: eventId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: kind
+        in: query
+        required: false
+        schema:
+          type: string
+          enum:
+          - image
+          - banner
+          - thumbnail
+          default: image
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+              - file
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: JPEG, PNG, atau WebP (dicek dari isi file), 1 byte sampai 5 MB
+      responses:
+        '201':
+          description: Tersimpan
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  meta:
+                    "$ref": "#/components/schemas/Meta"
+                  data:
+                    type: object
+                    properties:
+                      url:
+                        type: string
+                    required:
+                    - url
+                required:
+                - meta
+                - data
+        '400':
+          description: kind salah, field file kosong/terlalu besar, atau bukan JPEG/PNG/WebP
+            — errorCode `VALIDATION_ERROR`
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ErrorEnvelope"
+        '401':
+          description: Token tidak ada atau bukan admin
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ErrorEnvelope"
+        '404':
+          description: Event tidak ada — errorCode `NOT_FOUND`
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ErrorEnvelope"
   "/health":
     get:
       tags:

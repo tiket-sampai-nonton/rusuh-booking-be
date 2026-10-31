@@ -13,6 +13,9 @@ coverage.*
 .env
 !.env.example
 
+# Gambar event yang diunggah saat IMAGE_STORAGE=local
+var/
+
 # IDE / OS
 .idea/
 .vscode/

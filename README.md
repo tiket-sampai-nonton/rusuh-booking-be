@@ -60,6 +60,7 @@ Coba login OTP: `POST localhost:8085/api/v1/auth/otp/request {"email":"kamu@cont
 | `TICKET_LINK_KEY` | booking | kunci HMAC token tautan e-tiket (32 byte hex) |
 | `PII_HASH_KEY`, `PII_ENC_KEY` | queue, booking, notification, user | **sama di semua service**: hash NIK cocok, dan email pembeli yang dienkripsi Queue bisa dibuka Notification (ADR-026) |
 | `RATE_LIMIT_PER_IP`, `RATE_LIMIT_WINDOW`, `RATE_LIMIT_WEBHOOK_PER_IP` | booking, payment (webhook hanya payment) | batas request per IP per jendela (default 300 / 1m; webhook 600), dalam-memori per instance, 0 = nonaktif; lewat batas → 429 `RATE_LIMITED` + `Retry-After`. `/health`, `/metrics` dikecualikan |
+| `IMAGE_STORAGE`, `IMAGE_LOCAL_DIR`, `IMAGE_S3_BUCKET`, `IMAGE_S3_ENDPOINT`, `IMAGE_PUBLIC_BASE_URL` | booking | penyimpanan gambar event: `local` (default; direktori git-ignored, dilayani di `/media`, hanya `APP_ENV=local`) atau `s3` (bucket dari Terraform `images_bucket`; `IMAGE_PUBLIC_BASE_URL` menunjuk CloudFront). Upload: `POST /internal/v1/admin/events/{eventId}/images?kind=image\|banner\|thumbnail` (admin, multipart `file`, JPEG/PNG/WebP ≤ 5 MB) |
 | `TICKET_LINK_BASE_URL` | notification | halaman e-tiket; email memuat `{base}/{bookingId}?t={token}` (kosong = tanpa tautan) |
 | `MIDTRANS_SERVER_KEY`, `MIDTRANS_SNAP_BASE_URL`, `PAYMENT_SUCCESS_RETURN_URL`, `PAYMENT_FAILED_RETURN_URL` | payment | Snap Sandbox/produksi dan halaman FE tujuan |
 | `SERVICE_TOKEN_PRIVATE_KEY_PATH`, `PAYMENT_TOKEN_PUBLIC_KEY_PATH` | booking | panggilan Booking → Payment (expiry, batal) |

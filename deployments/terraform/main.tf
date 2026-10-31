@@ -36,6 +36,7 @@ module "iam" {
   region                      = var.region
   ecr_repository_arns         = module.ecr.repository_arns
   backup_bucket_arn           = module.storage.backup_bucket_arn
+  images_bucket_arn           = module.storage.images_bucket_arn
   github_repo                 = var.github_repo
   create_github_oidc_provider = var.create_github_oidc_provider
 }

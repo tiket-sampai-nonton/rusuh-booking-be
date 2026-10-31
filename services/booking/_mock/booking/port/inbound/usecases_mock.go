@@ -136,6 +136,45 @@ func (mr *MockICreateEventUsecaseMockRecorder) Create(ctx, req any) *gomock.Call
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Create", reflect.TypeOf((*MockICreateEventUsecase)(nil).Create), ctx, req)
 }
 
+// MockIUploadEventImageUsecase is a mock of IUploadEventImageUsecase interface.
+type MockIUploadEventImageUsecase struct {
+	ctrl     *gomock.Controller
+	recorder *MockIUploadEventImageUsecaseMockRecorder
+	isgomock struct{}
+}
+
+// MockIUploadEventImageUsecaseMockRecorder is the mock recorder for MockIUploadEventImageUsecase.
+type MockIUploadEventImageUsecaseMockRecorder struct {
+	mock *MockIUploadEventImageUsecase
+}
+
+// NewMockIUploadEventImageUsecase creates a new mock instance.
+func NewMockIUploadEventImageUsecase(ctrl *gomock.Controller) *MockIUploadEventImageUsecase {
+	mock := &MockIUploadEventImageUsecase{ctrl: ctrl}
+	mock.recorder = &MockIUploadEventImageUsecaseMockRecorder{mock}
+	return mock
+}
+
+// EXPECT returns an object that allows the caller to indicate expected use.
+func (m *MockIUploadEventImageUsecase) EXPECT() *MockIUploadEventImageUsecaseMockRecorder {
+	return m.recorder
+}
+
+// Upload mocks base method.
+func (m *MockIUploadEventImageUsecase) Upload(ctx context.Context, eventID, kind string, data []byte) (string, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Upload", ctx, eventID, kind, data)
+	ret0, _ := ret[0].(string)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// Upload indicates an expected call of Upload.
+func (mr *MockIUploadEventImageUsecaseMockRecorder) Upload(ctx, eventID, kind, data any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Upload", reflect.TypeOf((*MockIUploadEventImageUsecase)(nil).Upload), ctx, eventID, kind, data)
+}
+
 // MockIUpdateEventConfigUsecase is a mock of IUpdateEventConfigUsecase interface.
 type MockIUpdateEventConfigUsecase struct {
 	ctrl     *gomock.Controller
