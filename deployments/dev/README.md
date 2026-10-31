@@ -9,24 +9,25 @@ Satu VPS Linux (x86_64 atau arm64) menjalankan semuanya dengan Docker Compose: C
 | `env/*.env.example` | template konfigurasi per service dan infra |
 | `server-bootstrap.sh` | menyiapkan server kosong (sekali, root): swap, user deploy, UFW, fail2ban, Docker |
 | `gen-secrets.sh` | membuat kunci Ed25519, rahasia acak, dan file env di `/opt/rusuh` (idempoten, tidak menimpa) |
+| `push-config.sh` | dari laptop: kirim file konfigurasi ke server tanpa workflow |
+| `preflight.sh` | pemeriksaan sebelum deploy (env lengkap, DNS, port, disk, compose valid) |
+| `compose.sh` | pembungkus `docker compose` untuk operasi harian di server |
 | `deploy.sh` | dijalankan di server oleh CI: periksa konfigurasi, `pull`, `up -d` (migrasi ikut), smoke test |
 | `housekeeping.sh`, `backup.sh`, `systemd/`, `install-timers.sh` | pembersihan harian (03:00) dan `pg_dump` harian (02:30) |
 | `prometheus.dev.yml`, `loki.dev.yaml`, `alloy.dev.alloy` | konfigurasi observability untuk dev (retensi 7 hari) |
 | `postgres-passwords.sh` | memberi password role service saat volume Postgres pertama dibuat |
 
-## Pertama kali
+## Pertama kali (satu kali deploy)
 
-1. Server siap: jalankan `server-bootstrap.sh` sekali sebagai root (user `deploy`, UFW, fail2ban, Docker; konfigurasi SSH tidak diubah) dan DNS `dev.<domain>` mengarah ke VPS. Variabel environment `dev` di GitHub: `DEV_HOST`, `DEV_USER`, `DEV_SSH_PORT` (mis. 20130), secret `DEV_SSH_KEY` dan `DEV_SSH_KNOWN_HOSTS`.
-2. Jalankan workflow `ci` (Run workflow, `deploy_env=dev`) sekali. Ia mengirim file ke `/opt/rusuh/repo`, lalu `deploy.sh` berhenti dengan pesan bahwa konfigurasi belum ada. Itu disengaja.
-3. Di server, sebagai `deploy`:
-   ```bash
-   cd /opt/rusuh/repo/deployments/dev
-   DEV_DOMAIN=dev.rusuhbooking.my.id ACME_EMAIL=anda@contoh.id ADMIN_EMAILS=anda@contoh.id \
-   MIDTRANS_SERVER_KEY=... RESEND_API_KEY=... bash gen-secrets.sh
-   ```
-   Isi nilai `@@SET_...@@` yang masih tersisa (skrip menampilkan daftarnya), mis. alamat FE untuk `PAYMENT_*_RETURN_URL` dan `TICKET_LINK_BASE_URL`.
-4. Pasang timer (sebagai admin): `sudo bash /opt/rusuh/repo/deployments/dev/install-timers.sh`.
-5. Jalankan workflow `ci` dengan `deploy_env=dev` lagi: image ditarik, migrasi jalan, smoke test `GET /api/v1/events` harus 200.
+Rincian perintah demi perintah ada di `PANDUAN-INFRA-DEV-VPS-DAN-AWS.md` bagian 2A. Ringkasnya:
+
+1. Server siap (`server-bootstrap.sh`, user `deploy`, Docker) dan DNS `dev` serta `grafana.dev` mengarah ke VPS. Variabel dan secret GitHub terisi: `DEV_HOST`, `DEV_USER`, `DEV_SSH_PORT`, `DEV_SSH_KEY`, `DEV_SSH_KNOWN_HOSTS`.
+2. Dari laptop: `SSH_TARGET=rusuh-dev-deploy bash deployments/dev/push-config.sh` (mengirim file ke `/opt/rusuh/repo`).
+3. Di server sebagai `deploy`: `gen-secrets.sh` (isi `DEV_DOMAIN`, `ACME_EMAIL`, `ADMIN_EMAILS`, `MIDTRANS_SERVER_KEY`, `RESEND_API_KEY`; dua kunci terakhir lewat `read -s`).
+4. Di server sebagai `root`: `bash /opt/rusuh/repo/deployments/dev/install-timers.sh`.
+5. Di server sebagai `deploy`: `bash /opt/rusuh/repo/deployments/dev/preflight.sh` sampai `SIAP DEPLOY`.
+6. GitHub Actions: Run workflow `ci`, `deploy_env=dev` (boleh dari cabang fitur). Job `login GHCR` memakai token run, jadi tidak perlu PAT.
+7. Operasi harian di server: `./compose.sh ps | logs | restart | up -d --force-recreate <service>`.
 
 ## Batasan di dev (VPS dengan gateway bersama)
 
