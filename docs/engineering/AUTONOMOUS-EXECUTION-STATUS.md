@@ -50,18 +50,20 @@ Status: Backlog / Ready / In Progress / Blocked / In Review / Done. Story point 
 | DOC-1 | sinkron dokumen root dengan salinan mobile | 2 | – |
 | DOC-2 | ADR-024/025, README, tests/README, OpenAPI | (termasuk di atas) | – |
 
-## Backlog — tersisa (43 SP)
+## Backlog — tersisa (66 SP)
 
-| ID | Task | Prio | SP | Status | Catatan |
+| ID | Task | Prio | SP | Status | Catatan / desain singkat |
 |---|---|---|---|---|---|
-| INF-3 | `terraform plan/apply` ke AWS | P2 | 2 | **Blocked** | butuh akses AWS (lihat bawah); apply hanya dengan persetujuan |
-| INF-2 | CloudFront+WAF, Route 53, ACM, web Next.js, Prometheus/Grafana, scheduled scaling | P2 | 8 | Backlog | butuh domain |
-| R1 | Penulis snapshot ketersediaan `booking:avail:*` untuk SSE | P2 | 5 | Backlog | FE punya fallback polling |
+| PDP-1 | **Enkripsi `buyerEmail` di Booking** (UU PDP Pasal 39) | P1 | 8 | Backlog | AES-GCM (kunci `PII_ENC_KEY`, AAD per kolom) di `admissions`/`bookings`, kolom hash untuk pencarian, migrasi backfill + hapus kolom plaintext. Payload event (`booking.paid/review/expired`) dan `outbox_events` berisi email plaintext: kirim ciphertext, Notification membuka dengan kunci bersama (pola `otp.requested`). Dekripsi hanya di jalur kirim notifikasi |
+| RL-1 | **Rate limit configurable** (booking, payment, webhook) | P1 | 5 | Backlog | batas dan jendela dari env (`RATE_LIMIT_<ENDPOINT>_PER_IP/_PER_VISITOR` + `_WINDOW`), pola limiter Valkey yang sudah dipakai Queue/User; Payment belum punya Valkey (tambah klien atau limiter dalam-memori per instance — perlu keputusan) |
+| IMG-1 | **API upload gambar event** (internal/admin, bukan kontrak FE) | P2 | 8 | Backlog | `POST /internal/v1/admin/events/{id}/images` (multipart, JPEG/PNG/WebP ≤ 5 MB, validasi tipe isi); penyimpanan: S3 di AWS (Terraform: bucket + izin role), direktori lokal yang di-ignore git di lokal (`IMAGE_STORAGE=local|s3`, `IMAGE_LOCAL_DIR`); mengisi `image_url/banner_url/thumbnail_url` yang sudah ada |
+| INF-3 | `terraform plan/apply` ke AWS | P2 | 2 | **Blocked** | butuh akses AWS; ditunda sesuai keputusan pemilik |
+| INF-2 | CloudFront+WAF, Route 53, ACM, web Next.js, Prometheus/Grafana, scheduled scaling | P2 | 8 | Backlog | digabung dengan penyiapan Terraform nanti; butuh domain |
+| PERF-1 | Load test (k6), EXPLAIN, pen-test | P2 | 13 | Backlog | dikerjakan bersama penyiapan infra/Terraform nanti |
+| R1 | Penulis snapshot ketersediaan `booking:avail:*` untuk SSE | P2 | 5 | Backlog | lihat AUDIT-FINAL R1 |
 | R2 | Webhook memverifikasi ulang ke Status API | P2 | 3 | Backlog | pertahanan berlapis |
-| R3 | Rate limit endpoint booking/pembayaran | P2 | 3 | Backlog | WAF di produksi |
-| R4 | Upload gambar event | P3 | 5 | Backlog | butuh keputusan produk |
 | R5/R6 | `redirectUrl` untuk CREATED/UNKNOWN; klaim `nik_masked` di token User | P3 | 2 | Backlog | |
-| R7 | Pembayaran selesai Sandbox otomatis, load test, EXPLAIN, pen-test | P2 | 13 | Backlog | |
+| JIRA-1 | Sinkron Jira (epic, task, story point, status) | P2 | 2 | Backlog | Jira `SCRUM` baru berisi 1 tiket contoh |
 | R8 | Jalankan pipeline GitHub Actions; merge Dependabot | P2 | 2 | Backlog | butuh runner/repo remote |
 
 ## Human Confirmation Required
@@ -69,7 +71,7 @@ Status: Backlog / Ready / In Progress / Blocked / In Review / Done. Story point 
 1. **Akses AWS untuk `terraform plan`.** Login Google di browser tidak memberi akses CLI. Opsi (rekomendasi urut): (a) IAM Identity Center/SSO — jalankan sendiri `aws configure sso` lalu `aws sso login --profile rusuh` di terminal Anda, dan beri tahu nama profile; saya hanya memakai profile itu, kredensial tidak lewat percakapan; (b) role terbatas (read-only + izin plan) lewat `AWS_PROFILE`; (c) access key IAM user — paling tidak disarankan, jangan ditempel di chat. `apply` tetap hanya dengan persetujuan eksplisit Anda. Memblokir INF-3 saja.
 2. **Push dan PR** branch ini (menunggu persetujuan; sesuai CLAUDE.md saya tidak push/PR tanpa diminta).
 3. **Domain/ACM** untuk INF-2 (CloudFront, HTTPS wajib di ALB).
-4. **Keputusan produk R4** (upload gambar event) dan **retensi `buyerEmail` plaintext** di Booking terhadap UU PDP.
+4. **RL-1**: limiter Payment — pakai Valkey (konsisten, shared antar instance) atau dalam-memori (tanpa dependensi baru, per instance)?
 5. **Breaking operasional**: `ADMIN_EMAILS`, `TICKET_LINK_KEY`, `PII_*` Booking, `TICKET_LINK_BASE_URL` harus diisi di environment nyata (README).
 
 ## Perintah verifikasi
