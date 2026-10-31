@@ -88,7 +88,11 @@ func TestLoad_ImageStorage(t *testing.T) {
 	assert.ErrorContains(t, err, "IMAGE_STORAGE")
 
 	t.Setenv("IMAGE_STORAGE", "local")
+	t.Setenv("APP_ENV", "dev")
+	_, err = Load()
+	assert.NoError(t, err, "dev boleh menyimpan gambar di direktori lokal")
+
 	t.Setenv("APP_ENV", "staging")
 	_, err = Load()
-	assert.ErrorContains(t, err, "hanya untuk APP_ENV=local")
+	assert.ErrorContains(t, err, "hanya untuk APP_ENV=local atau dev")
 }

@@ -1,0 +1,46 @@
+// Grafana Alloy: pengganti Promtail (Promtail end-of-life Maret 2026). Alurnya sama:
+// baca log -> beri label -> kirim ke Loki.
+//
+// Dua sumber log:
+//  Dev VPS: hanya log container project compose "rusuh-dev" -> label source="docker".
+
+discovery.docker "containers" {
+  host = "unix:///var/run/docker.sock"
+  filter {
+    name   = "label"
+    values = ["com.docker.compose.project=rusuh-dev"]
+  }
+}
+
+discovery.relabel "containers" {
+  targets = discovery.docker.containers.targets
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label  = "container"
+  }
+}
+
+loki.source.docker "containers" {
+  host       = "unix:///var/run/docker.sock"
+  targets    = discovery.relabel.containers.output
+  labels     = { source = "docker" }
+  forward_to = [loki.process.rbt.receiver]
+}
+
+// Log service berformat JSON (slog). Hanya "level" yang dijadikan label (kardinalitas rendah);
+// requestId, trace_id, dll. tetap di isi log dan dicari dengan | json.
+loki.process "rbt" {
+  stage.json {
+    expressions = { level = "level" }
+  }
+  stage.labels {
+    values = { level = "" }
+  }
+  forward_to = [loki.write.local.receiver]
+}
+
+loki.write "local" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}

@@ -78,8 +78,8 @@ func (c Config) Validate() error {
 	}
 	switch c.Image.Storage {
 	case "local":
-		if c.App.Env != "local" {
-			errs = append(errs, errors.New("IMAGE_STORAGE=local hanya untuk APP_ENV=local; pakai s3"))
+		if c.App.Env != "local" && c.App.Env != "dev" {
+			errs = append(errs, errors.New("IMAGE_STORAGE=local hanya untuk APP_ENV=local atau dev; pakai s3"))
 		}
 		if c.Image.LocalDir == "" {
 			errs = append(errs, errors.New("IMAGE_LOCAL_DIR wajib untuk IMAGE_STORAGE=local"))

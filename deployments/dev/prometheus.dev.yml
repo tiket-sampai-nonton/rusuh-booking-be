@@ -1,0 +1,18 @@
+# Prometheus untuk VPS dev: scrape /metrics tiap service lewat jaringan Docker (tidak lewat Caddy).
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: rbt-containers
+    metrics_path: /metrics
+    static_configs:
+      - { targets: ["queue-api:8081"],        labels: { service: queue,        mode: container } }
+      - { targets: ["booking-api:8082"],      labels: { service: booking,      mode: container } }
+      - { targets: ["payment-api:8083"],      labels: { service: payment,      mode: container } }
+      - { targets: ["notification-api:8084"], labels: { service: notification, mode: container } }
+      - { targets: ["user-api:8085"],         labels: { service: user,         mode: container } }
+
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]

@@ -2,7 +2,7 @@ name: ci
 
 # Pipeline bertahap (satu file, matrix per modul/service):
 #   code-quality -> verify-code-quality -> case-coverage -> code-rank -> build -> package
-#   -> scan-package -> publish -> deployment-dev -> deployment-prod
+#   -> scan-package -> publish (multi-arch amd64+arm64) -> deployment-dev (SSH ke VPS) -> deployment-prod
 # Deployment hanya jalan manual (Actions > ci > Run workflow > deploy_env).
 # Cara mengatur nilai yang ditandai GANTI: lihat README bagian "CI/CD".
 
@@ -18,7 +18,7 @@ on:
         options: [none, dev, prod]
         default: none
       run_migration:
-        description: "Jalankan migrasi DB sebelum deploy"
+        description: "Dev: diabaikan (migrasi selalu jalan otomatis, idempoten). Prod: belum dikonfigurasi"
         type: boolean
         default: false
 
@@ -33,7 +33,8 @@ env:
   COVERAGE_MIN: "80"
   IMAGE_FAIL_SEVERITY: "CRITICAL"
   REGISTRY: ghcr.io
-  # Image dibangun untuk linux/arm64 (EC2 Graviton) di runner ARM GitHub. Ganti lewat repo variable ARM_RUNNER bila perlu.
+  # Image dibangun multi-arch: linux/amd64 (VPS dev, runner ubuntu-latest) dan linux/arm64 (EC2 Graviton, runner ARM GitHub;
+  # ganti lewat repo variable ARM_RUNNER bila perlu). Keduanya build native (tanpa emulasi) lalu digabung jadi satu manifest saat publish.
   # GANTI bila pindah ke ECR: REGISTRY menjadi <akun>.dkr.ecr.<region>.amazonaws.com
 
 jobs:
@@ -289,27 +290,28 @@ jobs:
 
   # ------------------------------------------------------------------ stage: package (dockerize)
   package:
-    name: package (${{ matrix.service.name }}, arm64)
+    name: package (${{ matrix.service.name }}, ${{ matrix.arch }})
     needs: [changes, build]
     if: needs.changes.outputs.any_services == 'true'
-    runs-on: ${{ vars.ARM_RUNNER || 'ubuntu-24.04-arm' }}
+    runs-on: ${{ matrix.arch == 'arm64' && (vars.ARM_RUNNER || 'ubuntu-24.04-arm') || 'ubuntu-latest' }}
     strategy:
       fail-fast: false
       matrix:
         service: ${{ fromJSON(needs.changes.outputs.services) }}
+        arch: [amd64, arm64]
     steps:
       - uses: actions/checkout@v4
       - name: Docker build
         run: |
-          docker build --platform linux/arm64 -f ${{ matrix.service.path }}/deployments/Dockerfile \
+          docker build --platform linux/${{ matrix.arch }} -f ${{ matrix.service.path }}/deployments/Dockerfile \
             -t rusuh-booking-${{ matrix.service.name }}:${{ github.sha }} .
           docker image inspect --format '{{.Os}}/{{.Architecture}}' rusuh-booking-${{ matrix.service.name }}:${{ github.sha }}
-          docker save -o image-${{ matrix.service.name }}.tar \
+          docker save -o image-${{ matrix.service.name }}-${{ matrix.arch }}.tar \
             rusuh-booking-${{ matrix.service.name }}:${{ github.sha }}
       - uses: actions/upload-artifact@v7
         with:
-          name: image-${{ matrix.service.name }}
-          path: image-${{ matrix.service.name }}.tar
+          name: image-${{ matrix.service.name }}-${{ matrix.arch }}
+          path: image-${{ matrix.service.name }}-${{ matrix.arch }}.tar
           retention-days: 1
 
   # ------------------------------------------------------------------ stage: scan-package
@@ -322,21 +324,22 @@ jobs:
       matrix:
         service: ${{ fromJSON(needs.changes.outputs.services) }}
     steps:
+      # Dipindai: image amd64. Kode, dependency Go, dan base image distroless sama untuk kedua arsitektur.
       - uses: actions/download-artifact@v8
         with:
-          name: image-${{ matrix.service.name }}
+          name: image-${{ matrix.service.name }}-amd64
       - name: Trivy scan image
         run: |
           mkdir -p reports
           docker run --rm -v "$PWD:/work" aquasec/trivy:0.58.1 image \
-            --input /work/image-${{ matrix.service.name }}.tar \
+            --input /work/image-${{ matrix.service.name }}-amd64.tar \
             --severity HIGH,CRITICAL --ignore-unfixed --no-progress \
             --format json --output /work/reports/trivy-${{ matrix.service.name }}.json
       - name: SBOM (CycloneDX)
         run: |
           mkdir -p sbom
           docker run --rm -v "$PWD:/work" aquasec/trivy:0.58.1 image \
-            --input /work/image-${{ matrix.service.name }}.tar --no-progress \
+            --input /work/image-${{ matrix.service.name }}-amd64.tar --no-progress \
             --format cyclonedx --output /work/sbom/sbom-${{ matrix.service.name }}.cdx.json
       - uses: actions/upload-artifact@v7
         if: always()
@@ -378,24 +381,27 @@ jobs:
     steps:
       - uses: actions/download-artifact@v8
         with:
-          name: image-${{ matrix.service.name }}
+          pattern: image-${{ matrix.service.name }}-*
+          merge-multiple: true
       - name: Login registry (GHCR)
         env:
           TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: echo "$TOKEN" | docker login "$REGISTRY" -u "${{ github.actor }}" --password-stdin
       # GANTI bila memakai ECR: ganti langkah login di atas dengan aws-actions/configure-aws-credentials
       # (OIDC, role dari repo variable AWS_ROLE_ARN_PUBLISH) lalu aws-actions/amazon-ecr-login.
-      - name: Tag dan push
+      - name: Push per arsitektur lalu gabung jadi manifest multi-arch
         run: |
-          docker load -i image-${{ matrix.service.name }}.tar
           repo="$REGISTRY/${GITHUB_REPOSITORY,,}/${{ matrix.service.name }}"
           local_ref="rusuh-booking-${{ matrix.service.name }}:${{ github.sha }}"
-          docker tag "$local_ref" "$repo:${{ github.sha }}"
-          docker tag "$local_ref" "$repo:main"
-          docker push "$repo:${{ github.sha }}"
-          docker push "$repo:main"
-          digest="$(docker image inspect --format '{{index .RepoDigests 0}}' "$repo:${{ github.sha }}")"
-          echo "- publish (arm64): $digest" >> "$GITHUB_STEP_SUMMARY"
+          for arch in amd64 arm64; do
+            docker load -i "image-${{ matrix.service.name }}-$arch.tar"
+            docker tag "$local_ref" "$repo:${{ github.sha }}-$arch"
+            docker push "$repo:${{ github.sha }}-$arch"
+          done
+          docker buildx imagetools create -t "$repo:${{ github.sha }}" -t "$repo:main" \
+            "$repo:${{ github.sha }}-amd64" "$repo:${{ github.sha }}-arm64"
+          digest="$(docker buildx imagetools inspect "$repo:${{ github.sha }}" --format '{{.Manifest.Digest}}')"
+          echo "- publish (amd64+arm64): $repo@$digest" >> "$GITHUB_STEP_SUMMARY"
 
   # ------------------------------------------------------------------ stage: deployment-dev (manual)
   deployment-dev:
@@ -405,28 +411,52 @@ jobs:
     environment: dev
     permissions:
       contents: read
-      id-token: write
     steps:
       - uses: actions/checkout@v4
-      # GANTI: isi repo variables AWS_ROLE_ARN_DEV dan AWS_REGION (OIDC, tanpa access key).
-      - name: Kredensial AWS (OIDC)
-        if: vars.AWS_ROLE_ARN_DEV != ''
-        uses: aws-actions/configure-aws-credentials@v6
-        with:
-          role-to-assume: ${{ vars.AWS_ROLE_ARN_DEV }}
-          aws-region: ${{ vars.AWS_REGION }}
-      - name: Migrasi DB (opsional)
-        if: inputs.run_migration
+      # Environment "dev": variable DEV_HOST (mis. dev.rusuhbooking.my.id) dan DEV_USER (deploy);
+      # secret DEV_SSH_KEY (private key khusus deploy) dan DEV_SSH_KNOWN_HOSTS (hasil ssh-keyscan -t ed25519 <host>).
+      # Panduan: PANDUAN-INFRA-DEV-VPS-DAN-AWS.md bagian 5.
+      - name: Periksa konfigurasi
+        id: cfg
+        env:
+          DEV_HOST: ${{ vars.DEV_HOST }}
+          DEV_USER: ${{ vars.DEV_USER }}
+          DEV_SSH_KEY: ${{ secrets.DEV_SSH_KEY }}
+          DEV_SSH_KNOWN_HOSTS: ${{ secrets.DEV_SSH_KNOWN_HOSTS }}
         run: |
-          # GANTI: jalankan migrasi tiap service, mis.
-          #   migrate -path services/<svc>/deployments/migrations -database "$DATABASE_URL" up
-          echo "::warning::PLACEHOLDER migrasi DB dev belum dikonfigurasi, tidak ada yang dijalankan."
-          echo "- migrasi dev: PLACEHOLDER (tidak dijalankan)" >> "$GITHUB_STEP_SUMMARY"
+          if [ -z "$DEV_HOST" ] || [ -z "$DEV_USER" ] || [ -z "$DEV_SSH_KEY" ] || [ -z "$DEV_SSH_KNOWN_HOSTS" ]; then
+            echo "::warning::DEV_HOST/DEV_USER/DEV_SSH_KEY/DEV_SSH_KNOWN_HOSTS belum lengkap di environment dev; deploy dilewati."
+            echo "- deployment-dev: DILEWATI (konfigurasi environment dev belum lengkap)" >> "$GITHUB_STEP_SUMMARY"
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Siapkan SSH
+        if: steps.cfg.outputs.ready == 'true'
+        env:
+          DEV_SSH_KEY: ${{ secrets.DEV_SSH_KEY }}
+          DEV_SSH_KNOWN_HOSTS: ${{ secrets.DEV_SSH_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$DEV_SSH_KEY" > ~/.ssh/id_ed25519 && chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' "$DEV_SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+      - name: Kirim konfigurasi deploy ke server
+        if: steps.cfg.outputs.ready == 'true'
+        env:
+          TARGET: ${{ vars.DEV_USER }}@${{ vars.DEV_HOST }}
+        run: |
+          # Hanya file yang dibutuhkan Compose: deployments/dev, init SQL, dan provisioning Grafana (path relatif dipertahankan).
+          tar -C . -czf - deployments/dev deployments/compose/postgres-init.sql deployments/observability \
+            | ssh "$TARGET" 'mkdir -p /opt/rusuh/repo && tar -C /opt/rusuh/repo -xzf -'
       - name: Deploy ke dev
+        if: steps.cfg.outputs.ready == 'true'
+        env:
+          TARGET: ${{ vars.DEV_USER }}@${{ vars.DEV_HOST }}
+          IMAGE_TAG: ${{ github.sha }}
         run: |
-          # GANTI: deploy image ${{ github.sha }} ke environment dev, mis. instance refresh ASG atau SSM send-command.
-          echo "::warning::PLACEHOLDER deploy dev belum dikonfigurasi, tidak ada yang dideploy."
-          echo "- deployment-dev: PLACEHOLDER (tidak ada deploy nyata), image ${{ github.sha }}" >> "$GITHUB_STEP_SUMMARY"
+          prefix="$REGISTRY/${GITHUB_REPOSITORY,,}"
+          ssh "$TARGET" "IMAGE_PREFIX='$prefix' IMAGE_TAG='$IMAGE_TAG' bash /opt/rusuh/repo/deployments/dev/deploy.sh"
+          echo "- deployment-dev: $prefix:*:$IMAGE_TAG ke ${{ vars.DEV_HOST }}" >> "$GITHUB_STEP_SUMMARY"
 
   # ------------------------------------------------------------------ stage: deployment-prod (manual)
   deployment-prod:
