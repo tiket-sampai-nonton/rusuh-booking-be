@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"net/http"
 	"os"
 	"testing"
 	"time"
@@ -15,8 +16,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/apperror"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/contract"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/migrate"
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/domain/dto"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/deployments/migrations"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/port/outbound"
@@ -347,4 +350,14 @@ func TestExpireSession_EditableAdmissionBecomesConverted(t *testing.T) {
 	assert.Equal(t, held, f.n(t, `SELECT held_units FROM booking.event_supply WHERE event_id=$1::uuid`, f.eventID), "stok yang di-hold booking tidak dilepas")
 	assert.Equal(t, "PENDING_PAYMENT", f.status(t, id), "booking tetap menunggu pembayaran")
 	require.NoError(t, NewAdmissionRepo(f.pool).ExpireSession(ctx, f.admissionID, time.Now()), "idempoten")
+}
+
+// A config value outside the table limits is the caller's mistake (400), not an internal error.
+func TestUpdateConfig_OutOfRangeValueIsAValidationError(t *testing.T) {
+	f := seed(t)
+	ttl := 30 // payment TTL minimum is 120 s
+	err := NewEventWriteRepo(f.pool).UpdateConfig(context.Background(), f.eventID, dto.UpdateEventConfigRequest{PaymentTTLSeconds: &ttl})
+	var ae *apperror.Error
+	require.ErrorAs(t, err, &ae)
+	assert.Equal(t, http.StatusBadRequest, ae.HTTPStatus)
 }

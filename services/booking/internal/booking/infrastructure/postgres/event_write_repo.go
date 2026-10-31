@@ -131,6 +131,9 @@ func mapEventWriteErr(err error, op string) error {
 		return inbound.Validation("slug", "slug atau kode kategori sudah dipakai")
 	case pkgpg.IsCode(err, "22P02"):
 		return inbound.ErrNotFound
+	case pkgpg.IsCode(err, pkgpg.CodeCheckViolation):
+		// A value outside the table's limits (e.g. payment TTL below 120 s) is the caller's mistake, not a server fault.
+		return inbound.Validation("config", "nilai di luar batas yang diizinkan ("+pkgpg.ConstraintName(err)+")")
 	}
 	return fmt.Errorf("%s: %w", op, err)
 }
