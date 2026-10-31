@@ -10,7 +10,7 @@ root="$(cd "$(dirname "$0")/.." && pwd)"
 work="$(mktemp -d)"
 keys="$root/deployments/compose/keys"
 pids=()
-cleanup() { for p in "${pids[@]:-}"; do kill "$p" 2>/dev/null || true; done; rm -rf "$work"; }
+cleanup() { for p in "${pids[@]:-}"; do kill "$p" 2>/dev/null || true; done; wait 2>/dev/null || true; rm -rf "$work"; }
 trap cleanup EXIT
 
 [ -f "$keys/queue-token.pem" ] || make -C "$root" keys
@@ -26,7 +26,7 @@ booking_env=(SERVICE_TOKEN_PRIVATE_KEY_PATH="$keys/booking-token.pem" PAYMENT_TO
 
 start() { # svc verb port [ENV=val...]
   local svc=$1 verb=$2 port=$3; shift 3
-  (cd "$root/services/$svc" && env "$@" APP_PORT="$port" "$work/$svc" "$verb" >"$work/$svc-$verb.log" 2>&1) &
+  (cd "$root/services/$svc" && exec env "$@" APP_PORT="$port" "$work/$svc" "$verb" >"$work/$svc-$verb.log" 2>&1) & # exec: $! adalah biner itu sendiri, jadi kill menghentikannya
   pids+=("$!")
 }
 start queue api 8081;        start queue worker 8091

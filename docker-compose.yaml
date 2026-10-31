@@ -96,11 +96,20 @@ services:
     image: rusuh-booking-booking:local
     command: ["migrate", "up"]
     environment: &booking-env
-      <<: *go-env
+      <<: [*go-env, *pii-env]
       APP_PORT: "8082"
       POSTGRES_USER: svc_booking
       POSTGRES_PASSWORD: booking-local-only
       POSTGRES_SCHEMA: booking
+      # Queue key: admission + visitor + service tokens. User key: buyer tokens (/me/bookings, admin).
+      TOKEN_PUBLIC_KEY_PATH: /run/keys/queue-token.pub.pem
+      USER_TOKEN_PUBLIC_KEY_PATH: /run/keys/user-token.pub.pem
+      # Calls to Payment (expiry, cancel) and Payment's calls to /internal/v1/bookings/*.
+      PAYMENT_SERVICE_URL: http://payment-api:8083
+      SERVICE_TOKEN_PRIVATE_KEY_PATH: /run/keys/booking-token.pem
+      PAYMENT_TOKEN_PUBLIC_KEY_PATH: /run/keys/payment-token.pub.pem
+      # Admin endpoints: buyer tokens of these emails only; empty = nobody (fail closed).
+      ADMIN_EMAILS: ${ADMIN_EMAILS:-}
     depends_on: { postgres: { condition: service_healthy } }
     restart: "no"
 
@@ -114,6 +123,14 @@ services:
       POSTGRES_USER: svc_payment
       POSTGRES_PASSWORD: payment-local-only
       POSTGRES_SCHEMA: payment
+      BOOKING_SERVICE_URL: http://booking-api:8082
+      TOKEN_PUBLIC_KEY_FILE: /run/keys/queue-token.pub.pem
+      SERVICE_TOKEN_PRIVATE_KEY_FILE: /run/keys/payment-token.pem
+      BOOKING_TOKEN_PUBLIC_KEY_FILE: /run/keys/booking-token.pub.pem
+      # Midtrans Snap Sandbox. The server key is a secret: export it (or put it in an ignored .env); never commit it.
+      MIDTRANS_SERVER_KEY: ${MIDTRANS_SERVER_KEY:-}
+      PAYMENT_SUCCESS_RETURN_URL: ${PAYMENT_SUCCESS_RETURN_URL:-http://localhost:8081/payment/success}
+      PAYMENT_FAILED_RETURN_URL: ${PAYMENT_FAILED_RETURN_URL:-http://localhost:8081/payment/failed}
     depends_on: { postgres: { condition: service_healthy } }
     restart: "no"
 
@@ -181,6 +198,7 @@ services:
     image: rusuh-booking-booking:local
     command: ["api"]
     environment: *booking-env
+    volumes: *keys-volume
     ports: ["8082:8082"]
     depends_on:
       <<: *depends-infra
@@ -191,6 +209,7 @@ services:
     image: rusuh-booking-booking:local
     command: ["worker"]
     environment: *booking-env
+    volumes: *keys-volume
     depends_on:
       <<: *depends-infra
       booking-migrate: { condition: service_completed_successfully }
@@ -200,6 +219,7 @@ services:
     image: rusuh-booking-payment:local
     command: ["api"]
     environment: *payment-env
+    volumes: *keys-volume
     ports: ["8083:8083"]
     depends_on:
       <<: *depends-infra
@@ -210,6 +230,7 @@ services:
     image: rusuh-booking-payment:local
     command: ["worker"]
     environment: *payment-env
+    volumes: *keys-volume
     depends_on:
       <<: *depends-infra
       payment-migrate: { condition: service_completed_successfully }

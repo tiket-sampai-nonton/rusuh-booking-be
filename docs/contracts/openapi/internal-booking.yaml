@@ -53,6 +53,13 @@ paths:
                 required:
                 - meta
                 - data
+        '401':
+          description: 'Token tidak ada, tidak valid, atau scope salah (service token
+            untuk /internal, token pembeli admin untuk /admin) — errorCode: `UNAUTHORIZED`'
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ErrorEnvelope"
   "/internal/v1/allocations/{allocationId}:release":
     post:
       tags:
@@ -93,6 +100,13 @@ paths:
                 required:
                 - meta
                 - data
+        '401':
+          description: 'Token tidak ada, tidak valid, atau scope salah (service token
+            untuk /internal, token pembeli admin untuk /admin) — errorCode: `UNAUTHORIZED`'
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ErrorEnvelope"
   "/internal/v1/events/{eventId}/supply":
     get:
       tags:
@@ -121,6 +135,13 @@ paths:
                 required:
                 - meta
                 - data
+        '401':
+          description: 'Token tidak ada, tidak valid, atau scope salah (service token
+            untuk /internal, token pembeli admin untuk /admin) — errorCode: `UNAUTHORIZED`'
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ErrorEnvelope"
   "/internal/v1/bookings/{bookingId}/payable":
     get:
       tags:
@@ -149,6 +170,13 @@ paths:
                 required:
                 - meta
                 - data
+        '401':
+          description: 'Token tidak ada, tidak valid, atau scope salah (service token
+            untuk /internal, token pembeli admin untuk /admin) — errorCode: `UNAUTHORIZED`'
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ErrorEnvelope"
   "/internal/v1/bookings/{bookingId}/payment-lock":
     post:
       tags:
@@ -183,6 +211,13 @@ paths:
                 required:
                 - meta
                 - data
+        '401':
+          description: 'Token tidak ada, tidak valid, atau scope salah (service token
+            untuk /internal, token pembeli admin untuk /admin) — errorCode: `UNAUTHORIZED`'
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ErrorEnvelope"
   "/internal/v1/bookings/{bookingId}/deadline-extension":
     post:
       tags:
@@ -217,6 +252,13 @@ paths:
                 required:
                 - meta
                 - data
+        '401':
+          description: 'Token tidak ada, tidak valid, atau scope salah (service token
+            untuk /internal, token pembeli admin untuk /admin) — errorCode: `UNAUTHORIZED`'
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ErrorEnvelope"
   "/internal/v1/admin/events":
     post:
       tags:
@@ -697,9 +739,11 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT (EdDSA)
-      description: Service token Queue (scope `service`, kunci Queue). Token visitor/queue/admission dari kunci yang sama ditolak.
+      description: Service token Queue (scope `service`, kunci Queue). Token visitor/queue/admission
+        dari kunci yang sama ditolak.
     adminBearer:
       type: http
       scheme: bearer
       bearerFormat: JWT (EdDSA)
-      description: Access token pembeli User Service (scope `buyer`) yang emailnya ada di ADMIN_EMAILS. Tanpa konfigurasi, semua permintaan ditolak (401).
+      description: Access token pembeli User Service (scope `buyer`) yang emailnya
+        ada di ADMIN_EMAILS. Tanpa konfigurasi, semua permintaan ditolak (401).
