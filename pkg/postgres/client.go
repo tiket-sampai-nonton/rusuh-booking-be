@@ -25,7 +25,7 @@ func New(ctx context.Context, cfg Config) (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("postgres: parse config: %w", err)
 	}
-	pcfg.MaxConns = int32(cfg.MaxConns) //nolint:gosec // dibatasi 1–200 oleh Validate
+	pcfg.MaxConns = int32(cfg.MaxConns) // #nosec G115 -- dibatasi 1–200 oleh Validate //nolint:gosec
 	pcfg.MinConns = 0
 	pcfg.MaxConnIdleTime = 5 * time.Minute
 	pcfg.HealthCheckPeriod = 30 * time.Second

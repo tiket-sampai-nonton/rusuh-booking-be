@@ -28,7 +28,7 @@ import (
 
 const (
 	fcmScope    = "https://www.googleapis.com/auth/firebase.messaging"
-	tokenURL    = "https://oauth2.googleapis.com/token"
+	tokenURL    = "https://oauth2.googleapis.com/token" // #nosec G101 -- endpoint publik Google, bukan kredensial
 	fcmBaseURL  = "https://fcm.googleapis.com"
 	sendPathTpl = "/v1/projects/%s/messages:send"
 )

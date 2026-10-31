@@ -8,7 +8,7 @@ import (
 
 // Service-specific error codes (mapped to the HTTP error envelope).
 const (
-	CodePushTokenInvalid apperror.Code = "PUSH_TOKEN_INVALID"
+	CodePushTokenInvalid apperror.Code = "PUSH_TOKEN_INVALID" // #nosec G101 -- kode error, bukan kredensial
 )
 
 // ErrUnauthorized signals a missing or invalid visitor token (401).
