@@ -102,12 +102,12 @@ Perubahan kontrak ke FE (mengikuti salinan mobile): `Attempt` memakai `redirectU
 - **Autorisasi per endpoint** (E2E): booking/pembayaran/tiket pemilik saja; token palsu/visitor lain/`X-Visitor-ID` palsu/tanpa token ditolak (401/403/404).
 - **Log**: pada run Compose, tidak ditemukan email, NIK 16 digit, bearer/JWT di log container user/notification/queue/booking/payment (pencocokan 16 digit adalah ID request/trace heksadesimal).
 - **Injeksi**: SQL yang dibaca berparameter; satu-satunya penyusunan string adalah nama kolom/urutan dari daftar tetap. gosec HIGH bersih; aturan MEDIUM tidak dijalankan di gerbang.
-- **Rate limiting**: ada untuk join (per email/IP), OTP (per email/IP), `me` (per visitor). **Tidak ada** pada endpoint booking/pembayaran/webhook publik (dibatasi WAF di desain HLD, belum ada di Terraform).
+- **Rate limiting**: join (per email/IP), OTP (per email/IP), `me` (per visitor) di Valkey; Booking dan Payment kini punya limiter per IP dalam-memori (`httpx.RateLimit`, `RATE_LIMIT_PER_IP`/`_WINDOW`, webhook terpisah `RATE_LIMIT_WEBHOOK_PER_IP`; 429 + `Retry-After`). Batas per instance, bukan global; WAF di depan ALB (INF-2) tetap disarankan untuk produksi.
 - **Konkurensi/oversell**: tes 100 hold bersamaan atas 50 stok (tepat 50), E2E 6 pembeli atas 2 stok (tepat 2, stok 0), idempotency-key hold dan attempt, advisory lock migrasi, lease promotor.
 - **Indeks**: query sweeper memakai indeks parsial (`idx_bookings_due`, `idx_admissions_due`, `idx_booking_outbox_pending`). Tinjauan N+1/EXPLAIN menyeluruh dan load test **tidak dilakukan** (butuh data realistis).
 - **Reliabilitas**: outbox + relay dengan backoff (terverifikasi ke broker nyata), retry berjenjang + DLQ (terlihat saat debugging: pesan racun masuk DLQ, bukan hilang), breaker + bulkhead pada Midtrans/Booking, shutdown bertahap.
 - **Dependensi**: govulncheck bersih pada Go 1.26.10. Cabang Dependabot (`prometheus`, `amqp091-go`, GitHub Actions) belum dimerge.
-- **Privasi**: NIK hanya sebagai hash + ciphertext + masked; email dienkripsi di Queue/User; `buyerEmail` dikirim ke Booking melalui kanal internal ber-JWT (sesuai kontrak) dan disimpan sebagai plaintext di `admissions`/`bookings` — keputusan desain yang perlu ditinjau terhadap UU PDP (retensi dan akses). Tidak ada klaim kepatuhan hukum; yang ada hanya kontrol teknis di atas.
+- **Privasi**: NIK hanya sebagai hash + ciphertext + masked. Email pembeli dienkripsi AES-256-GCM oleh Queue (`buyerEmailEnc`); Booking hanya menyimpan dan meneruskan ciphertext; hanya Notification yang membuka (ADR-026, UU PDP Pasal 39). Kolom plaintext lama dihapus di PDP-1b setelah `booking pii-backfill` dijalankan di tiap environment. Tidak ada klaim kepatuhan hukum; yang ada hanya kontrol teknis di atas.
 
 ## 6. CI/CD
 
@@ -122,9 +122,9 @@ Terraform di `deployments/terraform` (modul network/ecr/iam/storage/data_host/co
 | # | Sev | Item | Catatan |
 |---|---|---|---|
 | R1 | S | ~~SSE ketersediaan: `booking:avail:*` tanpa penulis~~ **Selesai**: job worker `availability-projector` menulis `capacity - held - sold` (≥0) tiap event yang sedang dijual ke `booking:avail:{eventId}` (TTL 30 dtk) tiap `WORKER_INTERVAL` | unit + integration (Postgres, Valkey) |
-| R2 | S | Webhook tidak memverifikasi ulang ke Status API | Signature + nominal sudah kuat; tambahan ini pertahanan berlapis |
-| R3 | S | Tidak ada rate limit pada endpoint booking/pembayaran/webhook | Ditutup WAF di produksi (belum ada di Terraform) |
-| R4 | S | Endpoint upload gambar event (ada di rencana awal) tidak diimplementasikan; dihapus dari OpenAPI | Perlu keputusan produk |
+| R2 | S | ~~Webhook tidak memverifikasi ulang ke Status API~~ **Dibatalkan** | Keputusan pemilik: signature + nominal cukup; keamanan env (server key) tanggung jawab pemilik |
+| R3 | S | ~~Tidak ada rate limit pada booking/payment/webhook~~ **Selesai** (RL-1) | Per instance dalam-memori; WAF untuk batas global ada di INF-2 |
+| R4 | S | ~~Endpoint upload gambar event tidak ada~~ **Selesai** (IMG-1) | API admin di luar kontrak FE; URL gambar belum tampil di katalog (perlu keputusan kontrak mobile) |
 | R5 | R | `Attempt.redirectUrl` hanya ada saat PENDING (kontrak mobile menandainya wajib) | FE perlu menangani `CREATED/UNKNOWN` |
 | R6 | R | `buyerNikMasked` kosong untuk user login yang NIK-nya hanya berupa hash di token | Perlu klaim `nik_masked` di token User |
 | R7 | R | Pembayaran selesai sungguhan di Sandbox, load test, EXPLAIN, pen-test tidak dilakukan | |
