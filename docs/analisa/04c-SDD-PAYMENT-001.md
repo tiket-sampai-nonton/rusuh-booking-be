@@ -115,26 +115,17 @@ POST /api/v1/payments/{bookingId}/attempts
 
 **Headers:** `Idempotency-Key: <uuid>`
 
-**Request:**
-```json
-{
-  "method": "gopay"
-}
-```
+> **Pembaruan 2026-10-31 (ADR-024):** Midtrans **Snap**. Contoh di bawah mengikuti implementasi; sebelumnya memakai `instructions` Core API.
 
-**Response:**
+**Request:** `{ "method": "VA_BCA" }` (bucket channel Snap; lihat 08b §3.2).
+
+**Response (201):**
 ```json
 {
-  "attemptId": "uuid",
-  "status": "PENDING",
-  "method": "gopay",
+  "attemptNo": 1, "method": "VA_BCA", "status": "PENDING", "bookingVersion": 4,
   "expiresAt": "2026-10-19T10:20:00Z",
-  "instructions": {
-    "type": "redirect",
-    "redirectUrl": "https://simulator.sandbox.midtrans.com/...",
-    "qrCodeUrl": null,
-    "vaNumber": null
-  }
+  "redirectUrl": "https://app.sandbox.midtrans.com/snap/v4/redirection/<token>",
+  "successReturnUrl": "https://<fe>/payment/success", "failedReturnUrl": "https://<fe>/payment/failed"
 }
 ```
 
@@ -144,14 +135,12 @@ POST /api/v1/payments/{bookingId}/attempts
 GET /api/v1/payments/{bookingId}/status
 ```
 
-**Response:**
+**Response:** status tidak mengubah state; FE memakainya untuk memverifikasi hasil setelah kembali dari Snap.
 ```json
 {
-  "bookingId": "uuid",
-  "status": "PAID",
-  "paidAt": "2026-10-19T10:08:00Z",
-  "method": "gopay",
-  "ticketUrl": "/tickets/uuid"
+  "bookingId": "uuid", "bookingStatus": "PAID", "orderId": "RB-7F3A9C21",
+  "paymentExpiresAt": "2026-10-19T10:20:00Z", "serverTime": "2026-10-19T10:08:05Z",
+  "attempt": { "attemptNo": 1, "method": "VA_BCA", "status": "SUCCEEDED", "bookingVersion": 4 }
 }
 ```
 

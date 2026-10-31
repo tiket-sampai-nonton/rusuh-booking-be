@@ -373,7 +373,7 @@ Prinsip pemilihan: **(1)** sesuai tech radar klien, **(2)** setiap komponen puny
 | Compute | **EC2 Auto Scaling Group** (Graviton t4g/c7g) | ASG Queue terpisah karena beban join berbeda dari beban transaksi; scheduled scale-out sebelum jam buka; Graviton memberi harga per vCPU lebih rendah | Biaya PoC dalam kredit; skala production terukur per tier (§17 [v4.6 → HLD §4.7]) |
 | IaC & CI/CD | **Terraform** + **GitHub Actions dengan OIDC** | Infrastruktur dapat direview dan diulang; OIDC menghapus access key jangka panjang; image dibangun sekali dan di-deploy per digest | Assessor dapat mengaudit seluruh infra dari repo |
 | Lokal | **Docker Compose** + nginx edge | Seluruh sistem (5 service, PostgreSQL, Valkey, RabbitMQ, Mailpit, observability) jalan dengan satu perintah; nginx meniru routing ALB dan cache CloudFront | Clean-room assessor tanpa AWS dan tanpa private registry |
-| Payment | **Midtrans Sandbox (Core API)** | Webhook bersignature, status API untuk rekonsiliasi, custom expiry diselaraskan dengan TTL; data kartu tidak pernah menyentuh sistem | Integrasi aktual, bukan mock; sesuai grooming (GR-13) |
+| Payment | **Midtrans Sandbox (Snap)** | Backend membuat token Snap; webhook bersignature, status API untuk rekonsiliasi, expiry Snap diselaraskan dengan TTL (lihat ADR-024); data kartu tidak pernah menyentuh sistem | Integrasi aktual, bukan mock; sesuai grooming (GR-13) |
 | Observability | **OpenTelemetry → Prometheus + Grafana**, Jaeger lokal | Standar vendor-neutral; trace lintas service dan event; dashboard disimpan di repo | Metrik antrean, konversi, dan expiry real-time (NFR-09) dengan biaya rendah |
 | Testing | Go `testing` (race), **godog**, **Apidog**, **Katalon**, **Appium**, **k6**, **Zephyr Scale** | Piramida test lengkap; acceptance criteria ditulis Gherkin; k6 membuktikan klaim kapasitas | Setiap klaim proposal ditautkan ke test ID dan evidence |
 | Keamanan | gosec, govulncheck, SonarCloud, Trivy, ZAP, secret scanning | Shift-left: dicek di setiap PR, bukan di akhir | Repo public tetap aman; temuan high/critical menjadi release blocker |
@@ -712,3 +712,15 @@ Pola yang diadopsi dari usulan BE-2: **satu image banyak verb** (`api`, `worker`
 | Observability | OTel → Prometheus/Grafana | CloudWatch penuh | Biaya rendah, dapat dijalankan assessor |
 
 ---
+
+---
+
+## ADR-024: Midtrans Snap menggantikan Core API charge
+
+| Field | Isi |
+|---|---|
+| **Status** | Accepted (2026-10-31; menggantikan keputusan Core API 26 Oktober 2026) |
+| **Konteks** | Persyaratan dan kontrak FE mobile memakai alur Snap: backend mengembalikan `redirectUrl`, FE membukanya dan memverifikasi status ke backend. Core API (`/v2/charge`) memaksa backend dan FE menangani instruksi VA/QR/deeplink per metode, dua jalur integrasi yang berlebihan. |
+| **Keputusan** | Hanya Snap (`POST /snap/v1/transactions`). Bucket metode (`VA_BCA`, `QRIS`, …) tetap di API sebagai pembatas `enabled_payments`; `SNAP` = semua channel. Status, cancel, dan webhook tetap memakai format Core API. Kode charge Core API dihapus. |
+| **Konsekuensi** | (1) Order Midtrans baru ada setelah pembayar memilih channel; status 404 sebelum itu = belum dibayar. (2) Token Snap tidak bisa dibatalkan; pembayaran lewat token lama setelah attempt diganti masuk jalur `SETTLED_AFTER_CANCEL` (refund manual). (3) Expiry Snap dalam menit, dibulatkan ke bawah; sisa waktu < 1 menit tidak dapat memulai attempt. (4) Instruksi VA/QR/deeplink hilang dari kontrak; `Attempt.instruction` dihapus. |
+| **Belum terverifikasi** | Satuan `expiry.unit=minute` dan perilaku `X-Override-Notification` pada Snap di Sandbox nyata (PAY-2). |
