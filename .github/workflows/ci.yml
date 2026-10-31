@@ -415,6 +415,7 @@ jobs:
     environment: dev
     permissions:
       contents: read
+      packages: read
     steps:
       - uses: actions/checkout@v4
       # Environment "dev": variable DEV_HOST (mis. dev.rusuhbooking.my.id), DEV_USER (deploy), dan DEV_SSH_PORT (bawaan 22);
@@ -459,8 +460,13 @@ jobs:
           TARGET: ${{ vars.DEV_USER }}@${{ vars.DEV_HOST }}
           SSH_PORT: ${{ vars.DEV_SSH_PORT || '22' }}
           IMAGE_TAG: ${{ github.sha }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_ACTOR: ${{ github.actor }}
         run: |
           prefix="$REGISTRY/${GITHUB_REPOSITORY,,}"
+          # Server menarik image dari GHCR (privat bila repo privat). Token run ini (hanya baca package, kedaluwarsa setelah job)
+          # dikirim lewat stdin; tidak ada PAT yang tersimpan di repo atau perlu diatur manual.
+          printf '%s' "$GH_TOKEN" | ssh -p "$SSH_PORT" "$TARGET" "docker login $REGISTRY -u '$GH_ACTOR' --password-stdin"
           ssh -p "$SSH_PORT" "$TARGET" "IMAGE_PREFIX='$prefix' IMAGE_TAG='$IMAGE_TAG' bash /opt/rusuh/repo/deployments/dev/deploy.sh"
           echo "- deployment-dev: $prefix:*:$IMAGE_TAG ke ${{ vars.DEV_HOST }}" >> "$GITHUB_STEP_SUMMARY"
 

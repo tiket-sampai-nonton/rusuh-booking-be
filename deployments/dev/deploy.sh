@@ -37,5 +37,8 @@ for i in $(seq 1 36); do
   if [ "$i" = 36 ]; then echo "::error::smoke test gagal; lihat: docker compose -f $PWD/docker-compose.dev.yaml logs --tail 50" >&2; dc ps; exit 1; fi
 done
 
+# simpan versi yang sedang berjalan agar compose.sh memakainya
+printf 'IMAGE_PREFIX=%s\nIMAGE_TAG=%s\n' "$IMAGE_PREFIX" "$IMAGE_TAG" > "$RUSUH_DIR/.deploy-state"
+
 dc ps --format 'table {{.Service}}\t{{.Status}}'
 echo "deploy selesai: $IMAGE_PREFIX:*:$IMAGE_TAG"
