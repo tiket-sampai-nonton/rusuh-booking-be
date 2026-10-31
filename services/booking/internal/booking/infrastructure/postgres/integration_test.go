@@ -1,12 +1,11 @@
 //go:build integration
 
-package postgres_test
+package postgres
 
 import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -20,40 +19,11 @@ import (
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/eventstore"
 	pkgpg "github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/postgres"
 	domevent "github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/domain/event"
-	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/infrastructure/postgres"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/port/outbound"
 )
 
-// testPool opens a pgx pool for integration tests. Uses TEST_POSTGRES_DSN or Makefile env vars.
-func testPool(t *testing.T) *pgxpool.Pool {
-	t.Helper()
-	dsn := os.Getenv("TEST_POSTGRES_DSN")
-	if dsn == "" {
-		dsn = fmt.Sprintf(
-			"host=%s port=%s user=%s password=%s dbname=%s sslmode=disable search_path=booking",
-			envOr("TEST_POSTGRES_HOST", "localhost"),
-			envOr("TEST_POSTGRES_PORT", "5432"),
-			envOr("TEST_POSTGRES_USER", "rbt"),
-			envOr("TEST_POSTGRES_PASSWORD", "rbt-local-only"),
-			envOr("TEST_POSTGRES_DATABASE", "rbt"),
-		)
-	}
-	cfg, err := pgxpool.ParseConfig(dsn)
-	require.NoError(t, err, "parse TEST_POSTGRES_DSN")
-	cfg.MaxConns = 30
-	cfg.ConnConfig.RuntimeParams["search_path"] = "booking" // the Makefile DSN has none
-	pool, err := pgxpool.NewWithConfig(context.Background(), cfg)
-	require.NoError(t, err, "pgxpool.New")
-	t.Cleanup(pool.Close)
-	return pool
-}
-
-func envOr(key, def string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return def
-}
+// testPool returns a pool on a throw-away database (see setup), so these tests never leave events in the dev database.
+func testPool(t *testing.T) *pgxpool.Pool { return setup(t) }
 
 // seedTestEvent inserts a minimal event + 1 category + supply with the given capacity.
 func seedTestEvent(t *testing.T, pool *pgxpool.Pool, suffix string, capacity int) (eventID, catID string) {
@@ -129,7 +99,7 @@ func TestTC_BKG07_NoOversell(t *testing.T) {
 			`UPDATE booking.admissions SET status='EXPIRED', ended_at=now(), end_reason='SESSION_EXPIRED' WHERE event_id=$1::uuid AND status='ACTIVE'`, eventID)
 	})
 
-	uow, err := postgres.NewUnitOfWork(pool)
+	uow, err := NewUnitOfWork(pool)
 	require.NoError(t, err)
 
 	var success, failed int64
