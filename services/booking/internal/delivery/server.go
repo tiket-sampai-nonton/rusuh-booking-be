@@ -45,9 +45,10 @@ func NewHandler(cfg config.Config, clients *Clients, logger *slog.Logger) (http.
 		return nil, err
 	}
 	mod.Register(mux)
+	routes := mod.WrapVisitor(mux)
 
 	mux.Handle("GET /metrics", telemetry.Handler())
 
 	// AccessLog dan telemetry.HTTP membaca r.Pattern, jadi harus di dalam RequestID dan langsung membungkus mux.
-	return httpx.Chain(mux, httpx.CORS(), httpx.RequestID(), httpx.AccessLog(logger), telemetry.HTTP(config.ServiceName), httpx.Recover(logger)), nil
+	return httpx.Chain(routes, httpx.CORS(), httpx.RequestID(), httpx.AccessLog(logger), telemetry.HTTP(config.ServiceName), httpx.Recover(logger)), nil
 }

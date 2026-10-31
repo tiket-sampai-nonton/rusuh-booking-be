@@ -31,6 +31,7 @@ func (noRoutes) Register(*http.ServeMux) {}
 
 // module bundles the wired usecases so both the HTTP router and the worker can reuse them.
 type module struct {
+	visitors   httpx.Middleware
 	registrars []registrar
 	sweepSess  *usecase.SweepSessions
 	sweepExp   *usecase.SweepExpiries
@@ -66,7 +67,7 @@ func newBookingModule(cfg config.Config, clients *Clients, logger *slog.Logger) 
 	if err != nil {
 		return nil, err
 	}
-	admissionVerifier, bearerVerifier := buildTokenVerifiers(clk.Now)
+	admissionVerifier, bearerVerifier, visitorVerifier := buildTokenVerifiers(clk.Now)
 	paymentClient := paymentclient.New(os.Getenv("PAYMENT_SERVICE_URL"), buildPaymentAuthorizer(logger, clk.Now))
 	paymentAuth := buildPaymentAuth(logger, clk.Now)
 
@@ -116,7 +117,12 @@ func newBookingModule(cfg config.Config, clients *Clients, logger *slog.Logger) 
 		regs = append(regs, bookinghttp.NewSSEHandler(streamUC))
 	}
 
+	var visitors httpx.TokenVerifier // nil interface (not a typed nil) when the Queue key is not configured
+	if visitorVerifier != nil {
+		visitors = visitorVerifier
+	}
 	return &module{
+		visitors:   bookinghttp.ResolveVisitor(visitors, clk.Now),
 		registrars: regs,
 		sweepSess:  usecase.NewSweepSessions(admissionRepo, clk),
 		sweepExp:   usecase.NewSweepExpiries(bookingRepo, expiry, clk),
@@ -124,6 +130,9 @@ func newBookingModule(cfg config.Config, clients *Clients, logger *slog.Logger) 
 		outbox:     outboxWriter,
 	}, nil
 }
+
+// WrapVisitor puts visitor-token verification in front of the routes.
+func (m *module) WrapVisitor(h http.Handler) http.Handler { return m.visitors(h) }
 
 // Register mounts every handler of the module.
 func (m *module) Register(mux *http.ServeMux) {
@@ -144,7 +153,7 @@ func buildPII() (*security.PII, error) {
 	return security.NewPII(hashKey, encKey)
 }
 
-func buildTokenVerifiers(now func() time.Time) (*security.AdmissionVerifier, bookinghttp.IUserTokenVerifier) {
+func buildTokenVerifiers(now func() time.Time) (*security.AdmissionVerifier, bookinghttp.IUserTokenVerifier, *token.Verifier) {
 	// Queue public key: verifies admission tokens + service bearer (internal allocations).
 	queueVerifier := loadVerifier(
 		os.Getenv("TOKEN_PUBLIC_KEY_PATH"),
@@ -162,7 +171,7 @@ func buildTokenVerifiers(now func() time.Time) (*security.AdmissionVerifier, boo
 		now,
 	)
 	return security.NewAdmissionVerifier(queueVerifier, now),
-		security.NewMultiBearerVerifier(userVerifier, queueVerifier, now)
+		security.NewMultiBearerVerifier(userVerifier, queueVerifier, now), queueVerifier
 }
 
 // buildPaymentAuthorizer makes the short-lived service token (5 minutes, cached) Booking sends to Payment's
