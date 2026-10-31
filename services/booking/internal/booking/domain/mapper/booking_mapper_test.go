@@ -46,8 +46,12 @@ func TestToBooking_OnlyActiveItemsAndLock(t *testing.T) {
 			{ID: "i2", CategoryID: "c1", Status: vo.ItemReplaced, AttendeeName: "B"},
 		},
 	}
+	b.PublicRef, b.BuyerNIKMasked = "RB-AAAA", "3174********0001"
 	out := mapper.ToBooking(b, 1, now)
 	assert.Len(t, out.Items, 1, "REPLACED items are excluded")
+	assert.Equal(t, 1, out.TicketQuantity)
+	assert.Equal(t, "RB-AAAA", out.OrderID)
+	assert.Equal(t, "3174********0001", out.BuyerNIKMasked)
 	assert.Equal(t, "i1", out.Items[0].ItemID)
 	assert.Equal(t, "PAYMENT_STARTED", out.LockReason)
 	assert.False(t, out.CanEdit)
@@ -56,8 +60,14 @@ func TestToBooking_OnlyActiveItemsAndLock(t *testing.T) {
 
 func TestToTicketList(t *testing.T) {
 	tickets := []entity.Ticket{{PublicCode: "TK-1", CategoryCode: "VIP", AttendeeName: "A", AttendeeNIKMasked: "3174********0001"}}
-	out := mapper.ToTicketList("b1", tickets, func(tk entity.Ticket) string { return "QR:" + tk.PublicCode })
+	b := entity.Booking{ID: "b1", PublicRef: "RB-7F3A9C21", AmountMinor: 1500000, BuyerNIKMasked: "3174********0009"}
+	out := mapper.ToTicketList(b, tickets, func(tk entity.Ticket) string { return "QR:" + tk.PublicCode })
 	assert.Equal(t, "b1", out.BookingID)
+	assert.Equal(t, "RB-7F3A9C21", out.OrderID)
+	assert.Equal(t, "RB-7F3A9C21", out.PublicRef)
+	assert.EqualValues(t, 1500000, out.AmountMinor)
+	assert.Equal(t, 1, out.TicketQuantity)
+	assert.Equal(t, "3174********0009", out.BuyerNIKMasked)
 	assert.Len(t, out.Tickets, 1)
 	assert.Equal(t, "QR:TK-1", out.Tickets[0].QRPayload)
 }

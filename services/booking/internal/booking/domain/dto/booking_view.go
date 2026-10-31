@@ -39,8 +39,11 @@ type BookingItemView struct {
 type Booking struct {
 	BookingID        string            `json:"bookingId"`
 	PublicRef        string            `json:"publicRef"`
+	OrderID          string            `json:"orderId"`
 	Status           string            `json:"status"`
 	AmountMinor      int64             `json:"amountMinor"`
+	TicketQuantity   int               `json:"ticketQuantity"`
+	BuyerNIKMasked   string            `json:"buyerNikMasked"`
 	Currency         string            `json:"currency"`
 	PaymentExpiresAt time.Time         `json:"paymentExpiresAt"`
 	ServerTime       time.Time         `json:"serverTime"`
@@ -62,8 +65,13 @@ type TicketView struct {
 
 // TicketList is the GET /api/v1/bookings/{id}/tickets response.
 type TicketList struct {
-	BookingID string       `json:"bookingId"`
-	Tickets   []TicketView `json:"tickets"`
+	BookingID      string       `json:"bookingId"`
+	OrderID        string       `json:"orderId"`
+	PublicRef      string       `json:"publicRef"`
+	AmountMinor    int64        `json:"amountMinor"`
+	TicketQuantity int          `json:"ticketQuantity"`
+	BuyerNIKMasked string       `json:"buyerNikMasked"`
+	Tickets        []TicketView `json:"tickets"`
 }
 
 // MyBookingItem is one row of the buyer's booking history.

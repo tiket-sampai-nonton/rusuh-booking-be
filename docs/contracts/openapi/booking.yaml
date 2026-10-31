@@ -994,6 +994,18 @@ components:
         publicRef:
           type: string
           example: RB-00912
+        orderId:
+          type: string
+          description: Nomor pesanan untuk pelanggan; sama dengan publicRef.
+          example: RB-00912
+        ticketQuantity:
+          type: integer
+          minimum: 1
+          maximum: 3
+        buyerNikMasked:
+          type: string
+          example: 3174********0001
+          description: NIK pembeli tersamar; NIK asli tidak pernah dikembalikan.
         status:
           type: string
           enum:
@@ -1066,6 +1078,9 @@ components:
       - publicRef
       - status
       - amountMinor
+      - orderId
+      - ticketQuantity
+      - buyerNikMasked
       - paymentExpiresAt
       - serverTime
       - version
@@ -1085,23 +1100,44 @@ components:
           description: NIK tersamar
         qrPayload:
           type: string
+          description: String untuk dirender sebagai QR (RBT:<ticketCode>). Tidak memuat data pribadi.
       required:
       - ticketCode
       - categoryCode
       - attendeeName
       - attendeeNikMasked
+      - qrPayload
     TicketList:
       type: object
       properties:
         bookingId:
           type: string
           format: uuid
+        orderId:
+          type: string
+        publicRef:
+          type: string
+        amountMinor:
+          type: integer
+          format: int64
+        ticketQuantity:
+          type: integer
+          minimum: 1
+          maximum: 3
+        buyerNikMasked:
+          type: string
+          example: 3174********0001
         tickets:
           type: array
           items:
             $ref: '#/components/schemas/Ticket'
       required:
       - bookingId
+      - orderId
+      - publicRef
+      - amountMinor
+      - ticketQuantity
+      - buyerNikMasked
       - tickets
     MyBookings:
       type: object

@@ -38,7 +38,7 @@ func (uc *GetTickets) GetTickets(ctx context.Context, bookingID string) (dto.Tic
 	if err != nil {
 		return dto.TicketList{}, err
 	}
-	return mapper.ToTicketList(bookingID, tickets, qrPayload), nil
+	return mapper.ToTicketList(booking, tickets, qrPayload), nil
 }
 
 // qrPayload builds a QR string from the ticket's public code. The QR never embeds PII.
