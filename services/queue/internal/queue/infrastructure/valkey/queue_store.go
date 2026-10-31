@@ -372,7 +372,7 @@ func (s *QueueStore) WasNotifiedSoon(ctx context.Context, eventID, entryID strin
 // MarkNotifiedSoon records that a pre-turn notification was sent (idempotent SETNX, TTL=600s).
 func (s *QueueStore) MarkNotifiedSoon(ctx context.Context, eventID, entryID string) error {
 	key := s.keyer.Key(s.tag(eventID) + ":notified_soon:" + entryID)
-	return s.c.Do(ctx, s.c.B().Set().Key(key).Value("1").Nx().Ex(600).Build()).Error()
+	return s.c.Do(ctx, s.c.B().Set().Key(key).Value("1").Nx().Ex(600*time.Second).Build()).Error()
 }
 
 // AddQuotaExhausted records a NIK hash in the quota_exhausted set (idempotent SADD).
