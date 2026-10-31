@@ -65,6 +65,12 @@ func accountIDFrom(ctx context.Context) string {
 	return id
 }
 
+// denyAll rejects every request; guards use it when their verification key is not configured.
+var denyAll = stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	w.Header().Set("WWW-Authenticate", `Bearer realm="rbt"`)
+	httpx.WriteError(w, r, inbound.ErrUnauthorized)
+})
+
 // IUserTokenVerifier verifies a User Service access token and returns the account id (sub).
 type IUserTokenVerifier interface {
 	VerifyAccess(token string) (accountID string, err error)

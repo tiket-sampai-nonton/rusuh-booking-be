@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/clock"
@@ -67,7 +68,8 @@ func newBookingModule(cfg config.Config, clients *Clients, logger *slog.Logger) 
 	if err != nil {
 		return nil, err
 	}
-	admissionVerifier, bearerVerifier, visitorVerifier := buildTokenVerifiers(clk.Now)
+	tv := buildTokenVerifiers(clk.Now)
+	admissionVerifier, visitorVerifier := tv.admission, tv.queue
 	paymentClient := paymentclient.New(os.Getenv("PAYMENT_SERVICE_URL"), buildPaymentAuthorizer(logger, clk.Now))
 	paymentAuth := buildPaymentAuth(logger, clk.Now)
 
@@ -105,9 +107,9 @@ func newBookingModule(cfg config.Config, clients *Clients, logger *slog.Logger) 
 		bookinghttp.NewCatalogHandler(listEvents, getDetail),
 		bookinghttp.NewSessionHandler(sessions, attendee, cancelSess),
 		bookinghttp.NewBookingHandler(hold, edit, tickets, getBooking, cancelBook),
-		bookinghttp.NewMyBookingsHandler(history, bearerVerifier),
-		bookinghttp.NewInternalHandler(allocate, bearerVerifier).WithSupply(supply).WithPayable(payable).WithDeadlineExtension(deadlineUC).WithPaymentLock(lockUC).WithReleaseAllocation(releaseAlloc).WithPaymentAuth(paymentAuth),
-		bookinghttp.NewAdminHandler(createEvent, updateConfig, bearerVerifier),
+		bookinghttp.NewMyBookingsHandler(history, tv.buyer),
+		bookinghttp.NewInternalHandler(allocate, tv.service).WithSupply(supply).WithPayable(payable).WithDeadlineExtension(deadlineUC).WithPaymentLock(lockUC).WithReleaseAllocation(releaseAlloc).WithPaymentAuth(paymentAuth),
+		bookinghttp.NewAdminHandler(createEvent, updateConfig, tv.admin),
 	}
 
 	// SSE availability + timer stream (requires Valkey; skipped when it is not wired).
@@ -132,7 +134,12 @@ func newBookingModule(cfg config.Config, clients *Clients, logger *slog.Logger) 
 }
 
 // WrapVisitor puts visitor-token verification in front of the routes.
-func (m *module) WrapVisitor(h http.Handler) http.Handler { return m.visitors(h) }
+func (m *module) WrapVisitor(h http.Handler) http.Handler {
+	if m.visitors == nil { // no database: only /health is mounted
+		return h
+	}
+	return m.visitors(h)
+}
 
 // Register mounts every handler of the module.
 func (m *module) Register(mux *http.ServeMux) {
@@ -153,8 +160,19 @@ func buildPII() (*security.PII, error) {
 	return security.NewPII(hashKey, encKey)
 }
 
-func buildTokenVerifiers(now func() time.Time) (*security.AdmissionVerifier, bookinghttp.IUserTokenVerifier, *token.Verifier) {
-	// Queue public key: verifies admission tokens + service bearer (internal allocations).
+// tokenVerifiers holds one verifier per kind of token Booking accepts. The Queue key signs admission, visitor,
+// queue, and service tokens, so each guard checks the scope it expects (a visitor token is public: anyone who joins
+// a queue gets one).
+type tokenVerifiers struct {
+	queue     *token.Verifier
+	admission *security.AdmissionVerifier
+	service   *security.BearerVerifier // Queue -> Booking internal calls
+	buyer     *security.BearerVerifier // /me/bookings
+	admin     *security.BearerVerifier // buyer token of an allow-listed email (ADMIN_EMAILS)
+}
+
+func buildTokenVerifiers(now func() time.Time) tokenVerifiers {
+	// Queue public key: verifies admission tokens, visitor tokens, and the Queue's service token.
 	queueVerifier := loadVerifier(
 		os.Getenv("TOKEN_PUBLIC_KEY_PATH"),
 		getenvOr("TOKEN_KEY_ID", "queue-1"),
@@ -162,7 +180,7 @@ func buildTokenVerifiers(now func() time.Time) (*security.AdmissionVerifier, boo
 		getenvOr("TOKEN_AUDIENCE", "rbt"),
 		now,
 	)
-	// User public key: verifies buyer bearer tokens (/me/bookings).
+	// User public key: verifies buyer bearer tokens.
 	userVerifier := loadVerifier(
 		os.Getenv("USER_TOKEN_PUBLIC_KEY_PATH"),
 		getenvOr("USER_TOKEN_KEY_ID", "user-1"),
@@ -170,8 +188,13 @@ func buildTokenVerifiers(now func() time.Time) (*security.AdmissionVerifier, boo
 		getenvOr("TOKEN_AUDIENCE", "rbt"),
 		now,
 	)
-	return security.NewAdmissionVerifier(queueVerifier, now),
-		security.NewMultiBearerVerifier(userVerifier, queueVerifier, now), queueVerifier
+	return tokenVerifiers{
+		queue:     queueVerifier,
+		admission: security.NewAdmissionVerifier(queueVerifier, now),
+		service:   security.NewBearerVerifier(queueVerifier, now, security.ScopeService),
+		buyer:     security.NewBearerVerifier(userVerifier, now, security.ScopeBuyer),
+		admin:     security.NewAdminVerifier(userVerifier, now, strings.Split(os.Getenv("ADMIN_EMAILS"), ",")),
+	}
 }
 
 // buildPaymentAuthorizer makes the short-lived service token (5 minutes, cached) Booking sends to Payment's

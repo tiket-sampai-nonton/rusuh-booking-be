@@ -34,7 +34,7 @@ func (h *AdminHandler) Register(mux *stdhttp.ServeMux) {
 // admin guards admin endpoints with the bearer token.
 func (h *AdminHandler) admin(next stdhttp.HandlerFunc) stdhttp.Handler {
 	if h.verifier == nil {
-		return next
+		return denyAll // no key configured: fail closed, never open
 	}
 	return withUser(h.verifier, next)
 }
