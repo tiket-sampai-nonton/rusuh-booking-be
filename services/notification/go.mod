@@ -8,6 +8,7 @@ require (
 	github.com/stretchr/testify v1.12.1
 	github.com/tiket-sampai-nonton/rusuh-booking-be/pkg v0.0.0
 	go.uber.org/mock v0.6.0
+	rsc.io/qr v0.2.0
 )
 
 require (
@@ -31,7 +32,6 @@ require (
 	golang.org/x/text v0.41.0 // indirect
 	golang.org/x/tools v0.48.0 // indirect
 	google.golang.org/protobuf v1.36.5 // indirect
-	rsc.io/qr v0.2.0 // indirect
 )
 
 // mockgen dijalankan lewat `go tool mockgen` (go:generate di port/*), versinya dikunci go.mod ini.
