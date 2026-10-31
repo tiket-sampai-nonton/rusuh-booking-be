@@ -28,6 +28,10 @@ Satu VPS Linux (x86_64 atau arm64) menjalankan semuanya dengan Docker Compose: C
 4. Pasang timer (sebagai admin): `sudo bash /opt/rusuh/repo/deployments/dev/install-timers.sh`.
 5. Jalankan workflow `ci` dengan `deploy_env=dev` lagi: image ditarik, migrasi jalan, smoke test `GET /api/v1/events` harus 200.
 
+## Batasan di dev (VPS dengan gateway bersama)
+
+Gateway penyedia meneruskan HTTPS tanpa mengubahnya, sehingga aplikasi melihat semua pengunjung berasal dari satu IP (`10.10.0.1`). Karena itu batas per-IP dilonggarkan di template env dev (`RATE_LIMIT_PER_IP=3000`, `RATE_LIMIT_JOIN_PER_IP=100000`, `OTP_MAX_PER_IP_HOUR=100000`); batas per email (OTP, join antrean) tetap berlaku. Ini batasan lingkungan dev, bukan perilaku produksi: di AWS IP klien terbaca dan nilai bawaan dipakai. Caddy sengaja tidak dikonfigurasi `trusted_proxies`, karena header `X-Forwarded-For` hanya ada di jalur HTTP (yang hanya mengalihkan ke HTTPS).
+
 ## Aturan
 
 - Jangan menaruh rahasia di repo atau di chat; `gen-secrets.sh` menulisnya hanya di `/opt/rusuh/env` (0600).
