@@ -99,11 +99,17 @@ Middleware dari `pkg/httpx` (platform R2).
 | GET | `/api/v1/events` | — | Daftar event + filter, cache 2s |
 | GET | `/api/v1/events/{eventId}` | — | Detail event + kategori, cache 2s |
 
-**`GET /api/v1/events`** — query `timeframe` ∈ {ALL,THIS_WEEK,THIS_MONTH,UPCOMING}, `city`, `status` ∈
-{ALL,NOT_STARTED,AVAILABLE,SOLD_OUT,CLOSED}, `sort` ∈ {DATE_ASC,PRICE_ASC,PRICE_DESC}.
-→ `200 EventList{ events: EventSummary[], serverTime }`; `EventSummary{ eventId, slug, name, venue,
-startsAt, salesStartsAt, salesEndsAt, status, minPriceMinor }`. `minPriceMinor = MIN(price_minor)` per event.
-Query memfilter `status <> 'DRAFT'`.
+**`GET /api/v1/events`** — query `timeframe` ∈ {ALL,THIS_WEEK,THIS_MONTH,UPCOMING}, `city`, `genres`
+(berulang atau CSV; overlap, kosong = semua), `startDate`/`endDate` (`YYYY-MM-DD`, inklusif WIB, opsional,
+independen & di-AND dengan `timeframe`), `status` ∈ {ALL,NOT_STARTED,AVAILABLE,SOLD_OUT,CLOSED}, `sort` ∈
+{DATE_ASC,DATE_DESC,PRICE_ASC,PRICE_DESC}.
+→ `200 EventList{ events: EventSummary[], serverTime }`; `EventSummary{ eventId, slug, name, venue, genres,
+startsAt, salesStartsAt, salesEndsAt, status, minPriceMinor }` (`genres` selalu array, `[]` bila kosong).
+`minPriceMinor = MIN(price_minor)` per event. Query memfilter `status <> 'DRAFT'`.
+Validasi: enum *fail-soft* ke default; tanggal cacat/terbalik & cap genre (>20 token, token >64 char)
+`400 VALIDATION_ERROR` sebelum query DB. Filter genre memakai `e.genre && $genres::text[]` (GIN
+`idx_events_genre`); rentang tanggal memakai `starts_at >= $start AND starts_at < $end` (sargable, btree
+`idx_events_starts_at`). Cache key CDN memakai parameter **terkanonikalisasi**.
 
 **`GET /api/v1/events/{eventId}`** → `200 EventDetail{ event, maxTicketsPerOrder, maxTicketsPerBuyerNik,
 allowMixedCategories, categories:[{ categoryId, code, name, priceMinor, available }] }`; `available =

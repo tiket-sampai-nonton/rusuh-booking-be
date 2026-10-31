@@ -26,7 +26,8 @@ type Event struct {
 	Slug          string
 	Name          string
 	Venue         string
-	City          string // SRS-F-28-02: filter kota (migrasi 0003)
+	City          string   // SRS-F-28-02: filter kota (migrasi 0003)
+	Genres        []string // US-015: genre multi-nilai per event (migrasi 0006)
 	Timezone      string
 	StartsAt      time.Time
 	SalesStartsAt time.Time

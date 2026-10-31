@@ -167,7 +167,7 @@ hapus `kid` lama setelah TTL token terpanjang lewat.
 | Path | Upstream | Cache |
 |------|----------|-------|
 | `/api/v1/events/*/queue-entries`, `/api/v1/queue-*` | queue-api:8081 | `queue-status` 1 s |
-| `/api/v1/events`, `/api/v1/events/{id}` | booking-api:8082 | 2 s, cache key termasuk `timeframe,city,status,sort,page,size` |
+| `/api/v1/events`, `/api/v1/events/{id}` | booking-api:8082 | 2 s via `Cache-Control: public, max-age=2` dari service; edge meng-cache dengan **cache key = query string mentah** (`timeframe,city,genres,startDate,endDate,status,sort,page,size`). Kanonikalisasi terjadi di **usecase** (setelah cache), sehingga param yang setara tapi beda urutan/kapitalisasi (mis. `genres=POP,ROCK` vs `rock,pop`) saat ini **MISS terpisah** ke origin. WAF/rate-limit edge = backstop volumetrik. *(Catatan: edge `deployments/edge/nginx.conf` belum ada — task platform terpisah; kanonikalisasi cache key memerlukan dukungan edge dan belum diimplementasikan.)* |
 | `/api/v1/booking-sessions/*/stream` | booking-api:8082 | **off**, `proxy_buffering off` |
 | `/api/v1/booking-sessions*`, `/api/v1/bookings*`, `/api/v1/me/bookings` | booking-api:8082 | off |
 | `/api/v1/payments*`, `/api/v1/payment-page-sessions`, `/api/v1/webhooks/*` | payment-api:8083 | off |

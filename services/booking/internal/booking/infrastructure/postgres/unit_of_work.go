@@ -715,9 +715,14 @@ func (u *UnitOfWork) expire(ctx context.Context, tx pgx.Tx, spec outbound.Expire
 		 WHERE booking_id=$1::uuid AND item_status='HELD'`, spec.BookingID); err != nil {
 		return false, err
 	}
+	// Use CANCELLED status when reason is CANCELLED, otherwise EXPIRED.
+	finalStatus := "EXPIRED"
+	if spec.Reason == "CANCELLED" {
+		finalStatus = "CANCELLED"
+	}
 	if _, err := tx.Exec(ctx, `
-		UPDATE booking.bookings SET status='EXPIRED', ended_at=now(), version=$2, updated_at=now()
-		 WHERE id=$1::uuid`, spec.BookingID, version+1); err != nil {
+		UPDATE booking.bookings SET status=$3, ended_at=now(), version=$2, updated_at=now()
+		 WHERE id=$1::uuid`, spec.BookingID, version+1, finalStatus); err != nil {
 		return false, err
 	}
 	n := sum(byCat)
