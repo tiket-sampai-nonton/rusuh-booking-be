@@ -60,7 +60,9 @@ func holdCmd(items []dto.HoldItem) inbound.HoldCommand {
 func TestHold_Success(t *testing.T) {
 	uow := &fakeUoW{holdRes: outbound.HoldResult{BookingID: "bk-1", PublicRef: "RB-1", Version: 1, Status: "PENDING_PAYMENT", AmountMinor: 3000, PaymentExpiresAt: time.Now().Add(time.Hour)}}
 	idem := &fakeIdem{}
-	uc := newHoldUC(&fakeAdmissionRepo{admission: activeAdmission(true)}, &fakeEventRepo{detail: detailWith(true, 3)}, idem, uow)
+	adm := activeAdmission(true)
+	adm.BuyerNIKMasked = "3174********0001"
+	uc := newHoldUC(&fakeAdmissionRepo{admission: adm}, &fakeEventRepo{detail: detailWith(true, 3)}, idem, uow)
 
 	resp, err := uc.Hold(context.Background(), holdCmd([]dto.HoldItem{
 		{CategoryID: catA, Attendee: dto.AttendeeInput{NIK: nik1, FullName: "Alice"}},
@@ -71,6 +73,10 @@ func TestHold_Success(t *testing.T) {
 	assert.EqualValues(t, 3000, resp.AmountMinor)
 	assert.Equal(t, 2, len(uow.heldSpec.Lines))
 	assert.True(t, idem.completed, "idempotency record completed")
+	// Contract fields the FE reads from the hold response (same as GET /bookings/{id}).
+	assert.Equal(t, "RB-1", resp.OrderID)
+	assert.Equal(t, 2, resp.TicketQuantity)
+	assert.Equal(t, "3174********0001", resp.BuyerNIKMasked)
 }
 
 func TestHold_QuantityExceeds(t *testing.T) {
