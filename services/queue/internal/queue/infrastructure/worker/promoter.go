@@ -114,11 +114,18 @@ func (p *Promoter) runEvent(ctx context.Context, eventID string) error {
 		return err // Booking down — leave entries waiting, retry next tick
 	}
 
+	// FIFO: Booking answers in candidate order. Entries granted before the first NO_SUPPLY_NOW are promoted (their
+	// allocations are already committed at Booking); a grant after it would jump the queue, so it is released.
 	var promoteCands []outbound.PromoteCandidate
+	var jumpers []outbound.AllocationResult
 	noSupply := false
 	for _, a := range resp.Allocations {
 		switch a.Status {
 		case "GRANTED": // Booking confirmed allocation — promote entry to ADMITTED
+			if noSupply {
+				jumpers = append(jumpers, a)
+				continue
+			}
 			deadline := now.Add(time.Minute)
 			if dl, perr := time.Parse(time.RFC3339, a.ClaimDeadline); perr == nil {
 				deadline = dl
@@ -137,8 +144,7 @@ func (p *Promoter) runEvent(ctx context.Context, eventID string) error {
 		case "SOLD_OUT":
 			_ = p.store.SetSale(ctx, eventID, "CLOSED", true)
 		case "NO_SUPPLY_NOW":
-			// Supply exhausted this tick — stop admitting to preserve FIFO (spec 11.R4, req 6.3/6.6).
-			// All candidates in this batch wait; Promoter retries next tick.
+			// Supply ran out at this entry: nobody behind it is admitted this tick (spec 11.R4, req 6.3/6.6).
 			noSupply = true
 		case "ALREADY_ACTIVE":
 			// Bug indicator: Queue constraints should prevent this. End entry and log for investigation (OQ-18).
@@ -149,10 +155,10 @@ func (p *Promoter) runEvent(ctx context.Context, eventID string) error {
 				"eventId", eventID, "queueEntryId", a.QueueEntryID)
 		}
 	}
-	if noSupply {
-		// Discard any GRANTEDs collected alongside NO_SUPPLY_NOW — FIFO requires all-or-nothing
-		// when supply is uncertain this tick.
-		promoteCands = nil
+	for _, j := range jumpers {
+		if err := p.booking.ReleaseAllocation(ctx, j.AllocationID, "FIFO_SKIPPED"); err != nil {
+			p.logger.Warn("alokasi di luar urutan tidak bisa dilepas; sweeper Booking akan melepasnya", "allocationId", j.AllocationID, "error", err)
+		}
 	}
 	if len(promoteCands) == 0 {
 		return nil
