@@ -49,7 +49,7 @@ Status: Backlog / Ready / In Progress / Blocked / In Review / Done. Story point 
 | AUD-2 | audit keamanan/keandalan/CI/privasi | 13 | AUDIT-FINAL §2, §5–§7 |
 | IMG-1 | API unggah gambar event (`POST /internal/v1/admin/events/{id}/images`; local git-ignored / S3 + bucket Terraform; validasi isi file, ≤ 5 MB) | 8 | unit + integration + E2E + OpenAPI; URL belum ada di kontrak katalog FE (perlu keputusan kontrak mobile) |
 | RL-1 | Rate limit per IP configurable, dalam-memori (`httpx.RateLimit`; Booking, Payment, webhook terpisah) | 5 | unit + handler |
-| JIRA-1 | Sinkron Jira SCRUM (epic SCRUM-5..13, task SCRUM-14..40, story point + status) | 2 | Jira |
+| JIRA-1 | Sinkron Jira SCRUM (epic SCRUM-5..13 dan SCRUM-41 fitur inti; task SCRUM-14..40, 42, 43; story SCRUM-44..50 per kelompok area SRS; story point + status) | 2 | Jira |
 | R5/R6 | `currentAttempt` hanya attempt ber-redirectUrl; klaim `nik_masked` di token User → Queue → Booking | 2 | unit |
 | API-3 | `imageUrl`/`bannerUrl`/`thumbnailUrl` pada `EventSummary` (katalog, detail) sesuai FE NEED THIS | 2 | unit + E2E + OpenAPI |
 | R1 | Proyektor ketersediaan SSE (`availability-projector`, `SetAvailability`, `OnSaleAvailability`) | 5 | unit + integration |
