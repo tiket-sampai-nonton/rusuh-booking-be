@@ -7,6 +7,7 @@ Satu VPS Linux (x86_64 atau arm64) menjalankan semuanya dengan Docker Compose: C
 | `docker-compose.dev.yaml` | stack dev; image dari GHCR (`IMAGE_PREFIX`, `IMAGE_TAG`), rahasia dari `/opt/rusuh/env/*.env`, tanpa port ke host selain Caddy |
 | `Caddyfile` | TLS otomatis dan routing path (queue, booking, payment, notification, user, `/media`); `/metrics` dan `/internal/*` tidak dirutekan; `/internal/v1/admin/*` hanya dari `ADMIN_ALLOW_IPS` |
 | `env/*.env.example` | template konfigurasi per service dan infra |
+| `server-bootstrap.sh` | menyiapkan server kosong (sekali, root): swap, user deploy, UFW, fail2ban, Docker |
 | `gen-secrets.sh` | membuat kunci Ed25519, rahasia acak, dan file env di `/opt/rusuh` (idempoten, tidak menimpa) |
 | `deploy.sh` | dijalankan di server oleh CI: periksa konfigurasi, `pull`, `up -d` (migrasi ikut), smoke test |
 | `housekeeping.sh`, `backup.sh`, `systemd/`, `install-timers.sh` | pembersihan harian (03:00) dan `pg_dump` harian (02:30) |
@@ -15,7 +16,7 @@ Satu VPS Linux (x86_64 atau arm64) menjalankan semuanya dengan Docker Compose: C
 
 ## Pertama kali
 
-1. Server siap (hardening, Docker, user `deploy`) dan DNS `dev.<domain>` mengarah ke VPS.
+1. Server siap: jalankan `server-bootstrap.sh` sekali sebagai root (user `deploy`, UFW, fail2ban, Docker; konfigurasi SSH tidak diubah) dan DNS `dev.<domain>` mengarah ke VPS. Variabel environment `dev` di GitHub: `DEV_HOST`, `DEV_USER`, `DEV_SSH_PORT` (mis. 20130), secret `DEV_SSH_KEY` dan `DEV_SSH_KNOWN_HOSTS`.
 2. Jalankan workflow `ci` (Run workflow, `deploy_env=dev`) sekali. Ia mengirim file ke `/opt/rusuh/repo`, lalu `deploy.sh` berhenti dengan pesan bahwa konfigurasi belum ada. Itu disengaja.
 3. Di server, sebagai `deploy`:
    ```bash

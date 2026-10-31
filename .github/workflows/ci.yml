@@ -369,7 +369,9 @@ jobs:
   publish:
     name: publish (${{ matrix.service.name }})
     needs: [changes, scan-package-verify]
-    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    # Dari main (push) atau dari cabang mana pun lewat Run workflow dengan deploy_env dev/prod (supaya deploy dev bisa
+    # diuji dari cabang fitur tanpa merge). Tag `main` hanya diberikan oleh main; cabang lain hanya tag <sha>.
+    if: (github.ref == 'refs/heads/main' && github.event_name != 'pull_request') || (github.event_name == 'workflow_dispatch' && inputs.deploy_env != 'none')
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -398,7 +400,9 @@ jobs:
             docker tag "$local_ref" "$repo:${{ github.sha }}-$arch"
             docker push "$repo:${{ github.sha }}-$arch"
           done
-          docker buildx imagetools create -t "$repo:${{ github.sha }}" -t "$repo:main" \
+          tags=(-t "$repo:${{ github.sha }}")
+          if [ "$GITHUB_REF" = "refs/heads/main" ]; then tags+=(-t "$repo:main"); fi
+          docker buildx imagetools create "${tags[@]}" \
             "$repo:${{ github.sha }}-amd64" "$repo:${{ github.sha }}-arm64"
           digest="$(docker buildx imagetools inspect "$repo:${{ github.sha }}" --format '{{.Manifest.Digest}}')"
           echo "- publish (amd64+arm64): $repo@$digest" >> "$GITHUB_STEP_SUMMARY"
@@ -413,7 +417,7 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
-      # Environment "dev": variable DEV_HOST (mis. dev.rusuhbooking.my.id) dan DEV_USER (deploy);
+      # Environment "dev": variable DEV_HOST (mis. dev.rusuhbooking.my.id), DEV_USER (deploy), dan DEV_SSH_PORT (bawaan 22);
       # secret DEV_SSH_KEY (private key khusus deploy) dan DEV_SSH_KNOWN_HOSTS (hasil ssh-keyscan -t ed25519 <host>).
       # Panduan: PANDUAN-INFRA-DEV-VPS-DAN-AWS.md bagian 5.
       - name: Periksa konfigurasi
@@ -444,24 +448,27 @@ jobs:
         if: steps.cfg.outputs.ready == 'true'
         env:
           TARGET: ${{ vars.DEV_USER }}@${{ vars.DEV_HOST }}
+          SSH_PORT: ${{ vars.DEV_SSH_PORT || '22' }}
         run: |
           # Hanya file yang dibutuhkan Compose: deployments/dev, init SQL, dan provisioning Grafana (path relatif dipertahankan).
           tar -C . -czf - deployments/dev deployments/compose/postgres-init.sql deployments/observability \
-            | ssh "$TARGET" 'mkdir -p /opt/rusuh/repo && tar -C /opt/rusuh/repo -xzf -'
+            | ssh -p "$SSH_PORT" "$TARGET" 'mkdir -p /opt/rusuh/repo && tar -C /opt/rusuh/repo -xzf -'
       - name: Deploy ke dev
         if: steps.cfg.outputs.ready == 'true'
         env:
           TARGET: ${{ vars.DEV_USER }}@${{ vars.DEV_HOST }}
+          SSH_PORT: ${{ vars.DEV_SSH_PORT || '22' }}
           IMAGE_TAG: ${{ github.sha }}
         run: |
           prefix="$REGISTRY/${GITHUB_REPOSITORY,,}"
-          ssh "$TARGET" "IMAGE_PREFIX='$prefix' IMAGE_TAG='$IMAGE_TAG' bash /opt/rusuh/repo/deployments/dev/deploy.sh"
+          ssh -p "$SSH_PORT" "$TARGET" "IMAGE_PREFIX='$prefix' IMAGE_TAG='$IMAGE_TAG' bash /opt/rusuh/repo/deployments/dev/deploy.sh"
           echo "- deployment-dev: $prefix:*:$IMAGE_TAG ke ${{ vars.DEV_HOST }}" >> "$GITHUB_STEP_SUMMARY"
 
   # ------------------------------------------------------------------ stage: deployment-prod (manual)
   deployment-prod:
     needs: [changes, publish]
-    if: github.event_name == 'workflow_dispatch' && inputs.deploy_env == 'prod'
+    # Prod hanya dari main.
+    if: github.event_name == 'workflow_dispatch' && inputs.deploy_env == 'prod' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     # Aktifkan Required reviewers pada environment "prod" (Settings > Environments) agar butuh persetujuan.
     environment: prod
