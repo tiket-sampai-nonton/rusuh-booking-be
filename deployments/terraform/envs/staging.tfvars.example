@@ -1,0 +1,8 @@
+env                   = "staging"
+owner                 = "tim-rusuh"
+expires_on            = "2026-12-31"
+allowed_ingress_cidrs = ["203.0.113.0/24"] # CIDR demo/assessor; jangan 0.0.0.0/0 untuk data nyata
+alert_email           = "alerts@example.com"
+image_tag             = "git-<sha>"        # tag immutable dari CI
+github_repo           = "tiket-sampai-nonton/rusuh-booking-be"
+certificate_arn      = "arn:aws:acm:ap-southeast-3:<account>:certificate/<id>"

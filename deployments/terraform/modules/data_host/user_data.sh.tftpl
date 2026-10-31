@@ -1,0 +1,32 @@
+#!/bin/bash
+# Host stateful: PostgreSQL, Valkey, RabbitMQ, Notification. Rahasia dibaca dari SSM Parameter Store saat boot.
+set -euo pipefail
+dnf install -y docker awscli >/dev/null
+systemctl enable --now docker
+
+DEV=/dev/nvme1n1
+if ! blkid "$DEV" >/dev/null 2>&1; then mkfs.xfs "$DEV"; fi
+mkdir -p /data
+grep -q ' /data ' /etc/fstab || echo "UUID=$(blkid -s UUID -o value "$DEV") /data xfs defaults,nofail 0 2" >> /etc/fstab
+mount -a
+mkdir -p /data/postgres /data/valkey /data/rabbitmq /etc/rusuh
+
+param() { aws ssm get-parameter --region "${region}" --with-decryption --name "/${name}/$1" --query Parameter.Value --output text; }
+param data.env > /etc/rusuh/data.env      # POSTGRES_PASSWORD=..., RABBITMQ_DEFAULT_USER/PASS=...
+chmod 600 /etc/rusuh/data.env
+
+docker network create rusuh 2>/dev/null || true
+run() { docker rm -f "$1" 2>/dev/null || true; docker run -d --restart unless-stopped --network rusuh --name "$@"; }
+run postgres --env-file /etc/rusuh/data.env -v /data/postgres:/var/lib/postgresql/data -p 5432:5432 postgres:16-alpine
+run valkey -v /data/valkey:/data -p 6379:6379 valkey/valkey:8.1-alpine valkey-server --appendonly yes --appendfsync everysec
+run rabbitmq --env-file /etc/rusuh/data.env -v /data/rabbitmq:/var/lib/rabbitmq -p 5672:5672 rabbitmq:3.13-alpine
+
+aws ecr get-login-password --region "${region}" | docker login --username AWS --password-stdin "${registry}"
+param notification.env | sed "s/__DATA_HOST__/$(hostname -I | awk '{print $1}')/g" > /etc/rusuh/notification.env
+chmod 600 /etc/rusuh/notification.env
+LOG="--log-driver awslogs --log-opt awslogs-region=${region} --log-opt awslogs-group=${log_group}"
+IMG="${registry}/${name}/notification:${image_tag}"
+docker run --rm --network host --env-file /etc/rusuh/notification.env "$IMG" migrate up
+docker rm -f notification-api notification-worker 2>/dev/null || true
+docker run -d --restart unless-stopped --network host $LOG --env-file /etc/rusuh/notification.env --name notification-api "$IMG" api
+docker run -d --restart unless-stopped --network host $LOG --env-file /etc/rusuh/notification.env -e APP_PORT=8094 --name notification-worker "$IMG" worker

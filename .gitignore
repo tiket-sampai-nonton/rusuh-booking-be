@@ -26,3 +26,11 @@ coverage.*
 
 # Catatan pribadi (tidak masuk repo)
 /docs/analisa/09-Panduan-Lokal-dan-Implementasi.md
+
+# Terraform
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+backend.tf
