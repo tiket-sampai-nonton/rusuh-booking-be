@@ -47,6 +47,7 @@ Status: Backlog / Ready / In Progress / Blocked / In Review / Done. Story point 
 | INF-1 | Terraform staging (HLD §4.5) | 8 | `fmt`/`validate`/Trivy |
 | AUD-1 | traceability matrix SRS | 13 | AUDIT-FINAL §9 |
 | AUD-2 | audit keamanan/keandalan/CI/privasi | 13 | AUDIT-FINAL §2, §5–§7 |
+| RL-1 | Rate limit per IP configurable, dalam-memori (`httpx.RateLimit`; Booking, Payment, webhook terpisah) | 5 | unit + handler |
 | R1 | Proyektor ketersediaan SSE (`availability-projector`, `SetAvailability`, `OnSaleAvailability`) | 5 | unit + integration |
 | DOC-1 | sinkron dokumen root dengan salinan mobile | 2 | – |
 | DOC-2 | ADR-024/025, README, tests/README, OpenAPI | (termasuk di atas) | – |
@@ -56,7 +57,6 @@ Status: Backlog / Ready / In Progress / Blocked / In Review / Done. Story point 
 | ID | Task | Prio | SP | Status | Catatan / desain singkat |
 |---|---|---|---|---|---|
 | PDP-1 | **Enkripsi `buyerEmail` di Booking** (UU PDP Pasal 39) | P1 | 8 | Backlog | AES-GCM (kunci `PII_ENC_KEY`, AAD per kolom) di `admissions`/`bookings`, kolom hash untuk pencarian, migrasi backfill + hapus kolom plaintext. Payload event (`booking.paid/review/expired`) dan `outbox_events` berisi email plaintext: kirim ciphertext, Notification membuka dengan kunci bersama (pola `otp.requested`). Dekripsi hanya di jalur kirim notifikasi |
-| RL-1 | **Rate limit configurable** (booking, payment, webhook) | P1 | 5 | Backlog | batas dan jendela dari env (`RATE_LIMIT_<ENDPOINT>_PER_IP/_PER_VISITOR` + `_WINDOW`), pola limiter Valkey yang sudah dipakai Queue/User; Payment belum punya Valkey (tambah klien atau limiter dalam-memori per instance — perlu keputusan) |
 | IMG-1 | **API upload gambar event** (internal/admin, bukan kontrak FE) | P2 | 8 | Backlog | `POST /internal/v1/admin/events/{id}/images` (multipart, JPEG/PNG/WebP ≤ 5 MB, validasi tipe isi); penyimpanan: S3 di AWS (Terraform: bucket + izin role), direktori lokal yang di-ignore git di lokal (`IMAGE_STORAGE=local|s3`, `IMAGE_LOCAL_DIR`); mengisi `image_url/banner_url/thumbnail_url` yang sudah ada |
 | INF-3 | `terraform plan/apply` ke AWS | P2 | 2 | **Blocked** | butuh akses AWS; ditunda sesuai keputusan pemilik |
 | INF-2 | CloudFront+WAF, Route 53, ACM, web Next.js, Prometheus/Grafana, scheduled scaling | P2 | 8 | Backlog | digabung dengan penyiapan Terraform nanti; butuh domain |
@@ -72,7 +72,7 @@ Status: Backlog / Ready / In Progress / Blocked / In Review / Done. Story point 
 1. **Akses AWS untuk `terraform plan`.** Login Google di browser tidak memberi akses CLI. Opsi (rekomendasi urut): (a) IAM Identity Center/SSO — jalankan sendiri `aws configure sso` lalu `aws sso login --profile rusuh` di terminal Anda, dan beri tahu nama profile; saya hanya memakai profile itu, kredensial tidak lewat percakapan; (b) role terbatas (read-only + izin plan) lewat `AWS_PROFILE`; (c) access key IAM user — paling tidak disarankan, jangan ditempel di chat. `apply` tetap hanya dengan persetujuan eksplisit Anda. Memblokir INF-3 saja.
 2. **Push dan PR** branch ini (menunggu persetujuan; sesuai CLAUDE.md saya tidak push/PR tanpa diminta).
 3. **Domain/ACM** untuk INF-2 (CloudFront, HTTPS wajib di ALB).
-4. **RL-1**: limiter Payment — pakai Valkey (konsisten, shared antar instance) atau dalam-memori (tanpa dependensi baru, per instance)?
+4. ~~RL-1 limiter Payment~~: diputuskan dalam-memori; bila perlu batas global antar instance, pindah ke Valkey.
 5. **Breaking operasional**: `ADMIN_EMAILS`, `TICKET_LINK_KEY`, `PII_*` Booking, `TICKET_LINK_BASE_URL` harus diisi di environment nyata (README).
 
 ## Perintah verifikasi

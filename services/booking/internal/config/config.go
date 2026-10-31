@@ -25,6 +25,8 @@ type App struct {
 
 // HTTP holds server tuning.
 type HTTP struct {
+	RateLimitPerIP  int           // batas request per IP per jendela, di luar /health & /metrics (0 = nonaktif)
+	RateLimitWindow time.Duration // panjang jendela batas di atas
 	ShutdownTimeout time.Duration
 	HealthTimeout   time.Duration // batas waktu ping semua dependency di GET /health
 }
@@ -57,8 +59,8 @@ func (c Config) Validate() error {
 	if c.App.Port <= 0 || c.App.Port > 65535 {
 		errs = append(errs, fmt.Errorf("APP_PORT %d di luar rentang", c.App.Port))
 	}
-	if c.HTTP.ShutdownTimeout <= 0 || c.HTTP.HealthTimeout <= 0 || c.Worker.Interval <= 0 {
-		errs = append(errs, errors.New("HTTP_SHUTDOWN_TIMEOUT, HEALTH_TIMEOUT, dan WORKER_INTERVAL harus > 0"))
+	if c.HTTP.ShutdownTimeout <= 0 || c.HTTP.HealthTimeout <= 0 || c.Worker.Interval <= 0 || c.HTTP.RateLimitWindow <= 0 {
+		errs = append(errs, errors.New("HTTP_SHUTDOWN_TIMEOUT, HEALTH_TIMEOUT, WORKER_INTERVAL, dan RATE_LIMIT_WINDOW harus > 0"))
 	}
 	if c.Worker.VerifyGraceSeconds < 60 || c.Worker.VerifyGraceSeconds > 600 {
 		errs = append(errs, fmt.Errorf("VERIFY_GRACE_SECONDS %d di luar rentang [60, 600]", c.Worker.VerifyGraceSeconds))

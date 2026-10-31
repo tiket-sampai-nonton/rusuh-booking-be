@@ -102,3 +102,25 @@ func TestPayment_ValidateForServeRequiresSecretsAndKeys(t *testing.T) {
 	p.Token.VisitorPublicKeyFile, p.Token.ServicePrivateKeyFile, p.Token.BookingPublicKeyFile = "a", "b", "c"
 	assert.NoError(t, p.ValidateForServe())
 }
+
+func TestLoad_RateLimitFromEnv(t *testing.T) {
+	setBase(t)
+	cfg, err := Load()
+	require.NoError(t, err)
+	assert.Equal(t, 300, cfg.HTTP.RateLimitPerIP)
+	assert.Equal(t, time.Minute, cfg.HTTP.RateLimitWindow)
+	assert.Equal(t, 600, cfg.HTTP.RateLimitWebhookPerIP)
+
+	t.Setenv("RATE_LIMIT_PER_IP", "7")
+	t.Setenv("RATE_LIMIT_WINDOW", "10s")
+	t.Setenv("RATE_LIMIT_WEBHOOK_PER_IP", "9")
+	cfg, err = Load()
+	require.NoError(t, err)
+	assert.Equal(t, 7, cfg.HTTP.RateLimitPerIP)
+	assert.Equal(t, 10*time.Second, cfg.HTTP.RateLimitWindow)
+	assert.Equal(t, 9, cfg.HTTP.RateLimitWebhookPerIP)
+
+	t.Setenv("RATE_LIMIT_WINDOW", "0s")
+	_, err = Load()
+	assert.ErrorContains(t, err, "RATE_LIMIT_WINDOW")
+}

@@ -59,6 +59,7 @@ Coba login OTP: `POST localhost:8085/api/v1/auth/otp/request {"email":"kamu@cont
 | `ADMIN_EMAILS` | booking | email (atau `@domain`) pemilik token pembeli yang boleh memakai `/internal/v1/admin/*`; kosong = tidak ada |
 | `TICKET_LINK_KEY` | booking | kunci HMAC token tautan e-tiket (32 byte hex) |
 | `PII_HASH_KEY`, `PII_ENC_KEY` | queue, booking, notification, user | **sama di semua service**: hash NIK cocok, dan email pembeli yang dienkripsi Queue bisa dibuka Notification (ADR-026) |
+| `RATE_LIMIT_PER_IP`, `RATE_LIMIT_WINDOW`, `RATE_LIMIT_WEBHOOK_PER_IP` | booking, payment (webhook hanya payment) | batas request per IP per jendela (default 300 / 1m; webhook 600), dalam-memori per instance, 0 = nonaktif; lewat batas → 429 `RATE_LIMITED` + `Retry-After`. `/health`, `/metrics` dikecualikan |
 | `TICKET_LINK_BASE_URL` | notification | halaman e-tiket; email memuat `{base}/{bookingId}?t={token}` (kosong = tanpa tautan) |
 | `MIDTRANS_SERVER_KEY`, `MIDTRANS_SNAP_BASE_URL`, `PAYMENT_SUCCESS_RETURN_URL`, `PAYMENT_FAILED_RETURN_URL` | payment | Snap Sandbox/produksi dan halaman FE tujuan |
 | `SERVICE_TOKEN_PRIVATE_KEY_PATH`, `PAYMENT_TOKEN_PUBLIC_KEY_PATH` | booking | panggilan Booking → Payment (expiry, batal) |

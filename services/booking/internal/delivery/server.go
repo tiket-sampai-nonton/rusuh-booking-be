@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/clock"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/httpx"
@@ -50,5 +51,7 @@ func NewHandler(cfg config.Config, clients *Clients, logger *slog.Logger) (http.
 	mux.Handle("GET /metrics", telemetry.Handler())
 
 	// AccessLog dan telemetry.HTTP membaca r.Pattern, jadi harus di dalam RequestID dan langsung membungkus mux.
-	return httpx.Chain(routes, httpx.CORS(), httpx.RequestID(), httpx.AccessLog(logger), telemetry.HTTP(config.ServiceName), httpx.Recover(logger)), nil
+	trustProxy := cfg.App.Env != "local"
+	limit := httpx.RateLimit(cfg.HTTP.RateLimitPerIP, cfg.HTTP.RateLimitWindow, httpx.IPKey(trustProxy, "/health", "/metrics"), time.Now)
+	return httpx.Chain(routes, httpx.CORS(), httpx.RequestID(), httpx.AccessLog(logger), telemetry.HTTP(config.ServiceName), httpx.Recover(logger), limit), nil
 }
