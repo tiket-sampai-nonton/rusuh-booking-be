@@ -17,7 +17,6 @@ type Booking struct {
 	BuyerNIKHash []byte
 	// BuyerNIKMasked comes from the admission; plaintext NIK is never exposed.
 	BuyerNIKMasked string
-	BuyerEmail     string // legacy plaintext (see Admission)
 	BuyerEmailEnc  string
 	Status         vo.BookingStatus
 	Currency       string

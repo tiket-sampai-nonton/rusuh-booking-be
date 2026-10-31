@@ -53,6 +53,8 @@ func funcMap() template.FuncMap {
 		"formatTime":  func(t time.Time) string { return t.UTC().Format("02 Jan 2006 15:04 MST") },
 		"formatIDR":   formatIDR,
 		"formatStart": formatStart,
+		"startDate":   startDate,
+		"startClock":  startClock,
 		"formatClock": func(t time.Time) string { return t.In(wib).Format("15.04") + " WIB" },
 	}
 }
@@ -83,6 +85,26 @@ func formatIDR(minor int64) string {
 var wib = time.FixedZone("WIB", 7*60*60)
 
 var months = [...]string{"Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"}
+
+// startDate is "26 Des 2026" for an RFC 3339 start time (WIB); an unparsable value is shown as is.
+func startDate(s string) string {
+	t, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		return s
+	}
+	t = t.In(wib)
+	return fmt.Sprintf("%d %s %d", t.Day(), months[t.Month()-1], t.Year())
+}
+
+// startClock is "02.00 WIB"; an unparsable value gives "-".
+func startClock(s string) string {
+	t, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		return "-"
+	}
+	t = t.In(wib)
+	return fmt.Sprintf("%02d.%02d WIB", t.Hour(), t.Minute())
+}
 
 // formatStart turns an RFC 3339 start time into "26 Des 2026, 02.00 WIB". The event payload carries no time zone, so WIB is
 // assumed (shortcut: events outside WIB would need the zone in the booking.paid payload). An unparsable value is shown as is.

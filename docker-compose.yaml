@@ -73,6 +73,20 @@ services:
     image: axllent/mailpit:v1.21
     ports: ["1025:1025", "8025:8025"]
 
+  # Swagger UI atas spesifikasi OpenAPI di docs/contracts/openapi (profile docs): `make docs`, http://localhost:8089
+  swagger:
+    profiles: ["docs"]
+    image: swaggerapi/swagger-ui:v5.17.14
+    ports: ["8089:8080"]
+    environment:
+      URLS: >-
+        [{"url":"/spec/booking.yaml","name":"Booking (FE)"},{"url":"/spec/queue.yaml","name":"Queue (FE)"},
+        {"url":"/spec/payment.yaml","name":"Payment (FE)"},{"url":"/spec/user.yaml","name":"User (FE)"},
+        {"url":"/spec/notification.yaml","name":"Notification"},{"url":"/spec/internal-booking.yaml","name":"Booking internal/admin"},
+        {"url":"/spec/internal-payment.yaml","name":"Payment internal"}]
+      URLS_PRIMARY_NAME: "Booking (FE)"
+    volumes: ["./docs/contracts/openapi:/usr/share/nginx/html/spec:ro"]
+
   # ------------------------------------------------------------------ migrasi (sekali jalan, per service dengan role-nya sendiri)
   queue-migrate:
     build: { context: ., dockerfile: services/queue/deployments/Dockerfile }

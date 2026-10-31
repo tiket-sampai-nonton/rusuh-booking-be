@@ -52,6 +52,7 @@ Status: Backlog / Ready / In Progress / Blocked / In Review / Done. Story point 
 | JIRA-1 | Sinkron Jira SCRUM (epic SCRUM-5..13 dan SCRUM-41 fitur inti; task SCRUM-14..40, 42, 43; story SCRUM-44..50 per kelompok area SRS; story point + status) | 2 | Jira |
 | R5/R6 | `currentAttempt` hanya attempt ber-redirectUrl; klaim `nik_masked` di token User → Queue → Booking | 2 | unit |
 | API-3 | `imageUrl`/`bannerUrl`/`thumbnailUrl` pada `EventSummary` (katalog, detail) sesuai FE NEED THIS | 2 | unit + E2E + OpenAPI |
+| PDP-1b | Hapus kolom `buyer_email` plaintext (migrasi 0005 + hapus jalur legacy dan `pii-backfill`) | 3 | integration |
 | R1 | Proyektor ketersediaan SSE (`availability-projector`, `SetAvailability`, `OnSaleAvailability`) | 5 | unit + integration |
 | DOC-1 | sinkron dokumen root dengan salinan mobile | 2 | – |
 | DOC-2 | ADR-024/025, README, tests/README, OpenAPI | (termasuk di atas) | – |

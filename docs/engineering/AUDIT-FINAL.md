@@ -107,7 +107,7 @@ Perubahan kontrak ke FE (mengikuti salinan mobile): `Attempt` memakai `redirectU
 - **Indeks**: query sweeper memakai indeks parsial (`idx_bookings_due`, `idx_admissions_due`, `idx_booking_outbox_pending`). Tinjauan N+1/EXPLAIN menyeluruh dan load test **tidak dilakukan** (butuh data realistis).
 - **Reliabilitas**: outbox + relay dengan backoff (terverifikasi ke broker nyata), retry berjenjang + DLQ (terlihat saat debugging: pesan racun masuk DLQ, bukan hilang), breaker + bulkhead pada Midtrans/Booking, shutdown bertahap.
 - **Dependensi**: govulncheck bersih pada Go 1.26.10. Cabang Dependabot (`prometheus`, `amqp091-go`, GitHub Actions) belum dimerge.
-- **Privasi**: NIK hanya sebagai hash + ciphertext + masked. Email pembeli dienkripsi AES-256-GCM oleh Queue (`buyerEmailEnc`); Booking hanya menyimpan dan meneruskan ciphertext; hanya Notification yang membuka (ADR-026, UU PDP Pasal 39). Kolom plaintext lama dihapus di PDP-1b setelah `booking pii-backfill` dijalankan di tiap environment. Tidak ada klaim kepatuhan hukum; yang ada hanya kontrol teknis di atas.
+- **Privasi**: NIK hanya sebagai hash + ciphertext + masked. Email pembeli dienkripsi AES-256-GCM oleh Queue (`buyerEmailEnc`); Booking hanya menyimpan dan meneruskan ciphertext; hanya Notification yang membuka (ADR-026, UU PDP Pasal 39). Kolom plaintext lama sudah dihapus (migrasi Booking 0005, PDP-1b). Tidak ada klaim kepatuhan hukum; yang ada hanya kontrol teknis di atas.
 
 ## 6. CI/CD
 

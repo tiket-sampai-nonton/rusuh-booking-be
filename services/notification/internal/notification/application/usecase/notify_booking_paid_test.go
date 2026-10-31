@@ -18,6 +18,7 @@ import (
 	mock_outbound "github.com/tiket-sampai-nonton/rusuh-booking-be/services/notification/_mock/notification/port/outbound"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/notification/internal/notification/application/usecase"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/notification/internal/notification/domain/dto"
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/notification/internal/notification/port/outbound"
 )
 
 func testLogger() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
@@ -38,6 +39,7 @@ type paidMocks struct {
 	tmpl  *mock_outbound.MockITemplateRenderer
 	email *mock_outbound.MockIEmailSender
 	pii   *mock_outbound.MockIPIIProtector
+	qr    *fakeQR
 }
 
 func newPaidUsecase(t *testing.T) (*usecase.NotifyBookingPaid, paidMocks) {
@@ -48,8 +50,9 @@ func newPaidUsecase(t *testing.T) (*usecase.NotifyBookingPaid, paidMocks) {
 		tmpl:  mock_outbound.NewMockITemplateRenderer(ctrl),
 		email: mock_outbound.NewMockIEmailSender(ctrl),
 		pii:   mock_outbound.NewMockIPIIProtector(ctrl),
+		qr:    &fakeQR{},
 	}
-	uc := usecase.NewNotifyBookingPaid(m.repo, m.tmpl, m.email, m.pii, clock.Fixed{T: time.Now()}, testLogger(), "https://rusuh.example/tickets/")
+	uc := usecase.NewNotifyBookingPaid(m.repo, m.tmpl, m.email, m.pii, m.qr, clock.Fixed{T: time.Now()}, testLogger(), "https://rusuh.example/tickets/")
 	return uc, m
 }
 
@@ -59,7 +62,14 @@ func TestNotifyBookingPaid_SendsAndMarksSent(t *testing.T) {
 	m.repo.EXPECT().ClaimDelivery(gomock.Any(), gomock.Any()).Return(true, nil)
 	m.tmpl.EXPECT().Render("eticket", gomock.Any()).Return("body", nil)
 	m.tmpl.EXPECT().RenderHTML("eticket", gomock.Any()).Return("<p>html</p>", nil)
-	m.email.EXPECT().SendEmail(gomock.Any(), "buyer@example.id", gomock.Any(), "body", "<p>html</p>", gomock.Any()).Return("prov-1", nil)
+	m.email.EXPECT().SendEmail(gomock.Any(), "buyer@example.id", gomock.Any(), "body", "<p>html</p>", gomock.Any(), gomock.Any()).DoAndReturn(
+		func(_ context.Context, _, _, _, _, _ string, images ...outbound.InlineImage) (string, error) {
+			require.Len(t, images, 1, "satu QR per tiket")
+			assert.Equal(t, "qr-1", images[0].CID)
+			assert.Equal(t, "image/png", images[0].ContentType)
+			assert.Equal(t, []byte("PNG:RBT:TKT-001"), images[0].Data)
+			return "prov-1", nil
+		})
 	m.repo.EXPECT().MarkSent(gomock.Any(), "msg-1", gomock.Any(), "prov-1").Return(nil)
 
 	err := uc.NotifyBookingPaid(context.Background(), "msg-1", validPaidPayload())
@@ -100,7 +110,7 @@ func TestNotifyBookingPaid_SMTPErrorRetries(t *testing.T) {
 	m.repo.EXPECT().ClaimDelivery(gomock.Any(), gomock.Any()).Return(true, nil)
 	m.tmpl.EXPECT().Render("eticket", gomock.Any()).Return("body", nil)
 	m.tmpl.EXPECT().RenderHTML("eticket", gomock.Any()).Return("<p>html</p>", nil)
-	m.email.EXPECT().SendEmail(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return("", errors.New("smtp down"))
+	m.email.EXPECT().SendEmail(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return("", errors.New("smtp down"))
 	m.repo.EXPECT().BumpAttempt(gomock.Any(), "msg-1", gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 
 	err := uc.NotifyBookingPaid(context.Background(), "msg-1", validPaidPayload())
@@ -139,7 +149,7 @@ func TestNotifyBookingPaid_OpensTheCiphertextToSend(t *testing.T) {
 	m.repo.EXPECT().ClaimDelivery(gomock.Any(), gomock.Any()).Return(true, nil)
 	m.tmpl.EXPECT().Render("eticket", gomock.Any()).Return("body", nil)
 	m.tmpl.EXPECT().RenderHTML("eticket", gomock.Any()).Return("<p>html</p>", nil)
-	m.email.EXPECT().SendEmail(gomock.Any(), "buyer@example.id", gomock.Any(), "body", "<p>html</p>", gomock.Any()).Return("prov-1", nil)
+	m.email.EXPECT().SendEmail(gomock.Any(), "buyer@example.id", gomock.Any(), "body", "<p>html</p>", gomock.Any(), gomock.Any()).Return("prov-1", nil)
 	m.repo.EXPECT().MarkSent(gomock.Any(), "msg-1", gomock.Any(), "prov-1").Return(nil)
 
 	require.NoError(t, uc.NotifyBookingPaid(context.Background(), "msg-1", p))
@@ -155,4 +165,29 @@ func TestNotifyBookingPaid_UnopenableCiphertextIsPermanent(t *testing.T) {
 	err := uc.NotifyBookingPaid(context.Background(), "msg-1", p)
 	require.Error(t, err)
 	assert.True(t, rabbitmq.IsPermanent(err))
+}
+
+type fakeQR struct{ err error }
+
+func (f *fakeQR) PNG(payload string) ([]byte, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	return []byte("PNG:" + payload), nil
+}
+
+// A QR that cannot be made must not block the e-ticket: it goes out with the ticket code only.
+func TestNotifyBookingPaid_QRFailureStillSendsTheEticket(t *testing.T) {
+	uc, m := newPaidUsecase(t)
+	m.qr.err = errors.New("qr rusak")
+	m.pii.EXPECT().HMACRecipient(gomock.Any()).Return([]byte("h"))
+	m.repo.EXPECT().ClaimDelivery(gomock.Any(), gomock.Any()).Return(true, nil)
+	m.tmpl.EXPECT().Render("eticket", gomock.Any()).Return("body", nil)
+	m.tmpl.EXPECT().RenderHTML("eticket", gomock.Any()).DoAndReturn(func(_ string, data any) (string, error) {
+		assert.Empty(t, data.(dto.EticketData).Tickets[0].QRCID)
+		return "<p>html</p>", nil
+	})
+	m.email.EXPECT().SendEmail(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return("prov-1", nil)
+	m.repo.EXPECT().MarkSent(gomock.Any(), "msg-1", gomock.Any(), "prov-1").Return(nil)
+	require.NoError(t, uc.NotifyBookingPaid(context.Background(), "msg-1", validPaidPayload()))
 }

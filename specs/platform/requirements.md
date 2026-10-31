@@ -143,7 +143,7 @@ Trace: SRS-Q-FLX-03, SRS-C-05, SRS-IF-24, SRS-F-90-04 · SDD-RBT §4.1.3
 1. WHEN `make up` dijalankan, THE compose SHALL menjalankan PostgreSQL, Valkey, RabbitMQ, Mailpit, migrasi kelima service, serta `api` dan `worker` setiap service. *(Sudah ada [kode: `docker-compose.yaml`].)*
 2. THE compose SHALL menyertakan edge lokal (`deployments/edge/nginx.conf`) yang meniru CloudFront/ALB: routing per service berdasarkan path, cache 1 s untuk Status Document dan 2 s untuk katalog, tanpa cache untuk SSE, dan **tidak** merutekan `/internal/v1/*`.
 3. THE `tools/seed` SHALL membuat data event sintetis (event, kategori, kapasitas, konfigurasi) lewat endpoint admin internal Booking atau SQL seed; data pribadi hanya sintetis.
-4. THE simulator pembayaran SHALL hanya aktif saat `APP_ENV ∈ {ci, local-offline}` dan hasilnya berlabel `SIMULATED`. *(Implementasi di payment spec; platform menyediakan variabel lingkungan dan profil compose.)*
+4. ~~Simulator pembayaran~~ **[Dihapus]**: Payment hanya Midtrans (Sandbox di lokal/CI); test memakai fake gateway.
 5. THE `make smoke` SHALL menjalankan alur bahagia singkat (join → claim → hold → bayar simulasi → tiket) terhadap compose.
 6. THE observability lokal SHALL dijalankan lewat `make obs` (compose profile `observability`, tidak ikut `make up`): Prometheus :9090, Loki :3100, Alloy :12345, Grafana :3000 (tanpa login, khusus lokal). Alloy (pengganti Promtail yang end-of-life sejak Maret 2026) membaca log container compose dan file `logs/*.log` untuk service yang dijalankan dengan `go run`; retensi log 30 hari (R13). *(Sudah ada — task 7.5.)*
 

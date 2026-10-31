@@ -17,6 +17,8 @@ import (
 	"time"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/rabbitmq"
+
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/notification/internal/notification/port/outbound"
 )
 
 // Config holds the SMTP_* settings.
@@ -44,9 +46,9 @@ func New(cfg Config) *Sender {
 
 // SendEmail builds an RFC822 text/plain message and delivers it, returning the Message-ID header.
 // The idempotency key is ignored: SMTP has no provider-side dedup (the deliveries table does that).
-func (s *Sender) SendEmail(ctx context.Context, to, subject, body, html, _ string) (string, error) {
+func (s *Sender) SendEmail(ctx context.Context, to, subject, body, html, _ string, images ...outbound.InlineImage) (string, error) {
 	messageID := fmt.Sprintf("<%s@notification.rusuh>", rabbitmq.NewID())
-	msg := s.build(messageID, to, subject, body, html)
+	msg := s.build(messageID, to, subject, body, html, images)
 
 	done := make(chan error, 1)
 	go func() { done <- s.deliver(to, msg) }()
@@ -83,7 +85,7 @@ func redact(err error) error {
 	return err
 }
 
-func (s *Sender) build(messageID, to, subject, body, html string) []byte {
+func (s *Sender) build(messageID, to, subject, body, html string, images []outbound.InlineImage) []byte {
 	var b strings.Builder
 	b.WriteString("From: " + s.cfg.From + "\r\n")
 	b.WriteString("To: " + to + "\r\n")
@@ -97,13 +99,36 @@ func (s *Sender) build(messageID, to, subject, body, html string) []byte {
 		return []byte(b.String())
 	}
 	// text first, html last: clients show the last alternative they understand.
-	mw := multipart.NewWriter(&b)
-	b.WriteString("Content-Type: multipart/alternative; boundary=" + mw.Boundary() + "\r\n\r\n")
-	for _, part := range []struct{ typ, content string }{{"text/plain", body}, {"text/html", html}} {
-		w, _ := mw.CreatePart(textproto.MIMEHeader{"Content-Type": {part.typ + "; charset=utf-8"}, "Content-Transfer-Encoding": {"base64"}})
-		_, _ = w.Write([]byte(wrap76(base64.StdEncoding.EncodeToString([]byte(part.content)))))
+	alt := func(w *multipart.Writer) {
+		for _, part := range []struct{ typ, content string }{{"text/plain", body}, {"text/html", html}} {
+			p, _ := w.CreatePart(textproto.MIMEHeader{"Content-Type": {part.typ + "; charset=utf-8"}, "Content-Transfer-Encoding": {"base64"}})
+			_, _ = p.Write([]byte(wrap76(base64.StdEncoding.EncodeToString([]byte(part.content)))))
+		}
 	}
-	_ = mw.Close()
+	if len(images) == 0 {
+		mw := multipart.NewWriter(&b)
+		b.WriteString("Content-Type: multipart/alternative; boundary=" + mw.Boundary() + "\r\n\r\n")
+		alt(mw)
+		_ = mw.Close()
+		return []byte(b.String())
+	}
+	// multipart/related: the alternative body plus the images its HTML refers to by cid:.
+	rel := multipart.NewWriter(&b)
+	b.WriteString("Content-Type: multipart/related; boundary=" + rel.Boundary() + "\r\n\r\n")
+	var inner strings.Builder
+	in := multipart.NewWriter(&inner)
+	alt(in)
+	_ = in.Close()
+	p, _ := rel.CreatePart(textproto.MIMEHeader{"Content-Type": {"multipart/alternative; boundary=" + in.Boundary()}})
+	_, _ = p.Write([]byte(inner.String()))
+	for _, im := range images {
+		p, _ := rel.CreatePart(textproto.MIMEHeader{
+			"Content-Type": {im.ContentType}, "Content-Transfer-Encoding": {"base64"},
+			"Content-ID": {"<" + im.CID + ">"}, "Content-Disposition": {"inline; filename=\"" + im.CID + ".png\""},
+		})
+		_, _ = p.Write([]byte(wrap76(base64.StdEncoding.EncodeToString(im.Data))))
+	}
+	_ = rel.Close()
 	return []byte(b.String())
 }
 

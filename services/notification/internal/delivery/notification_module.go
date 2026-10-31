@@ -19,6 +19,7 @@ import (
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/notification/internal/notification/infrastructure/fcm"
 	notificationhttp "github.com/tiket-sampai-nonton/rusuh-booking-be/services/notification/internal/notification/infrastructure/http"
 	notificationpg "github.com/tiket-sampai-nonton/rusuh-booking-be/services/notification/internal/notification/infrastructure/postgres"
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/notification/internal/notification/infrastructure/qrcode"
 	notificationmq "github.com/tiket-sampai-nonton/rusuh-booking-be/services/notification/internal/notification/infrastructure/rabbitmq"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/notification/internal/notification/infrastructure/resend"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/notification/internal/notification/infrastructure/security"
@@ -89,7 +90,7 @@ func newNotificationModule(cfg config.Config, clients *Clients, logger *slog.Log
 	subs := notificationpg.NewSubscriptions(clients.PG.Pool())
 	clk := clock.System{}
 
-	paid := usecase.NewNotifyBookingPaid(deliveries, tmpl, email, pii, clk, logger, cfg.Email.TicketLinkBaseURL)
+	paid := usecase.NewNotifyBookingPaid(deliveries, tmpl, email, pii, qrcode.New(), clk, logger, cfg.Email.TicketLinkBaseURL)
 	expired := usecase.NewNotifyBookingExpired(deliveries, tmpl, email, pii, clk, logger)
 	review := usecase.NewNotifyBookingReview(deliveries, tmpl, email, pii, clk, logger)
 	turnSoon := usecase.NewNotifyTurnSoon(deliveries, subs, push, pii, clk, logger)

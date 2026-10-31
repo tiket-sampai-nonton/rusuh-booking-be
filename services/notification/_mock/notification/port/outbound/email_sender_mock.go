@@ -13,6 +13,7 @@ import (
 	context "context"
 	reflect "reflect"
 
+	outbound "github.com/tiket-sampai-nonton/rusuh-booking-be/services/notification/internal/notification/port/outbound"
 	gomock "go.uber.org/mock/gomock"
 )
 
@@ -41,16 +42,21 @@ func (m *MockIEmailSender) EXPECT() *MockIEmailSenderMockRecorder {
 }
 
 // SendEmail mocks base method.
-func (m *MockIEmailSender) SendEmail(ctx context.Context, to, subject, text, html, idempotencyKey string) (string, error) {
+func (m *MockIEmailSender) SendEmail(ctx context.Context, to, subject, text, html, idempotencyKey string, images ...outbound.InlineImage) (string, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "SendEmail", ctx, to, subject, text, html, idempotencyKey)
+	varargs := []any{ctx, to, subject, text, html, idempotencyKey}
+	for _, a := range images {
+		varargs = append(varargs, a)
+	}
+	ret := m.ctrl.Call(m, "SendEmail", varargs...)
 	ret0, _ := ret[0].(string)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // SendEmail indicates an expected call of SendEmail.
-func (mr *MockIEmailSenderMockRecorder) SendEmail(ctx, to, subject, text, html, idempotencyKey any) *gomock.Call {
+func (mr *MockIEmailSenderMockRecorder) SendEmail(ctx, to, subject, text, html, idempotencyKey any, images ...any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SendEmail", reflect.TypeOf((*MockIEmailSender)(nil).SendEmail), ctx, to, subject, text, html, idempotencyKey)
+	varargs := append([]any{ctx, to, subject, text, html, idempotencyKey}, images...)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SendEmail", reflect.TypeOf((*MockIEmailSender)(nil).SendEmail), varargs...)
 }

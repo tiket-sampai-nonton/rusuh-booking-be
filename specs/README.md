@@ -18,7 +18,7 @@ code-principles, invariants, security-privacy, testing-review) dan **tidak diula
 |------|---------|------|-------|-----------------------------------------------------|
 | [platform](platform/) | `pkg/`, kontrak, CI, compose/edge, `tests/`, `tools/` | — | **kamu** | `pkg/` inti + CORS lokal; `nik`, `outbox`, telemetry, kontrak OTP, edge belum |
 | [notification-service](notification-service/) | Email + push | 8084 | **kamu** (kode awal DEV-2) | Fitur lengkap; perbaiki klaim retry, breaker SMTP, adapter push log |
-| [payment-service](payment-service/) | Midtrans/simulator, attempt, webhook, resolve | 8083 | **kamu** | Belum ada kode bisnis |
+| [payment-service](payment-service/) | Midtrans (Snap), attempt, webhook, resolve | 8083 | **kamu** | Belum ada kode bisnis |
 | [user-service](user-service/) | Akun opsional, OTP, token, profil | 8085 | DEV-2 | Lengkap (OTP lewat event); perbaikan kecil envelope |
 | [queue-service](queue-service/) | Waiting room, FIFO, admission | 8081 | DEV-2 | Fitur ada; ada defect direct admission & antrean tersumbat |
 | [booking-service](booking-service/) | Stok & uang, sesi, hold, settlement | 8082 | DEV-2 | Alur publik ada; ada defect stok, sweeper, payload event; API untuk Payment belum |
@@ -43,7 +43,7 @@ Urutan implementasi yang disarankan (dependensi antar-spec):
 ```
 platform 2.6 (format error), 5.2 (schema OTP), 12 (routing key)   ← kamu
 notification 0a.R1, 8.R1, 0b.R1                                  ← kamu
-payment 0 → 12 (simulator) → 3 → 4 → 5 → 7 → 8 → 9              ← kamu, butuh booking Task 13 (DEV-2)
+payment 0 → 3 → 4 → 5 → 7 → 8 → 9              ← kamu, butuh booking Task 13 (DEV-2)
 booking 6.R1, 10.R1, 12.R1, 4.R1, 13 → queue 8.R1, 11.R1         ← DEV-2
 e2e journey                                                      ← bersama
 ```
@@ -114,7 +114,7 @@ dicatat sebagai open question di bawah dan di spec terkait.
 | OQ-17 | Bila `payment.succeeded.amountMinor` ≠ `bookings.amount_minor` (seharusnya mustahil karena Payment menagih versi terkunci), apa yang dilakukan Booking? | Tidak didefinisikan | booking R9 | `REVIEW` + alert Ops (konsisten dengan jalur pembayaran bermasalah); konfirmasi BA |
 | OQ-18 | Bagaimana Queue menangani outcome alokasi `ALREADY_ACTIVE` (NIK/visitor sudah punya admission aktif di Booking padahal Queue menegakkan satu entry aktif)? | Tidak didefinisikan | queue R6.13 | Anggap anomali: entry `ENDED` (`reason = ALREADY_ACTIVE`) + alert; konfirmasi BA |
 | OQ-19 | SDD-PAYMENT App.B mendefinisikan `BOOKING_EXPIRED` (410), `VISITOR_MISMATCH` (403), `ATTEMPT_IN_PROGRESS` (409); `payment.yaml` dan SRS §3.1.4 tidak. `ATTEMPT_IN_PROGRESS` juga bertentangan dengan SRS-F-14-06 (ganti metode membatalkan attempt lama) | SDD per service vs kontrak/SRS | payment R1.4, R3 | Pakai `409 BOOKING_NOT_PAYABLE` untuk expired, `404 NOT_FOUND` untuk bukan pemilik (konsisten Booking); tambah ke kontrak bila perlu |
-| OQ-20 | Simulator aktif di `APP_ENV=local|ci` (`payment.yaml`) atau `ci|local-offline` (SRS-IF-24)? `local-offline` tidak ada di daftar `APP_ENV` SDD §6.1 | Kontrak vs SRS vs SDD | payment R10.3, platform R7.4 | Tambah `local-offline` ke validasi `APP_ENV` dan selaraskan kontrak + SRS |
+| OQ-20 | ~~Simulator aktif di mana?~~ **Selesai**: simulator tidak dibangun (Payment hanya Midtrans, 2026-10-23) | – |
 | OQ-21 | `order_id = RB-{publicRef}-{attemptNo}` (SDD-RBT §4.6.3), tetapi `Payable` (`internal-booking.yaml`) tidak memuat `publicRef` | SDD vs kontrak | payment R3.3, booking R14.1 | Tambah `publicRef` ke `Payable` (additive) |
 | OQ-11 | Retensi data pribadi (ciphertext NIK event + 30 hari via `PII_RETENTION_DAYS_AFTER_EVENT`, push token dihapus saat penjualan berakhir) tidak punya job yang dirancang | SRS §3.4 (PROPOSED), SDD §4.10 | booking, queue, notification | Rancang job purge setelah retensi dikonfirmasi Ops |
 | OQ-22 | Respons `GET /payments/{id}/status` dipolling tiap 3 detik dan mengembalikan seluruh `attempt` termasuk instruksi; cukupkah `{bookingStatus, attemptStatus, serverTime}`? | Over-fetching (masukan tim 2026-10-21) | payment R6.3, klien web/mobile | Usulkan ke FE; ubah kontrak bila setuju |

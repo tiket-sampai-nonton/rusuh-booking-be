@@ -138,7 +138,7 @@ Compose menjalankan seluruh sistem lokal tanpa AWS dan private registry. Service
 
 Mode payment:
 - `PAYMENT_PROVIDER=midtrans` (**default**): butuh kredensial Midtrans Sandbox di `.env` dan tunnel publik untuk webhook.
-- `PAYMENT_PROVIDER=simulator` + `APP_ENV=local-offline`: tanpa kredensial/internet; hasil diberi label SIMULATED.
+- ~~`PAYMENT_PROVIDER=simulator` + `APP_ENV=local-offline`~~ dihapus: Payment selalu Midtrans (Sandbox lokal); test memakai fake gateway.
 
 ```yaml
 name: rusuh-booking-tiket

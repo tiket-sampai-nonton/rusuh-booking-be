@@ -46,6 +46,7 @@ Coba login OTP: `POST localhost:8085/api/v1/auth/otp/request {"email":"kamu@cont
 | `make test-integration` | unit + integration test (PostgreSQL, Valkey, RabbitMQ dari `make infra`) |
 | `make cover` | sama dengan stage `case-coverage` CI (ambang 80%, tanpa pengecualian paket) |
 | `make test-e2e` | E2E lintas service: membangun dan menjalankan 5 service di host terhadap infra Compose (`make infra`), lalu `tests/e2e` (login OTP → event → antre → klaim → sesi → hold → token Snap Sandbox → webhook → PAID → tiket → email) dan memvalidasi setiap respons terhadap OpenAPI. `E2E_SLOW=1` menambah skenario expiry (±5 menit). Butuh `MIDTRANS_SERVER_KEY` di `services/payment/.env` |
+| `make docs` | Swagger UI untuk semua spesifikasi di `docs/contracts/openapi` (Booking, Queue, Payment, User, Notification, internal/admin) di http://localhost:8089 |
 | `make mock` | generate mock (`go tool mockgen`, versi dikunci `go.mod`) ke `_mock/` |
 | `make tidy` | `go mod tidy` semua modul |
 | `make isolation` | build tiap service tanpa `go.work` |
@@ -65,7 +66,7 @@ Coba login OTP: `POST localhost:8085/api/v1/auth/otp/request {"email":"kamu@cont
 | `MIDTRANS_SERVER_KEY`, `MIDTRANS_SNAP_BASE_URL`, `PAYMENT_SUCCESS_RETURN_URL`, `PAYMENT_FAILED_RETURN_URL` | payment | Snap Sandbox/produksi dan halaman FE tujuan |
 | `SERVICE_TOKEN_PRIVATE_KEY_PATH`, `PAYMENT_TOKEN_PUBLIC_KEY_PATH` | booking | panggilan Booking → Payment (expiry, batal) |
 
-Setelah `migrate up` pertama dengan versi ini jalankan sekali `booking pii-backfill` (mengenkripsi email lama; idempoten).
+Migrasi Booking 0005 menghapus kolom email plaintext dan menolak berjalan bila masih ada baris plaintext (data dari sebelum PDP-1 harus dienkripsi dulu dengan versi sebelum 0005; perintah `pii-backfill` sudah dihapus).
 
 Detail dan alasan: ADR-025/026 (`docs/analisa/05-ADR-RBT.md`). Hasil audit: `docs/engineering/AUDIT-FINAL.md`.
 

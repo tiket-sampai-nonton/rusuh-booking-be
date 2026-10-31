@@ -71,7 +71,6 @@ func newBookingModule(cfg config.Config, clients *Clients, logger *slog.Logger) 
 	if err != nil {
 		return nil, err
 	}
-	uow = uow.WithEmailSealer(pii.SealBuyerEmail)
 	tv := buildTokenVerifiers(clk.Now)
 	admissionVerifier, visitorVerifier := tv.admission, tv.queue
 	paymentClient := paymentclient.New(os.Getenv("PAYMENT_SERVICE_URL"), buildPaymentAuthorizer(logger, clk.Now))

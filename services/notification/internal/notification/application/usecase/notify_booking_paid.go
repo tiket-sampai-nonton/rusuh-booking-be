@@ -28,6 +28,7 @@ type NotifyBookingPaid struct {
 	tmpl  outbound.ITemplateRenderer
 	email outbound.IEmailSender
 	pii   outbound.IPIIProtector
+	qr    outbound.IQREncoder
 	clock clock.IClock
 	log   *slog.Logger
 	// ticketLinkBase is the page that shows the e-tickets (TICKET_LINK_BASE_URL), e.g. https://rusuh.example/tickets.
@@ -35,8 +36,8 @@ type NotifyBookingPaid struct {
 }
 
 // NewNotifyBookingPaid accepts interfaces and returns the concrete usecase.
-func NewNotifyBookingPaid(repo outbound.IDeliveryRepository, tmpl outbound.ITemplateRenderer, email outbound.IEmailSender, pii outbound.IPIIProtector, clk clock.IClock, log *slog.Logger, ticketLinkBase string) *NotifyBookingPaid {
-	return &NotifyBookingPaid{repo: repo, tmpl: tmpl, email: email, pii: pii, clock: clk, log: log, ticketLinkBase: ticketLinkBase}
+func NewNotifyBookingPaid(repo outbound.IDeliveryRepository, tmpl outbound.ITemplateRenderer, email outbound.IEmailSender, pii outbound.IPIIProtector, qr outbound.IQREncoder, clk clock.IClock, log *slog.Logger, ticketLinkBase string) *NotifyBookingPaid {
+	return &NotifyBookingPaid{repo: repo, tmpl: tmpl, email: email, pii: pii, qr: qr, clock: clk, log: log, ticketLinkBase: ticketLinkBase}
 }
 
 // NotifyBookingPaid processes one booking.paid event (idempotent via ClaimDelivery).
@@ -59,12 +60,13 @@ func (u *NotifyBookingPaid) NotifyBookingPaid(ctx context.Context, sourceMessage
 		return nil // R8: duplicate → ack
 	}
 
+	tickets, images := u.ticketViews(p.Tickets)
 	data := dto.EticketData{
 		PublicRef:     p.PublicRef,
 		EventName:     p.Event.Name,
 		EventStartsAt: p.Event.StartsAt,
 		EventVenue:    p.Event.Venue,
-		Tickets:       p.Tickets,
+		Tickets:       tickets,
 		TicketURL:     ticketURL(u.ticketLinkBase, p.BookingID, p.TicketLinkToken),
 	}
 	body, html, rerr := renderBoth(u.tmpl, "eticket", data)
@@ -74,12 +76,31 @@ func (u *NotifyBookingPaid) NotifyBookingPaid(ctx context.Context, sourceMessage
 	}
 
 	subject := fmt.Sprintf("[RBT] E-Tiket Anda — %s", p.Event.Name)
-	providerID, serr := u.email.SendEmail(ctx, to, subject, body, html, idempotencyKey(sourceMessageID, entity.TypeBookingPaid))
+	providerID, serr := u.email.SendEmail(ctx, to, subject, body, html, idempotencyKey(sourceMessageID, entity.TypeBookingPaid), images...)
 	if serr != nil {
 		recordSendFailure(ctx, u.repo, sourceMessageID, entity.TypeBookingPaid, u.clock.Now(), serr)
 		return fmt.Errorf("send eticket email: %w", serr) // transient → retry; permanent stays permanent (DLQ)
 	}
 	return u.repo.MarkSent(ctx, sourceMessageID, entity.TypeBookingPaid, providerID)
+}
+
+// ticketViews builds the template rows and the QR images. A QR that cannot be made leaves that ticket with its code only:
+// the buyer still gets the e-ticket.
+func (u *NotifyBookingPaid) ticketViews(in []dto.TicketInfo) ([]dto.EticketTicket, []outbound.InlineImage) {
+	out := make([]dto.EticketTicket, 0, len(in))
+	var images []outbound.InlineImage
+	for i, t := range in {
+		v := dto.EticketTicket{TicketInfo: t, QRPayload: "RBT:" + t.TicketCode}
+		png, err := u.qr.PNG(v.QRPayload)
+		if err != nil {
+			u.log.Warn("QR tiket gagal dibuat; email dikirim tanpa QR untuk tiket ini", "index", i, "error", err)
+		} else {
+			v.QRCID = fmt.Sprintf("qr-%d", i+1)
+			images = append(images, outbound.InlineImage{CID: v.QRCID, ContentType: "image/png", Data: png})
+		}
+		out = append(out, v)
+	}
+	return out, images
 }
 
 // ticketURL is {base}/{bookingId}?t={token}; empty unless both a base and the token Booking issued are present, so an

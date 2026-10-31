@@ -25,7 +25,7 @@ type AdmissionRepo struct{ pool *pgxpool.Pool }
 func NewAdmissionRepo(pool *pgxpool.Pool) *AdmissionRepo { return &AdmissionRepo{pool: pool} }
 
 const admissionCols = `id::text, event_id::text, queue_entry_id::text, queue_seq, visitor_id::text,
-	buyer_nik_hash, COALESCE(buyer_email, ''), COALESCE(buyer_email_enc, ''), COALESCE(buyer_nik_masked, ''), units, status,
+	buyer_nik_hash, COALESCE(buyer_email_enc, ''), COALESCE(buyer_nik_masked, ''), units, status,
 	COALESCE(admission_jti::text, ''), attendee_checks, edit_count, COALESCE(account_id::text, ''),
 	cfg_selection_ttl_seconds, cfg_payment_ttl_seconds, cfg_submit_grace_seconds,
 	cfg_edit_enabled, cfg_max_edits, cfg_allow_mixed_categories,
@@ -35,7 +35,7 @@ func scanAdmission(row pgx.Row) (entity.Admission, error) {
 	var a entity.Admission
 	err := row.Scan(
 		&a.ID, &a.EventID, &a.QueueEntryID, &a.QueueSeq, &a.VisitorID,
-		&a.BuyerNIKHash, &a.BuyerEmail, &a.BuyerEmailEnc, &a.BuyerNIKMasked, &a.Units, &a.Status,
+		&a.BuyerNIKHash, &a.BuyerEmailEnc, &a.BuyerNIKMasked, &a.Units, &a.Status,
 		&a.AdmissionJTI, &a.AttendeeChecks, &a.EditCount, &a.AccountID,
 		&a.CfgSelectionTTLSeconds, &a.CfgPaymentTTLSeconds, &a.CfgSubmitGraceSeconds,
 		&a.CfgEditEnabled, &a.CfgMaxEdits, &a.CfgAllowMixedCategories,

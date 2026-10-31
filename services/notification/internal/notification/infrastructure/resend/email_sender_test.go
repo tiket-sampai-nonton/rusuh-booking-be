@@ -2,6 +2,7 @@ package resend_test
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/rabbitmq"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/notification/internal/notification/infrastructure/resend"
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/notification/internal/notification/port/outbound"
 )
 
 const (
@@ -154,4 +156,22 @@ func TestSendEmail_SuccessWithoutIDIsAnError(t *testing.T) {
 	_, err := s.SendEmail(context.Background(), testTo, "s", "b", "", "k")
 	require.Error(t, err)
 	assert.False(t, rabbitmq.IsPermanent(err))
+}
+
+func TestSendEmail_SendsInlineImagesAsContentIDAttachments(t *testing.T) {
+	var gotBody map[string]any
+	s := newSender(t, func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &gotBody)
+		_, _ = w.Write([]byte(`{"id":"x"}`))
+	})
+	_, err := s.SendEmail(context.Background(), testTo, "Subjek", "Isi", `<img src="cid:qr-1">`, "k",
+		outbound.InlineImage{CID: "qr-1", ContentType: "image/png", Data: []byte("PNGDATA")})
+	require.NoError(t, err)
+	atts, _ := gotBody["attachments"].([]any)
+	require.Len(t, atts, 1)
+	a := atts[0].(map[string]any)
+	assert.Equal(t, "qr-1", a["content_id"])
+	assert.Equal(t, "image/png", a["content_type"])
+	assert.Equal(t, base64.StdEncoding.EncodeToString([]byte("PNGDATA")), a["content"])
 }

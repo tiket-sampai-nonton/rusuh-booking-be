@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/notification/internal/notification/infrastructure/smtp"
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/notification/internal/notification/port/outbound"
 )
 
 // fakeSMTP is a tiny SMTP server that accepts one message and records the DATA body.
@@ -128,4 +129,22 @@ func TestSender_DialErrorIsReturned(t *testing.T) {
 	s := smtp.New(smtp.Config{Host: "127.0.0.1", Port: 1, From: "x@y.id", Timeout: time.Second})
 	_, err := s.SendEmail(context.Background(), "a@b.id", "s", "b", "", "key-1")
 	require.Error(t, err)
+}
+
+func TestSender_InlineImagesBecomeMultipartRelatedWithContentID(t *testing.T) {
+	f := startFakeSMTP(t)
+	host, port := f.addr()
+	s := smtp.New(smtp.Config{Host: host, Port: port, From: "no-reply@rusuh.example", Timeout: 2 * time.Second})
+
+	_, err := s.SendEmail(context.Background(), "buyer@example.id", "[RBT] Hi", "teks", `<img src="cid:qr-1">`, "k",
+		outbound.InlineImage{CID: "qr-1", ContentType: "image/png", Data: []byte("PNGDATA")})
+	require.NoError(t, err)
+
+	f.mu.Lock()
+	body := f.body
+	f.mu.Unlock()
+	assert.Contains(t, body, "Content-Type: multipart/related; boundary=")
+	assert.Contains(t, body, "Content-Type: multipart/alternative; boundary=")
+	assert.Contains(t, body, "Content-ID: <qr-1>")
+	assert.Contains(t, body, base64.StdEncoding.EncodeToString([]byte("PNGDATA")))
 }

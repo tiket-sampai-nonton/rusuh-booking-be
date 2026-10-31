@@ -15,7 +15,6 @@ type Admission struct {
 	QueueSeq       int64
 	VisitorID      string
 	BuyerNIKHash   []byte
-	BuyerEmail     string // legacy plaintext, only until `booking pii-backfill`; never written any more
 	BuyerEmailEnc  string // AES-GCM base64 sealed by Queue; Booking forwards it, never opens it
 	BuyerNIKMasked string
 	Units          int

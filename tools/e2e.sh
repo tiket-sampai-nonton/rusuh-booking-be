@@ -22,7 +22,7 @@ done
 
 # Booking butuh kunci service ke Payment dan allow-list admin (hanya domain uji lokal).
 booking_env=(SERVICE_TOKEN_PRIVATE_KEY_PATH="$keys/booking-token.pem" PAYMENT_TOKEN_PUBLIC_KEY_PATH="$keys/payment-token.pub.pem"
-  ADMIN_EMAILS="@admin.e2e.test" IMAGE_LOCAL_DIR="$work/images")
+  ADMIN_EMAILS="@admin.e2e.test" IMAGE_LOCAL_DIR="$work/images" RATE_LIMIT_PER_IP=0)
 
 start() { # svc verb port [ENV=val...]
   local svc=$1 verb=$2 port=$3; shift 3
@@ -31,8 +31,10 @@ start() { # svc verb port [ENV=val...]
 }
 start queue api 8081;        start queue worker 8091
 start booking api 8082 "${booking_env[@]}"; start booking worker 8092 "${booking_env[@]}"
-start payment api 8083;      start payment worker 8093
-start notification api 8084; start notification worker 8094 TICKET_LINK_BASE_URL="http://localhost:3000/tickets"
+# Satu IP memanggil ratusan kali per menit (polling); limiter punya tes unit sendiri, jadi dimatikan di sini.
+start payment api 8083 RATE_LIMIT_PER_IP=0 RATE_LIMIT_WEBHOOK_PER_IP=0; start payment worker 8093
+# E2E selalu memakai Mailpit (EMAIL_PROVIDER di .env boleh resend untuk demo); tidak ada email nyata dari tes.
+start notification api 8084 EMAIL_PROVIDER=mailpit; start notification worker 8094 EMAIL_PROVIDER=mailpit EMAIL_FROM=no-reply@rusuh.test TICKET_LINK_BASE_URL="http://localhost:3000/tickets"
 start user api 8085
 
 for port in 8081 8082 8083 8084 8085; do

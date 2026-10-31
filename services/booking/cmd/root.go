@@ -49,7 +49,7 @@ var rootCmd = &cobra.Command{
 }
 
 func init() {
-	rootCmd.AddCommand(apiCmd, migrateCmd, healthcheckCmd, workerCmd, piiBackfillCmd)
+	rootCmd.AddCommand(apiCmd, migrateCmd, healthcheckCmd, workerCmd)
 }
 
 // Execute runs the command tree with a context cancelled on SIGINT/SIGTERM.

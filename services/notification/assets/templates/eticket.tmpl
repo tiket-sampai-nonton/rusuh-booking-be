@@ -7,7 +7,7 @@ Tanggal: {{formatStart .EventStartsAt}}
 Venue  : {{.EventVenue}}
 
 Tiket:
-{{range .Tickets}}- {{.CategoryCode}} | {{.TicketCode}} | {{.AttendeeName}} | {{.AttendeeNikMasked}}
+{{range .Tickets}}- {{.CategoryCode}} | {{.TicketCode}} | {{.AttendeeName}} | {{.AttendeeNikMasked}} | QR: {{.QRPayload}}
 {{end}}
 {{if .TicketURL}}Lihat e-tiket: {{.TicketURL}}
 

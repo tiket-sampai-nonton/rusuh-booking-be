@@ -37,8 +37,7 @@
 **Environments:**
 | Environment | Midtrans Mode | Webhook URL |
 |-------------|---------------|-------------|
-| Local (simulator) | `PAYMENT_PROVIDER=simulator` | N/A |
-| Local (Midtrans) | `PAYMENT_PROVIDER=midtrans` | via cloudflared tunnel |
+| Local | Midtrans Sandbox (`MIDTRANS_ENVIRONMENT=sandbox`, server key Sandbox) | via cloudflared tunnel atau `MIDTRANS_NOTIFICATION_URL` per transaksi |
 | Staging/Demo | Midtrans Sandbox | `https://api.staging.rusuh.example/api/v1/webhooks/midtrans` |
 | Production | Midtrans Production | `https://api.rusuh.example/api/v1/webhooks/midtrans` |
 
@@ -360,16 +359,9 @@ setInterval(() => {
 
 ## 9. Local Development
 
-### 9.1 Simulator Mode
+### 9.1 Tanpa simulator internal
 
-Untuk testing tanpa Midtrans:
-
-```bash
-# .env
-PAYMENT_PROVIDER=simulator
-```
-
-Simulator auto-settles setelah 5 detik.
+Payment hanya memakai Midtrans (Snap). Lokal dan CI memakai Sandbox; unit test memakai fake gateway. Tidak ada `PAYMENT_PROVIDER` maupun endpoint `local-simulator`. "Simulator" yang disebut di bawah adalah halaman simulator pembayaran milik Midtrans Sandbox.
 
 ### 9.2 Midtrans Sandbox
 

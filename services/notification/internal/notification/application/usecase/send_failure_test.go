@@ -27,7 +27,7 @@ func TestNotifyBookingPaid_PassesIdempotencyKey(t *testing.T) {
 	m.repo.EXPECT().ClaimDelivery(gomock.Any(), gomock.Any()).Return(true, nil)
 	m.tmpl.EXPECT().Render("eticket", gomock.Any()).Return("body", nil)
 	m.tmpl.EXPECT().RenderHTML("eticket", gomock.Any()).Return("<p>html</p>", nil)
-	m.email.EXPECT().SendEmail(gomock.Any(), gomock.Any(), gomock.Any(), "body", gomock.Any(), "msg-1:BOOKING_PAID").Return("p", nil)
+	m.email.EXPECT().SendEmail(gomock.Any(), gomock.Any(), gomock.Any(), "body", gomock.Any(), "msg-1:BOOKING_PAID", gomock.Any()).Return("p", nil)
 	m.repo.EXPECT().MarkSent(gomock.Any(), "msg-1", gomock.Any(), "p").Return(nil)
 
 	require.NoError(t, uc.NotifyBookingPaid(context.Background(), "msg-1", validPaidPayload()))
@@ -39,7 +39,7 @@ func TestNotifyBookingPaid_PermanentSendErrorMarksDead(t *testing.T) {
 	m.repo.EXPECT().ClaimDelivery(gomock.Any(), gomock.Any()).Return(true, nil)
 	m.tmpl.EXPECT().Render("eticket", gomock.Any()).Return("body", nil)
 	m.tmpl.EXPECT().RenderHTML("eticket", gomock.Any()).Return("<p>html</p>", nil)
-	m.email.EXPECT().SendEmail(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+	m.email.EXPECT().SendEmail(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return("", rabbitmq.Permanent(errors.New("resend: status 403 validation_error")))
 	m.repo.EXPECT().MarkDead(gomock.Any(), "msg-1", gomock.Any(), gomock.Any()).Return(nil) // no BumpAttempt expected
 
