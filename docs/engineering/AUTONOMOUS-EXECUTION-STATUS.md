@@ -49,11 +49,12 @@ Status: Backlog / Ready / In Progress / Blocked / In Review / Done. Story point 
 | AUD-2 | audit keamanan/keandalan/CI/privasi | 13 | AUDIT-FINAL §2, §5–§7 |
 | IMG-1 | API unggah gambar event (`POST /internal/v1/admin/events/{id}/images`; local git-ignored / S3 + bucket Terraform; validasi isi file, ≤ 5 MB) | 8 | unit + integration + E2E + OpenAPI; URL belum ada di kontrak katalog FE (perlu keputusan kontrak mobile) |
 | RL-1 | Rate limit per IP configurable, dalam-memori (`httpx.RateLimit`; Booking, Payment, webhook terpisah) | 5 | unit + handler |
+| JIRA-1 | Sinkron Jira SCRUM (epic SCRUM-5..13, task SCRUM-14..40, story point + status) | 2 | Jira |
 | R1 | Proyektor ketersediaan SSE (`availability-projector`, `SetAvailability`, `OnSaleAvailability`) | 5 | unit + integration |
 | DOC-1 | sinkron dokumen root dengan salinan mobile | 2 | – |
 | DOC-2 | ADR-024/025, README, tests/README, OpenAPI | (termasuk di atas) | – |
 
-## Backlog — tersisa (66 SP)
+## Backlog — tersisa (Jira SCRUM-34..39: PDP-1b 3, INF-3 2 blocked, INF-2 8, PERF-1 13, R5/R6 2, R8 2 = 30 SP)
 
 | ID | Task | Prio | SP | Status | Catatan / desain singkat |
 |---|---|---|---|---|---|
@@ -64,7 +65,6 @@ Status: Backlog / Ready / In Progress / Blocked / In Review / Done. Story point 
 | R1 | ~~Penulis snapshot ketersediaan SSE~~ | – | 5 | **Done** | job `availability-projector` (lihat bagian selesai) |
 | R2 | Webhook verifikasi ulang Status API | – | 0 | **Dibatalkan** | keputusan pemilik: keamanan env tanggung jawab pemilik |
 | R5/R6 | `redirectUrl` untuk CREATED/UNKNOWN; klaim `nik_masked` di token User | P3 | 2 | Backlog | |
-| JIRA-1 | Sinkron Jira (epic, task, story point, status) | P2 | 2 | Backlog | Jira `SCRUM` baru berisi 1 tiket contoh |
 | R8 | Jalankan pipeline GitHub Actions; merge Dependabot | P2 | 2 | Backlog | butuh runner/repo remote |
 
 ## Human Confirmation Required
