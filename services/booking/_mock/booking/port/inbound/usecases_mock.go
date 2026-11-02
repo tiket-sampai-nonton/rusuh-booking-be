@@ -97,6 +97,45 @@ func (mr *MockIEventDetailUsecaseMockRecorder) GetEventDetail(ctx, eventID any) 
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetEventDetail", reflect.TypeOf((*MockIEventDetailUsecase)(nil).GetEventDetail), ctx, eventID)
 }
 
+// MockIEventFacetsUsecase is a mock of IEventFacetsUsecase interface.
+type MockIEventFacetsUsecase struct {
+	ctrl     *gomock.Controller
+	recorder *MockIEventFacetsUsecaseMockRecorder
+	isgomock struct{}
+}
+
+// MockIEventFacetsUsecaseMockRecorder is the mock recorder for MockIEventFacetsUsecase.
+type MockIEventFacetsUsecaseMockRecorder struct {
+	mock *MockIEventFacetsUsecase
+}
+
+// NewMockIEventFacetsUsecase creates a new mock instance.
+func NewMockIEventFacetsUsecase(ctrl *gomock.Controller) *MockIEventFacetsUsecase {
+	mock := &MockIEventFacetsUsecase{ctrl: ctrl}
+	mock.recorder = &MockIEventFacetsUsecaseMockRecorder{mock}
+	return mock
+}
+
+// EXPECT returns an object that allows the caller to indicate expected use.
+func (m *MockIEventFacetsUsecase) EXPECT() *MockIEventFacetsUsecaseMockRecorder {
+	return m.recorder
+}
+
+// GetFacets mocks base method.
+func (m *MockIEventFacetsUsecase) GetFacets(ctx context.Context, q dto.EventListQuery) (dto.EventFacets, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetFacets", ctx, q)
+	ret0, _ := ret[0].(dto.EventFacets)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetFacets indicates an expected call of GetFacets.
+func (mr *MockIEventFacetsUsecaseMockRecorder) GetFacets(ctx, q any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetFacets", reflect.TypeOf((*MockIEventFacetsUsecase)(nil).GetFacets), ctx, q)
+}
+
 // MockICreateEventUsecase is a mock of ICreateEventUsecase interface.
 type MockICreateEventUsecase struct {
 	ctrl     *gomock.Controller

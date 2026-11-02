@@ -185,6 +185,97 @@ paths:
             application/json:
               schema:
                 "$ref": "#/components/schemas/ErrorEnvelope"
+  "/api/v1/events/facets":
+    get:
+      tags:
+      - catalog
+      summary: >-
+        Nilai filter tersedia (cities, genres) untuk katalog publik, drill-down mengikuti event list
+        (cache 2 detik, SRS-F-28-02/04). Tiap facet menerapkan semua filter aktif kecuali dirinya sendiri.
+      operationId: listEventFacets
+      security: []
+      parameters:
+      - name: timeframe
+        in: query
+        required: false
+        description: Sama seperti GET /events. Diterapkan ke facet cities dan genres.
+        schema:
+          type: string
+          enum:
+          - ALL
+          - THIS_WEEK
+          - THIS_MONTH
+          - UPCOMING
+          default: ALL
+      - name: city
+        in: query
+        required: false
+        description: Diterapkan ke facet genres; diabaikan oleh facet cities (drill-down).
+        schema:
+          type: string
+      - name: genres
+        in: query
+        required: false
+        description: >-
+          Multi-nilai (ulangi atau CSV). Diterapkan ke facet cities; diabaikan oleh facet genres
+          (drill-down). Cap dan normalisasi sama dengan GET /events.
+        explode: true
+        style: form
+        schema:
+          type: array
+          items:
+            type: string
+      - name: startDate
+        in: query
+        required: false
+        description: Batas awal rentang tanggal (YYYY-MM-DD, inklusif WIB). Sama seperti GET /events.
+        schema:
+          type: string
+          format: date
+      - name: endDate
+        in: query
+        required: false
+        description: Batas akhir rentang tanggal (YYYY-MM-DD, inklusif WIB). Sama seperti GET /events.
+        schema:
+          type: string
+          format: date
+      - name: status
+        in: query
+        required: false
+        description: Sama seperti GET /events. Diterapkan ke facet cities dan genres.
+        schema:
+          type: string
+          enum:
+          - ALL
+          - NOT_STARTED
+          - AVAILABLE
+          - SOLD_OUT
+          - CLOSED
+          - CANCELLED
+          default: ALL
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  meta:
+                    "$ref": "#/components/schemas/Meta"
+                  data:
+                    "$ref": "#/components/schemas/EventFacets"
+                required:
+                - meta
+                - data
+        '400':
+          description: >-
+            Filter tidak valid (format tanggal, rentang terbalik, atau cap genre) — errorCode:
+            `VALIDATION_ERROR`. Identik dengan GET /events; nilai enum tak dikenal TIDAK 400 (fail-soft).
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ErrorEnvelope"
   "/api/v1/booking-sessions":
     post:
       tags:
@@ -1089,6 +1180,23 @@ components:
       required:
       - events
       - serverTime
+    EventFacets:
+      type: object
+      description: Nilai filter yang tersedia lintas katalog publik (event terbit, non-cancelled).
+      properties:
+        cities:
+          type: array
+          description: Daftar kota distinct (non-kosong), terurut. Selalu array ([] bila kosong).
+          items:
+            type: string
+        genres:
+          type: array
+          description: Daftar token genre distinct, terurut. Selalu array ([] bila kosong).
+          items:
+            type: string
+      required:
+      - cities
+      - genres
     EventDetail:
       type: object
       properties:

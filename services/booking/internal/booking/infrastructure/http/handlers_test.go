@@ -39,6 +39,19 @@ func (f fakeCatalog) GetEventDetail(context.Context, string) (dto.EventDetail, e
 	return f.detail, f.err
 }
 
+type fakeFacets struct {
+	facets dto.EventFacets
+	err    error
+	got    *dto.EventListQuery // optional: records the query passed to GetFacets
+}
+
+func (f fakeFacets) GetFacets(_ context.Context, q dto.EventListQuery) (dto.EventFacets, error) {
+	if f.got != nil {
+		*f.got = q
+	}
+	return f.facets, f.err
+}
+
 type fakeHold struct {
 	resp dto.Booking
 	err  error
@@ -122,7 +135,7 @@ func serve(t *testing.T, reg interface{ Register(*http.ServeMux) }, method, targ
 
 func TestCatalogHandler_ListAndDetail(t *testing.T) {
 	cat := fakeCatalog{list: dto.EventList{Events: []dto.EventSummary{{EventID: "e1"}}}}
-	h := bookinghttp.NewCatalogHandler(cat, cat)
+	h := bookinghttp.NewCatalogHandler(cat, cat, fakeFacets{})
 
 	w := serve(t, h, http.MethodGet, "/api/v1/events?sort=PRICE_ASC", "", nil)
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -151,7 +164,7 @@ func TestCatalogHandler_ParsesGenres(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			var got dto.EventListQuery
 			cat := fakeCatalog{got: &got}
-			h := bookinghttp.NewCatalogHandler(cat, cat)
+			h := bookinghttp.NewCatalogHandler(cat, cat, fakeFacets{})
 			w := serve(t, h, http.MethodGet, tc.url, "", nil)
 			require.Equal(t, http.StatusOK, w.Code)
 			assert.Equal(t, tc.want, got.Genres, "handler meneruskan token mentah; normalisasi di usecase")
@@ -164,14 +177,78 @@ func TestCatalogHandler_MapsValidationErrorTo400(t *testing.T) {
 	// here we assert the handler maps that apperror to HTTP 400 with the code in the envelope.
 	// (Adapter talks to the port, not the usecase directly — depguard — so we drive it via fakeCatalog.)
 	cat := fakeCatalog{err: inbound.Validation("startDate", "format tanggal harus YYYY-MM-DD")}
-	h := bookinghttp.NewCatalogHandler(cat, cat)
+	h := bookinghttp.NewCatalogHandler(cat, cat, fakeFacets{})
 	w := serve(t, h, http.MethodGet, "/api/v1/events?startDate=nonsense", "", nil)
 	require.Equal(t, http.StatusBadRequest, w.Code, "body=%s", w.Body.String())
 	assert.Contains(t, w.Body.String(), "VALIDATION_ERROR")
 }
 
+func TestCatalogHandler_Facets(t *testing.T) {
+	cat := fakeCatalog{}
+	facets := fakeFacets{facets: dto.EventFacets{Cities: []string{"Bandung", "Jakarta"}, Genres: []string{"JAZZ", "POP"}}}
+	h := bookinghttp.NewCatalogHandler(cat, cat, facets)
+
+	w := serve(t, h, http.MethodGet, "/api/v1/events/facets", "", nil)
+	require.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
+	assert.Equal(t, "public, max-age=2", w.Header().Get("Cache-Control"))
+
+	var env struct {
+		Data dto.EventFacets `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &env))
+	assert.Equal(t, []string{"Bandung", "Jakarta"}, env.Data.Cities)
+	assert.Equal(t, []string{"JAZZ", "POP"}, env.Data.Genres)
+}
+
+func TestCatalogHandler_FacetsForwardsCatalogFilters(t *testing.T) {
+	var got dto.EventListQuery
+	facets := fakeFacets{got: &got}
+	cat := fakeCatalog{}
+	h := bookinghttp.NewCatalogHandler(cat, cat, facets)
+
+	w := serve(t, h, http.MethodGet, "/api/v1/events/facets?city=Jakarta&genres=POP,ROCK&status=AVAILABLE&timeframe=UPCOMING&startDate=2026-12-01&endDate=2026-12-31", "", nil)
+	require.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
+
+	assert.Equal(t, "Jakarta", got.City)
+	assert.Equal(t, []string{"POP", "ROCK"}, got.Genres, "handler meneruskan token mentah; drill-down + normalisasi di usecase")
+	assert.Equal(t, "AVAILABLE", got.Status)
+	assert.Equal(t, "UPCOMING", got.Timeframe)
+	assert.Equal(t, "2026-12-01", got.StartDate)
+	assert.Equal(t, "2026-12-31", got.EndDate)
+}
+
+func TestCatalogHandler_FacetsMapsValidationErrorTo400(t *testing.T) {
+	facets := fakeFacets{err: inbound.Validation("startDate", "format tanggal harus YYYY-MM-DD")}
+	cat := fakeCatalog{}
+	h := bookinghttp.NewCatalogHandler(cat, cat, facets)
+	w := serve(t, h, http.MethodGet, "/api/v1/events/facets?startDate=nonsense", "", nil)
+	require.Equal(t, http.StatusBadRequest, w.Code, "body=%s", w.Body.String())
+	assert.Contains(t, w.Body.String(), "VALIDATION_ERROR")
+}
+
+func TestCatalogHandler_FacetsRouteDoesNotCollideWithDetail(t *testing.T) {
+	// /api/v1/events/facets must hit getFacets, not getEventDetail with eventId="facets".
+	// Building the mux and serving both routes proves registration does not panic and the static
+	// pattern wins over the wildcard (Go 1.22+ precedence).
+	cat := fakeCatalog{detail: dto.EventDetail{Event: dto.EventSummary{EventID: "e1"}}}
+	facets := fakeFacets{facets: dto.EventFacets{Cities: []string{"Jakarta"}, Genres: []string{"POP"}}}
+	h := bookinghttp.NewCatalogHandler(cat, cat, facets)
+
+	wf := serve(t, h, http.MethodGet, "/api/v1/events/facets", "", nil)
+	require.Equal(t, http.StatusOK, wf.Code)
+	var fenv struct {
+		Data dto.EventFacets `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(wf.Body.Bytes(), &fenv))
+	assert.Equal(t, []string{"Jakarta"}, fenv.Data.Cities, "facets payload, bukan event detail")
+
+	wd := serve(t, h, http.MethodGet, "/api/v1/events/e1", "", nil)
+	require.Equal(t, http.StatusOK, wd.Code)
+	assert.Contains(t, wd.Body.String(), `"eventId":"e1"`, "wildcard tetap melayani detail")
+}
+
 func TestCatalogHandler_DetailNotFound(t *testing.T) {
-	h := bookinghttp.NewCatalogHandler(fakeCatalog{err: inbound.ErrNotFound}, fakeCatalog{err: inbound.ErrNotFound})
+	h := bookinghttp.NewCatalogHandler(fakeCatalog{err: inbound.ErrNotFound}, fakeCatalog{err: inbound.ErrNotFound}, fakeFacets{})
 	w := serve(t, h, http.MethodGet, "/api/v1/events/22222222-2222-2222-2222-222222222222", "", nil)
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }

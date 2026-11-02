@@ -29,6 +29,22 @@ dan Payment) → sisanya.
     - _Requirements: 1.3_
   - [x] 2.R2 Filter katalog lanjutan: `genres` (multi-nilai, overlap `text[]`), rentang tanggal `startDate`/`endDate` (inklusif WIB, sargable, di-AND dengan `timeframe`), sort `DATE_DESC`. Migrasi `0006` (`events.genre text[]`, GIN `idx_events_genre`, btree `idx_events_starts_at`). Validasi: enum fail-soft, tanggal/cap genre fail-hard `400`. Cache key edge ditambah `genres,startDate,endDate` (terkanonikalisasi)
     - _Requirements: 1.6, 1.7, 1.9, 1.10, 1.11_
+  - [ ] 2.R3 Facet katalog `GET /api/v1/events/facets` (drill-down): endpoint publik menerima filter
+        katalog yang sama (`timeframe,city,genres,startDate,endDate,status`) dan **mengikuti event list
+        saat ini** — tiap facet menerapkan semua filter aktif kecuali dirinya (`cities` abaikan `city`,
+        `genres` abaikan `genres`); lantai visibilitas published+non-cancelled. Tanpa migrasi.
+        Predikat filter diekstrak jadi satu sumber (dibagi `ListEvents`, tidak diduplikasi). Port
+        `IEventRepo.ListFacets(ctx,q,dim)` + `CountEvents(ctx,q)` + inbound `IEventFacetsUsecase.GetFacets(ctx,q)`;
+        usecase `list_facets.go` (normalisasi = daftar event, validasi identik; **guard option c**: bila
+        `CountEvents` di query penuh = 0, kembalikan facet kosong `{[],[]}` sebelum drill-down);
+        repo dua query DISTINCT (`unnest` untuk genre) memakai WHERE bersama; mapper `ToEventFacets`
+        (selalu array); extend `CatalogHandler` parse filter spt listEvents (cache2s, security []); tambah
+        query params ke path `/events/facets` di `booking.yaml`. TDD: unit usecase (mock repo, drill-down,
+        empty-guard, validasi), mapper (nil→[]), handler, integration PostgreSQL (drill-down: `city` filter
+        tak mempersempit `cities` dst; `CountEvents` predikat bersama; filter gabungan kosong → facet
+        kosong; kecualikan cancelled/unpublished), `make mock` regen. TC-CAT-11.
+    - _Requirements: 1.12, 1.13, 1.14, 1.15_
+    - _Design: §3.1_
   - _Requirements: 1.1, 1.2, 1.4, 1.5, 1.6, 1.7, 1.8_
 
 - [x] 3. Detail event `GET /api/v1/events/{eventId}`

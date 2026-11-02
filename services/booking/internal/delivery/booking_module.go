@@ -84,6 +84,7 @@ func newBookingModule(cfg config.Config, clients *Clients, logger *slog.Logger) 
 	// Usecases.
 	listEvents := usecase.NewListEvents(eventRepo, clk)
 	getDetail := usecase.NewGetEventDetail(eventRepo, clk)
+	listFacets := usecase.NewListFacets(eventRepo)
 	createEvent := usecase.NewCreateEvent(eventWriteRepo, idGen)
 	updateConfig := usecase.NewUpdateEventConfig(eventWriteRepo)
 	allocate := usecase.NewAllocateBatch(admissionRepo, idGen, clk)
@@ -122,7 +123,7 @@ func newBookingModule(cfg config.Config, clients *Clients, logger *slog.Logger) 
 	adminHandler := bookinghttp.NewAdminHandler(createEvent, updateConfig, tv.admin).WithImages(usecase.NewUploadEventImage(eventWriteRepo, store)).
 		WithPublication(usecase.NewPublishEvent(eventRepo, eventWriteRepo, clk), getDetail)
 	regs := []registrar{
-		bookinghttp.NewCatalogHandler(listEvents, getDetail),
+		bookinghttp.NewCatalogHandler(listEvents, getDetail, listFacets),
 		bookinghttp.NewSessionHandler(sessions, attendee, cancelSess),
 		bookinghttp.NewBookingHandler(hold, edit, tickets, getBooking, cancelBook).WithBuyerAuth(tv.buyer),
 		bookinghttp.NewMyBookingsHandler(history, tv.buyer),

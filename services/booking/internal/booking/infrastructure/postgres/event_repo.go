@@ -51,6 +51,32 @@ func scanEvent(row pgx.Row, minPrice *int64) (entity.Event, error) {
 	return e, err
 }
 
+// eventFilterWhere is the catalog filter predicate shared by ListEvents and ListFacets so both endpoints
+// agree on exactly what "visible, matching the query" means (single source of truth, not duplicated).
+// Positional params, in order: $1 status, $2 city, $3 timeframe, $4 genres::text[], $5 startUTC, $6 endUTC.
+// The published + non-cancelled floor is always applied. Callers that want a drill-down facet zero out the
+// dimension being listed (city="" or genres=nil) via filterArgs before binding.
+const eventFilterWhere = `
+		 WHERE ($1 = 'ALL' OR (CASE WHEN e.status IN ('SOLD_OUT','CLOSED','CANCELLED') THEN e.status
+		                            WHEN now() < e.sales_starts_at THEN 'NOT_STARTED'
+		                            WHEN now() > e.sales_ends_at THEN 'CLOSED'
+		                            ELSE 'AVAILABLE' END) = $1)
+		   AND ($2 = '' OR lower(e.city) = lower($2))
+		   AND ($3 = 'ALL'
+		        OR ($3 = 'UPCOMING'   AND (e.starts_at AT TIME ZONE 'Asia/Jakarta')::date >= (now() AT TIME ZONE 'Asia/Jakarta')::date)
+		        OR ($3 = 'THIS_WEEK'  AND date_trunc('week',  e.starts_at AT TIME ZONE 'Asia/Jakarta') = date_trunc('week',  now() AT TIME ZONE 'Asia/Jakarta'))
+		        OR ($3 = 'THIS_MONTH' AND date_trunc('month', e.starts_at AT TIME ZONE 'Asia/Jakarta') = date_trunc('month', now() AT TIME ZONE 'Asia/Jakarta')))
+		   AND (cardinality($4::text[]) = 0 OR e.genre && $4::text[])
+		   AND ($5::timestamptz IS NULL OR e.starts_at >= $5::timestamptz)
+		   AND ($6::timestamptz IS NULL OR e.starts_at <  $6::timestamptz)
+		   AND e.published_at IS NOT NULL
+		   AND (e.status <> 'CANCELLED' OR $1 = 'CANCELLED')`
+
+// filterArgs returns the six positional args for eventFilterWhere, in order, from the query.
+func filterArgs(q dto.EventListQuery) []any {
+	return []any{orAll(q.Status), q.City, orAll(q.Timeframe), genresParam(q.Genres), q.StartUTC, q.EndUTC}
+}
+
 // ListEvents returns catalog rows filtered by the query.
 func (r *EventRepo) ListEvents(ctx context.Context, q dto.EventListQuery) ([]entity.Event, error) {
 	order := "e.starts_at ASC, e.id"
@@ -67,25 +93,11 @@ func (r *EventRepo) ListEvents(ctx context.Context, q dto.EventListQuery) ([]ent
 	sql := fmt.Sprintf(`
 		SELECT %s, COALESCE(MIN(c.price_minor), 0) AS min_price_minor
 		  FROM booking.events e
-		  LEFT JOIN booking.ticket_categories c ON c.event_id = e.id
-		 WHERE ($1 = 'ALL' OR (CASE WHEN e.status IN ('SOLD_OUT','CLOSED','CANCELLED') THEN e.status
-		                            WHEN now() < e.sales_starts_at THEN 'NOT_STARTED'
-		                            WHEN now() > e.sales_ends_at THEN 'CLOSED'
-		                            ELSE 'AVAILABLE' END) = $1)
-		   AND ($2 = '' OR lower(e.city) = lower($2))
-		   AND ($3 = 'ALL'
-		        OR ($3 = 'UPCOMING'   AND (e.starts_at AT TIME ZONE 'Asia/Jakarta')::date >= (now() AT TIME ZONE 'Asia/Jakarta')::date)
-		        OR ($3 = 'THIS_WEEK'  AND date_trunc('week',  e.starts_at AT TIME ZONE 'Asia/Jakarta') = date_trunc('week',  now() AT TIME ZONE 'Asia/Jakarta'))
-		        OR ($3 = 'THIS_MONTH' AND date_trunc('month', e.starts_at AT TIME ZONE 'Asia/Jakarta') = date_trunc('month', now() AT TIME ZONE 'Asia/Jakarta')))
-		   AND (cardinality($4::text[]) = 0 OR e.genre && $4::text[])
-		   AND ($5::timestamptz IS NULL OR e.starts_at >= $5::timestamptz)
-		   AND ($6::timestamptz IS NULL OR e.starts_at <  $6::timestamptz)
-		   AND e.published_at IS NOT NULL
-		   AND (e.status <> 'CANCELLED' OR $1 = 'CANCELLED')
+		  LEFT JOIN booking.ticket_categories c ON c.event_id = e.id%s
 		 GROUP BY e.id
-		 ORDER BY %s`, eventCols, order)
+		 ORDER BY %s`, eventCols, eventFilterWhere, order)
 
-	rows, err := r.pool.Query(ctx, sql, orAll(q.Status), q.City, orAll(q.Timeframe), genresParam(q.Genres), q.StartUTC, q.EndUTC)
+	rows, err := r.pool.Query(ctx, sql, filterArgs(q)...)
 	if err != nil {
 		return nil, fmt.Errorf("events: list: %w", err)
 	}
@@ -101,6 +113,52 @@ func (r *EventRepo) ListEvents(ctx context.Context, q dto.EventListQuery) ([]ent
 		out = append(out, e)
 	}
 	return out, rows.Err()
+}
+
+// ListFacets returns the distinct values of one catalog dimension (cities or genre tokens) across events
+// matching the query, reusing the exact same filter predicate as ListEvents (eventFilterWhere) so facet
+// values always agree with what the list can show. Results are sorted. The drill-down exclusion (a facet
+// ignoring its own filter) is the caller's job: it passes a query with that dimension's filter zeroed.
+func (r *EventRepo) ListFacets(ctx context.Context, q dto.EventListQuery, dim outbound.FacetDimension) ([]string, error) {
+	var sql string
+	switch dim {
+	case outbound.FacetCities:
+		// city <> '' keeps unset cities out of the picker; still gated by the shared filter + visibility floor.
+		sql = `SELECT DISTINCT e.city FROM booking.events e` + eventFilterWhere + `
+		   AND e.city <> ''
+		 ORDER BY e.city`
+	case outbound.FacetGenres:
+		sql = `SELECT DISTINCT g FROM booking.events e, unnest(e.genre) AS g` + eventFilterWhere + `
+		 ORDER BY g`
+	default:
+		return nil, fmt.Errorf("events: facets: dimensi tidak dikenal: %d", dim)
+	}
+
+	rows, err := r.pool.Query(ctx, sql, filterArgs(q)...)
+	if err != nil {
+		return nil, fmt.Errorf("events: facets: %w", err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var v string
+		if err := rows.Scan(&v); err != nil {
+			return nil, fmt.Errorf("events: facets: scan: %w", err)
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
+}
+
+// CountEvents returns how many events match the full query (all filters applied, nothing dropped), using
+// the same filter predicate as ListEvents. Cheap existence check for the facets empty-result guard.
+func (r *EventRepo) CountEvents(ctx context.Context, q dto.EventListQuery) (int, error) {
+	sql := `SELECT count(*) FROM booking.events e` + eventFilterWhere
+	var n int
+	if err := r.pool.QueryRow(ctx, sql, filterArgs(q)...).Scan(&n); err != nil {
+		return 0, fmt.Errorf("events: count: %w", err)
+	}
+	return n, nil
 }
 
 // GetByID returns one event or inbound.ErrNotFound.
