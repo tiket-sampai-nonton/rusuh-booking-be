@@ -297,6 +297,29 @@ paths:
               schema:
                 "$ref": "#/components/schemas/ErrorEnvelope"
   "/internal/v1/admin/events/{eventId}":
+    get:
+      tags:
+      - admin
+      summary: Detail event untuk admin, termasuk draf. Bentuk respons sama dengan GET /api/v1/events/{eventId} (booking.yaml); field `published` menunjukkan terbit atau draf.
+      operationId: adminGetEvent
+      security:
+      - adminBearer: []
+      parameters:
+      - name: eventId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: OK
+        '400':
+          description: eventId bukan UUID
+        '401':
+          description: Missing or invalid user bearer token
+        '404':
+          description: Event tidak ada
     patch:
       tags:
       - admin
@@ -328,6 +351,56 @@ paths:
           description: Missing or invalid user bearer token
         '409':
           description: Rules locked after sale started
+  "/internal/v1/admin/events/{eventId}/publish":
+    post:
+      tags:
+      - admin
+      summary: Terbitkan event (tampil di katalog dan boleh dijual). Idempotent; boleh kapan saja.
+      operationId: adminPublishEvent
+      security:
+      - adminBearer: []
+      parameters:
+      - name: eventId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: Terbit (atau sudah terbit)
+        '400':
+          description: eventId bukan UUID
+        '401':
+          description: Missing or invalid user bearer token
+        '404':
+          description: Event tidak ada
+  "/internal/v1/admin/events/{eventId}/unpublish":
+    post:
+      tags:
+      - admin
+      summary: Kembalikan event menjadi draf. Hanya sebelum jendela penjualan dibuka.
+      operationId: adminUnpublishEvent
+      security:
+      - adminBearer: []
+      parameters:
+      - name: eventId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: Draf
+        '400':
+          description: eventId bukan UUID
+        '401':
+          description: Missing or invalid user bearer token
+        '404':
+          description: Event tidak ada
+        '409':
+          description: 'Penjualan sudah dibuka — errorCode: `EVENT_RULES_LOCKED`'
   "/internal/v1/admin/events/{eventId}/images":
     post:
       tags:

@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"io"
 	stdhttp "net/http"
 
@@ -16,6 +17,8 @@ type AdminHandler struct {
 	update   inbound.IUpdateEventConfigUsecase
 	verifier IUserTokenVerifier
 	images   inbound.IUploadEventImageUsecase
+	publish  inbound.IPublishEventUsecase
+	detail   inbound.IGetAdminEventUsecase
 }
 
 // NewAdminHandler wires the admin handler.
@@ -33,10 +36,21 @@ func (h *AdminHandler) WithImages(uc inbound.IUploadEventImageUsecase) *AdminHan
 	return h
 }
 
+// WithPublication enables GET /internal/v1/admin/events/{eventId} (drafts included) and the publish and unpublish actions.
+func (h *AdminHandler) WithPublication(publish inbound.IPublishEventUsecase, detail inbound.IGetAdminEventUsecase) *AdminHandler {
+	h.publish, h.detail = publish, detail
+	return h
+}
+
 // Register mounts the admin routes.
 func (h *AdminHandler) Register(mux *stdhttp.ServeMux) {
 	mux.Handle("POST /internal/v1/admin/events", h.admin(h.createEvent))
 	mux.Handle("PATCH /internal/v1/admin/events/{eventId}", h.admin(h.updateEventConfig))
+	if h.publish != nil && h.detail != nil {
+		mux.Handle("GET /internal/v1/admin/events/{eventId}", h.admin(h.getEvent))
+		mux.Handle("POST /internal/v1/admin/events/{eventId}/publish", h.admin(h.publishEvent(h.publish.Publish)))
+		mux.Handle("POST /internal/v1/admin/events/{eventId}/unpublish", h.admin(h.publishEvent(h.publish.Unpublish)))
+	}
 	if h.images != nil {
 		mux.Handle("POST /internal/v1/admin/events/{eventId}/images", h.admin(h.uploadImage))
 	}
@@ -104,4 +118,26 @@ func (h *AdminHandler) uploadImage(w stdhttp.ResponseWriter, r *stdhttp.Request)
 	}
 	noStore(w)
 	httpx.WriteData(w, r, stdhttp.StatusCreated, map[string]string{"url": url})
+}
+
+func (h *AdminHandler) getEvent(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	d, err := h.detail.GetAdminEventDetail(r.Context(), r.PathValue("eventId"))
+	if err != nil {
+		httpx.WriteError(w, r, err)
+		return
+	}
+	noStore(w)
+	httpx.WriteData(w, r, stdhttp.StatusOK, d)
+}
+
+// publishEvent adapts Publish/Unpublish to a handler; both are idempotent and answer 200 with an empty body.
+func (h *AdminHandler) publishEvent(action func(ctx context.Context, eventID string) error) stdhttp.HandlerFunc {
+	return func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+		if err := action(r.Context(), r.PathValue("eventId")); err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
+		noStore(w)
+		httpx.WriteData(w, r, stdhttp.StatusOK, struct{}{})
+	}
 }

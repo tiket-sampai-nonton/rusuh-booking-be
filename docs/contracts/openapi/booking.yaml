@@ -166,7 +166,7 @@ paths:
                 - meta
                 - data
         '404':
-          description: 'Event tidak ada — errorCode: `NOT_FOUND`'
+          description: 'Event tidak ada atau masih draf (belum diterbitkan) — errorCode: `NOT_FOUND`'
           content:
             application/json:
               schema:
@@ -1098,6 +1098,9 @@ components:
           type: integer
         allowMixedCategories:
           type: boolean
+        published:
+          type: boolean
+          description: Selalu true di katalog publik (event draf menjawab 404). Draf hanya terlihat oleh admin.
         categories:
           type: array
           items:

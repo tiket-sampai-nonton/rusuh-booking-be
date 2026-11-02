@@ -15,7 +15,7 @@ import (
 
 func TestGetEventSupply_Success(t *testing.T) {
 	detail := entity.EventDetail{
-		Event: entity.Event{ID: eventID, Status: entity.EventAvailable},
+		Event: entity.Event{ID: eventID, Published: true, Status: entity.EventAvailable},
 		Categories: []entity.CategoryDetail{
 			{Category: entity.Category{Code: "VIP", Name: "VIP"}, Available: 7},
 			{Category: entity.Category{Code: "REG", Name: "Regular"}, Available: 0},
@@ -55,7 +55,7 @@ func TestGetEventSupply_RepoError(t *testing.T) {
 
 func TestGetEventSupply_SoldOut(t *testing.T) {
 	detail := entity.EventDetail{
-		Event: entity.Event{ID: eventID, Status: entity.EventSoldOut},
+		Event: entity.Event{ID: eventID, Published: true, Status: entity.EventSoldOut},
 		Categories: []entity.CategoryDetail{
 			{Category: entity.Category{Code: "VIP"}, Available: 0},
 		},
@@ -69,7 +69,7 @@ func TestGetEventSupply_SoldOut(t *testing.T) {
 
 func TestGetEventSupply_MultipleCategories(t *testing.T) {
 	detail := entity.EventDetail{
-		Event: entity.Event{ID: eventID, Status: entity.EventAvailable},
+		Event: entity.Event{ID: eventID, Published: true, Status: entity.EventAvailable},
 		Categories: []entity.CategoryDetail{
 			{Category: entity.Category{Code: "A"}, Available: 10},
 			{Category: entity.Category{Code: "B"}, Available: 5},

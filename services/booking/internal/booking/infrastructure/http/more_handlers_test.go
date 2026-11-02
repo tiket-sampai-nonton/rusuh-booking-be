@@ -299,3 +299,56 @@ func TestAdminHandler_UploadImage(t *testing.T) {
 	none := bookinghttp.NewAdminHandler(uc, uc, allowAll{})
 	assert.Equal(t, http.StatusNotFound, multipartUpload(t, none, "/internal/v1/admin/events/ev-1/images", "file", []byte("DATA"), auth).Code, "rute tidak ada tanpa penyimpanan")
 }
+
+type fakePublish struct {
+	published []bool
+	err       error
+}
+
+func (f *fakePublish) Publish(context.Context, string) error {
+	f.published = append(f.published, true)
+	return f.err
+}
+func (f *fakePublish) Unpublish(context.Context, string) error {
+	f.published = append(f.published, false)
+	return f.err
+}
+
+type fakeAdminDetail struct {
+	out dto.EventDetail
+	err error
+}
+
+func (f fakeAdminDetail) GetAdminEventDetail(context.Context, string) (dto.EventDetail, error) {
+	return f.out, f.err
+}
+
+func TestAdminHandler_PublicationRoutes(t *testing.T) {
+	uc := &fakeAdminUC{id: "ev-1"}
+	pub := &fakePublish{}
+	h := bookinghttp.NewAdminHandler(uc, uc, allowAll{}).WithPublication(pub, fakeAdminDetail{out: dto.EventDetail{Published: false}})
+	auth := map[string]string{"Authorization": "Bearer t"}
+
+	assert.Equal(t, http.StatusOK, do(t, h, http.MethodPost, "/internal/v1/admin/events/ev-1/publish", "", auth).Code)
+	assert.Equal(t, http.StatusOK, do(t, h, http.MethodPost, "/internal/v1/admin/events/ev-1/unpublish", "", auth).Code)
+	assert.Equal(t, []bool{true, false}, pub.published)
+
+	w := do(t, h, http.MethodGet, "/internal/v1/admin/events/ev-1", "", auth)
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Contains(t, w.Body.String(), `"published":false`, "admin melihat draf")
+
+	for _, p := range []string{"/publish", "/unpublish"} {
+		assert.Equal(t, http.StatusUnauthorized, do(t, h, http.MethodPost, "/internal/v1/admin/events/ev-1"+p, "", nil).Code, "tanpa token admin")
+	}
+	assert.Equal(t, http.StatusUnauthorized, do(t, h, http.MethodGet, "/internal/v1/admin/events/ev-1", "", nil).Code)
+
+	locked := bookinghttp.NewAdminHandler(uc, uc, allowAll{}).WithPublication(&fakePublish{err: inbound.ErrRulesLocked}, fakeAdminDetail{err: inbound.ErrNotFound})
+	assert.Equal(t, http.StatusConflict, do(t, locked, http.MethodPost, "/internal/v1/admin/events/ev-1/unpublish", "", auth).Code)
+	assert.Equal(t, http.StatusNotFound, do(t, locked, http.MethodGet, "/internal/v1/admin/events/ev-1", "", auth).Code)
+}
+
+func TestAdminHandler_PublicationRoutesAbsentWithoutWiring(t *testing.T) {
+	uc := &fakeAdminUC{id: "ev-1"}
+	h := bookinghttp.NewAdminHandler(uc, uc, allowAll{})
+	assert.Equal(t, http.StatusNotFound, do(t, h, http.MethodPost, "/internal/v1/admin/events/ev-1/publish", "", map[string]string{"Authorization": "Bearer t"}).Code)
+}

@@ -30,7 +30,8 @@ const eventCols = `e.id::text, e.slug, e.name, e.venue, e.city, e.genre,
 	e.starts_at, e.sales_starts_at, e.sales_ends_at, e.status,
 	e.max_tickets_per_order, e.max_tickets_per_buyer_nik, e.allow_mixed_categories,
 	e.selection_ttl_seconds, e.payment_ttl_seconds, e.claim_window_seconds,
-	e.max_attendee_checks_per_session, e.selection_edit_enabled, e.max_selection_edits, e.selection_submit_grace_seconds`
+	e.max_attendee_checks_per_session, e.selection_edit_enabled, e.max_selection_edits, e.selection_submit_grace_seconds,
+	(e.published_at IS NOT NULL)`
 
 func scanEvent(row pgx.Row, minPrice *int64) (entity.Event, error) {
 	var e entity.Event
@@ -41,6 +42,7 @@ func scanEvent(row pgx.Row, minPrice *int64) (entity.Event, error) {
 		&e.MaxTicketsPerOrder, &e.MaxTicketsPerBuyerNik, &e.AllowMixedCategories,
 		&e.SelectionTTLSeconds, &e.PaymentTTLSeconds, &e.ClaimWindowSeconds,
 		&e.MaxAttendeeChecks, &e.SelectionEditEnabled, &e.MaxSelectionEdits, &e.SubmitGraceSeconds,
+		&e.Published,
 	}
 	if minPrice != nil {
 		dest = append(dest, minPrice)
@@ -78,6 +80,7 @@ func (r *EventRepo) ListEvents(ctx context.Context, q dto.EventListQuery) ([]ent
 		   AND (cardinality($4::text[]) = 0 OR e.genre && $4::text[])
 		   AND ($5::timestamptz IS NULL OR e.starts_at >= $5::timestamptz)
 		   AND ($6::timestamptz IS NULL OR e.starts_at <  $6::timestamptz)
+		   AND e.published_at IS NOT NULL
 		 GROUP BY e.id
 		 ORDER BY %s`, eventCols, order)
 

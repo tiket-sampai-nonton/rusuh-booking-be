@@ -5,6 +5,7 @@ import (
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/domain/dto"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/domain/entity"
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/port/inbound"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/port/outbound"
 )
 
@@ -23,6 +24,9 @@ func (uc *GetEventSupply) GetSupply(ctx context.Context, eventID string) (dto.Su
 	detail, err := uc.events.GetDetail(ctx, eventID)
 	if err != nil {
 		return dto.SupplySnapshot{}, err
+	}
+	if !detail.Event.Published {
+		return dto.SupplySnapshot{}, inbound.ErrNotFound // draf tidak boleh dijual: Queue menolak join
 	}
 
 	remaining := 0

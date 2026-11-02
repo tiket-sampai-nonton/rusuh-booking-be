@@ -20,10 +20,10 @@ func SeedEvent(ctx context.Context, pool *pgxpool.Pool, capacity int) (eventID, 
 			status, max_tickets_per_order, max_tickets_per_buyer_nik,
 			selection_ttl_seconds, payment_ttl_seconds, selection_submit_grace_seconds,
 			claim_window_seconds, selection_edit_enabled, max_selection_edits,
-			allow_mixed_categories)
+			allow_mixed_categories, published_at)
 		VALUES ($1,'Test Event','GBK','Jakarta',
 			now()+interval '30 days', now()-interval '1 hour', now()+interval '7 days',
-			'AVAILABLE', 3, 3, 300, 600, 5, 180, true, 3, true)
+			'AVAILABLE', 3, 3, 300, 600, 5, 180, true, 3, true, now())
 		RETURNING id::text`, slug).Scan(&eventID)
 	if err != nil {
 		return

@@ -57,6 +57,9 @@ func newEventWith(t *testing.T, adminToken string, capacity, perOrder int) (even
 	})
 	mustStatus(t, 201, r, "create event")
 	eventID = r.str("eventId")
+	// Event baru berstatus draf: tidak tampil di katalog sampai diterbitkan (SCRUM-55).
+	mustStatus(t, 404, call(t, "GET", bookingURL+"/api/v1/events/"+eventID, nil, nil), "draf tidak tampil di katalog")
+	mustStatus(t, 200, call(t, "POST", bookingURL+"/internal/v1/admin/events/"+eventID+"/publish", map[string]string{"Authorization": "Bearer " + adminToken}, nil), "publish event")
 	d := call(t, "GET", bookingURL+"/api/v1/events/"+eventID, nil, nil)
 	mustStatus(t, 200, d, "event detail")
 	cats, _ := d.Data["categories"].([]any)

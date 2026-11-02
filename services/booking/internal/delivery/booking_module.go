@@ -114,7 +114,8 @@ func newBookingModule(cfg config.Config, clients *Clients, logger *slog.Logger) 
 	if err != nil {
 		return nil, err
 	}
-	adminHandler := bookinghttp.NewAdminHandler(createEvent, updateConfig, tv.admin).WithImages(usecase.NewUploadEventImage(eventWriteRepo, store))
+	adminHandler := bookinghttp.NewAdminHandler(createEvent, updateConfig, tv.admin).WithImages(usecase.NewUploadEventImage(eventWriteRepo, store)).
+		WithPublication(usecase.NewPublishEvent(eventRepo, eventWriteRepo, clk), getDetail)
 	regs := []registrar{
 		bookinghttp.NewCatalogHandler(listEvents, getDetail),
 		bookinghttp.NewSessionHandler(sessions, attendee, cancelSess),

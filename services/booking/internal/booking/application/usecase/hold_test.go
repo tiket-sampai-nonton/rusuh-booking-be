@@ -37,7 +37,7 @@ func activeAdmission(mixed bool) entity.Admission {
 
 func detailWith(mixed bool, maxOrder int) entity.EventDetail {
 	return entity.EventDetail{
-		Event: entity.Event{ID: eventID, MaxTicketsPerOrder: maxOrder, AllowMixedCategories: mixed},
+		Event: entity.Event{ID: eventID, Published: true, MaxTicketsPerOrder: maxOrder, AllowMixedCategories: mixed},
 		Categories: []entity.CategoryDetail{
 			{Category: entity.Category{ID: catA, Code: "A", PriceMinor: 1000}, Available: 50},
 			{Category: entity.Category{ID: catB, Code: "B", PriceMinor: 2000}, Available: 50},

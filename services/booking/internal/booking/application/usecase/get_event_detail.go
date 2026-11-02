@@ -31,5 +31,20 @@ func (uc *GetEventDetail) GetEventDetail(ctx context.Context, eventID string) (d
 	if err != nil {
 		return dto.EventDetail{}, err
 	}
+	if !detail.Event.Published {
+		return dto.EventDetail{}, inbound.ErrNotFound // draf: 404 agar keberadaannya tidak bocor
+	}
+	return mapper.ToEventDetail(detail, uc.clock.Now()), nil
+}
+
+// GetAdminEventDetail is GetEventDetail for admins: drafts are visible too (field published tells which).
+func (uc *GetEventDetail) GetAdminEventDetail(ctx context.Context, eventID string) (dto.EventDetail, error) {
+	if !isUUID(eventID) {
+		return dto.EventDetail{}, inbound.Validation("eventId", "eventId harus UUID")
+	}
+	detail, err := uc.events.GetDetail(ctx, eventID)
+	if err != nil {
+		return dto.EventDetail{}, err
+	}
 	return mapper.ToEventDetail(detail, uc.clock.Now()), nil
 }

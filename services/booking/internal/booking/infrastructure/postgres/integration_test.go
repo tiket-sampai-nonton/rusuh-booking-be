@@ -36,9 +36,9 @@ func seedTestEvent(t *testing.T, pool *pgxpool.Pool, suffix string, capacity int
 		INSERT INTO booking.events
 			(id, slug, name, venue, starts_at, sales_starts_at, sales_ends_at, status,
 			 max_tickets_per_order, max_tickets_per_buyer_nik, selection_ttl_seconds,
-			 payment_ttl_seconds, claim_window_seconds, max_attendee_checks_per_session)
+			 payment_ttl_seconds, claim_window_seconds, max_attendee_checks_per_session, published_at)
 		VALUES ($1::uuid, $2, $2, 'Venue', now()+interval '1 hour', now()-interval '1 hour',
-			now()+interval '2 hours', 'AVAILABLE', 1, 3, 300, 600, 180, 10)
+			now()+interval '2 hours', 'AVAILABLE', 1, 3, 300, 600, 180, 10, now())
 		ON CONFLICT (id) DO NOTHING`, eventID, "slug-"+eventID)
 	require.NoError(t, err)
 

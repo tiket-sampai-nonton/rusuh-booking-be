@@ -91,6 +91,7 @@ func ToEventDetail(d entity.EventDetail, now time.Time) dto.EventDetail {
 		MaxTicketsPerOrder:    d.Event.MaxTicketsPerOrder,
 		MaxTicketsPerBuyerNik: d.Event.MaxTicketsPerBuyerNik,
 		AllowMixedCategories:  d.Event.AllowMixedCategories,
+		Published:             d.Event.Published,
 		Categories:            cats,
 	}
 }
