@@ -52,7 +52,7 @@ func TestGetFacets_PassThroughAndAlwaysArray(t *testing.T) {
 // never contradict a zero-result list. ListFacets must not even be consulted for values.
 func TestGetFacets_EmptyWhenCombinedFilterMatchesNothing(t *testing.T) {
 	repo := &fakeEventRepo{
-		count:  0, // combined filter -> no events
+		count:  0,                                                                        // combined filter -> no events
 		facets: entity.EventFacets{Cities: []string{"Jakarta"}, Genres: []string{"POP"}}, // would be returned if consulted
 	}
 	uc := usecase.NewListFacets(repo)
