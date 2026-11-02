@@ -13,6 +13,7 @@ import (
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/crypto"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/rabbitmq"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/resilience"
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/revocation"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/token"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/telemetry"
@@ -72,7 +73,7 @@ func newQueueModule(cfg config.Config, clients *Clients, logger *slog.Logger) (*
 	if err != nil {
 		return nil, err
 	}
-	userVerifier := security.NewUserTokenVerifier(userVerifierCore, clk.Now)
+	userVerifier := security.NewUserTokenVerifier(userVerifierCore, clk.Now).WithDenylist(revocation.NewStore(clients.VK.VK(), clients.VK)) // logout mencabut access token (SCRUM-53)
 
 	store := queuevalkey.NewQueueStore(clients.VK.VK(), clients.VK, clk)
 	limiter := queuevalkey.NewRateLimiter(clients.VK.VK(), clients.VK, clk.Now)

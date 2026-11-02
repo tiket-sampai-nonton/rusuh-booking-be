@@ -1,7 +1,9 @@
 package security_test
 
 import (
+	"context"
 	"crypto/ed25519"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -10,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/revocation"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/token"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/infrastructure/security"
@@ -182,4 +185,32 @@ func TestTokenIssuer_ServiceTokenIsShortLivedCachedAndRenewed(t *testing.T) {
 	assert.NoError(t, err, "token yang diperbarui harus lolos verifikasi")
 	_, err = verifier.Verify(first, later)
 	assert.Error(t, err, "token awal memang sudah kedaluwarsa")
+}
+
+type stubDenylist struct {
+	revoked map[string]bool
+	err     error
+}
+
+func (s stubDenylist) Revoke(context.Context, string, time.Duration) error { return nil }
+func (s stubDenylist) IsRevoked(_ context.Context, sid string) (bool, error) {
+	return s.revoked[sid], s.err
+}
+
+func TestUserTokenVerifier_RefusesLoggedOutSessionsAndFailsClosed(t *testing.T) {
+	signer, verifier := newSigner(t)
+	now := time.Now().UTC()
+	tok, err := signer.Sign(token.Claims{
+		Issuer: "rbt-queue", Subject: "acc1", Audience: "rbt", SessionID: "sess-1",
+		IssuedAt: now.Unix(), ExpiresAt: now.Add(time.Hour).Unix(), Email: "a@b.id",
+	})
+	require.NoError(t, err)
+	at := func() time.Time { return now }
+
+	_, err = security.NewUserTokenVerifier(verifier, at).WithDenylist(stubDenylist{revoked: map[string]bool{"sess-1": true}}).Verify(tok)
+	assert.ErrorIs(t, err, revocation.ErrRevoked, "pembeli yang sudah logout tidak diterima sebagai akun")
+	_, err = security.NewUserTokenVerifier(verifier, at).WithDenylist(stubDenylist{revoked: map[string]bool{"sess-lain": true}}).Verify(tok)
+	assert.NoError(t, err)
+	_, err = security.NewUserTokenVerifier(verifier, at).WithDenylist(stubDenylist{err: errors.New("valkey mati")}).Verify(tok)
+	assert.Error(t, err, "fail closed")
 }

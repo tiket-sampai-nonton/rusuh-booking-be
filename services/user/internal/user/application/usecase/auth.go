@@ -12,6 +12,7 @@ import (
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/apperror"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/clock"
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/revocation"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/user/internal/user/domain/dto"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/user/internal/user/domain/entity"
@@ -29,6 +30,7 @@ type AuthSettings struct {
 	MaxPerEmailHour int
 	MaxPerIPHour    int
 	RefreshTTL      time.Duration
+	AccessTTL       time.Duration // umur access token; menentukan berapa lama sid logout disimpan di denylist
 }
 
 // AuthDeps are the driven ports of the auth usecase.
@@ -44,6 +46,7 @@ type AuthDeps struct {
 	PII       outbound.IPIIProtector
 	Clock     clock.IClock
 	Logger    *slog.Logger
+	Denylist  revocation.Denylist // nil = access token tidak dicabut saat logout (hanya sesi refresh)
 }
 
 // Auth implements inbound.IAuthUsecase.
@@ -252,6 +255,13 @@ func (u *Auth) Logout(ctx context.Context, req dto.RefreshRequest, client inboun
 	if err := u.d.Sessions.Revoke(ctx, sess.ID, u.d.Clock.Now()); err != nil {
 		return apperror.Internal(err)
 	}
+	// Access token sesi ini berhenti berlaku sekarang, bukan baru saat exp. Bila denylist gagal ditulis, logout dijawab
+	// error supaya klien mengulang (idempoten); refresh token sudah mati.
+	if u.d.Denylist != nil {
+		if err := u.d.Denylist.Revoke(ctx, sess.ID, u.s.AccessTTL+revocation.Leeway); err != nil {
+			return apperror.Internal(err)
+		}
+	}
 	u.audit(ctx, entity.LoginEvent{AccountID: sess.AccountID, Outcome: entity.AuditLogout, ClientIP: client.IP})
 	return nil
 }
@@ -283,7 +293,7 @@ func (u *Auth) openSession(ctx context.Context, acc entity.Account, email string
 		return dto.TokenResponse{}, apperror.Internal(fmt.Errorf("fetch nik hash: %w", err))
 	}
 
-	access, accessExp, err := u.d.Tokens.IssueAccess(acc.ID, email, nikHash, acc.NIKMasked, now)
+	access, accessExp, err := u.d.Tokens.IssueAccess(acc.ID, sess.ID, email, nikHash, acc.NIKMasked, now)
 	if err != nil {
 		return dto.TokenResponse{}, apperror.Internal(err)
 	}

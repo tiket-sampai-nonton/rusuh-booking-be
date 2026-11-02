@@ -4,6 +4,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/revocation"
+
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/token"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/port/outbound"
@@ -96,6 +98,7 @@ func (t *TokenIssuer) ServiceToken(now time.Time) (string, error) {
 type UserTokenVerifier struct {
 	verifier *token.Verifier
 	now      func() time.Time
+	deny     revocation.Denylist
 }
 
 // NewUserTokenVerifier returns the verifier.
@@ -103,10 +106,19 @@ func NewUserTokenVerifier(verifier *token.Verifier, now func() time.Time) *UserT
 	return &UserTokenVerifier{verifier: verifier, now: now}
 }
 
+// WithDenylist refuses tokens whose session logged out (and every token when the denylist cannot be read: fail closed).
+func (v *UserTokenVerifier) WithDenylist(d revocation.Denylist) *UserTokenVerifier {
+	v.deny = d
+	return v
+}
+
 // Verify checks a User Service bearer token and extracts the buyer identity.
 func (v *UserTokenVerifier) Verify(bearer string) (outbound.UserIdentity, error) {
 	claims, err := v.verifier.Verify(bearer, v.now())
 	if err != nil {
+		return outbound.UserIdentity{}, err
+	}
+	if err := revocation.Check(v.deny, claims); err != nil {
 		return outbound.UserIdentity{}, err
 	}
 	return outbound.UserIdentity{

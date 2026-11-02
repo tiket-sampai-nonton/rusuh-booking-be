@@ -1,8 +1,10 @@
 package security
 
 import (
+	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"errors"
 	"regexp"
 	"testing"
 	"time"
@@ -76,7 +78,7 @@ func TestTokens_IssueAndVerify(t *testing.T) {
 	tk := NewTokens(signer, verifier, "rbt-user", "rbt", 15*time.Minute, func() time.Time { return clock })
 
 	t.Run("without NIK", func(t *testing.T) {
-		tok, exp, err := tk.IssueAccess("acc-1", "buyer@example.com", nil, "", now)
+		tok, exp, err := tk.IssueAccess("acc-1", "sess-1", "buyer@example.com", nil, "", now)
 		require.NoError(t, err)
 		assert.Equal(t, now.Add(15*time.Minute), exp)
 
@@ -94,7 +96,7 @@ func TestTokens_IssueAndVerify(t *testing.T) {
 
 	t.Run("with NIK", func(t *testing.T) {
 		nikHash := []byte{0xab, 0xcd, 0xef}
-		tok, exp, err := tk.IssueAccess("acc-2", "user@example.com", nikHash, "3174********0001", now)
+		tok, exp, err := tk.IssueAccess("acc-2", "sess-2", "user@example.com", nikHash, "3174********0001", now)
 		require.NoError(t, err)
 		assert.Equal(t, now.Add(15*time.Minute), exp)
 
@@ -112,7 +114,7 @@ func TestTokens_IssueAndVerify(t *testing.T) {
 	})
 
 	t.Run("expired", func(t *testing.T) {
-		tok, _, _ := tk.IssueAccess("acc-1", "buyer@example.com", nil, "", now)
+		tok, _, _ := tk.IssueAccess("acc-1", "sess-1", "buyer@example.com", nil, "", now)
 		clock = now.Add(16 * time.Minute)
 		_, err = tk.VerifyAccess(tok)
 		assert.ErrorIs(t, err, inbound.ErrUnauthorized)
@@ -122,4 +124,47 @@ func TestTokens_IssueAndVerify(t *testing.T) {
 		_, err := tk.VerifyAccess("garbage")
 		assert.ErrorIs(t, err, inbound.ErrUnauthorized)
 	})
+}
+
+type stubDenylist struct {
+	revoked map[string]bool
+	err     error
+}
+
+func (s stubDenylist) Revoke(context.Context, string, time.Duration) error { return nil }
+func (s stubDenylist) IsRevoked(_ context.Context, sid string) (bool, error) {
+	return s.revoked[sid], s.err
+}
+
+func TestTokens_VerifyAccessRejectsTokensOfLoggedOutSessions(t *testing.T) {
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+	signer, err := token.NewSigner(priv, "user-1")
+	require.NoError(t, err)
+	verifier, err := token.NewVerifier(map[string]ed25519.PublicKey{"user-1": pub}, "rbt-user", "rbt", 0)
+	require.NoError(t, err)
+	now := time.Now()
+	tk := NewTokens(signer, verifier, "rbt-user", "rbt", 15*time.Minute, func() time.Time { return now })
+
+	tok, _, err := tk.IssueAccess("acc-1", "sess-1", "buyer@example.com", nil, "", now)
+	require.NoError(t, err)
+	claims, err := verifier.Verify(tok, now)
+	require.NoError(t, err)
+	assert.Equal(t, "sess-1", claims.SessionID, "sid ikut di access token")
+
+	acc, err := tk.VerifyAccess(tok)
+	require.NoError(t, err)
+	assert.Equal(t, "acc-1", acc, "tanpa denylist token berlaku seperti sebelumnya")
+
+	tk.WithDenylist(stubDenylist{revoked: map[string]bool{"sess-1": true}})
+	_, err = tk.VerifyAccess(tok)
+	assert.ErrorIs(t, err, inbound.ErrUnauthorized, "sesi sudah logout: ditolak walau exp belum lewat")
+
+	tk.WithDenylist(stubDenylist{revoked: map[string]bool{"sess-lain": true}})
+	_, err = tk.VerifyAccess(tok)
+	assert.NoError(t, err, "sesi lain yang logout tidak berpengaruh")
+
+	tk.WithDenylist(stubDenylist{err: errors.New("valkey mati")})
+	_, err = tk.VerifyAccess(tok)
+	assert.ErrorIs(t, err, inbound.ErrUnauthorized, "fail closed bila denylist tidak bisa dibaca")
 }

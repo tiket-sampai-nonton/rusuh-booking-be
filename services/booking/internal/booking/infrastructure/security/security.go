@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/crypto"
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/revocation"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/token"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/port/outbound"
@@ -93,11 +94,19 @@ type BearerVerifier struct {
 	now      func() time.Time
 	scope    string
 	admins   map[string]bool // lower-cased emails, or "@domain" entries; nil = not an admin check
+	deny     revocation.Denylist
 }
 
 // NewBearerVerifier builds a verifier that accepts only tokens with the given scope.
 func NewBearerVerifier(verifier *token.Verifier, now func() time.Time, scope string) *BearerVerifier {
 	return &BearerVerifier{verifier: verifier, now: now, scope: scope}
+}
+
+// WithDenylist makes the verifier refuse tokens whose session logged out, and every token when the denylist cannot be
+// read (fail closed). Tokens without a session id (older, or service tokens) are unaffected.
+func (v *BearerVerifier) WithDenylist(d revocation.Denylist) *BearerVerifier {
+	v.deny = d
+	return v
 }
 
 // NewAdminVerifier accepts a buyer (User Service) token whose email is in the allow-list (ADMIN_EMAILS).
@@ -124,6 +133,9 @@ func (v *BearerVerifier) VerifyAccess(tok string) (string, error) {
 	}
 	if claims.Scope != v.scope {
 		return "", errors.New("security: scope token tidak sesuai")
+	}
+	if err := revocation.Check(v.deny, claims); err != nil {
+		return "", err
 	}
 	if v.admins != nil && !v.isAdmin(claims.Email) {
 		return "", errors.New("security: bukan admin")
