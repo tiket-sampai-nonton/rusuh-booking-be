@@ -264,3 +264,47 @@ func TestAdmin_OnlyAllowListedAccountsCanCreateEvents(t *testing.T) {
 	ok := call(t, "POST", bookingURL+"/internal/v1/admin/events", map[string]string{"Authorization": "Bearer " + admin}, body)
 	assert.Equal(t, 201, ok.Status, "admin sah: "+ok.Raw)
 }
+
+// SCRUM-53: after logout the same access token stops working at once, not after its exp.
+func TestLogout_RevokesTheAccessTokenAtOnce(t *testing.T) {
+	email := fmt.Sprintf("logout-%d@contoh.id", time.Now().UnixNano())
+	mustStatus(t, 202, call(t, "POST", userURL+"/api/v1/auth/otp/request", nil, map[string]string{"email": email}), "otp request")
+	var code string
+	eventually(t, 15*time.Second, "email OTP di Mailpit", func() bool {
+		for _, m := range mailsTo(t, email) {
+			if g := otpRe.FindStringSubmatch(m.Text); g != nil {
+				code = g[1]
+				return true
+			}
+		}
+		return false
+	})
+	r := call(t, "POST", userURL+"/api/v1/auth/otp/verify", nil, map[string]string{"email": email, "code": code})
+	mustStatus(t, 200, r, "otp verify")
+	access, refresh := r.str("accessToken"), r.str("refreshToken")
+	require.NotEmpty(t, access)
+	require.NotEmpty(t, refresh)
+	bearer := map[string]string{"Authorization": "Bearer " + access}
+
+	mustStatus(t, 200, call(t, "GET", userURL+"/api/v1/me", bearer, nil), "me sebelum logout")
+	mustStatus(t, 204, call(t, "POST", userURL+"/api/v1/auth/logout", nil, map[string]string{"refreshToken": refresh}), "logout")
+	assert.Equal(t, 401, call(t, "GET", userURL+"/api/v1/me", bearer, nil).Status, "access token yang sama ditolak setelah logout")
+}
+
+// SCRUM-56: a cancelled event leaves the default catalog list but stays readable, and no new hold can start.
+func TestCancelledEvent_LeavesTheListButStaysReadable(t *testing.T) {
+	admin := adminToken(t)
+	eventID, _ := newEvent(t, admin, 5)
+	hdr := map[string]string{"Authorization": "Bearer " + admin}
+
+	mustStatus(t, 200, call(t, "POST", bookingURL+"/internal/v1/admin/events/"+eventID+"/cancel", hdr, nil), "cancel event")
+	d := call(t, "GET", bookingURL+"/api/v1/events/"+eventID, nil, nil)
+	mustStatus(t, 200, d, "detail tetap terbuka")
+	ev, _ := d.Data["event"].(map[string]any)
+	assert.Equal(t, "CANCELLED", ev["status"])
+
+	list := call(t, "GET", bookingURL+"/api/v1/events", nil, nil)
+	mustStatus(t, 200, list, "daftar katalog")
+	assert.NotContains(t, list.Raw, eventID, "event dibatalkan tidak ada di daftar bawaan")
+	assert.Contains(t, call(t, "GET", bookingURL+"/api/v1/events?status=CANCELLED", nil, nil).Raw, eventID, "bisa disaring lewat status")
+}
