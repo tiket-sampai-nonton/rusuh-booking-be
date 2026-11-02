@@ -65,11 +65,14 @@ func (h *JoinHandler) join(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	}
 	// Web clients: move the freshly-minted visitor token into an HttpOnly cookie, hide it from the body.
 	if resp.VisitorToken != "" && !in.IsMobile {
-		// Flag Secure ditentukan per environment (h.secure; false hanya untuk http lokal).
-		stdhttp.SetCookie(w, &stdhttp.Cookie{ // NOSONAR go:S2092
+		c := &stdhttp.Cookie{
 			Name: cookieVisitor, Value: resp.VisitorToken, Path: "/",
-			HttpOnly: true, Secure: h.secure, SameSite: stdhttp.SameSiteLaxMode,
-		})
+			HttpOnly: true, Secure: true, SameSite: stdhttp.SameSiteLaxMode,
+		}
+		if !h.secure {
+			c.Secure = false // hanya http lokal (APP_ENV=local): cookie Secure tidak terkirim lewat http
+		}
+		stdhttp.SetCookie(w, c)
 		resp.VisitorToken = ""
 	}
 	w.Header().Set("Cache-Control", "no-store")

@@ -100,11 +100,14 @@ func (h *PaymentHandler) exchangePageToken(w stdhttp.ResponseWriter, r *stdhttp.
 		httpx.WriteError(w, r, err)
 		return
 	}
-	// Flag Secure ditentukan per environment (h.secureCookie; false hanya untuk http lokal).
-	stdhttp.SetCookie(w, &stdhttp.Cookie{ // NOSONAR go:S2092
+	c := &stdhttp.Cookie{
 		Name: CookiePay, Value: s.Cookie, Path: "/", Expires: s.ExpiresAt,
-		HttpOnly: true, Secure: h.secureCookie, SameSite: stdhttp.SameSiteLaxMode,
-	})
+		HttpOnly: true, Secure: true, SameSite: stdhttp.SameSiteLaxMode,
+	}
+	if !h.secureCookie {
+		c.Secure = false // hanya http lokal (APP_ENV=local): cookie Secure tidak terkirim lewat http
+	}
+	stdhttp.SetCookie(w, c)
 	noStore(w)
 	w.WriteHeader(stdhttp.StatusNoContent)
 }

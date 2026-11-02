@@ -119,6 +119,7 @@ func newEmailSender(cfg config.Config, logger *slog.Logger) (outbound.IEmailSend
 		return smtp.New(smtp.Config{
 			Host: cfg.SMTP.Host, Port: cfg.SMTP.Port, User: cfg.SMTP.User,
 			Password: cfg.SMTP.Password, From: cfg.Email.From, Timeout: cfg.SMTP.Timeout,
+			AllowPlaintext: true, // Mailpit lokal/CI tidak punya TLS; provider SMTP lain harus STARTTLS
 		}), nil
 	case config.EmailResend:
 		logger.Warn("EMAIL_PROVIDER=resend: email nyata akan dikirim lewat Resend (kuota akun gratis 100/hari)", "from", cfg.Email.From)

@@ -92,7 +92,7 @@ func (f *fakeSMTP) accept() {
 func TestSender_SendEmail(t *testing.T) {
 	f := startFakeSMTP(t)
 	host, port := f.addr()
-	s := smtp.New(smtp.Config{Host: host, Port: port, From: "no-reply@rusuh.example", Timeout: 2 * time.Second})
+	s := smtp.New(smtp.Config{Host: host, Port: port, From: "no-reply@rusuh.example", Timeout: 2 * time.Second, AllowPlaintext: true})
 
 	id, err := s.SendEmail(context.Background(), "buyer@example.id", "[RBT] Hi", "hello world", "", "key-1")
 	require.NoError(t, err)
@@ -110,7 +110,7 @@ func TestSender_SendEmail(t *testing.T) {
 func TestSender_SendEmailWithHTMLIsMultipart(t *testing.T) {
 	f := startFakeSMTP(t)
 	host, port := f.addr()
-	s := smtp.New(smtp.Config{Host: host, Port: port, From: "no-reply@rusuh.example", Timeout: 2 * time.Second})
+	s := smtp.New(smtp.Config{Host: host, Port: port, From: "no-reply@rusuh.example", Timeout: 2 * time.Second, AllowPlaintext: true})
 
 	_, err := s.SendEmail(context.Background(), "buyer@example.id", "[RBT] Hi", "teks biasa", "<p>versi html</p>", "key-1")
 	require.NoError(t, err)
@@ -134,7 +134,7 @@ func TestSender_DialErrorIsReturned(t *testing.T) {
 func TestSender_InlineImagesBecomeMultipartRelatedWithContentID(t *testing.T) {
 	f := startFakeSMTP(t)
 	host, port := f.addr()
-	s := smtp.New(smtp.Config{Host: host, Port: port, From: "no-reply@rusuh.example", Timeout: 2 * time.Second})
+	s := smtp.New(smtp.Config{Host: host, Port: port, From: "no-reply@rusuh.example", Timeout: 2 * time.Second, AllowPlaintext: true})
 
 	_, err := s.SendEmail(context.Background(), "buyer@example.id", "[RBT] Hi", "teks", `<img src="cid:qr-1">`, "k",
 		outbound.InlineImage{CID: "qr-1", ContentType: "image/png", Data: []byte("PNGDATA")})
@@ -147,4 +147,19 @@ func TestSender_InlineImagesBecomeMultipartRelatedWithContentID(t *testing.T) {
 	assert.Contains(t, body, "Content-Type: multipart/alternative; boundary=")
 	assert.Contains(t, body, "Content-ID: <qr-1>")
 	assert.Contains(t, body, base64.StdEncoding.EncodeToString([]byte("PNGDATA")))
+}
+
+func TestSender_RefusesPlaintextUnlessAllowed(t *testing.T) {
+	f := startFakeSMTP(t)
+	host, port := f.addr()
+	s := smtp.New(smtp.Config{Host: host, Port: port, From: "no-reply@rusuh.example", Timeout: 2 * time.Second})
+
+	_, err := s.SendEmail(context.Background(), "buyer@example.id", "Halo", "isi", "", "key-1")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "STARTTLS", "server tanpa STARTTLS ditolak, email tidak dikirim polos")
+
+	f.mu.Lock()
+	body := f.body
+	f.mu.Unlock()
+	assert.Empty(t, body, "tidak ada pesan yang sampai ke server")
 }
