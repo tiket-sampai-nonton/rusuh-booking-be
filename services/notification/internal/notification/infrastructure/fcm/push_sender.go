@@ -214,9 +214,7 @@ func (s *Sender) signedJWT() (string, error) {
 	}
 	signingInput := header + "." + base64urlBytes(claims)
 	sum := sha256.Sum256([]byte(signingInput))
-	// RS256 diwajibkan OAuth service account Google. Lewat crypto.Signer: untuk kunci RSA dengan opsi hash biasa hasilnya
-	// tanda tangan PKCS#1 v1.5, sama dengan rsa.SignPKCS1v15, tanpa memanggil primitif padding secara langsung.
-	sig, err := s.key.Sign(rand.Reader, sum[:], crypto.SHA256)
+	sig, err := rsa.SignPKCS1v15(rand.Reader, s.key, crypto.SHA256, sum[:])
 	if err != nil {
 		return "", fmt.Errorf("fcm: sign jwt: %w", err)
 	}
