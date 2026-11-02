@@ -21,6 +21,7 @@ func TestMapHoldErr(t *testing.T) {
 	assert.ErrorIs(t, mapHoldErr(pgErr("23514", "category_inventories_check")), inbound.ErrCategoryUnavailable)
 	assert.ErrorIs(t, mapHoldErr(pgErr("23505", "uq_attendee_nik_per_event")), inbound.ErrNikRegistered)
 	assert.ErrorIs(t, mapHoldErr(pgErr("23505", "uq_booking_item_nik_active")), inbound.ErrNikDuplicate)
+	assert.ErrorIs(t, mapHoldErr(pgErr("23505", "bookings_admission_id_key")), inbound.ErrAdmissionToken, "hold kedua pada sesi yang sama")
 	other := errors.New("koneksi putus")
 	assert.Equal(t, other, mapHoldErr(other), "kesalahan lain diteruskan apa adanya")
 	assert.Equal(t, pgErr("23505", "lain"), mapHoldErr(pgErr("23505", "lain")))
