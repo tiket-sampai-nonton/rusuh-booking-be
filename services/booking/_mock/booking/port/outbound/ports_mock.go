@@ -155,6 +155,58 @@ func (mr *MockIEventWriteRepoMockRecorder) UpdateConfig(ctx, eventID, req any) *
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateConfig", reflect.TypeOf((*MockIEventWriteRepo)(nil).UpdateConfig), ctx, eventID, req)
 }
 
+// MockIEventPublicationRepo is a mock of IEventPublicationRepo interface.
+type MockIEventPublicationRepo struct {
+	ctrl     *gomock.Controller
+	recorder *MockIEventPublicationRepoMockRecorder
+	isgomock struct{}
+}
+
+// MockIEventPublicationRepoMockRecorder is the mock recorder for MockIEventPublicationRepo.
+type MockIEventPublicationRepoMockRecorder struct {
+	mock *MockIEventPublicationRepo
+}
+
+// NewMockIEventPublicationRepo creates a new mock instance.
+func NewMockIEventPublicationRepo(ctrl *gomock.Controller) *MockIEventPublicationRepo {
+	mock := &MockIEventPublicationRepo{ctrl: ctrl}
+	mock.recorder = &MockIEventPublicationRepoMockRecorder{mock}
+	return mock
+}
+
+// EXPECT returns an object that allows the caller to indicate expected use.
+func (m *MockIEventPublicationRepo) EXPECT() *MockIEventPublicationRepoMockRecorder {
+	return m.recorder
+}
+
+// Cancel mocks base method.
+func (m *MockIEventPublicationRepo) Cancel(ctx context.Context, eventID string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Cancel", ctx, eventID)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// Cancel indicates an expected call of Cancel.
+func (mr *MockIEventPublicationRepoMockRecorder) Cancel(ctx, eventID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Cancel", reflect.TypeOf((*MockIEventPublicationRepo)(nil).Cancel), ctx, eventID)
+}
+
+// SetPublished mocks base method.
+func (m *MockIEventPublicationRepo) SetPublished(ctx context.Context, eventID string, published bool) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "SetPublished", ctx, eventID, published)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// SetPublished indicates an expected call of SetPublished.
+func (mr *MockIEventPublicationRepoMockRecorder) SetPublished(ctx, eventID, published any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetPublished", reflect.TypeOf((*MockIEventPublicationRepo)(nil).SetPublished), ctx, eventID, published)
+}
+
 // MockIImageStore is a mock of IImageStore interface.
 type MockIImageStore struct {
 	ctrl     *gomock.Controller

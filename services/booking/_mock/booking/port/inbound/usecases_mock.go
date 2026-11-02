@@ -213,6 +213,111 @@ func (mr *MockIUpdateEventConfigUsecaseMockRecorder) Update(ctx, eventID, req an
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Update", reflect.TypeOf((*MockIUpdateEventConfigUsecase)(nil).Update), ctx, eventID, req)
 }
 
+// MockIPublishEventUsecase is a mock of IPublishEventUsecase interface.
+type MockIPublishEventUsecase struct {
+	ctrl     *gomock.Controller
+	recorder *MockIPublishEventUsecaseMockRecorder
+	isgomock struct{}
+}
+
+// MockIPublishEventUsecaseMockRecorder is the mock recorder for MockIPublishEventUsecase.
+type MockIPublishEventUsecaseMockRecorder struct {
+	mock *MockIPublishEventUsecase
+}
+
+// NewMockIPublishEventUsecase creates a new mock instance.
+func NewMockIPublishEventUsecase(ctrl *gomock.Controller) *MockIPublishEventUsecase {
+	mock := &MockIPublishEventUsecase{ctrl: ctrl}
+	mock.recorder = &MockIPublishEventUsecaseMockRecorder{mock}
+	return mock
+}
+
+// EXPECT returns an object that allows the caller to indicate expected use.
+func (m *MockIPublishEventUsecase) EXPECT() *MockIPublishEventUsecaseMockRecorder {
+	return m.recorder
+}
+
+// Cancel mocks base method.
+func (m *MockIPublishEventUsecase) Cancel(ctx context.Context, eventID string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Cancel", ctx, eventID)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// Cancel indicates an expected call of Cancel.
+func (mr *MockIPublishEventUsecaseMockRecorder) Cancel(ctx, eventID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Cancel", reflect.TypeOf((*MockIPublishEventUsecase)(nil).Cancel), ctx, eventID)
+}
+
+// Publish mocks base method.
+func (m *MockIPublishEventUsecase) Publish(ctx context.Context, eventID string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Publish", ctx, eventID)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// Publish indicates an expected call of Publish.
+func (mr *MockIPublishEventUsecaseMockRecorder) Publish(ctx, eventID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Publish", reflect.TypeOf((*MockIPublishEventUsecase)(nil).Publish), ctx, eventID)
+}
+
+// Unpublish mocks base method.
+func (m *MockIPublishEventUsecase) Unpublish(ctx context.Context, eventID string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Unpublish", ctx, eventID)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// Unpublish indicates an expected call of Unpublish.
+func (mr *MockIPublishEventUsecaseMockRecorder) Unpublish(ctx, eventID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Unpublish", reflect.TypeOf((*MockIPublishEventUsecase)(nil).Unpublish), ctx, eventID)
+}
+
+// MockIGetAdminEventUsecase is a mock of IGetAdminEventUsecase interface.
+type MockIGetAdminEventUsecase struct {
+	ctrl     *gomock.Controller
+	recorder *MockIGetAdminEventUsecaseMockRecorder
+	isgomock struct{}
+}
+
+// MockIGetAdminEventUsecaseMockRecorder is the mock recorder for MockIGetAdminEventUsecase.
+type MockIGetAdminEventUsecaseMockRecorder struct {
+	mock *MockIGetAdminEventUsecase
+}
+
+// NewMockIGetAdminEventUsecase creates a new mock instance.
+func NewMockIGetAdminEventUsecase(ctrl *gomock.Controller) *MockIGetAdminEventUsecase {
+	mock := &MockIGetAdminEventUsecase{ctrl: ctrl}
+	mock.recorder = &MockIGetAdminEventUsecaseMockRecorder{mock}
+	return mock
+}
+
+// EXPECT returns an object that allows the caller to indicate expected use.
+func (m *MockIGetAdminEventUsecase) EXPECT() *MockIGetAdminEventUsecaseMockRecorder {
+	return m.recorder
+}
+
+// GetAdminEventDetail mocks base method.
+func (m *MockIGetAdminEventUsecase) GetAdminEventDetail(ctx context.Context, eventID string) (dto.EventDetail, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetAdminEventDetail", ctx, eventID)
+	ret0, _ := ret[0].(dto.EventDetail)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetAdminEventDetail indicates an expected call of GetAdminEventDetail.
+func (mr *MockIGetAdminEventUsecaseMockRecorder) GetAdminEventDetail(ctx, eventID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAdminEventDetail", reflect.TypeOf((*MockIGetAdminEventUsecase)(nil).GetAdminEventDetail), ctx, eventID)
+}
+
 // MockIAllocationUsecase is a mock of IAllocationUsecase interface.
 type MockIAllocationUsecase struct {
 	ctrl     *gomock.Controller
