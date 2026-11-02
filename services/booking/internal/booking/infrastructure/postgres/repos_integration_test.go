@@ -460,3 +460,38 @@ func TestEventRepo_DraftIsHiddenAndCannotBeReservedUntilPublished(t *testing.T) 
 	assert.ErrorIs(t, write.SetPublished(ctx, "00000000-0000-0000-0000-000000000000", true), inbound.ErrNotFound)
 	assert.ErrorIs(t, write.SetPublished(ctx, "bukan-uuid", true), inbound.ErrNotFound)
 }
+
+// SCRUM-56: a cancelled event leaves the default list, can be listed by status CANCELLED, stays readable by id, and
+// cannot be reserved.
+func TestEventRepo_CancelledEventLeavesTheListButStaysReadable(t *testing.T) {
+	f := seed(t)
+	ctx := context.Background()
+	events := NewEventRepo(f.pool)
+	write := NewEventWriteRepo(f.pool)
+	count := func(status string) int {
+		got, err := events.ListEvents(ctx, dto.EventListQuery{Status: status})
+		require.NoError(t, err)
+		return len(got)
+	}
+	assert.Equal(t, 1, count("ALL"))
+
+	require.NoError(t, write.Cancel(ctx, f.eventID))
+	require.NoError(t, write.Cancel(ctx, f.eventID), "idempoten")
+	assert.Equal(t, 0, count("ALL"), "dibatalkan: hilang dari daftar bawaan")
+	assert.Equal(t, 0, count("AVAILABLE"))
+	assert.Equal(t, 1, count("CANCELLED"), "tetap bisa disaring lewat status")
+
+	detail, err := events.GetDetail(ctx, f.eventID)
+	require.NoError(t, err)
+	assert.EqualValues(t, "CANCELLED", detail.Event.Status, "detail tetap terbaca dengan status CANCELLED")
+
+	out, err := NewAdmissionRepo(f.pool).ReserveBatch(ctx, f.eventID, []outbound.ReserveEntry{{
+		QueueEntryID: f.q(t, `SELECT gen_random_uuid()::text`), Seq: 1, VisitorID: f.q(t, `SELECT gen_random_uuid()::text`),
+		BuyerNIKHash: []byte{7}, BuyerNIKMasked: "3174********0001", BuyerEmailEnc: sealedEmail, Units: 1,
+		AdmissionJTI: f.q(t, `SELECT gen_random_uuid()::text`),
+	}}, time.Now())
+	require.NoError(t, err)
+	assert.Equal(t, "NO_SUPPLY_NOW", out[0].Outcome, "tidak ada admission baru untuk event dibatalkan")
+
+	assert.ErrorIs(t, write.Cancel(ctx, "00000000-0000-0000-0000-000000000000"), inbound.ErrNotFound)
+}

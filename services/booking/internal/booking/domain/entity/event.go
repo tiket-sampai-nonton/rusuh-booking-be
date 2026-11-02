@@ -18,6 +18,7 @@ const (
 	EventAvailable  EventStatus = "AVAILABLE"
 	EventSoldOut    EventStatus = "SOLD_OUT"
 	EventClosed     EventStatus = "CLOSED"
+	EventCancelled  EventStatus = "CANCELLED" // dibatalkan penyelenggara; tersimpan, mengalahkan status turunan waktu
 )
 
 // Event is the catalog + config aggregate (events table).

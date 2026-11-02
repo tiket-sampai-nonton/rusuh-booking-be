@@ -14,8 +14,14 @@ import (
 )
 
 type fakePublication struct {
-	calls []bool
-	err   error
+	calls     []bool
+	cancelled int
+	err       error
+}
+
+func (f *fakePublication) Cancel(context.Context, string) error {
+	f.cancelled++
+	return f.err
 }
 
 func (f *fakePublication) SetPublished(_ context.Context, _ string, published bool) error {
@@ -69,4 +75,24 @@ func TestGetEventSupply_DraftIsNotFoundSoQueueRefusesToJoin(t *testing.T) {
 	uc := usecase.NewGetEventSupply(&fakeEventRepo{detail: entity.EventDetail{Event: entity.Event{ID: eventID}}})
 	_, err := uc.GetSupply(context.Background(), eventID)
 	assert.ErrorIs(t, err, inbound.ErrNotFound)
+}
+
+func TestPublishEvent_CancelIsIdempotentAndValidatesTheID(t *testing.T) {
+	repo := &fakePublication{}
+	uc := usecase.NewPublishEvent(&fakeEventRepo{}, repo, fixedClock{t: time.Now()})
+	require.NoError(t, uc.Cancel(context.Background(), eventID))
+	require.NoError(t, uc.Cancel(context.Background(), eventID))
+	assert.Equal(t, 2, repo.cancelled)
+	assert.Error(t, uc.Cancel(context.Background(), "nope"))
+}
+
+func TestGetEventSupply_CancelledEventHasNothingToSell(t *testing.T) {
+	detail := entity.EventDetail{
+		Event:      entity.Event{ID: eventID, Published: true, Status: entity.EventCancelled},
+		Categories: []entity.CategoryDetail{{Category: entity.Category{Code: "VIP"}, Available: 9}},
+	}
+	snap, err := usecase.NewGetEventSupply(&fakeEventRepo{detail: detail}).GetSupply(context.Background(), eventID)
+	require.NoError(t, err)
+	assert.True(t, snap.SoldOut)
+	assert.Equal(t, 0, snap.RemainingTickets)
 }

@@ -41,7 +41,10 @@ func (uc *GetEventSupply) GetSupply(ctx context.Context, eventID string) (dto.Su
 		})
 	}
 
-	soldOut := detail.Event.Status == entity.EventSoldOut || remaining == 0
+	if detail.Event.Status == entity.EventCancelled {
+		remaining = 0 // dibatalkan: tidak ada tiket yang dijual
+	}
+	soldOut := detail.Event.Status == entity.EventSoldOut || detail.Event.Status == entity.EventCancelled || remaining == 0
 
 	return dto.SupplySnapshot{
 		EventID:          eventID,

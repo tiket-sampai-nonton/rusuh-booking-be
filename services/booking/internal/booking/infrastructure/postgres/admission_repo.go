@@ -130,7 +130,7 @@ func (r *AdmissionRepo) reserveOne(ctx context.Context, tx pgx.Tx, eventID strin
 	if err := tx.QueryRow(ctx, `
 		SELECT s.total_capacity, s.allocated_units, s.held_units, s.sold_units
 		  FROM booking.event_supply s
-		  JOIN booking.events ev ON ev.id = s.event_id AND ev.published_at IS NOT NULL
+		  JOIN booking.events ev ON ev.id = s.event_id AND ev.published_at IS NOT NULL AND ev.status <> 'CANCELLED'
 		 WHERE s.event_id=$1::uuid FOR UPDATE OF s`, eventID).
 		Scan(&totalCap, &allocUnits, &heldUnits, &soldUnits); err != nil {
 		_, _ = tx.Exec(ctx, "ROLLBACK TO SAVEPOINT entry")

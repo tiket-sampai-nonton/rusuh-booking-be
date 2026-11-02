@@ -40,10 +40,11 @@ type IUpdateEventConfigUsecase interface {
 	Update(ctx context.Context, eventID string, req dto.UpdateEventConfigRequest) error
 }
 
-// IPublishEventUsecase publishes or unpublishes an event (admin).
+// IPublishEventUsecase publishes, unpublishes, or cancels an event (admin).
 type IPublishEventUsecase interface {
 	Publish(ctx context.Context, eventID string) error
 	Unpublish(ctx context.Context, eventID string) error
+	Cancel(ctx context.Context, eventID string) error
 }
 
 // IGetAdminEventUsecase returns an event including drafts (admin).

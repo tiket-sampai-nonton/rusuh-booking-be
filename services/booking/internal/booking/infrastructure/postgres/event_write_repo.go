@@ -171,3 +171,15 @@ func (r *EventWriteRepo) SetPublished(ctx context.Context, eventID string, publi
 	}
 	return nil
 }
+
+// Cancel stores status CANCELLED (idempotent).
+func (r *EventWriteRepo) Cancel(ctx context.Context, eventID string) error {
+	tag, err := r.pool.Exec(ctx, `UPDATE booking.events SET status = 'CANCELLED' WHERE id = $1::uuid`, eventID)
+	if err != nil {
+		return mapEventWriteErr(err, "events: cancel")
+	}
+	if tag.RowsAffected() == 0 {
+		return inbound.ErrNotFound
+	}
+	return nil
+}

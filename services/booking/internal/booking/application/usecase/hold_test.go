@@ -149,3 +149,13 @@ func TestHold_BadIdempotencyKey(t *testing.T) {
 	_, err := uc.Hold(context.Background(), cmd)
 	assert.Error(t, err)
 }
+
+func TestHold_CancelledEventRefusesNewHolds(t *testing.T) {
+	d := detailWith(true, 3)
+	d.Event.Status = entity.EventCancelled
+	uow := &fakeUoW{}
+	uc := newHoldUC(&fakeAdmissionRepo{admission: activeAdmission(true)}, &fakeEventRepo{detail: d}, &fakeIdem{}, uow)
+	_, err := uc.Hold(context.Background(), holdCmd([]dto.HoldItem{{CategoryID: catA, Attendee: dto.AttendeeInput{NIK: nik1, FullName: "Alice"}}}))
+	assert.ErrorIs(t, err, inbound.ErrEventCancelled)
+	assert.Empty(t, uow.heldSpec.Lines, "tidak ada stok yang ditahan")
+}

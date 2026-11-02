@@ -50,6 +50,7 @@ func (h *AdminHandler) Register(mux *stdhttp.ServeMux) {
 		mux.Handle("GET /internal/v1/admin/events/{eventId}", h.admin(h.getEvent))
 		mux.Handle("POST /internal/v1/admin/events/{eventId}/publish", h.admin(h.publishEvent(h.publish.Publish)))
 		mux.Handle("POST /internal/v1/admin/events/{eventId}/unpublish", h.admin(h.publishEvent(h.publish.Unpublish)))
+		mux.Handle("POST /internal/v1/admin/events/{eventId}/cancel", h.admin(h.publishEvent(h.publish.Cancel)))
 	}
 	if h.images != nil {
 		mux.Handle("POST /internal/v1/admin/events/{eventId}/images", h.admin(h.uploadImage))

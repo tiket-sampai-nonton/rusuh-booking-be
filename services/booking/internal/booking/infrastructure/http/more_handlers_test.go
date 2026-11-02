@@ -313,6 +313,7 @@ func (f *fakePublish) Unpublish(context.Context, string) error {
 	f.published = append(f.published, false)
 	return f.err
 }
+func (f *fakePublish) Cancel(context.Context, string) error { return f.err }
 
 type fakeAdminDetail struct {
 	out dto.EventDetail
@@ -332,6 +333,8 @@ func TestAdminHandler_PublicationRoutes(t *testing.T) {
 	assert.Equal(t, http.StatusOK, do(t, h, http.MethodPost, "/internal/v1/admin/events/ev-1/publish", "", auth).Code)
 	assert.Equal(t, http.StatusOK, do(t, h, http.MethodPost, "/internal/v1/admin/events/ev-1/unpublish", "", auth).Code)
 	assert.Equal(t, []bool{true, false}, pub.published)
+	assert.Equal(t, http.StatusOK, do(t, h, http.MethodPost, "/internal/v1/admin/events/ev-1/cancel", "", auth).Code)
+	assert.Equal(t, http.StatusUnauthorized, do(t, h, http.MethodPost, "/internal/v1/admin/events/ev-1/cancel", "", nil).Code)
 
 	w := do(t, h, http.MethodGet, "/internal/v1/admin/events/ev-1", "", auth)
 	assert.Equal(t, http.StatusOK, w.Code)

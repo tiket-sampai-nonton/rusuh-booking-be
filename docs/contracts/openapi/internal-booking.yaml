@@ -401,6 +401,30 @@ paths:
           description: Event tidak ada
         '409':
           description: 'Penjualan sudah dibuka — errorCode: `EVENT_RULES_LOCKED`'
+  "/internal/v1/admin/events/{eventId}/cancel":
+    post:
+      tags:
+      - admin
+      summary: Batalkan event (status CANCELLED, tersimpan). Hilang dari daftar katalog bawaan, detail tetap terbuka dengan status CANCELLED, dan tidak ada admission, hold, atau sesi baru. Idempotent. Booking yang masih menahan stok habis sesuai batas bayarnya; refund bukan bagian endpoint ini.
+      operationId: adminCancelEvent
+      security:
+      - adminBearer: []
+      parameters:
+      - name: eventId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: Dibatalkan (atau sudah dibatalkan)
+        '400':
+          description: eventId bukan UUID
+        '401':
+          description: Missing or invalid user bearer token
+        '404':
+          description: Event tidak ada
   "/internal/v1/admin/events/{eventId}/images":
     post:
       tags:

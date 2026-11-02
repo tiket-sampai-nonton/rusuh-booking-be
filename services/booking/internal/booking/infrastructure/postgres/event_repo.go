@@ -68,7 +68,7 @@ func (r *EventRepo) ListEvents(ctx context.Context, q dto.EventListQuery) ([]ent
 		SELECT %s, COALESCE(MIN(c.price_minor), 0) AS min_price_minor
 		  FROM booking.events e
 		  LEFT JOIN booking.ticket_categories c ON c.event_id = e.id
-		 WHERE ($1 = 'ALL' OR (CASE WHEN e.status IN ('SOLD_OUT','CLOSED') THEN e.status
+		 WHERE ($1 = 'ALL' OR (CASE WHEN e.status IN ('SOLD_OUT','CLOSED','CANCELLED') THEN e.status
 		                            WHEN now() < e.sales_starts_at THEN 'NOT_STARTED'
 		                            WHEN now() > e.sales_ends_at THEN 'CLOSED'
 		                            ELSE 'AVAILABLE' END) = $1)
@@ -81,6 +81,7 @@ func (r *EventRepo) ListEvents(ctx context.Context, q dto.EventListQuery) ([]ent
 		   AND ($5::timestamptz IS NULL OR e.starts_at >= $5::timestamptz)
 		   AND ($6::timestamptz IS NULL OR e.starts_at <  $6::timestamptz)
 		   AND e.published_at IS NOT NULL
+		   AND (e.status <> 'CANCELLED' OR $1 = 'CANCELLED')
 		 GROUP BY e.id
 		 ORDER BY %s`, eventCols, order)
 

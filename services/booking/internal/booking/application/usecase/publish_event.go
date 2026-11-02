@@ -45,3 +45,13 @@ func (uc *PublishEvent) Unpublish(ctx context.Context, eventID string) error {
 	}
 	return uc.repo.SetPublished(ctx, eventID, false)
 }
+
+// Cancel marks the event CANCELLED: it leaves the catalog list, stays readable by id with status CANCELLED, and no new
+// admission, hold, or booking session can start. Idempotent. Bookings already holding stock run out their own payment
+// deadline; refunds for paid bookings are a separate task.
+func (uc *PublishEvent) Cancel(ctx context.Context, eventID string) error {
+	if !isUUID(eventID) {
+		return inbound.Validation("eventId", "eventId harus UUID")
+	}
+	return uc.repo.Cancel(ctx, eventID)
+}

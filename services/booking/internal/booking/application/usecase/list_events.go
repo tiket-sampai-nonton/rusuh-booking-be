@@ -51,7 +51,7 @@ func normalizeEventQuery(q dto.EventListQuery) (dto.EventListQuery, error) {
 	q.Timeframe = oneOf(strings.ToUpper(strings.TrimSpace(q.Timeframe)),
 		[]string{"ALL", "THIS_WEEK", "THIS_MONTH", "UPCOMING"}, "ALL")
 	q.Status = oneOf(strings.ToUpper(strings.TrimSpace(q.Status)),
-		[]string{"ALL", "NOT_STARTED", "AVAILABLE", "SOLD_OUT", "CLOSED"}, "ALL")
+		[]string{"ALL", "NOT_STARTED", "AVAILABLE", "SOLD_OUT", "CLOSED", "CANCELLED"}, "ALL")
 	q.Sort = oneOf(strings.ToUpper(strings.TrimSpace(q.Sort)),
 		[]string{"DATE_ASC", "DATE_DESC", "PRICE_ASC", "PRICE_DESC"}, "DATE_ASC")
 	q.City = strings.TrimSpace(q.City)
