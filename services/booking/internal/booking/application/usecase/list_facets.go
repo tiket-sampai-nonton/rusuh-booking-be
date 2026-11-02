@@ -32,30 +32,18 @@ func (uc *ListFacets) GetFacets(ctx context.Context, q dto.EventListQuery) (dto.
 		return dto.EventFacets{}, err
 	}
 
-	// Alignment guard (option c): if the full combined filter yields no events, the facets must mirror the
-	// empty list — never offer options that contradict a zero-result catalog. Drill-down hints only make
-	// sense when the current query actually returns something.
-	n, err := uc.events.CountEvents(ctx, norm)
+	// One round-trip: drill-down city/genre values + the full-filter match count.
+	facets, n, err := uc.events.Facets(ctx, norm)
 	if err != nil {
 		return dto.EventFacets{}, err
 	}
+
+	// Alignment guard (option c): if the full combined filter yields no events, the facets must mirror the
+	// empty list — never offer options that contradict a zero-result catalog. Drill-down hints only make
+	// sense when the current query actually returns something.
 	if n == 0 {
 		return mapper.ToEventFacets(entity.EventFacets{}), nil // {cities:[], genres:[]}
 	}
 
-	cityQuery := norm
-	cityQuery.City = "" // drill-down: cities ignore the city filter
-	cities, err := uc.events.ListFacets(ctx, cityQuery, outbound.FacetCities)
-	if err != nil {
-		return dto.EventFacets{}, err
-	}
-
-	genreQuery := norm
-	genreQuery.Genres = nil // drill-down: genres ignore the genres filter
-	genres, err := uc.events.ListFacets(ctx, genreQuery, outbound.FacetGenres)
-	if err != nil {
-		return dto.EventFacets{}, err
-	}
-
-	return mapper.ToEventFacets(entity.EventFacets{Cities: cities, Genres: genres}), nil
+	return mapper.ToEventFacets(facets), nil
 }

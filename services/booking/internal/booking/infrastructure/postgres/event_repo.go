@@ -6,6 +6,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
+	"strconv"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -77,6 +79,25 @@ func filterArgs(q dto.EventListQuery) []any {
 	return []any{orAll(q.Status), q.City, orAll(q.Timeframe), genresParam(q.Genres), q.StartUTC, q.EndUTC}
 }
 
+// filterWhereAt returns eventFilterWhere with its $1..$6 placeholders shifted to start at base+1, so the
+// same single-source predicate can be reused several times in one statement, each bound to its own arg
+// block. base=0 yields the original $1..$6; base=6 yields $7..$12; base=12 yields $13..$18. Keeping one
+// predicate constant and renumbering it (rather than copying the SQL) preserves the single source of truth.
+func filterWhereAt(base int) string {
+	if base == 0 {
+		return eventFilterWhere
+	}
+	// Match a whole $N token (one or more digits) and shift it, so renumbering never corrupts a multi-digit
+	// placeholder (a naive per-number string replace would turn $1 inside $13 into garbage).
+	return placeholderRe.ReplaceAllStringFunc(eventFilterWhere, func(tok string) string {
+		n, _ := strconv.Atoi(tok[1:])
+		return fmt.Sprintf("$%d", base+n)
+	})
+}
+
+// placeholderRe matches a positional parameter token like $1 or $12.
+var placeholderRe = regexp.MustCompile(`\$\d+`)
+
 // ListEvents returns catalog rows filtered by the query.
 func (r *EventRepo) ListEvents(ctx context.Context, q dto.EventListQuery) ([]entity.Event, error) {
 	order := "e.starts_at ASC, e.id"
@@ -115,50 +136,45 @@ func (r *EventRepo) ListEvents(ctx context.Context, q dto.EventListQuery) ([]ent
 	return out, rows.Err()
 }
 
-// ListFacets returns the distinct values of one catalog dimension (cities or genre tokens) across events
-// matching the query, reusing the exact same filter predicate as ListEvents (eventFilterWhere) so facet
-// values always agree with what the list can show. Results are sorted. The drill-down exclusion (a facet
-// ignoring its own filter) is the caller's job: it passes a query with that dimension's filter zeroed.
-func (r *EventRepo) ListFacets(ctx context.Context, q dto.EventListQuery, dim outbound.FacetDimension) ([]string, error) {
-	var sql string
-	switch dim {
-	case outbound.FacetCities:
-		// city <> '' keeps unset cities out of the picker; still gated by the shared filter + visibility floor.
-		sql = `SELECT DISTINCT e.city FROM booking.events e` + eventFilterWhere + `
-		   AND e.city <> ''
-		 ORDER BY e.city`
-	case outbound.FacetGenres:
-		sql = `SELECT DISTINCT g FROM booking.events e, unnest(e.genre) AS g` + eventFilterWhere + `
-		 ORDER BY g`
-	default:
-		return nil, fmt.Errorf("events: facets: dimensi tidak dikenal: %d", dim)
-	}
+// Facets returns, in a single round-trip, the drill-down city and genre values plus the count of events
+// matching the full query. All three reuse the one shared filter predicate (eventFilterWhere, renumbered
+// per block) so facet values always agree with what ListEvents can show. Drill-down is intrinsic: the
+// cities block applies every filter except city ($2 blanked), the genres block every filter except genres
+// ($10 → empty array). The count applies the full, unmodified filter — the caller uses it for the option-c
+// empty guard (count 0 ⇒ facets must read empty). Results are distinct and sorted.
+//
+// Param layout: $1..$6 full (count), $7..$12 city-dropped (cities), $13..$18 genres-dropped (genres).
+func (r *EventRepo) Facets(ctx context.Context, q dto.EventListQuery) (entity.EventFacets, int, error) {
+	cityQ := q
+	cityQ.City = "" // drill-down: cities ignore the city filter
+	genreQ := q
+	genreQ.Genres = nil // drill-down: genres ignore the genres filter
 
-	rows, err := r.pool.Query(ctx, sql, filterArgs(q)...)
-	if err != nil {
-		return nil, fmt.Errorf("events: facets: %w", err)
-	}
-	defer rows.Close()
-	var out []string
-	for rows.Next() {
-		var v string
-		if err := rows.Scan(&v); err != nil {
-			return nil, fmt.Errorf("events: facets: scan: %w", err)
-		}
-		out = append(out, v)
-	}
-	return out, rows.Err()
-}
+	sql := `
+		WITH cnt AS (
+			SELECT count(*) AS n FROM booking.events e` + filterWhereAt(0) + `
+		), cities AS (
+			SELECT DISTINCT e.city AS v FROM booking.events e` + filterWhereAt(6) + `
+			   AND e.city <> ''
+		), genres AS (
+			SELECT DISTINCT g AS v FROM booking.events e, unnest(e.genre) AS g` + filterWhereAt(12) + `
+		)
+		SELECT
+			(SELECT n FROM cnt) AS total,
+			COALESCE((SELECT array_agg(v ORDER BY v) FROM cities), '{}') AS cities,
+			COALESCE((SELECT array_agg(v ORDER BY v) FROM genres), '{}') AS genres`
 
-// CountEvents returns how many events match the full query (all filters applied, nothing dropped), using
-// the same filter predicate as ListEvents. Cheap existence check for the facets empty-result guard.
-func (r *EventRepo) CountEvents(ctx context.Context, q dto.EventListQuery) (int, error) {
-	sql := `SELECT count(*) FROM booking.events e` + eventFilterWhere
+	args := make([]any, 0, 18)
+	args = append(args, filterArgs(q)...)      // $1..$6  full
+	args = append(args, filterArgs(cityQ)...)  // $7..$12 city-dropped
+	args = append(args, filterArgs(genreQ)...) // $13..$18 genres-dropped
+
+	var out entity.EventFacets
 	var n int
-	if err := r.pool.QueryRow(ctx, sql, filterArgs(q)...).Scan(&n); err != nil {
-		return 0, fmt.Errorf("events: count: %w", err)
+	if err := r.pool.QueryRow(ctx, sql, args...).Scan(&n, &out.Cities, &out.Genres); err != nil {
+		return entity.EventFacets{}, 0, fmt.Errorf("events: facets: %w", err)
 	}
-	return n, nil
+	return out, n, nil
 }
 
 // GetByID returns one event or inbound.ErrNotFound.

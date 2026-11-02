@@ -48,12 +48,12 @@ func TestGetFacets_PassThroughAndAlwaysArray(t *testing.T) {
 	}
 }
 
-// Option c: when the combined filter matches no events, both facets are empty (always-array), so they
-// never contradict a zero-result list. ListFacets must not even be consulted for values.
+// Option c: when the combined filter matches no events (count 0), both facets are empty (always-array),
+// so they never contradict a zero-result list — even if the repo returned non-empty drill-down values.
 func TestGetFacets_EmptyWhenCombinedFilterMatchesNothing(t *testing.T) {
 	repo := &fakeEventRepo{
 		count:  0,                                                                        // combined filter -> no events
-		facets: entity.EventFacets{Cities: []string{"Jakarta"}, Genres: []string{"POP"}}, // would be returned if consulted
+		facets: entity.EventFacets{Cities: []string{"Jakarta"}, Genres: []string{"POP"}}, // suppressed by the guard
 	}
 	uc := usecase.NewListFacets(repo)
 	out, err := uc.GetFacets(context.Background(), dto.EventListQuery{City: "Bandung", Genres: []string{"ROCK"}})
@@ -64,9 +64,9 @@ func TestGetFacets_EmptyWhenCombinedFilterMatchesNothing(t *testing.T) {
 	assert.NotNil(t, out.Genres)
 }
 
-// Drill-down: the cities facet must be queried with the city filter cleared, the genres facet with the
-// genres filter cleared, while every OTHER filter is preserved (and normalised).
-func TestGetFacets_DrillDownClearsOwnFilterKeepsOthers(t *testing.T) {
+// The usecase normalises the query and passes it to the repo unchanged otherwise (drill-down itself is the
+// repo's SQL concern; verified in the postgres integration test). Here we assert normalisation pass-through.
+func TestGetFacets_NormalisesAndPassesQueryToRepo(t *testing.T) {
 	repo := &fakeEventRepo{count: 1}
 	uc := usecase.NewListFacets(repo)
 
@@ -77,15 +77,9 @@ func TestGetFacets_DrillDownClearsOwnFilterKeepsOthers(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// cities facet: city cleared, but genres+status kept (and normalised: pop -> POP).
-	assert.Empty(t, repo.gotCity.City, "cities facet mengabaikan filter city")
-	assert.Equal(t, []string{"POP"}, repo.gotCity.Genres, "genres tetap diterapkan + ternormalisasi")
-	assert.Equal(t, "AVAILABLE", repo.gotCity.Status, "status tetap diterapkan")
-
-	// genres facet: genres cleared, but city+status kept.
-	assert.Nil(t, repo.gotGenr.Genres, "genres facet mengabaikan filter genres")
-	assert.Equal(t, "Jakarta", repo.gotGenr.City, "city tetap diterapkan")
-	assert.Equal(t, "AVAILABLE", repo.gotGenr.Status, "status tetap diterapkan")
+	assert.Equal(t, "Jakarta", repo.gotFacets.City, "city diteruskan apa adanya")
+	assert.Equal(t, []string{"POP"}, repo.gotFacets.Genres, "genres ternormalisasi (pop -> POP)")
+	assert.Equal(t, "AVAILABLE", repo.gotFacets.Status, "status diteruskan")
 }
 
 // Validation parity: the same bad input that fails the list (criterion 11) fails facets with 400.
@@ -102,7 +96,7 @@ func TestGetFacets_EnumFailSoft(t *testing.T) {
 	uc := usecase.NewListFacets(repo)
 	_, err := uc.GetFacets(context.Background(), dto.EventListQuery{Status: "bogus"})
 	require.NoError(t, err)
-	assert.Equal(t, "ALL", repo.gotCity.Status, "status tak dikenal -> default ALL (fail-soft)")
+	assert.Equal(t, "ALL", repo.gotFacets.Status, "status tak dikenal -> default ALL (fail-soft)")
 }
 
 func TestGetFacets_RepoErrorPropagates(t *testing.T) {

@@ -44,19 +44,20 @@ func (m *MockIEventRepo) EXPECT() *MockIEventRepoMockRecorder {
 	return m.recorder
 }
 
-// CountEvents mocks base method.
-func (m *MockIEventRepo) CountEvents(ctx context.Context, q dto.EventListQuery) (int, error) {
+// Facets mocks base method.
+func (m *MockIEventRepo) Facets(ctx context.Context, q dto.EventListQuery) (entity.EventFacets, int, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "CountEvents", ctx, q)
-	ret0, _ := ret[0].(int)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
+	ret := m.ctrl.Call(m, "Facets", ctx, q)
+	ret0, _ := ret[0].(entity.EventFacets)
+	ret1, _ := ret[1].(int)
+	ret2, _ := ret[2].(error)
+	return ret0, ret1, ret2
 }
 
-// CountEvents indicates an expected call of CountEvents.
-func (mr *MockIEventRepoMockRecorder) CountEvents(ctx, q any) *gomock.Call {
+// Facets indicates an expected call of Facets.
+func (mr *MockIEventRepoMockRecorder) Facets(ctx, q any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CountEvents", reflect.TypeOf((*MockIEventRepo)(nil).CountEvents), ctx, q)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Facets", reflect.TypeOf((*MockIEventRepo)(nil).Facets), ctx, q)
 }
 
 // GetByID mocks base method.
@@ -102,21 +103,6 @@ func (m *MockIEventRepo) ListEvents(ctx context.Context, q dto.EventListQuery) (
 func (mr *MockIEventRepoMockRecorder) ListEvents(ctx, q any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListEvents", reflect.TypeOf((*MockIEventRepo)(nil).ListEvents), ctx, q)
-}
-
-// ListFacets mocks base method.
-func (m *MockIEventRepo) ListFacets(ctx context.Context, q dto.EventListQuery, dim outbound.FacetDimension) ([]string, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ListFacets", ctx, q, dim)
-	ret0, _ := ret[0].([]string)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// ListFacets indicates an expected call of ListFacets.
-func (mr *MockIEventRepoMockRecorder) ListFacets(ctx, q, dim any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListFacets", reflect.TypeOf((*MockIEventRepo)(nil).ListFacets), ctx, q, dim)
 }
 
 // MockIEventWriteRepo is a mock of IEventWriteRepo interface.

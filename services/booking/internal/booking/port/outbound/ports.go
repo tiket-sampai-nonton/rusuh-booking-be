@@ -18,19 +18,8 @@ type IEventRepo interface {
 	ListEvents(ctx context.Context, q dto.EventListQuery) ([]entity.Event, error)
 	GetDetail(ctx context.Context, eventID string) (entity.EventDetail, error)
 	GetByID(ctx context.Context, eventID string) (entity.Event, error)
-	ListFacets(ctx context.Context, q dto.EventListQuery, dim FacetDimension) ([]string, error)
-	CountEvents(ctx context.Context, q dto.EventListQuery) (int, error)
+	Facets(ctx context.Context, q dto.EventListQuery) (entity.EventFacets, int, error)
 }
-
-// FacetDimension selects which catalog facet IEventRepo.ListFacets returns.
-type FacetDimension int
-
-const (
-	// FacetCities lists distinct non-empty cities.
-	FacetCities FacetDimension = iota
-	// FacetGenres lists distinct genre tokens (unnested from events.genre).
-	FacetGenres
-)
 
 // IEventWriteRepo creates and configures events (admin operations).
 type IEventWriteRepo interface {

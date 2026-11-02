@@ -34,14 +34,15 @@ dan Payment) → sisanya.
         saat ini** — tiap facet menerapkan semua filter aktif kecuali dirinya (`cities` abaikan `city`,
         `genres` abaikan `genres`); lantai visibilitas published+non-cancelled. Tanpa migrasi.
         Predikat filter diekstrak jadi satu sumber (dibagi `ListEvents`, tidak diduplikasi). Port
-        `IEventRepo.ListFacets(ctx,q,dim)` + `CountEvents(ctx,q)` + inbound `IEventFacetsUsecase.GetFacets(ctx,q)`;
+        `IEventRepo.Facets(ctx,q) (EventFacets,int,error)` (satu round-trip) + inbound `IEventFacetsUsecase.GetFacets(ctx,q)`;
         usecase `list_facets.go` (normalisasi = daftar event, validasi identik; **guard option c**: bila
-        `CountEvents` di query penuh = 0, kembalikan facet kosong `{[],[]}` sebelum drill-down);
-        repo dua query DISTINCT (`unnest` untuk genre) memakai WHERE bersama; mapper `ToEventFacets`
+        count filter-penuh yang dikembalikan `Facets` = 0, kembalikan facet kosong `{[],[]}`);
+        repo satu query tiga CTE (count + dua DISTINCT, `unnest` untuk genre) memakai predikat WHERE bersama
+        yang dinomori ulang per blok parameter (`$1–6`/`$7–12`/`$13–18`), `array_agg(... ORDER BY)`; mapper `ToEventFacets`
         (selalu array); extend `CatalogHandler` parse filter spt listEvents (cache2s, security []); tambah
-        query params ke path `/events/facets` di `booking.yaml`. TDD: unit usecase (mock repo, drill-down,
+        query params ke path `/events/facets` di `booking.yaml`. TDD: unit usecase (mock repo, pass-through,
         empty-guard, validasi), mapper (nil→[]), handler, integration PostgreSQL (drill-down: `city` filter
-        tak mempersempit `cities` dst; `CountEvents` predikat bersama; filter gabungan kosong → facet
+        tak mempersempit `cities` dst; count predikat bersama vs drill-down; filter gabungan kosong → facet
         kosong; kecualikan cancelled/unpublished), `make mock` regen. TC-CAT-11.
     - _Requirements: 1.12, 1.13, 1.14, 1.15_
     - _Design: §3.1_

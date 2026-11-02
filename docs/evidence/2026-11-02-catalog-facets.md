@@ -32,6 +32,20 @@ Tanggal: 2026-11-02 · Alat: Kiro CLI · Service: Booking · Task: 2.R3
 > yang dijamin: *tidak ada nilai facet yang, bila dipilih, mengosongkan hasil mengingat filter lain yang
 > aktif*. Catatan: ini **hanya** di endpoint facet; endpoint daftar `GET /api/v1/events` tetap `AND` semua
 > filter seperti biasa (tidak membuang dimensi apa pun). Diverifikasi live via curl (lihat Verifikasi).
+>
+> **Revisi 2026-11-02 (performa — satu round-trip).** `GetFacets` semula melakukan **tiga** round-trip
+> PostgreSQL berurutan (`CountEvents` guard + `ListFacets(cities)` + `ListFacets(genres)`). Karena satu
+> request menahan koneksi pool selama tiga query, ini melipatgandakan waktu-tahan koneksi di bawah beban
+> (yang relevan saat lonjakan katalog). Direfaktor menjadi **satu round-trip**: satu query dengan tiga CTE
+> (`cnt`, `cities`, `genres`), masing-masing memakai predikat bersama `eventFilterWhere` yang **dinomori
+> ulang** per blok parameter (`$1–6` filter penuh untuk count, `$7–12` drop `city` untuk cities, `$13–18`
+> drop `genres` untuk genres) via helper `filterWhereAt(base)`, dan tiap dimensi di-`array_agg(... ORDER
+> BY)`. Perubahan API internal: `IEventRepo.ListFacets`+`CountEvents`+`FacetDimension` diganti satu metode
+> `Facets(ctx, q) (EventFacets, int, error)`; drill-down kini intrinsik di SQL (bukan tugas usecase memanggil
+> dua kali). Perilaku/kontrak eksternal **tidak berubah** (drill-down, guard option c, always-array, lantai
+> visibilitas identik). Catatan: implementasi awal `filterWhereAt` memakai string-replace naif yang merusak
+> placeholder multi-digit (`$10`→`$70`); diganti regex token utuh `\$\d+` dan **diverifikasi terhadap
+> PostgreSQL nyata** — integration test `TestEventRepo_Facets_*` (4) + seluruh suite postgres Booking lulus.
 
 ---
 
@@ -59,12 +73,15 @@ text[]` (GIN `idx_events_genre`, migrasi 0006) sudah ada.
   <> 'CANCELLED'` — predikat yang sama dengan `ListEvents` (R1.4). Event draf dan dibatalkan tidak
   pernah menyumbang nilai facet (keputusan 3.a).
 
-### 4. SQL — dua query DISTINCT yang memakai indeks
-- `cities`: `SELECT DISTINCT city FROM booking.events WHERE city <> '' AND published_at IS NOT NULL AND
-  status <> 'CANCELLED' ORDER BY city` (didukung btree `idx_events_city`).
-- `genres`: `SELECT DISTINCT g FROM booking.events e, unnest(e.genre) AS g WHERE <visible> ORDER BY g`
-  — `unnest` meratakan kolom `text[]` menjadi token; nilai dari beberapa event di-dedupe oleh DISTINCT.
-- Keduanya terurut server sehingga output deterministik untuk tes dan klien.
+### 4. SQL — satu query (tiga CTE) yang memakai indeks
+- Satu round-trip mengembalikan count filter-penuh + dua daftar DISTINCT, lewat tiga CTE yang berbagi
+  predikat `eventFilterWhere` (dinomori ulang per blok parameter oleh `filterWhereAt`):
+  - `cnt`: `SELECT count(*) ... <filter penuh $1–6>` — sinyal guard option c.
+  - `cities`: `SELECT DISTINCT city ... <filter kecuali city, $7–12> AND city <> ''` (btree `idx_events_city`).
+  - `genres`: `SELECT DISTINCT g FROM events e, unnest(e.genre) g ... <filter kecuali genres, $13–18>`
+    (GIN `idx_events_genre`) — `unnest` meratakan `text[]`, DISTINCT men-dedupe lintas event.
+- Hasil akhir: `SELECT (SELECT n FROM cnt), array_agg(cities ORDER BY city), array_agg(genres ORDER BY g)` —
+  terurut server (output deterministik), `COALESCE(..., '{}')` sehingga kosong = array kosong, bukan NULL.
 
 ### 5. Kontrak always-array
 - `EventFacets.cities`/`genres` **selalu** array (`[]` bila kosong), bukan `null`. Dijamin oleh
@@ -77,10 +94,10 @@ text[]` (GIN `idx_events_genre`, migrasi 0006) sudah ada.
   `eventId = "facets"`. Dibuktikan oleh test yang membangun mux dan melayani kedua rute.
 
 ## Lapisan (hexagonal)
-- Port: `outbound.IEventRepo.ListFacets(ctx)`, `inbound.IEventFacetsUsecase.GetFacets(ctx)`.
-- Usecase: `application/usecase/list_facets.go` — read-only, tanpa input/validasi, memanggil repo lalu
-  `mapper.ToEventFacets`.
-- Repo: `infrastructure/postgres/event_repo.go` — `ListFacets` (dua query di atas).
+- Port: `outbound.IEventRepo.Facets(ctx, q) (EventFacets, int, error)`, `inbound.IEventFacetsUsecase.GetFacets(ctx, q)`.
+- Usecase: `application/usecase/list_facets.go` — normalisasi (paritas validasi daftar), satu panggilan
+  `Facets`, guard option c (count = 0 → `{[],[]}`), lalu `mapper.ToEventFacets`.
+- Repo: `infrastructure/postgres/event_repo.go` — `Facets` (satu query tiga CTE di atas; drill-down intrinsik).
 - Handler: `infrastructure/http/catalog_handler.go` — `getFacets` (cache 2s, `security: []`), route
   didaftarkan di `CatalogHandler.Register`; di-wire di composition root `internal/delivery/booking_module.go`.
 - DTO/entity: `dto.EventFacets`, `entity.EventFacets`.
@@ -91,13 +108,15 @@ text[]` (GIN `idx_events_genre`, migrasi 0006) sudah ada.
   `genres` array string, keduanya `required`).
 
 ## Verifikasi
-- `go build ./...` bersih; unit test (mapper nil→[], usecase pass-through + drill-down per-dimensi +
-  empty-guard + paritas validasi + error propagation, handler 200 + forward filter + route-precedence) hijau.
-- Integrasi PostgreSQL nyata (build tag `integration`): `TestEventRepo_ListFacets_VisibilityAndDistinct`,
-  `TestEventRepo_ListFacets_DrillDown`, `TestEventRepo_ListFacets_EmptyWhenNoVisibleEvents`, dan
-  `TestEventRepo_CountEvents_SharedPredicate` lulus — distinct/terurut, mengecualikan `CANCELLED`/draf,
-  dedupe `POP` lintas event, drill-down (filter satu dimensi tak mempersempit facet-nya sendiri), dan
-  `CountEvents` = 0 pada filter gabungan bertentangan. Seluruh suite postgres Booking hijau.
+- `go build ./...` bersih; unit test (mapper nil→[], usecase pass-through + normalisasi + empty-guard +
+  paritas validasi + error propagation, handler 200 + forward filter + route-precedence) hijau.
+- Integrasi PostgreSQL nyata (build tag `integration`): `TestEventRepo_Facets_VisibilityAndDistinct`,
+  `TestEventRepo_Facets_DrillDown`, `TestEventRepo_Facets_EmptyWhenNoVisibleEvents`, dan
+  `TestEventRepo_Facets_CountSharedPredicateVsDrillDown` lulus — distinct/terurut, mengecualikan
+  `CANCELLED`/draf, dedupe `POP` lintas event, drill-down (filter satu dimensi tak mempersempit facet-nya
+  sendiri) dalam satu query, dan count filter-penuh = 0 pada filter gabungan bertentangan meski facet
+  drill-down masing-masing non-kosong. Seluruh suite postgres Booking hijau (dijalankan via
+  `TEST_POSTGRES_DSN` ke PostgreSQL nyata; harness membuat & men-drop database throwaway-nya sendiri).
 - **Verifikasi live (service berjalan + seed demo):** `go run ./cmd api` di :8082 terhadap PostgreSQL
   `berebut` nyata; curl membandingkan `/events` vs `/events/facets` pada beberapa query. Hasil kunci:
   `?city=Surabaya` (hanya ROCK) → genres facet `[ROCK]` (JAZZ/POP tidak muncul); `?city=Bandung&genres=ROCK`
@@ -107,15 +126,15 @@ text[]` (GIN `idx_events_genre`, migrasi 0006) sudah ada.
 - Test case: TC-CAT-11 (`docs/analisa/06-TP-RBT-001.md`).
 
 ## Out of scope (YAGNI)
-Tanpa hitungan per-nilai di respons (hanya `CountEvents` internal untuk guard, bukan count yang dikembalikan),
-tanpa caching tambahan selain `cache2s`, tanpa facet provinsi, tanpa endpoint per-facet, tanpa perubahan pada
-filter enum (`timeframe`/`status`/`sort`).
+Tanpa hitungan per-nilai di respons (count filter-penuh dari `Facets` hanya dipakai internal untuk guard,
+bukan count yang dikembalikan ke klien), tanpa caching tambahan selain `cache2s`, tanpa facet provinsi,
+tanpa endpoint per-facet, tanpa perubahan pada filter enum (`timeframe`/`status`/`sort`).
 
 ## Berkas utama
 - DTO/entity/mapper: `domain/dto/event_catalog.go`, `domain/entity/event.go`, `domain/mapper/booking_mapper.go` (`ToEventFacets`)
-- Port: `port/outbound/ports.go` (`IEventRepo.ListFacets`, `CountEvents`, `FacetDimension`), `port/inbound/usecases.go` (`IEventFacetsUsecase`)
-- Usecase: `application/usecase/list_facets.go` (drill-down + guard option c)
-- Repo: `infrastructure/postgres/event_repo.go` (`eventFilterWhere`/`filterArgs` bersama, `ListFacets`, `CountEvents`) + `facets_integration_test.go`
+- Port: `port/outbound/ports.go` (`IEventRepo.Facets`), `port/inbound/usecases.go` (`IEventFacetsUsecase`)
+- Usecase: `application/usecase/list_facets.go` (satu panggilan `Facets` + guard option c)
+- Repo: `infrastructure/postgres/event_repo.go` (`eventFilterWhere`/`filterArgs`/`filterWhereAt` bersama, `Facets` satu query tiga CTE) + `facets_integration_test.go`
 - Handler: `infrastructure/http/catalog_handler.go` (`getFacets`) + `handlers_test.go`
 - Composition root: `internal/delivery/booking_module.go`
 - Kontrak: `docs/contracts/openapi/booking.yaml`

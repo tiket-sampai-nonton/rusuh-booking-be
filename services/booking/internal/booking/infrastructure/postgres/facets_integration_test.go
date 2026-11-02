@@ -10,13 +10,13 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/domain/dto"
-	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/port/outbound"
 )
 
 // seedFacetEvents gives the seeded "Konser A" a city and adds a second visible event, a CANCELLED one,
 // and an unpublished one. Visible set after this:
 //   - Konser A: Jakarta, genre {POP, ROCK}
 //   - Konser B: Bandung, genre {POP, JAZZ}
+//
 // Excluded: Konser C (CANCELLED, Surabaya/METAL), Konser D (draft, Medan/FOLK).
 func seedFacetEvents(t *testing.T, f fixture) {
 	t.Helper()
@@ -38,84 +38,81 @@ func seedFacetEvents(t *testing.T, f fixture) {
 }
 
 // TC-CAT-11: facets return distinct, sorted values from events visible in the public catalog
-// (published, non-cancelled); DRAFT/CANCELLED must not contribute.
-func TestEventRepo_ListFacets_VisibilityAndDistinct(t *testing.T) {
+// (published, non-cancelled); DRAFT/CANCELLED must not contribute. One round-trip returns both
+// dimensions plus the full-filter count.
+func TestEventRepo_Facets_VisibilityAndDistinct(t *testing.T) {
 	f := seed(t)
 	seedFacetEvents(t, f)
 	ctx := context.Background()
 	repo := NewEventRepo(f.pool)
 
-	cities, err := repo.ListFacets(ctx, dto.EventListQuery{}, outbound.FacetCities)
+	got, n, err := repo.Facets(ctx, dto.EventListQuery{})
 	require.NoError(t, err)
-	assert.Equal(t, []string{"Bandung", "Jakarta"}, cities,
+	assert.Equal(t, []string{"Bandung", "Jakarta"}, got.Cities,
 		"distinct + terurut; Surabaya (cancelled) dan Medan (draft) dikecualikan")
-
-	genres, err := repo.ListFacets(ctx, dto.EventListQuery{}, outbound.FacetGenres)
-	require.NoError(t, err)
-	assert.Equal(t, []string{"JAZZ", "POP", "ROCK"}, genres,
+	assert.Equal(t, []string{"JAZZ", "POP", "ROCK"}, got.Genres,
 		"distinct lintas event + terurut; METAL/FOLK dikecualikan; POP tidak diduplikasi")
+	assert.Equal(t, 2, n, "dua event terlihat (Konser A + Konser B)")
 }
 
-// TC-CAT-11 drill-down: filtering by city narrows the GENRES facet to that city, but the CITIES facet
-// must ignore its own city filter (the caller clears it) so the city picker stays complete.
-func TestEventRepo_ListFacets_DrillDown(t *testing.T) {
+// TC-CAT-11 drill-down (now intrinsic to Facets, in one query): filtering by city narrows the GENRES
+// facet to that city, while the CITIES facet ignores its own city filter so the city picker stays
+// complete. Symmetrically for a genres filter.
+func TestEventRepo_Facets_DrillDown(t *testing.T) {
 	f := seed(t)
 	seedFacetEvents(t, f)
 	ctx := context.Background()
 	repo := NewEventRepo(f.pool)
 
-	// Genres facet with city=Bandung applied -> only Bandung's genres {JAZZ, POP}, ROCK (Jakarta-only) gone.
-	genresInBandung, err := repo.ListFacets(ctx, dto.EventListQuery{City: "Bandung"}, outbound.FacetGenres)
+	// city=Bandung: genres facet follows the city -> only Bandung's {JAZZ, POP} (ROCK is Jakarta-only);
+	// cities facet ignores its own city filter -> full city list.
+	got, n, err := repo.Facets(ctx, dto.EventListQuery{City: "Bandung"})
 	require.NoError(t, err)
-	assert.Equal(t, []string{"JAZZ", "POP"}, genresInBandung, "genre facet mengikuti filter city")
+	assert.Equal(t, []string{"JAZZ", "POP"}, got.Genres, "genre facet mengikuti filter city")
+	assert.Equal(t, []string{"Bandung", "Jakarta"}, got.Cities, "cities facet mengabaikan filter city-nya sendiri")
+	assert.Equal(t, 1, n, "hanya Konser B di Bandung")
 
-	// Cities facet: the caller (usecase) clears the city filter for drill-down, so passing an empty City
-	// here yields the full city list even though a genres filter is applied.
-	citiesForPop, err := repo.ListFacets(ctx, dto.EventListQuery{Genres: []string{"POP"}}, outbound.FacetCities)
+	// genres=POP: in both cities -> cities facet lists both; genres facet ignores its own genres filter.
+	got, _, err = repo.Facets(ctx, dto.EventListQuery{Genres: []string{"POP"}})
 	require.NoError(t, err)
-	assert.Equal(t, []string{"Bandung", "Jakarta"}, citiesForPop,
-		"POP ada di kedua kota -> dua kota; city facet mengikuti filter genres")
+	assert.Equal(t, []string{"Bandung", "Jakarta"}, got.Cities, "POP ada di kedua kota")
 
-	// A genre only in Jakarta narrows the cities facet to Jakarta.
-	citiesForRock, err := repo.ListFacets(ctx, dto.EventListQuery{Genres: []string{"ROCK"}}, outbound.FacetCities)
+	// genres=ROCK: only in Jakarta -> cities facet narrows to Jakarta.
+	got, _, err = repo.Facets(ctx, dto.EventListQuery{Genres: []string{"ROCK"}})
 	require.NoError(t, err)
-	assert.Equal(t, []string{"Jakarta"}, citiesForRock, "ROCK hanya di Jakarta")
+	assert.Equal(t, []string{"Jakarta"}, got.Cities, "ROCK hanya di Jakarta")
 }
 
-// Empty visible catalog yields empty slices, not an error.
-func TestEventRepo_ListFacets_EmptyWhenNoVisibleEvents(t *testing.T) {
+// Empty visible catalog yields empty slices (never nil) and count 0, not an error.
+func TestEventRepo_Facets_EmptyWhenNoVisibleEvents(t *testing.T) {
 	f := seed(t)
 	ctx := context.Background()
 	repo := NewEventRepo(f.pool)
 	_, err := f.pool.Exec(ctx, `UPDATE booking.events SET published_at = NULL WHERE id=$1::uuid`, f.eventID)
 	require.NoError(t, err)
 
-	cities, err := repo.ListFacets(ctx, dto.EventListQuery{}, outbound.FacetCities)
+	got, n, err := repo.Facets(ctx, dto.EventListQuery{})
 	require.NoError(t, err)
-	assert.Empty(t, cities)
-	genres, err := repo.ListFacets(ctx, dto.EventListQuery{}, outbound.FacetGenres)
-	require.NoError(t, err)
-	assert.Empty(t, genres)
+	assert.Empty(t, got.Cities)
+	assert.Empty(t, got.Genres)
+	assert.Equal(t, 0, n)
 }
 
-// CountEvents backs the option-c empty guard: it uses the same filter predicate as ListEvents, so a
-// combined filter with no matches returns 0 even though each dimension alone is non-empty.
-func TestEventRepo_CountEvents_SharedPredicate(t *testing.T) {
+// The count returned by Facets uses the same filter predicate as ListEvents (shared eventFilterWhere), so
+// a combined filter with no matches returns 0 even though each dimension's drill-down facet is non-empty.
+// This is exactly the signal the usecase uses for the option-c empty guard.
+func TestEventRepo_Facets_CountSharedPredicateVsDrillDown(t *testing.T) {
 	f := seed(t)
 	seedFacetEvents(t, f)
 	ctx := context.Background()
 	repo := NewEventRepo(f.pool)
 
-	// Bandung has POP,JAZZ; no Bandung event has ROCK -> combined filter matches nothing.
-	n, err := repo.CountEvents(ctx, dto.EventListQuery{City: "Bandung", Genres: []string{"ROCK"}})
+	// Bandung has POP,JAZZ; no Bandung event has ROCK -> full filter matches nothing (count 0)...
+	got, n, err := repo.Facets(ctx, dto.EventListQuery{City: "Bandung", Genres: []string{"ROCK"}})
 	require.NoError(t, err)
 	assert.Equal(t, 0, n, "city+genre yang bertentangan -> 0 event (dasar guard facet kosong)")
-
-	// But each dimension alone is non-empty.
-	n, err = repo.CountEvents(ctx, dto.EventListQuery{City: "Bandung"})
-	require.NoError(t, err)
-	assert.Positive(t, n, "Bandung sendiri punya event")
-	n, err = repo.CountEvents(ctx, dto.EventListQuery{Genres: []string{"ROCK"}})
-	require.NoError(t, err)
-	assert.Positive(t, n, "ROCK sendiri punya event")
+	// ...yet the drill-down facets each stay non-empty (cities drops city, genres drops genres), which is
+	// precisely why the count is needed as a separate guard signal.
+	assert.NotEmpty(t, got.Cities, "cities drill-down (drop city) tetap ada isinya")
+	assert.NotEmpty(t, got.Genres, "genres drill-down (drop genres) tetap ada isinya")
 }

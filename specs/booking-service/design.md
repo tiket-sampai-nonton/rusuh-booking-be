@@ -120,15 +120,19 @@ capacity − held_quantity − sold_quantity`. Error: `400 VALIDATION_ERROR`, `4
 Menerima parameter filter yang sama dengan `GET /api/v1/events` dan **mengikuti event list saat ini**
 (drill-down): `cities` dihitung dengan semua filter aktif kecuali `city`; `genres` dengan semua filter
 kecuali `genres`. Lantai visibilitas (`published_at IS NOT NULL AND status <> 'CANCELLED'`) selalu
-berlaku. `cities` = `SELECT DISTINCT city ... <filter kecuali city> ORDER BY city` (btree
-`idx_events_city`); `genres` = `SELECT DISTINCT g FROM events e, unnest(genre) g ... <filter kecuali
-genres> ORDER BY g` (GIN `idx_events_genre`). Predikat filter dibagi satu sumber dengan `ListEvents`
-(tidak diduplikasi). Validasi identik dengan daftar event (enum fail-soft; tanggal/cap genre → `400`).
-Bila filter gabungan (tanpa dimensi dibuang) tidak cocok satu event pun, facet dikosongkan
-`{cities:[], genres:[]}` lewat guard `CountEvents(ctx, q)` (predikat sama) sebelum query drill-down —
-facet tak pernah bertentangan dengan daftar kosong (option c).
-Tanpa migrasi — kolom sudah ada (0003 city, 0006 genre). Port baru `IEventRepo.ListFacets(ctx, q, dim)`
-+ `CountEvents(ctx, q)`, inbound `IEventFacetsUsecase.GetFacets(ctx, q)`.
+berlaku. Ketiga hasil (count filter-penuh, `cities`, `genres`) diambil dalam **satu round-trip**: satu
+query dengan tiga CTE yang memakai predikat filter bersama `eventFilterWhere` yang dinomori ulang per blok
+parameter (`$1–6` filter penuh, `$7–12` drop `city`, `$13–18` drop `genres`) — `cities` = `SELECT DISTINCT
+city ... <filter kecuali city>` (btree `idx_events_city`), `genres` = `SELECT DISTINCT g FROM events e,
+unnest(genre) g ... <filter kecuali genres>` (GIN `idx_events_genre`), masing-masing di-`array_agg(... ORDER
+BY)`. Predikat filter tetap satu sumber dengan `ListEvents` (tidak diduplikasi; hanya dinomori ulang, bukan
+disalin). Validasi identik dengan daftar event (enum fail-soft; tanggal/cap genre → `400`).
+Bila filter gabungan (tanpa dimensi dibuang) tidak cocok satu event pun — ditandai oleh count filter-penuh
+= 0 yang dikembalikan query yang sama — usecase mengosongkan facet `{cities:[], genres:[]}` (option c),
+sehingga facet tak pernah bertentangan dengan daftar kosong.
+Tanpa migrasi — kolom sudah ada (0003 city, 0006 genre). Port `IEventRepo.Facets(ctx, q) (EventFacets, int,
+error)` (satu round-trip: drill-down cities/genres + count filter-penuh), inbound
+`IEventFacetsUsecase.GetFacets(ctx, q)`.
 
 ### 3.2 Publik — Sesi (R3, R5, R7, R8, R15, R16)
 

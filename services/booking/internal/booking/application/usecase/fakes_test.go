@@ -50,16 +50,14 @@ func itoa(n int) string {
 
 // fakeEventRepo serves a fixed event + detail.
 type fakeEventRepo struct {
-	detail   entity.EventDetail
-	event    entity.Event
-	list     []entity.Event
-	facets   entity.EventFacets // Cities returned for FacetCities, Genres for FacetGenres
-	count    int                // value returned by CountEvents; -1 means "derive a non-zero default"
-	err      error
-	gotList  dto.EventListQuery // captured query from the most recent ListEvents call
-	gotCity  dto.EventListQuery // captured query from the FacetCities call
-	gotGenr  dto.EventListQuery // captured query from the FacetGenres call
-	gotCount dto.EventListQuery // captured query from the CountEvents call
+	detail    entity.EventDetail
+	event     entity.Event
+	list      []entity.Event
+	facets    entity.EventFacets // returned by Facets
+	count     int                // match count returned by Facets (0 triggers the option-c empty guard)
+	err       error
+	gotList   dto.EventListQuery // captured query from the most recent ListEvents call
+	gotFacets dto.EventListQuery // captured query from the Facets call
 }
 
 func (f *fakeEventRepo) ListEvents(_ context.Context, q dto.EventListQuery) ([]entity.Event, error) {
@@ -75,27 +73,16 @@ func (f *fakeEventRepo) GetByID(context.Context, string) (entity.Event, error) {
 	}
 	return f.event, f.err
 }
-func (f *fakeEventRepo) ListFacets(_ context.Context, q dto.EventListQuery, dim outbound.FacetDimension) ([]string, error) {
-	if f.err != nil {
-		return nil, f.err
-	}
-	switch dim {
-	case outbound.FacetCities:
-		f.gotCity = q
-		return f.facets.Cities, nil
-	case outbound.FacetGenres:
-		f.gotGenr = q
-		return f.facets.Genres, nil
-	default:
-		return nil, nil
-	}
-}
 
-// CountEvents returns f.count. Default zero-value means "no events" -> handy for the empty-guard test;
-// tests that want the drill-down path set count to a positive number.
-func (f *fakeEventRepo) CountEvents(_ context.Context, q dto.EventListQuery) (int, error) {
-	f.gotCount = q
-	return f.count, f.err
+// Facets returns the canned facets + count, capturing the (normalised) query the usecase passed. Drill-down
+// (clearing the own-dimension filter) is the real repo's job in SQL, so the fake does not re-implement it;
+// usecase tests assert only what the usecase controls: query pass-through, the count guard, always-array.
+func (f *fakeEventRepo) Facets(_ context.Context, q dto.EventListQuery) (entity.EventFacets, int, error) {
+	f.gotFacets = q
+	if f.err != nil {
+		return entity.EventFacets{}, 0, f.err
+	}
+	return f.facets, f.count, nil
 }
 
 // boolPtr returns a pointer to a bool value (used in tests with releaseResult).
