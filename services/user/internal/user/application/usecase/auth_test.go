@@ -3,7 +3,6 @@ package usecase
 import (
 	"context"
 	"errors"
-	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/revocation"
 	"io"
 	"log/slog"
 	"testing"
@@ -15,6 +14,7 @@ import (
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/apperror"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/clock"
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/revocation"
 
 	mock_outbound "github.com/tiket-sampai-nonton/rusuh-booking-be/services/user/_mock/user/port/outbound"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/user/internal/user/domain/dto"
