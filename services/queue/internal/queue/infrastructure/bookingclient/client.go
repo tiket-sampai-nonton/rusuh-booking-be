@@ -25,11 +25,11 @@ type Client struct {
 	baseURL      string
 	http         *http.Client
 	breaker      *resilience.Breaker
-	serviceToken string // EdDSA-signed JWT from Queue's signer; sent as Bearer on every request
+	serviceToken func() string // returns the current service bearer token; nil sends no Authorization header
 }
 
 // NewClient returns the client. timeout bounds each request; breaker fails fast when Booking is down.
-func NewClient(baseURL string, timeout time.Duration, breaker *resilience.Breaker, serviceToken string) *Client {
+func NewClient(baseURL string, timeout time.Duration, breaker *resilience.Breaker, serviceToken func() string) *Client {
 	return &Client{
 		baseURL:      strings.TrimRight(baseURL, "/"),
 		http:         &http.Client{Timeout: timeout},
@@ -98,8 +98,10 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 		}
 		httpReq.Header.Set("Accept", "application/json")
 		httpx.Propagate(ctx, httpReq)
-		if c.serviceToken != "" {
-			httpReq.Header.Set("Authorization", "Bearer "+c.serviceToken)
+		if c.serviceToken != nil {
+			if tok := c.serviceToken(); tok != "" {
+				httpReq.Header.Set("Authorization", "Bearer "+tok)
+			}
 		}
 		res, err := c.http.Do(httpReq)
 		if err != nil {

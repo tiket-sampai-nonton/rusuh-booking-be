@@ -2,6 +2,7 @@ package bookingclient_test
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -36,7 +37,7 @@ func TestReserveBatch_OK(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := bookingclient.NewClient(srv.URL, time.Second, newBreaker(t), "")
+	c := bookingclient.NewClient(srv.URL, time.Second, newBreaker(t), nil)
 	resp, err := c.ReserveBatch(context.Background(), outbound.AllocationBatchRequest{
 		EventID: "ev1", Entries: []outbound.AllocationEntryRequest{{QueueEntryID: "e1", Units: 1}},
 	})
@@ -54,7 +55,7 @@ func TestSupply_OK(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := bookingclient.NewClient(srv.URL, time.Second, newBreaker(t), "")
+	c := bookingclient.NewClient(srv.URL, time.Second, newBreaker(t), nil)
 	snap, err := c.Supply(context.Background(), "ev1")
 	require.NoError(t, err)
 	assert.Equal(t, 320, snap.RemainingTickets)
@@ -67,7 +68,7 @@ func TestReserveBatch_ServerErrorWrappedDependency(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := bookingclient.NewClient(srv.URL, time.Second, newBreaker(t), "")
+	c := bookingclient.NewClient(srv.URL, time.Second, newBreaker(t), nil)
 	_, err := c.ReserveBatch(context.Background(), outbound.AllocationBatchRequest{EventID: "ev1"})
 	assert.ErrorIs(t, err, entity.ErrDependencyUnavailable)
 }
@@ -78,7 +79,7 @@ func TestReserveBatch_BreakerOpensAfterFailures(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := bookingclient.NewClient(srv.URL, time.Second, newBreaker(t), "")
+	c := bookingclient.NewClient(srv.URL, time.Second, newBreaker(t), nil)
 	for i := 0; i < 2; i++ {
 		_, err := c.Supply(context.Background(), "ev1")
 		assert.ErrorIs(t, err, entity.ErrDependencyUnavailable)
@@ -96,7 +97,7 @@ func TestSupply_PropagatesRequestAndTrace(t *testing.T) {
 		_, _ = w.Write([]byte(`{"meta":{"code":200},"data":{"eventId":"ev1"}}`))
 	}))
 	defer srv.Close()
-	c := bookingclient.NewClient(srv.URL, time.Second, newBreaker(t), "")
+	c := bookingclient.NewClient(srv.URL, time.Second, newBreaker(t), nil)
 
 	in := httptest.NewRequest(http.MethodGet, "/", nil)
 	in.Header.Set("X-Request-ID", "req-7")
@@ -115,7 +116,7 @@ func TestSupply_UnknownEventIsNotFoundAndDoesNotTripTheBreaker(t *testing.T) {
 	defer srv.Close()
 
 	br := newBreaker(t) // threshold 2
-	c := bookingclient.NewClient(srv.URL, time.Second, br, "")
+	c := bookingclient.NewClient(srv.URL, time.Second, br, nil)
 	for i := 0; i < 5; i++ {
 		_, err := c.Supply(context.Background(), "made-up")
 		require.ErrorIs(t, err, entity.ErrEventNotFound)
@@ -130,7 +131,25 @@ func TestReserveBatch_NotFoundStaysADependencyError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNotFound) }))
 	defer srv.Close()
 
-	c := bookingclient.NewClient(srv.URL, time.Second, newBreaker(t), "")
+	c := bookingclient.NewClient(srv.URL, time.Second, newBreaker(t), nil)
 	_, err := c.ReserveBatch(context.Background(), outbound.AllocationBatchRequest{EventID: "ev1"})
 	assert.ErrorIs(t, err, entity.ErrDependencyUnavailable)
+}
+
+func TestClient_AsksForAFreshServiceTokenOnEveryCall(t *testing.T) {
+	var seen []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen = append(seen, r.Header.Get("Authorization"))
+		_, _ = w.Write([]byte(`{"meta":{"code":200},"data":{"results":[]}}`))
+	}))
+	defer srv.Close()
+
+	n := 0
+	c := bookingclient.NewClient(srv.URL, time.Second, newBreaker(t), func() string { n++; return fmt.Sprintf("tok-%d", n) })
+	req := outbound.AllocationBatchRequest{EventID: "ev1"}
+	_, err := c.ReserveBatch(context.Background(), req)
+	require.NoError(t, err)
+	_, err = c.ReserveBatch(context.Background(), req)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"Bearer tok-1", "Bearer tok-2"}, seen, "token tidak boleh dibekukan saat client dibuat")
 }

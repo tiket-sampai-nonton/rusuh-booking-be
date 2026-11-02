@@ -86,7 +86,7 @@ func newQueueModule(cfg config.Config, clients *Clients, logger *slog.Logger) (*
 	if err != nil {
 		return nil, err
 	}
-	booking := bookingclient.NewClient(cfg.Booking.BaseURL, cfg.Booking.Timeout, breaker, serviceToken(tokens))
+	booking := bookingclient.NewClient(cfg.Booking.BaseURL, cfg.Booking.Timeout, breaker, serviceToken(tokens, clk.Now))
 
 	// Event publisher needs its own confirm-mode channel.
 	rmqConn, err := rabbitmq.Dial(cfg.RabbitMQ)
@@ -184,13 +184,15 @@ func loadUserVerifier(cfg config.Config, fallback *token.Verifier) (*token.Verif
 	return v, nil
 }
 
-// serviceToken issues a long-lived EdDSA service bearer token used by the Queue Service when
-// calling Booking's internal API. The token is signed with Queue's private key; Booking verifies
-// it using Queue's public key (TOKEN_PUBLIC_KEY_PATH in Booking's config).
-func serviceToken(tokens *security.TokenIssuer) string {
-	tok, err := tokens.IssueService(time.Now())
-	if err != nil {
-		return ""
+// serviceToken returns a function that gives Booking calls a valid service bearer token each time. The token is
+// signed with Queue's private key and verified by Booking with Queue's public key (TOKEN_PUBLIC_KEY_PATH in
+// Booking's config); it is renewed before it expires so a long-running worker keeps working.
+func serviceToken(tokens *security.TokenIssuer, now func() time.Time) func() string {
+	return func() string {
+		tok, err := tokens.ServiceToken(now())
+		if err != nil {
+			return ""
+		}
+		return tok
 	}
-	return tok
 }

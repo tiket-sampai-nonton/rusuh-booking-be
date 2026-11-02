@@ -1,6 +1,7 @@
 package security
 
 import (
+	"sync"
 	"time"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/token"
@@ -23,6 +24,10 @@ type TokenIssuer struct {
 	admissionTTL time.Duration
 	visitorTTL   time.Duration
 	queueTTL     time.Duration
+
+	svcMu  sync.Mutex // melindungi cache token service
+	svcTok string
+	svcExp time.Time
 }
 
 // NewTokenIssuer returns the issuer.
@@ -65,11 +70,26 @@ func (t *TokenIssuer) IssueQueue(entryID, visitorID string, now time.Time) (stri
 	return tok, err
 }
 
-// IssueService mints a long-lived service bearer token for service-to-service calls.
-// Subject is "queue-service"; Booking verifies with Queue's public key.
-func (t *TokenIssuer) IssueService(now time.Time) (string, error) {
-	tok, _, err := t.sign("queue-service", "service", now, 24*time.Hour)
-	return tok, err
+const (
+	serviceTokenTTL     = 5 * time.Minute  // batas token service antar-service (httpx.ServiceTokenMaxTTL)
+	serviceTokenRefresh = 30 * time.Second // tanda tangan ulang bila sisa umur kurang dari ini
+)
+
+// ServiceToken returns the bearer token Queue sends to Booking's /internal/v1/*. It lives 5 minutes and is signed
+// again shortly before it expires, so a long-running worker never keeps an expired token. Subject is
+// "queue-service"; Booking verifies it with Queue's public key.
+func (t *TokenIssuer) ServiceToken(now time.Time) (string, error) {
+	t.svcMu.Lock()
+	defer t.svcMu.Unlock()
+	if t.svcTok != "" && t.svcExp.Sub(now) > serviceTokenRefresh {
+		return t.svcTok, nil
+	}
+	tok, exp, err := t.sign("queue-service", "service", now, serviceTokenTTL)
+	if err != nil {
+		return "", err
+	}
+	t.svcTok, t.svcExp = tok, exp
+	return tok, nil
 }
 
 // UserTokenVerifier implements outbound.IUserTokenVerifier against the User Service public key.

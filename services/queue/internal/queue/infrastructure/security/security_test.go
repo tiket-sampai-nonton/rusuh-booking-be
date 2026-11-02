@@ -156,3 +156,30 @@ func TestVisitorAuthenticator_NoToken(t *testing.T) {
 	_, ok := auth.Resolve(req)
 	assert.False(t, ok)
 }
+
+func TestTokenIssuer_ServiceTokenIsShortLivedCachedAndRenewed(t *testing.T) {
+	signer, verifier := newSigner(t)
+	iss := security.NewTokenIssuer(signer, "rbt-queue", "rbt", time.Minute, time.Hour, time.Hour)
+	t0 := time.Unix(1_700_000_000, 0)
+
+	first, err := iss.ServiceToken(t0)
+	require.NoError(t, err)
+	claims, err := verifier.Verify(first, t0)
+	require.NoError(t, err)
+	assert.Equal(t, "service", claims.Scope)
+	assert.Equal(t, "queue-service", claims.Subject)
+	assert.LessOrEqual(t, claims.ExpiresAt-claims.IssuedAt, int64(5*60), "token service maksimal 5 menit")
+
+	again, _ := iss.ServiceToken(t0.Add(2 * time.Minute))
+	assert.Equal(t, first, again, "dipakai ulang selama sisa umur masih panjang")
+
+	// Setelah 24 jam (umur token lama) tokennya harus baru dan valid, bukan token kedaluwarsa.
+	later := t0.Add(39 * time.Hour)
+	renewed, err := iss.ServiceToken(later)
+	require.NoError(t, err)
+	assert.NotEqual(t, first, renewed)
+	_, err = verifier.Verify(renewed, later)
+	assert.NoError(t, err, "token yang diperbarui harus lolos verifikasi")
+	_, err = verifier.Verify(first, later)
+	assert.Error(t, err, "token awal memang sudah kedaluwarsa")
+}
