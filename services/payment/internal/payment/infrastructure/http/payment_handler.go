@@ -100,7 +100,8 @@ func (h *PaymentHandler) exchangePageToken(w stdhttp.ResponseWriter, r *stdhttp.
 		httpx.WriteError(w, r, err)
 		return
 	}
-	stdhttp.SetCookie(w, &stdhttp.Cookie{
+	// Flag Secure ditentukan per environment (h.secureCookie; false hanya untuk http lokal).
+	stdhttp.SetCookie(w, &stdhttp.Cookie{ // NOSONAR go:S2092
 		Name: CookiePay, Value: s.Cookie, Path: "/", Expires: s.ExpiresAt,
 		HttpOnly: true, Secure: h.secureCookie, SameSite: stdhttp.SameSiteLaxMode,
 	})

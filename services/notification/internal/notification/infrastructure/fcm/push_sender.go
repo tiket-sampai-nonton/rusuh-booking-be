@@ -214,7 +214,8 @@ func (s *Sender) signedJWT() (string, error) {
 	}
 	signingInput := header + "." + base64urlBytes(claims)
 	sum := sha256.Sum256([]byte(signingInput))
-	sig, err := rsa.SignPKCS1v15(rand.Reader, s.key, crypto.SHA256, sum[:])
+	// Tanda tangan JWT RS256 (RSASSA-PKCS1-v1_5) yang diwajibkan OAuth service account Google, bukan enkripsi; PSS ditolak.
+	sig, err := rsa.SignPKCS1v15(rand.Reader, s.key, crypto.SHA256, sum[:]) // NOSONAR go:S5542
 	if err != nil {
 		return "", fmt.Errorf("fcm: sign jwt: %w", err)
 	}

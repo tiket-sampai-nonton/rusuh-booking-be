@@ -7,6 +7,7 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
+: "${TEST_POSTGRES_DSN:?isi TEST_POSTGRES_DSN, atau jalankan lewat make test-e2e}"
 work="$(mktemp -d)"
 keys="$root/deployments/compose/keys"
 pids=()

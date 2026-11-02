@@ -140,7 +140,9 @@ func (s *Sender) deliver(to string, msg []byte) error {
 	if err != nil {
 		return fmt.Errorf("smtp: dial %s: %w", addr, err)
 	}
-	c, err := smtp.NewClient(conn, s.cfg.Host)
+	// STARTTLS dipakai bila server menawarkannya; tanpa TLS hanya untuk Mailpit lokal, dan smtp.PlainAuth menolak
+	// mengirim kredensial tanpa TLS ke host non-lokal.
+	c, err := smtp.NewClient(conn, s.cfg.Host) // NOSONAR go:S5332
 	if err != nil {
 		_ = conn.Close()
 		return fmt.Errorf("smtp: client: %w", err)

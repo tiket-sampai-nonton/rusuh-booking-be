@@ -11,7 +11,9 @@ OUT="${GITHUB_OUTPUT:-/dev/stdout}"
 base=""
 case "${EVENT:-}" in
   pull_request) base="${PR_BASE:-}" ;;
-  push) base="${PUSH_BEFORE:-}" ;;
+  # Push ke main menjalankan semua modul: SonarCloud menghitung coverage dari laporan yang ada di run itu, dan modul
+  # yang tidak ikut dijalankan terbaca 0% (coverage kode baru 46% padahal tiap modul lokal 82-92%).
+  push) base="" ;;
 esac
 
 all=1
