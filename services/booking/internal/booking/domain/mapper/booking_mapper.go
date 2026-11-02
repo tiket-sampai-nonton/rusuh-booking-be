@@ -28,12 +28,17 @@ func eventStatus(e entity.Event, now time.Time) string {
 
 // ToEventSummary maps a catalog event.
 func ToEventSummary(e entity.Event, now time.Time) dto.EventSummary {
+	genres := e.Genres
+	if genres == nil {
+		genres = []string{} // kontrak: genres selalu array ([]), tidak pernah null
+	}
 	return dto.EventSummary{
 		EventID:       e.ID,
 		Slug:          e.Slug,
 		Name:          e.Name,
 		Venue:         e.Venue,
 		City:          e.City,
+		Genres:        genres,
 		StartsAt:      e.StartsAt,
 		SalesStartsAt: e.SalesStartsAt,
 		SalesEndsAt:   e.SalesEndsAt,

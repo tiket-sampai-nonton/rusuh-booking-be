@@ -108,3 +108,17 @@ func TestToEventSummary_CarriesImageURLsOnlyWhenPresent(t *testing.T) {
 	raw, _ := json.Marshal(mapper.ToEventSummary(entity.Event{ID: "e2"}, now))
 	assert.NotContains(t, string(raw), "Url", "tanpa gambar: field tidak dikirim")
 }
+
+func TestToEventSummary_GenresAlwaysArray(t *testing.T) {
+	now := time.Now().UTC()
+
+	// Dengan genre: dibawa apa adanya.
+	with := mapper.ToEventSummary(entity.Event{ID: "e1", Genres: []string{"POP", "ROCK"}}, now)
+	assert.Equal(t, []string{"POP", "ROCK"}, with.Genres)
+
+	// Tanpa genre (nil): kontrak mengharuskan array kosong, bukan null.
+	without := mapper.ToEventSummary(entity.Event{ID: "e2"}, now)
+	assert.Equal(t, []string{}, without.Genres)
+	raw, _ := json.Marshal(without)
+	assert.Contains(t, string(raw), `"genres":[]`, "genres selalu array, bukan null/omitempty")
+}

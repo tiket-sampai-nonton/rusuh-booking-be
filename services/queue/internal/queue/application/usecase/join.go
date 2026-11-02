@@ -231,7 +231,7 @@ func (u *JoinQueue) tryDirectAdmission(ctx context.Context, eventID string, ent 
 	resp, err := u.d.Booking.ReserveBatch(ctx, outbound.AllocationBatchRequest{
 		EventID: eventID,
 		Entries: []outbound.AllocationEntryRequest{{
-			QueueEntryID: ent.ID, VisitorID: ent.VisitorID, BuyerNikHash: nikHashHex, Units: 1,
+			QueueEntryID: ent.ID, Seq: int64(ent.Seq), VisitorID: ent.VisitorID, BuyerNikHash: nikHashHex, Units: 1,
 			BuyerNikMasked: ent.BuyerNikMasked, BuyerEmailEnc: emailEnc, AccountID: ent.AccountID,
 		}},
 	})

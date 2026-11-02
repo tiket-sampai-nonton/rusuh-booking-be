@@ -8,8 +8,19 @@ import "time"
 type EventListQuery struct {
 	Timeframe string // ALL | THIS_WEEK | THIS_MONTH | UPCOMING
 	City      string
-	Status    string // ALL | NOT_STARTED | AVAILABLE | SOLD_OUT | CLOSED
-	Sort      string // DATE_ASC | PRICE_ASC | PRICE_DESC
+	Genres    []string // US-015: cocok bila event punya salah satu genre (overlap); kosong = semua
+	Status    string   // ALL | NOT_STARTED | AVAILABLE | SOLD_OUT | CLOSED
+	Sort      string   // DATE_ASC | DATE_DESC | PRICE_ASC | PRICE_DESC
+
+	// StartDate/EndDate are raw YYYY-MM-DD bounds from the client (inclusive, WIB). The usecase parses
+	// and converts them to a half-open UTC window; the repo filters on starts_at (sargable), ANDed with Timeframe.
+	StartDate string
+	EndDate   string
+
+	// startUTC/endUTC are the resolved half-open window [startUTC, endUTC) in UTC, set by the usecase.
+	// Unexported-at-JSON intent but exported for the repo in the same module; nil = that bound is open.
+	StartUTC *time.Time
+	EndUTC   *time.Time
 }
 
 // EventSummary is one catalog row.
@@ -19,6 +30,7 @@ type EventSummary struct {
 	Name          string    `json:"name"`
 	Venue         string    `json:"venue"`
 	City          string    `json:"city"`
+	Genres        []string  `json:"genres"` // selalu array ([] bila kosong), bukan omitempty
 	StartsAt      time.Time `json:"startsAt"`
 	SalesStartsAt time.Time `json:"salesStartsAt"`
 	SalesEndsAt   time.Time `json:"salesEndsAt"`

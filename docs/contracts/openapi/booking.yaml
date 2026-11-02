@@ -46,6 +46,40 @@ paths:
         description: Filter lokasi/kota (SRS-F-28-02)
         schema:
           type: string
+      - name: genres
+        in: query
+        required: false
+        description: >-
+          Filter genre (SRS-F-28-04, US-015). Multi-nilai: ulangi param
+          (`?genres=POP&genres=ROCK`) atau CSV (`?genres=POP,ROCK`). Cocok bila
+          event punya salah satu genre (overlap); kosong = semua. Token
+          dinormalisasi server (trim, uppercase, `-`/spasi -> `_`, dedupe). Maks
+          20 token, tiap token maks 64 karakter -- pelanggaran -> 400 VALIDATION_ERROR.
+        explode: true
+        style: form
+        schema:
+          type: array
+          items:
+            type: string
+      - name: startDate
+        in: query
+        required: false
+        description: >-
+          Batas awal rentang tanggal (inklusif, zona WIB), format `YYYY-MM-DD`
+          (SRS-F-28-04). Independen dari `timeframe`; bila keduanya diberikan
+          hasilnya di-AND. Format salah -> 400 VALIDATION_ERROR.
+        schema:
+          type: string
+          format: date
+      - name: endDate
+        in: query
+        required: false
+        description: >-
+          Batas akhir rentang tanggal (inklusif, zona WIB), format `YYYY-MM-DD`
+          (SRS-F-28-04). `endDate` lebih awal dari `startDate` -> 400 VALIDATION_ERROR.
+        schema:
+          type: string
+          format: date
       - name: status
         in: query
         required: false
@@ -62,11 +96,12 @@ paths:
       - name: sort
         in: query
         required: false
-        description: Urutan hasil (SRS-F-28-06)
+        description: Urutan hasil (SRS-F-28-06); tiebreaker eventId. Nilai tak dikenal -> default DATE_ASC (fail-soft)
         schema:
           type: string
           enum:
           - DATE_ASC
+          - DATE_DESC
           - PRICE_ASC
           - PRICE_DESC
           default: DATE_ASC
@@ -85,6 +120,16 @@ paths:
                 required:
                 - meta
                 - data
+        '400':
+          description: >-
+            Filter tidak valid: format `startDate`/`endDate` bukan YYYY-MM-DD,
+            rentang terbalik (endDate < startDate), jumlah genre > 20, atau token
+            genre > 64 karakter -- errorCode: `VALIDATION_ERROR`. Nilai enum tak
+            dikenal TIDAK menyebabkan 400 (fail-soft ke default).
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ErrorEnvelope"
         '401':
           description: 'Token visitor tidak valid atau kedaluwarsa — errorCode: `UNAUTHORIZED`'
           content:
@@ -1014,10 +1059,18 @@ components:
         thumbnailUrl:
           type: string
           description: URL thumbnail kartu katalog; tidak ada bila belum diunggah
+        genres:
+          type: array
+          items:
+            type: string
+          description: >-
+            Genre event (SRS-F-28-04, US-015). Selalu array; `[]` bila kosong.
+            Dinormalisasi uppercase. Dipakai filter query `genres` (overlap).
       required:
       - eventId
       - slug
       - name
+      - genres
       - salesStartsAt
       - salesEndsAt
       - status

@@ -27,6 +27,8 @@ dan Payment) → sisanya.
   - Ada: `list_events.go`, `catalog_handler.go`, `event_repo.go`
   - [x] 2.R1 Filter `city` sekarang `venue ILIKE`. Tambah migrasi `0003` (`events.city` + kolom gambar), lalu filter ke `city` secara case-insensitive
     - _Requirements: 1.3_
+  - [x] 2.R2 Filter katalog lanjutan: `genres` (multi-nilai, overlap `text[]`), rentang tanggal `startDate`/`endDate` (inklusif WIB, sargable, di-AND dengan `timeframe`), sort `DATE_DESC`. Migrasi `0006` (`events.genre text[]`, GIN `idx_events_genre`, btree `idx_events_starts_at`). Validasi: enum fail-soft, tanggal/cap genre fail-hard `400`. Cache key edge ditambah `genres,startDate,endDate` (terkanonikalisasi)
+    - _Requirements: 1.6, 1.7, 1.9, 1.10, 1.11_
   - _Requirements: 1.1, 1.2, 1.4, 1.5, 1.6, 1.7, 1.8_
 
 - [x] 3. Detail event `GET /api/v1/events/{eventId}`

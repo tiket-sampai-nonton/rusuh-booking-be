@@ -25,7 +25,7 @@ type EventRepo struct{ pool *pgxpool.Pool }
 // NewEventRepo returns the repository.
 func NewEventRepo(pool *pgxpool.Pool) *EventRepo { return &EventRepo{pool: pool} }
 
-const eventCols = `e.id::text, e.slug, e.name, e.venue, e.city,
+const eventCols = `e.id::text, e.slug, e.name, e.venue, e.city, e.genre,
 	COALESCE(e.image_url, ''), COALESCE(e.banner_url, ''), COALESCE(e.thumbnail_url, ''),
 	e.starts_at, e.sales_starts_at, e.sales_ends_at, e.status,
 	e.max_tickets_per_order, e.max_tickets_per_buyer_nik, e.allow_mixed_categories,
@@ -35,7 +35,7 @@ const eventCols = `e.id::text, e.slug, e.name, e.venue, e.city,
 func scanEvent(row pgx.Row, minPrice *int64) (entity.Event, error) {
 	var e entity.Event
 	dest := []any{
-		&e.ID, &e.Slug, &e.Name, &e.Venue, &e.City,
+		&e.ID, &e.Slug, &e.Name, &e.Venue, &e.City, &e.Genres,
 		&e.ImageURL, &e.BannerURL, &e.ThumbnailURL,
 		&e.StartsAt, &e.SalesStartsAt, &e.SalesEndsAt, &e.Status,
 		&e.MaxTicketsPerOrder, &e.MaxTicketsPerBuyerNik, &e.AllowMixedCategories,
@@ -51,12 +51,14 @@ func scanEvent(row pgx.Row, minPrice *int64) (entity.Event, error) {
 
 // ListEvents returns catalog rows filtered by the query.
 func (r *EventRepo) ListEvents(ctx context.Context, q dto.EventListQuery) ([]entity.Event, error) {
-	order := "e.starts_at ASC"
+	order := "e.starts_at ASC, e.id"
 	switch q.Sort {
+	case "DATE_DESC":
+		order = "e.starts_at DESC, e.id"
 	case "PRICE_ASC":
-		order = "min_price_minor ASC"
+		order = "min_price_minor ASC, e.id"
 	case "PRICE_DESC":
-		order = "min_price_minor DESC"
+		order = "min_price_minor DESC, e.id"
 	}
 	// status follows the sales window like the status the API shows (stored SOLD_OUT/CLOSED win); timeframe applies to
 	// startsAt in WIB: THIS_WEEK Monday-Sunday, THIS_MONTH the calendar month, UPCOMING today onwards (SRS-F-28-03).
@@ -73,10 +75,13 @@ func (r *EventRepo) ListEvents(ctx context.Context, q dto.EventListQuery) ([]ent
 		        OR ($3 = 'UPCOMING'   AND (e.starts_at AT TIME ZONE 'Asia/Jakarta')::date >= (now() AT TIME ZONE 'Asia/Jakarta')::date)
 		        OR ($3 = 'THIS_WEEK'  AND date_trunc('week',  e.starts_at AT TIME ZONE 'Asia/Jakarta') = date_trunc('week',  now() AT TIME ZONE 'Asia/Jakarta'))
 		        OR ($3 = 'THIS_MONTH' AND date_trunc('month', e.starts_at AT TIME ZONE 'Asia/Jakarta') = date_trunc('month', now() AT TIME ZONE 'Asia/Jakarta')))
+		   AND (cardinality($4::text[]) = 0 OR e.genre && $4::text[])
+		   AND ($5::timestamptz IS NULL OR e.starts_at >= $5::timestamptz)
+		   AND ($6::timestamptz IS NULL OR e.starts_at <  $6::timestamptz)
 		 GROUP BY e.id
 		 ORDER BY %s`, eventCols, order)
 
-	rows, err := r.pool.Query(ctx, sql, orAll(q.Status), q.City, orAll(q.Timeframe))
+	rows, err := r.pool.Query(ctx, sql, orAll(q.Status), q.City, orAll(q.Timeframe), genresParam(q.Genres), q.StartUTC, q.EndUTC)
 	if err != nil {
 		return nil, fmt.Errorf("events: list: %w", err)
 	}
@@ -149,6 +154,14 @@ func orAll(v string) string {
 		return "ALL"
 	}
 	return v
+}
+
+// genresParam ensures a non-nil slice so pgx binds a real text[] (cardinality 0 => no filter).
+func genresParam(g []string) []string {
+	if g == nil {
+		return []string{}
+	}
+	return g
 }
 
 // OnSaleAvailability returns per-category availability (capacity - held - sold, clamped at 0) for every
