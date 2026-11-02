@@ -229,13 +229,13 @@ func TestRelay_PublishesToRealRabbitMQ(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = pub.Close() }()
 
-	got := make(chan rabbitmq.Delivery, 1)
+	got := make(chan rabbitmq.Delivery, 16)
 	queue := "it.outbox-" + rabbitmq.NewID()[:8]
 	go func() {
 		_ = conn.Consume(ctx, rabbitmq.Subscription{Queue: queue, RoutingKeys: []string{"payment.succeeded"},
 			Handler: func(_ context.Context, d rabbitmq.Delivery) error { got <- d; return nil }}, quiet)
 	}()
-	time.Sleep(500 * time.Millisecond) // topologi terpasang sebelum publish
+	waitUntilBound(t, ctx, pub, got)
 
 	n, err := outbox.NewRelay(pool, pub, "payment-service", quiet).RunOnce(ctx)
 	require.NoError(t, err)
@@ -243,13 +243,37 @@ func TestRelay_PublishesToRealRabbitMQ(t *testing.T) {
 
 	var id string
 	require.NoError(t, pool.QueryRow(ctx, `SELECT id::text FROM outbox_events`).Scan(&id))
-	select {
-	case d := <-got:
-		assert.Equal(t, id, d.Envelope.MessageID)
-		assert.Equal(t, "payment-service", d.Envelope.Producer)
-		assert.Equal(t, "payment.succeeded", d.Envelope.EventType)
-		assert.JSONEq(t, `{"i":0}`, string(d.Envelope.Payload))
-	case <-time.After(10 * time.Second):
-		t.Fatal("envelope tidak diterima consumer")
+	deadline := time.After(10 * time.Second)
+	var d rabbitmq.Delivery
+	for found := false; !found; {
+		select {
+		case d = <-got:
+			found = d.Envelope.MessageID == id // pesan probe diabaikan
+		case <-deadline:
+			t.Fatal("envelope tidak diterima consumer")
+		}
+	}
+	assert.Equal(t, id, d.Envelope.MessageID)
+	assert.Equal(t, "payment-service", d.Envelope.Producer)
+	assert.Equal(t, "payment.succeeded", d.Envelope.EventType)
+	assert.JSONEq(t, `{"i":0}`, string(d.Envelope.Payload))
+}
+
+// waitUntilBound publishes probe messages until the consumer's queue is declared and bound, so the real publish below
+// cannot be dropped by the exchange. A fixed sleep was flaky on slow CI runners.
+func waitUntilBound(t *testing.T, ctx context.Context, pub *rabbitmq.Publisher, got <-chan rabbitmq.Delivery) {
+	t.Helper()
+	deadline := time.After(20 * time.Second)
+	for {
+		env, err := rabbitmq.NewEnvelope("payment.succeeded", "probe", "probe", "", map[string]int{"probe": 1}, time.Now())
+		require.NoError(t, err)
+		require.NoError(t, pub.Publish(ctx, "payment.succeeded", env))
+		select {
+		case <-got:
+			return
+		case <-time.After(300 * time.Millisecond):
+		case <-deadline:
+			t.Fatal("antrean consumer tidak terpasang dalam 20 detik")
+		}
 	}
 }
