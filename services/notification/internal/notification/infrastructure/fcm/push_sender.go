@@ -1,27 +1,24 @@
 // Package fcm implements IPushSender against the FCM HTTP v1 API. Access tokens are minted from a
-// Google service-account key via the OAuth2 JWT-bearer grant (self-contained, no SDK dependency).
+// Google service-account key via the OAuth2 JWT-bearer grant (tanda tangan JWT lewat golang.org/x/oauth2/jws, tanpa SDK Firebase).
 package fcm
 
 import (
 	"bytes"
 	"context"
-	"crypto"
-	"crypto/rand"
 	"crypto/rsa"
-	"crypto/sha256"
 	"crypto/x509"
-	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"os"
 	"strings"
-	"sync"
 	"time"
+
+	"golang.org/x/oauth2"
+	"golang.org/x/oauth2/jwt"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/notification/internal/notification/port/outbound"
 )
@@ -37,24 +34,19 @@ const (
 var ErrTokenInvalid = errors.New("fcm: token tidak valid")
 
 type serviceAccount struct {
-	ClientEmail string `json:"client_email"`
-	PrivateKey  string `json:"private_key"`
-	TokenURI    string `json:"token_uri"`
-	ProjectID   string `json:"project_id"`
+	ClientEmail  string `json:"client_email"`
+	PrivateKey   string `json:"private_key"`
+	PrivateKeyID string `json:"private_key_id"`
+	TokenURI     string `json:"token_uri"`
+	ProjectID    string `json:"project_id"`
 }
 
 // Sender implements outbound.IPushSender.
 type Sender struct {
 	projectID string
 	baseURL   string
-	sa        serviceAccount
-	key       *rsa.PrivateKey
 	http      *http.Client
-	now       func() time.Time
-
-	mu    sync.Mutex
-	token string
-	exp   time.Time
+	tokens    oauth2.TokenSource // access token Google; di-cache dan diperbarui otomatis oleh oauth2
 }
 
 // NewFromCredentialsFile loads the service account JSON and returns the sender.
@@ -67,8 +59,7 @@ func NewFromCredentialsFile(projectID, credentialsPath string, httpClient *http.
 	if err := json.Unmarshal(raw, &sa); err != nil {
 		return nil, fmt.Errorf("fcm: parse credentials: %w", err)
 	}
-	key, err := parseRSAKey(sa.PrivateKey)
-	if err != nil {
+	if _, err := parseRSAKey(sa.PrivateKey); err != nil { // gagal cepat bila PEM rusak
 		return nil, err
 	}
 	if projectID == "" {
@@ -80,7 +71,11 @@ func NewFromCredentialsFile(projectID, credentialsPath string, httpClient *http.
 	if sa.TokenURI == "" {
 		sa.TokenURI = tokenURL
 	}
-	return &Sender{projectID: projectID, baseURL: fcmBaseURL, sa: sa, key: key, http: httpClient, now: func() time.Time { return time.Now() }}, nil
+	// Penukaran JWT (RS256) ke access token dikerjakan pustaka resmi golang.org/x/oauth2; tidak ada kode tanda tangan di sini.
+	cfg := &jwt.Config{Email: sa.ClientEmail, PrivateKey: []byte(sa.PrivateKey), PrivateKeyID: sa.PrivateKeyID,
+		Scopes: []string{fcmScope}, TokenURL: sa.TokenURI}
+	ctx := context.WithValue(context.Background(), oauth2.HTTPClient, httpClient)
+	return &Sender{projectID: projectID, baseURL: fcmBaseURL, http: httpClient, tokens: oauth2.ReuseTokenSource(nil, cfg.TokenSource(ctx))}, nil
 }
 
 // WithBaseURL overrides the FCM send base URL (used in tests). Returns the sender for chaining.
@@ -113,7 +108,7 @@ type sendResponse struct {
 
 // Send posts one message to the FCM v1 endpoint.
 func (s *Sender) Send(ctx context.Context, msg outbound.PushMessage) (string, error) {
-	tok, err := s.accessToken(ctx)
+	tok, err := s.accessToken()
 	if err != nil {
 		return "", err
 	}
@@ -159,70 +154,13 @@ func isInvalidTokenResponse(status int, body []byte) bool {
 	return strings.Contains(b, "UNREGISTERED") || strings.Contains(b, "INVALID_ARGUMENT")
 }
 
-func (s *Sender) accessToken(ctx context.Context) (string, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.token != "" && s.now().Before(s.exp.Add(-30*time.Second)) {
-		return s.token, nil
-	}
-	assertion, err := s.signedJWT()
+func (s *Sender) accessToken() (string, error) {
+	t, err := s.tokens.Token()
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("fcm: token: %w", err)
 	}
-	form := url.Values{}
-	form.Set("grant_type", "urn:ietf:params:oauth:grant-type:jwt-bearer")
-	form.Set("assertion", assertion)
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.sa.TokenURI, strings.NewReader(form.Encode()))
-	if err != nil {
-		return "", fmt.Errorf("fcm: token request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	resp, err := s.http.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("fcm: token exchange: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("fcm: token http %d: %s", resp.StatusCode, string(body))
-	}
-	var tr struct {
-		AccessToken string `json:"access_token"`
-		ExpiresIn   int    `json:"expires_in"`
-	}
-	if err := json.Unmarshal(body, &tr); err != nil {
-		return "", fmt.Errorf("fcm: token decode: %w", err)
-	}
-	s.token = tr.AccessToken
-	s.exp = s.now().Add(time.Duration(tr.ExpiresIn) * time.Second)
-	return s.token, nil
+	return t.AccessToken, nil
 }
-
-func (s *Sender) signedJWT() (string, error) {
-	now := s.now()
-	header := base64url(`{"alg":"RS256","typ":"JWT"}`)
-	claims, err := json.Marshal(map[string]any{
-		"iss":   s.sa.ClientEmail,
-		"scope": fcmScope,
-		"aud":   s.sa.TokenURI,
-		"iat":   now.Unix(),
-		"exp":   now.Add(time.Hour).Unix(),
-	})
-	if err != nil {
-		return "", fmt.Errorf("fcm: claims: %w", err)
-	}
-	signingInput := header + "." + base64urlBytes(claims)
-	sum := sha256.Sum256([]byte(signingInput))
-	sig, err := rsa.SignPKCS1v15(rand.Reader, s.key, crypto.SHA256, sum[:])
-	if err != nil {
-		return "", fmt.Errorf("fcm: sign jwt: %w", err)
-	}
-	return signingInput + "." + base64.RawURLEncoding.EncodeToString(sig), nil
-}
-
-func base64url(s string) string      { return base64.RawURLEncoding.EncodeToString([]byte(s)) }
-func base64urlBytes(b []byte) string { return base64.RawURLEncoding.EncodeToString(b) }
 
 func parseRSAKey(pemKey string) (*rsa.PrivateKey, error) {
 	block, _ := pem.Decode([]byte(pemKey))
