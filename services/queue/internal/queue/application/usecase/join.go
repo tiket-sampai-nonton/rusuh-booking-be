@@ -3,6 +3,7 @@ package usecase
 import (
 	"context"
 	"encoding/hex"
+	"net/mail"
 	"strings"
 	"time"
 
@@ -149,6 +150,10 @@ func validateJoinBody(b dto.JoinRequest) error {
 	}
 	if !strings.EqualFold(b.Email, b.EmailConfirmation) {
 		return entity.ErrEmailMismatch
+	}
+	// Alamat polos saja ("a@b.id"); nama tampilan atau teks lain ditolak.
+	if addr, err := mail.ParseAddress(b.Email); err != nil || addr.Address != b.Email || len(b.Email) > 254 {
+		return entity.ErrEmailInvalid
 	}
 	return nil
 }

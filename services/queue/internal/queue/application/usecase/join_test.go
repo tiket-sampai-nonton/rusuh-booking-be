@@ -156,6 +156,8 @@ func TestJoin_Validation(t *testing.T) {
 	}{
 		{"no consent", dto.JoinRequest{Email: "a@b.id", EmailConfirmation: "a@b.id", BuyerNik: "3201234567890123"}, entity.ErrConsentNik},
 		{"email mismatch", dto.JoinRequest{Email: "a@b.id", EmailConfirmation: "x@b.id", ConsentNik: true, BuyerNik: "3201234567890123"}, entity.ErrEmailMismatch},
+		{"email bukan alamat", dto.JoinRequest{Email: "bukan-email", EmailConfirmation: "bukan-email", ConsentNik: true, BuyerNik: "3201234567890123"}, entity.ErrEmailInvalid},
+		{"email dengan nama tampilan", dto.JoinRequest{Email: "Budi <a@b.id>", EmailConfirmation: "Budi <a@b.id>", ConsentNik: true, BuyerNik: "3201234567890123"}, entity.ErrEmailInvalid},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
