@@ -12,19 +12,19 @@ import (
 
 // PaymentHandler serves the customer-facing payment endpoints (payment.yaml).
 type PaymentHandler struct {
-	page         inbound.IGetPaymentPage
-	status       inbound.IGetPaymentStatus
-	attempt      inbound.ICreateAttempt
-	createToken  inbound.ICreatePageToken
-	exchange     inbound.IExchangePageToken
-	auth         *PayerAuth
-	secureCookie bool
+	page        inbound.IGetPaymentPage
+	status      inbound.IGetPaymentStatus
+	attempt     inbound.ICreateAttempt
+	createToken inbound.ICreatePageToken
+	exchange    inbound.IExchangePageToken
+	auth        *PayerAuth
 }
 
-// NewPaymentHandler wires the handler. secureCookie is false only for plain-http local development.
+// NewPaymentHandler wires the handler. The payment-page cookie is always Secure: it travels over https (browsers also
+// accept it on localhost); plain-http clients use the visitor token header instead.
 func NewPaymentHandler(page inbound.IGetPaymentPage, status inbound.IGetPaymentStatus, attempt inbound.ICreateAttempt,
-	createToken inbound.ICreatePageToken, exchange inbound.IExchangePageToken, auth *PayerAuth, secureCookie bool) *PaymentHandler {
-	return &PaymentHandler{page: page, status: status, attempt: attempt, createToken: createToken, exchange: exchange, auth: auth, secureCookie: secureCookie}
+	createToken inbound.ICreatePageToken, exchange inbound.IExchangePageToken, auth *PayerAuth) *PaymentHandler {
+	return &PaymentHandler{page: page, status: status, attempt: attempt, createToken: createToken, exchange: exchange, auth: auth}
 }
 
 // Register mounts the routes.
@@ -100,14 +100,10 @@ func (h *PaymentHandler) exchangePageToken(w stdhttp.ResponseWriter, r *stdhttp.
 		httpx.WriteError(w, r, err)
 		return
 	}
-	c := &stdhttp.Cookie{
+	stdhttp.SetCookie(w, &stdhttp.Cookie{
 		Name: CookiePay, Value: s.Cookie, Path: "/", Expires: s.ExpiresAt,
 		HttpOnly: true, Secure: true, SameSite: stdhttp.SameSiteLaxMode,
-	}
-	if !h.secureCookie {
-		c.Secure = false // hanya http lokal (APP_ENV=local): cookie Secure tidak terkirim lewat http
-	}
-	stdhttp.SetCookie(w, c)
+	})
 	noStore(w)
 	w.WriteHeader(stdhttp.StatusNoContent)
 }

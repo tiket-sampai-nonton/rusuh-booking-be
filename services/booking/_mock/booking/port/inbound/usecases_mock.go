@@ -279,32 +279,32 @@ func (mr *MockIPublishEventUsecaseMockRecorder) Unpublish(ctx, eventID any) *gom
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Unpublish", reflect.TypeOf((*MockIPublishEventUsecase)(nil).Unpublish), ctx, eventID)
 }
 
-// MockIGetAdminEventUsecase is a mock of IGetAdminEventUsecase interface.
-type MockIGetAdminEventUsecase struct {
+// MockIAdminEventDetailGetter is a mock of IAdminEventDetailGetter interface.
+type MockIAdminEventDetailGetter struct {
 	ctrl     *gomock.Controller
-	recorder *MockIGetAdminEventUsecaseMockRecorder
+	recorder *MockIAdminEventDetailGetterMockRecorder
 	isgomock struct{}
 }
 
-// MockIGetAdminEventUsecaseMockRecorder is the mock recorder for MockIGetAdminEventUsecase.
-type MockIGetAdminEventUsecaseMockRecorder struct {
-	mock *MockIGetAdminEventUsecase
+// MockIAdminEventDetailGetterMockRecorder is the mock recorder for MockIAdminEventDetailGetter.
+type MockIAdminEventDetailGetterMockRecorder struct {
+	mock *MockIAdminEventDetailGetter
 }
 
-// NewMockIGetAdminEventUsecase creates a new mock instance.
-func NewMockIGetAdminEventUsecase(ctrl *gomock.Controller) *MockIGetAdminEventUsecase {
-	mock := &MockIGetAdminEventUsecase{ctrl: ctrl}
-	mock.recorder = &MockIGetAdminEventUsecaseMockRecorder{mock}
+// NewMockIAdminEventDetailGetter creates a new mock instance.
+func NewMockIAdminEventDetailGetter(ctrl *gomock.Controller) *MockIAdminEventDetailGetter {
+	mock := &MockIAdminEventDetailGetter{ctrl: ctrl}
+	mock.recorder = &MockIAdminEventDetailGetterMockRecorder{mock}
 	return mock
 }
 
 // EXPECT returns an object that allows the caller to indicate expected use.
-func (m *MockIGetAdminEventUsecase) EXPECT() *MockIGetAdminEventUsecaseMockRecorder {
+func (m *MockIAdminEventDetailGetter) EXPECT() *MockIAdminEventDetailGetterMockRecorder {
 	return m.recorder
 }
 
 // GetAdminEventDetail mocks base method.
-func (m *MockIGetAdminEventUsecase) GetAdminEventDetail(ctx context.Context, eventID string) (dto.EventDetail, error) {
+func (m *MockIAdminEventDetailGetter) GetAdminEventDetail(ctx context.Context, eventID string) (dto.EventDetail, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "GetAdminEventDetail", ctx, eventID)
 	ret0, _ := ret[0].(dto.EventDetail)
@@ -313,9 +313,9 @@ func (m *MockIGetAdminEventUsecase) GetAdminEventDetail(ctx context.Context, eve
 }
 
 // GetAdminEventDetail indicates an expected call of GetAdminEventDetail.
-func (mr *MockIGetAdminEventUsecaseMockRecorder) GetAdminEventDetail(ctx, eventID any) *gomock.Call {
+func (mr *MockIAdminEventDetailGetterMockRecorder) GetAdminEventDetail(ctx, eventID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAdminEventDetail", reflect.TypeOf((*MockIGetAdminEventUsecase)(nil).GetAdminEventDetail), ctx, eventID)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAdminEventDetail", reflect.TypeOf((*MockIAdminEventDetailGetter)(nil).GetAdminEventDetail), ctx, eventID)
 }
 
 // MockIAllocationUsecase is a mock of IAllocationUsecase interface.

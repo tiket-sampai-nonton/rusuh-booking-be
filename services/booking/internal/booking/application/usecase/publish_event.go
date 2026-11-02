@@ -26,7 +26,7 @@ func NewPublishEvent(events outbound.IEventRepo, repo outbound.IEventPublication
 // Publish makes the event visible and sellable.
 func (uc *PublishEvent) Publish(ctx context.Context, eventID string) error {
 	if !isUUID(eventID) {
-		return inbound.Validation("eventId", "eventId harus UUID")
+		return inbound.Validation("eventId", errEventIDNotUUID)
 	}
 	return uc.repo.SetPublished(ctx, eventID, true)
 }
@@ -34,7 +34,7 @@ func (uc *PublishEvent) Publish(ctx context.Context, eventID string) error {
 // Unpublish hides the event again; rejected (EVENT_RULES_LOCKED) once the sales window has opened.
 func (uc *PublishEvent) Unpublish(ctx context.Context, eventID string) error {
 	if !isUUID(eventID) {
-		return inbound.Validation("eventId", "eventId harus UUID")
+		return inbound.Validation("eventId", errEventIDNotUUID)
 	}
 	event, err := uc.events.GetByID(ctx, eventID)
 	if err != nil {
@@ -51,7 +51,7 @@ func (uc *PublishEvent) Unpublish(ctx context.Context, eventID string) error {
 // deadline; refunds for paid bookings are a separate task.
 func (uc *PublishEvent) Cancel(ctx context.Context, eventID string) error {
 	if !isUUID(eventID) {
-		return inbound.Validation("eventId", "eventId harus UUID")
+		return inbound.Validation("eventId", errEventIDNotUUID)
 	}
 	return uc.repo.Cancel(ctx, eventID)
 }

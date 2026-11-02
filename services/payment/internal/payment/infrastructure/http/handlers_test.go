@@ -49,7 +49,7 @@ type env struct {
 	serviceToken func(issuer string) string
 }
 
-func newEnv(t *testing.T, secureCookie bool) env {
+func newEnv(t *testing.T) env {
 	t.Helper()
 	c := gomock.NewController(t)
 	e := env{
@@ -90,7 +90,7 @@ func newEnv(t *testing.T, secureCookie bool) env {
 	}
 
 	auth := paymenthttp.NewPayerAuth(httpx.VisitorAuth(visitorVerifier, now), session, now)
-	paymenthttp.NewPaymentHandler(e.page, e.status, e.attempt, e.createToken, e.exchange, auth, secureCookie).Register(e.mux)
+	paymenthttp.NewPaymentHandler(e.page, e.status, e.attempt, e.createToken, e.exchange, auth).Register(e.mux)
 	paymenthttp.NewWebhookHandler(e.webhook).Register(e.mux)
 	paymenthttp.NewInternalHandler(e.resolve, httpx.ServiceAuth(now, serviceVerifier)).Register(e.mux)
 	return e
@@ -116,7 +116,7 @@ func errorMessage(t *testing.T, rec *httptest.ResponseRecorder) string {
 }
 
 func TestPayerAuth_VisitorTokenFromCookieOrHeaderGivesSamePayer(t *testing.T) {
-	e := newEnv(t, true)
+	e := newEnv(t)
 	want := inbound.Payer{VisitorID: visitorID}
 	e.page.EXPECT().GetPage(gomock.Any(), want, bookingID).Return(dto.PaymentPage{BookingID: bookingID}, nil).Times(2)
 
@@ -130,7 +130,7 @@ func TestPayerAuth_VisitorTokenFromCookieOrHeaderGivesSamePayer(t *testing.T) {
 }
 
 func TestPayerAuth_PageSessionCookieIsScopedToItsBooking(t *testing.T) {
-	e := newEnv(t, true)
+	e := newEnv(t)
 	e.status.EXPECT().GetStatus(gomock.Any(), inbound.Payer{VisitorID: visitorID, BookingID: bookingID}, bookingID).
 		Return(dto.PaymentStatus{BookingID: bookingID}, nil)
 
@@ -140,7 +140,7 @@ func TestPayerAuth_PageSessionCookieIsScopedToItsBooking(t *testing.T) {
 }
 
 func TestPayerAuth_VisitorTokenWinsOverPageCookie(t *testing.T) {
-	e := newEnv(t, true)
+	e := newEnv(t)
 	e.page.EXPECT().GetPage(gomock.Any(), inbound.Payer{VisitorID: visitorID}, bookingID).Return(dto.PaymentPage{}, nil)
 	r := httptest.NewRequest(stdhttp.MethodGet, "/api/v1/payments/"+bookingID+"/page", nil)
 	r.Header.Set(httpx.HeaderVisitorToken, e.visitorToken())
@@ -149,7 +149,7 @@ func TestPayerAuth_VisitorTokenWinsOverPageCookie(t *testing.T) {
 }
 
 func TestPayerAuth_Rejects(t *testing.T) {
-	e := newEnv(t, true)
+	e := newEnv(t)
 	for name, mod := range map[string]func(*stdhttp.Request){
 		"tanpa kredensial":     func(*stdhttp.Request) {},
 		"visitor token sampah": func(r *stdhttp.Request) { r.Header.Set(httpx.HeaderVisitorToken, "sampah") },
@@ -172,7 +172,7 @@ func TestPayerAuth_Rejects(t *testing.T) {
 }
 
 func TestPageTokens_RequireVisitorTokenNotAPageSession(t *testing.T) {
-	e := newEnv(t, true)
+	e := newEnv(t)
 	r := httptest.NewRequest(stdhttp.MethodPost, "/api/v1/payments/"+bookingID+"/page-tokens", nil)
 	r.AddCookie(&stdhttp.Cookie{Name: paymenthttp.CookiePay, Value: e.pageCookie(visitorID, bookingID)})
 	assert.Equal(t, 401, e.do(r).Code, "sesi WebView tidak boleh mencetak token baru")
@@ -187,7 +187,7 @@ func TestPageTokens_RequireVisitorTokenNotAPageSession(t *testing.T) {
 }
 
 func TestCreateAttempt_PassesIdempotencyKeyAndBodyAndReturns201Envelope(t *testing.T) {
-	e := newEnv(t, true)
+	e := newEnv(t)
 	e.attempt.EXPECT().CreateAttempt(gomock.Any(), inbound.Payer{VisitorID: visitorID}, bookingID, idemKey, dto.CreateAttemptRequest{Method: "VA_BCA"}).
 		Return(dto.Attempt{AttemptNo: 1, Method: "VA_BCA", Status: "PENDING", RedirectURL: "https://snap/r/812"}, nil)
 
@@ -207,7 +207,7 @@ func TestCreateAttempt_PassesIdempotencyKeyAndBodyAndReturns201Envelope(t *testi
 }
 
 func TestCreateAttempt_RejectsUnknownFieldsAndMapsUsecaseErrors(t *testing.T) {
-	e := newEnv(t, true)
+	e := newEnv(t)
 	r := jsonReq(stdhttp.MethodPost, "/api/v1/payments/"+bookingID+"/attempts", `{"method":"VA_BCA","amountMinor":1}`)
 	r.Header.Set(httpx.HeaderVisitorToken, e.visitorToken())
 	assert.Equal(t, 400, e.do(r).Code, "klien tidak boleh mengirim nominal")
@@ -222,8 +222,8 @@ func TestCreateAttempt_RejectsUnknownFieldsAndMapsUsecaseErrors(t *testing.T) {
 
 func TestPageSessions_SetsHardenedCookie(t *testing.T) {
 	exp := t0.Add(15 * time.Minute)
-	for _, secure := range []bool{true, false} {
-		e := newEnv(t, secure)
+	{
+		e := newEnv(t)
 		e.exchange.EXPECT().ExchangePageToken(gomock.Any(), "token-satu-kali").Return(dto.PageSession{Cookie: "cookie-value", ExpiresAt: exp}, nil)
 		rec := e.do(jsonReq(stdhttp.MethodPost, "/api/v1/payment-page-sessions", `{"pageToken":"token-satu-kali"}`))
 
@@ -234,14 +234,14 @@ func TestPageSessions_SetsHardenedCookie(t *testing.T) {
 		assert.Equal(t, "rb_pay", c.Name)
 		assert.Equal(t, "cookie-value", c.Value)
 		assert.True(t, c.HttpOnly)
-		assert.Equal(t, secure, c.Secure)
+		assert.True(t, c.Secure, "Secure selalu aktif")
 		assert.Equal(t, stdhttp.SameSiteLaxMode, c.SameSite)
 		assert.Equal(t, "no-store", rec.Header().Get("Cache-Control"))
 	}
 }
 
 func TestPageSessions_InvalidTokenIs403WithoutCookie(t *testing.T) {
-	e := newEnv(t, true)
+	e := newEnv(t)
 	e.exchange.EXPECT().ExchangePageToken(gomock.Any(), "pernah-dipakai").Return(dto.PageSession{}, inbound.ErrPageTokenInvalid)
 	rec := e.do(jsonReq(stdhttp.MethodPost, "/api/v1/payment-page-sessions", `{"pageToken":"pernah-dipakai"}`))
 	assert.Equal(t, 403, rec.Code)
@@ -253,7 +253,7 @@ func TestWebhook(t *testing.T) {
 	const raw = `{"order_id":"RB-1-1","transaction_status":"settlement","status_code":"200","gross_amount":"1500000.00","signature_key":"s","extra_field":"diabaikan","va_numbers":[{"bank":"bca"}]}`
 
 	t.Run("diterima, field tambahan diabaikan, body mentah diteruskan", func(t *testing.T) {
-		e := newEnv(t, true)
+		e := newEnv(t)
 		e.webhook.EXPECT().HandleWebhook(gomock.Any(), gomock.Any(), []byte(raw)).DoAndReturn(func(_ any, n dto.MidtransNotification, _ []byte) error {
 			assert.Equal(t, "RB-1-1", n.OrderID)
 			assert.Equal(t, "settlement", n.TransactionStatus)
@@ -262,23 +262,23 @@ func TestWebhook(t *testing.T) {
 		assert.Equal(t, 200, e.do(jsonReq(stdhttp.MethodPost, "/api/v1/webhooks/midtrans", raw)).Code)
 	})
 	t.Run("signature salah → 401", func(t *testing.T) {
-		e := newEnv(t, true)
+		e := newEnv(t)
 		e.webhook.EXPECT().HandleWebhook(gomock.Any(), gomock.Any(), gomock.Any()).Return(inbound.ErrSignatureInvalid)
 		rec := e.do(jsonReq(stdhttp.MethodPost, "/api/v1/webhooks/midtrans", raw))
 		assert.Equal(t, 401, rec.Code)
 		assert.True(t, strings.HasPrefix(errorMessage(t, rec), "WEBHOOK_SIGNATURE_INVALID"))
 	})
 	t.Run("gangguan sementara → 503 agar Midtrans mengulang", func(t *testing.T) {
-		e := newEnv(t, true)
+		e := newEnv(t)
 		e.webhook.EXPECT().HandleWebhook(gomock.Any(), gomock.Any(), gomock.Any()).Return(inbound.ErrDependency)
 		assert.Equal(t, 503, e.do(jsonReq(stdhttp.MethodPost, "/api/v1/webhooks/midtrans", raw)).Code)
 	})
 	t.Run("bukan JSON → 400", func(t *testing.T) {
-		e := newEnv(t, true)
+		e := newEnv(t)
 		assert.Equal(t, 400, e.do(jsonReq(stdhttp.MethodPost, "/api/v1/webhooks/midtrans", `<html>`)).Code)
 	})
 	t.Run("body terlalu besar → 413", func(t *testing.T) {
-		e := newEnv(t, true)
+		e := newEnv(t)
 		big := `{"order_id":"` + strings.Repeat("a", 70<<10) + `"}`
 		assert.Equal(t, 413, e.do(jsonReq(stdhttp.MethodPost, "/api/v1/webhooks/midtrans", big)).Code)
 	})
@@ -286,7 +286,7 @@ func TestWebhook(t *testing.T) {
 
 // Property 4: Internal API closed.
 func TestInternalResolve_OnlyAKnownServiceTokenIsAccepted(t *testing.T) {
-	e := newEnv(t, true)
+	e := newEnv(t)
 	path := "/internal/v1/payments/" + bookingID + "/resolve"
 
 	for name, mod := range map[string]func(*stdhttp.Request){

@@ -47,8 +47,8 @@ type IPublishEventUsecase interface {
 	Cancel(ctx context.Context, eventID string) error
 }
 
-// IGetAdminEventUsecase returns an event including drafts (admin).
-type IGetAdminEventUsecase interface {
+// IAdminEventDetailGetter returns an event including drafts (admin).
+type IAdminEventDetailGetter interface {
 	GetAdminEventDetail(ctx context.Context, eventID string) (dto.EventDetail, error)
 }
 

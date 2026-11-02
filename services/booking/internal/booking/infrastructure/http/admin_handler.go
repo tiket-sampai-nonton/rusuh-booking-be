@@ -18,7 +18,7 @@ type AdminHandler struct {
 	verifier IUserTokenVerifier
 	images   inbound.IUploadEventImageUsecase
 	publish  inbound.IPublishEventUsecase
-	detail   inbound.IGetAdminEventUsecase
+	detail   inbound.IAdminEventDetailGetter
 }
 
 // NewAdminHandler wires the admin handler.
@@ -37,7 +37,7 @@ func (h *AdminHandler) WithImages(uc inbound.IUploadEventImageUsecase) *AdminHan
 }
 
 // WithPublication enables GET /internal/v1/admin/events/{eventId} (drafts included) and the publish and unpublish actions.
-func (h *AdminHandler) WithPublication(publish inbound.IPublishEventUsecase, detail inbound.IGetAdminEventUsecase) *AdminHandler {
+func (h *AdminHandler) WithPublication(publish inbound.IPublishEventUsecase, detail inbound.IAdminEventDetailGetter) *AdminHandler {
 	h.publish, h.detail = publish, detail
 	return h
 }

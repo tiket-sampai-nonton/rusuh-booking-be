@@ -66,7 +66,7 @@ func (uc *Session) GetSession(ctx context.Context, sessionID, visitorID string) 
 // GetCurrentSession recovers the active session for a visitor on an event (refresh/back navigation).
 func (uc *Session) GetCurrentSession(ctx context.Context, eventID, visitorID string) (dto.BookingSession, error) {
 	if !isUUID(eventID) {
-		return dto.BookingSession{}, inbound.Validation("eventId", "eventId harus UUID")
+		return dto.BookingSession{}, inbound.Validation("eventId", errEventIDNotUUID)
 	}
 	admission, err := uc.admissions.FindActiveByVisitor(ctx, eventID, visitorID)
 	if err != nil {

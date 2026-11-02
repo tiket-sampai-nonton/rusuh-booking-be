@@ -25,7 +25,7 @@ func NewGetEventDetail(events outbound.IEventRepo, clk clock.IClock) *GetEventDe
 // GetEventDetail validates the id, loads the event, and maps it to the detail DTO.
 func (uc *GetEventDetail) GetEventDetail(ctx context.Context, eventID string) (dto.EventDetail, error) {
 	if !isUUID(eventID) {
-		return dto.EventDetail{}, inbound.Validation("eventId", "eventId harus UUID")
+		return dto.EventDetail{}, inbound.Validation("eventId", errEventIDNotUUID)
 	}
 	detail, err := uc.events.GetDetail(ctx, eventID)
 	if err != nil {
@@ -40,7 +40,7 @@ func (uc *GetEventDetail) GetEventDetail(ctx context.Context, eventID string) (d
 // GetAdminEventDetail is GetEventDetail for admins: drafts are visible too (field published tells which).
 func (uc *GetEventDetail) GetAdminEventDetail(ctx context.Context, eventID string) (dto.EventDetail, error) {
 	if !isUUID(eventID) {
-		return dto.EventDetail{}, inbound.Validation("eventId", "eventId harus UUID")
+		return dto.EventDetail{}, inbound.Validation("eventId", errEventIDNotUUID)
 	}
 	detail, err := uc.events.GetDetail(ctx, eventID)
 	if err != nil {

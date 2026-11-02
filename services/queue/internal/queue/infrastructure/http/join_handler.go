@@ -15,12 +15,12 @@ type JoinHandler struct {
 	uc         inbound.IJoinUsecase
 	auth       VisitorAuthenticator // decodes rb_visitor JWT to get the visitor UUID
 	trustProxy bool
-	secure     bool // Secure flag on the visitor cookie (false in local http)
 }
 
-// NewJoinHandler creates the handler. trustProxy=true behind the ALB (X-Forwarded-For).
-func NewJoinHandler(uc inbound.IJoinUsecase, trustProxy, secure bool) *JoinHandler {
-	return &JoinHandler{uc: uc, trustProxy: trustProxy, secure: secure}
+// NewJoinHandler creates the handler. trustProxy=true behind the ALB (X-Forwarded-For). The visitor cookie is always
+// Secure (https; browsers also accept it on localhost); plain-http clients send X-Client-Type: mobile and keep the token.
+func NewJoinHandler(uc inbound.IJoinUsecase, trustProxy bool) *JoinHandler {
+	return &JoinHandler{uc: uc, trustProxy: trustProxy}
 }
 
 // WithAuth sets the visitor authenticator (call this to enable JWT decoding on join).
@@ -65,14 +65,10 @@ func (h *JoinHandler) join(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	}
 	// Web clients: move the freshly-minted visitor token into an HttpOnly cookie, hide it from the body.
 	if resp.VisitorToken != "" && !in.IsMobile {
-		c := &stdhttp.Cookie{
+		stdhttp.SetCookie(w, &stdhttp.Cookie{
 			Name: cookieVisitor, Value: resp.VisitorToken, Path: "/",
 			HttpOnly: true, Secure: true, SameSite: stdhttp.SameSiteLaxMode,
-		}
-		if !h.secure {
-			c.Secure = false // hanya http lokal (APP_ENV=local): cookie Secure tidak terkirim lewat http
-		}
-		stdhttp.SetCookie(w, c)
+		})
 		resp.VisitorToken = ""
 	}
 	w.Header().Set("Cache-Control", "no-store")

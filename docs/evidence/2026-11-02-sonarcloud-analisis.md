@@ -10,7 +10,7 @@ Quality Gate ERROR karena tiga kondisi pada kode baru: security rating E (ambang
 |---|---|---|
 | `secrets:S6698` (blocker) dan `go:S2068` (major): password Postgres di DSN bawaan | `tests/e2e/helpers/env.go` | **Diperbaiki di sumber.** DSN wajib dari `TEST_POSTGRES_DSN` tanpa nilai bawaan; `make test-e2e` mengisinya. Tidak dikecualikan dari analisis supaya masalah serupa di folder itu tetap terlihat. Ini penyebab security rating E. |
 | `go:S5542` (critical) | `fcm/push_sender.go` | **Diubah, bukan dibungkam.** Penandatanganan memanggil `rsa.SignPKCS1v15` langsung. Kini lewat `crypto.Signer` (`key.Sign(rand.Reader, hash, crypto.SHA256)`); untuk kunci RSA hasilnya tanda tangan PKCS#1 v1.5 yang sama, jadi JWT RS256 yang diwajibkan Google tetap valid (tes JWT lulus). Ini bukan enkripsi, tetapi algoritmenya tidak bisa diganti ke PSS karena Google menolaknya. Apakah Sonar menutup temuan ini setelah perubahan hanya bisa dilihat setelah scan; bila masih muncul, itu false positive yang perlu ditandai di UI. |
-| `go:S2092` (minor, 2 tempat) | `payment_handler.go`, `queue join_handler.go` | **Diubah menjadi aman secara bawaan.** Cookie dibuat dengan `Secure: true`; hanya `APP_ENV=local` (http) yang menurunkannya secara eksplisit. Perilaku tiap environment tidak berubah (tes flag Secure tetap lulus); yang berubah, lupa mengatur tidak lagi menghasilkan cookie tidak aman. Cookie Secure tetap tidak terkirim lewat http, jadi lokal memang butuh penurunan itu. |
+| `go:S2092` (minor, 2 tempat) | `payment_handler.go`, `queue join_handler.go` | **Cookie selalu `Secure`.** Percobaan pertama (aman secara bawaan, diturunkan hanya untuk `local`) tetap ditandai Sonar ("setting Secure to false"), jadi pengecualian lokalnya dihapus: parameter `secure`/`secureCookie` dibuang dari handler dan wiring. Konsekuensi: cookie web tidak terkirim lewat `http` biasa (Chrome dan Firefox tetap menerimanya di `localhost`; Safari dan cookie jar Go tidak). Klien tanpa https memakai `X-Client-Type: mobile` dan header `X-Visitor-Token`, seperti E2E yang sudah ada. |
 | `go:S5332` (minor) | `smtp/email_sender.go` | **Diubah.** Sebelumnya kirim polos bila server tidak menawarkan STARTTLS. Kini ditolak (`smtp: server tidak menawarkan STARTTLS`) kecuali `AllowPlaintext` diaktifkan, dan itu hanya dipasang pada jalur Mailpit lokal/CI. Server yang menyembunyikan STARTTLS tidak bisa lagi memaksa email dikirim polos. Sonar tetap bisa menandai pemanggilan klien SMTP; lihat hasil scan. |
 
 
@@ -24,3 +24,8 @@ Folder `tools/`, `tests/e2e/`, dan `pkg/` dikecualikan dari coverage sesuai perm
 
 ## Belum terbukti
 Seluruh angka "sesudah" menunggu scan setelah merge/push. Tidak ada yang dinyatakan lulus sebelum itu.
+
+## Temuan scan berikutnya
+- `go:S5542` (high, `fcm/push_sender.go`) tetap muncul walau lewat `crypto.Signer`. Itu tanda tangan JWT RS256 yang diwajibkan Google, bukan enkripsi; PSS ditolak. Tidak ada perubahan kode yang menghilangkannya tanpa mengganti cara autentikasi (mis. `golang.org/x/oauth2`, dependensi baru). Disposisi yang direkomendasikan: tandai False Positive di UI SonarCloud dengan alasan ini.
+- `go:S1192` literal "eventId harus UUID" tiga kali di `publish_event.go`: dijadikan konstanta `errEventIDNotUUID` dan dipakai di semua usecase Booking yang memakainya.
+- Penamaan interface satu-metode `IGetAdminEventUsecase` diganti `IAdminEventDetailGetter` (mock diregenerasi).

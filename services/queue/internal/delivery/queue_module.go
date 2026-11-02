@@ -115,9 +115,8 @@ func newQueueModule(cfg config.Config, clients *Clients, logger *slog.Logger) (*
 	leaveUC := usecase.NewLeaveQueue(store, booking, clk)
 
 	trustProxy := cfg.App.Env != "local"
-	secure := cfg.App.Env != "local"
 	handlers := []registrar{
-		queuehttp.NewJoinHandler(joinUC, trustProxy, secure).WithAuth(visitorAuth),
+		queuehttp.NewJoinHandler(joinUC, trustProxy).WithAuth(visitorAuth),
 		queuehttp.NewStatusHandler(statusUC),
 		queuehttp.NewMyEntryHandler(myEntryUC, visitorAuth),
 		queuehttp.NewClaimHandler(claimUC, visitorAuth),
