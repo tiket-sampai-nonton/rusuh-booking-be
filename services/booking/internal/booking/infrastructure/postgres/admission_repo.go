@@ -128,8 +128,10 @@ func (r *AdmissionRepo) reserveOne(ctx context.Context, tx pgx.Tx, eventID strin
 	// Step 1 (§9.1): lock event_supply FOR UPDATE and read stock counters.
 	var totalCap, allocUnits, heldUnits, soldUnits int
 	if err := tx.QueryRow(ctx, `
-		SELECT total_capacity, allocated_units, held_units, sold_units
-		  FROM booking.event_supply WHERE event_id=$1::uuid FOR UPDATE`, eventID).
+		SELECT s.total_capacity, s.allocated_units, s.held_units, s.sold_units
+		  FROM booking.event_supply s
+		  JOIN booking.events ev ON ev.id = s.event_id AND ev.published_at IS NOT NULL AND ev.status <> 'CANCELLED'
+		 WHERE s.event_id=$1::uuid FOR UPDATE OF s`, eventID).
 		Scan(&totalCap, &allocUnits, &heldUnits, &soldUnits); err != nil {
 		_, _ = tx.Exec(ctx, "ROLLBACK TO SAVEPOINT entry")
 		res.Outcome = "NO_SUPPLY_NOW"

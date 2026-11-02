@@ -68,7 +68,7 @@ paths:
                 - meta
                 - data
         '400':
-          description: 'Field tidak valid — errorCode: `VALIDATION_ERROR`'
+          description: 'Field tidak valid (consentNik bukan true, atau format email bukan alamat polos seperti a@b.id) — errorCode: `VALIDATION_ERROR`'
           content:
             application/json:
               schema:

@@ -81,7 +81,11 @@ func (u *NotifyBookingPaid) NotifyBookingPaid(ctx context.Context, sourceMessage
 		recordSendFailure(ctx, u.repo, sourceMessageID, entity.TypeBookingPaid, u.clock.Now(), serr)
 		return fmt.Errorf("send eticket email: %w", serr) // transient → retry; permanent stays permanent (DLQ)
 	}
-	return u.repo.MarkSent(ctx, sourceMessageID, entity.TypeBookingPaid, providerID)
+	if err := u.repo.MarkSent(ctx, sourceMessageID, entity.TypeBookingPaid, providerID); err != nil {
+		return err
+	}
+	u.log.Info("e-tiket terkirim", "messageId", sourceMessageID, "bookingId", p.BookingID) // tanpa email penerima
+	return nil
 }
 
 // ticketViews builds the template rows and the QR images. A QR that cannot be made leaves that ticket with its code only:

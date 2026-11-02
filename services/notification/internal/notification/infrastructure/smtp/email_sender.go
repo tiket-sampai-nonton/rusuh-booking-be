@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"mime/multipart"
 	"net"
@@ -29,6 +30,9 @@ type Config struct {
 	Password string
 	From     string
 	Timeout  time.Duration
+	// AllowPlaintext membolehkan kirim tanpa TLS bila server tidak menawarkan STARTTLS. Hanya untuk Mailpit lokal/CI;
+	// bawaan false supaya server yang menyembunyikan STARTTLS tidak memaksa email dikirim polos.
+	AllowPlaintext bool
 }
 
 // Sender implements outbound.IEmailSender.
@@ -151,6 +155,8 @@ func (s *Sender) deliver(to string, msg []byte) error {
 		if err := c.StartTLS(&tls.Config{ServerName: s.cfg.Host, MinVersion: tls.VersionTLS12}); err != nil {
 			return fmt.Errorf("smtp: starttls: %w", err)
 		}
+	} else if !s.cfg.AllowPlaintext {
+		return errors.New("smtp: server tidak menawarkan STARTTLS; kirim tanpa TLS ditolak")
 	}
 	if s.cfg.User != "" {
 		auth := smtp.PlainAuth("", s.cfg.User, s.cfg.Password, s.cfg.Host)

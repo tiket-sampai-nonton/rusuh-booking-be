@@ -163,6 +163,12 @@ paths:
       tags:
       - auth
       summary: Cabut sesi (idempoten)
+      description: >-
+        Mencabut sesi refresh dan access token sesi itu: access token berhenti diterima di User, Booking (admin dan
+        pembeli), dan Queue segera setelah logout, tidak menunggu exp. Berlaku untuk token yang memuat klaim `sid`;
+        token yang terbit sebelum fitur ini tetap berlaku sampai exp. Access token yang diterbitkan sebelum refresh
+        terakhir memakai `sid` sesi sebelumnya dan tidak ikut dicabut (umurnya paling lama TOKEN_ACCESS_TTL).
+        Bila denylist (Valkey) gagal ditulis, jawabannya 500 dan klien boleh mengulang.
       operationId: logout
       security: []
       requestBody:
@@ -174,6 +180,8 @@ paths:
       responses:
         '204':
           description: Sesi dicabut (atau memang tidak ada)
+        '500':
+          description: 'Denylist tidak bisa ditulis (sesi refresh sudah dicabut); ulangi — errorCode: `INTERNAL_ERROR`'
   /api/v1/me:
     get:
       tags:

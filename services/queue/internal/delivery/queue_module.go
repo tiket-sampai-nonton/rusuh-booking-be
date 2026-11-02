@@ -13,6 +13,7 @@ import (
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/crypto"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/rabbitmq"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/resilience"
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/revocation"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/token"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/telemetry"
@@ -72,7 +73,7 @@ func newQueueModule(cfg config.Config, clients *Clients, logger *slog.Logger) (*
 	if err != nil {
 		return nil, err
 	}
-	userVerifier := security.NewUserTokenVerifier(userVerifierCore, clk.Now)
+	userVerifier := security.NewUserTokenVerifier(userVerifierCore, clk.Now).WithDenylist(revocation.NewStore(clients.VK.VK(), clients.VK)) // logout mencabut access token (SCRUM-53)
 
 	store := queuevalkey.NewQueueStore(clients.VK.VK(), clients.VK, clk)
 	limiter := queuevalkey.NewRateLimiter(clients.VK.VK(), clients.VK, clk.Now)
@@ -86,7 +87,7 @@ func newQueueModule(cfg config.Config, clients *Clients, logger *slog.Logger) (*
 	if err != nil {
 		return nil, err
 	}
-	booking := bookingclient.NewClient(cfg.Booking.BaseURL, cfg.Booking.Timeout, breaker, serviceToken(tokens))
+	booking := bookingclient.NewClient(cfg.Booking.BaseURL, cfg.Booking.Timeout, breaker, serviceToken(tokens, clk.Now))
 
 	// Event publisher needs its own confirm-mode channel.
 	rmqConn, err := rabbitmq.Dial(cfg.RabbitMQ)
@@ -114,9 +115,8 @@ func newQueueModule(cfg config.Config, clients *Clients, logger *slog.Logger) (*
 	leaveUC := usecase.NewLeaveQueue(store, booking, clk)
 
 	trustProxy := cfg.App.Env != "local"
-	secure := cfg.App.Env != "local"
 	handlers := []registrar{
-		queuehttp.NewJoinHandler(joinUC, trustProxy, secure).WithAuth(visitorAuth),
+		queuehttp.NewJoinHandler(joinUC, trustProxy).WithAuth(visitorAuth),
 		queuehttp.NewStatusHandler(statusUC),
 		queuehttp.NewMyEntryHandler(myEntryUC, visitorAuth),
 		queuehttp.NewClaimHandler(claimUC, visitorAuth),
@@ -184,13 +184,15 @@ func loadUserVerifier(cfg config.Config, fallback *token.Verifier) (*token.Verif
 	return v, nil
 }
 
-// serviceToken issues a long-lived EdDSA service bearer token used by the Queue Service when
-// calling Booking's internal API. The token is signed with Queue's private key; Booking verifies
-// it using Queue's public key (TOKEN_PUBLIC_KEY_PATH in Booking's config).
-func serviceToken(tokens *security.TokenIssuer) string {
-	tok, err := tokens.IssueService(time.Now())
-	if err != nil {
-		return ""
+// serviceToken returns a function that gives Booking calls a valid service bearer token each time. The token is
+// signed with Queue's private key and verified by Booking with Queue's public key (TOKEN_PUBLIC_KEY_PATH in
+// Booking's config); it is renewed before it expires so a long-running worker keeps working.
+func serviceToken(tokens *security.TokenIssuer, now func() time.Time) func() string {
+	return func() string {
+		tok, err := tokens.ServiceToken(now())
+		if err != nil {
+			return ""
+		}
+		return tok
 	}
-	return tok
 }

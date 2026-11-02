@@ -30,7 +30,7 @@ func TestJoinHandler_Created(t *testing.T) {
 	uc := mock_inbound.NewMockIJoinUsecase(ctrl)
 	uc.EXPECT().Join(gomock.Any(), gomock.Any()).Return(dto.QueueEntry{EntryID: "e1", Seq: 5, Status: "WAITING", VisitorToken: "vt"}, nil)
 
-	h := queuehttp.NewJoinHandler(uc, false, false)
+	h := queuehttp.NewJoinHandler(uc, false)
 	mux := http.NewServeMux()
 	h.Register(mux)
 
@@ -52,7 +52,7 @@ func TestJoinHandler_MobileReturnsTokenInBody(t *testing.T) {
 	uc := mock_inbound.NewMockIJoinUsecase(ctrl)
 	uc.EXPECT().Join(gomock.Any(), gomock.Any()).Return(dto.QueueEntry{EntryID: "e1", VisitorToken: "vt"}, nil)
 
-	h := queuehttp.NewJoinHandler(uc, false, false)
+	h := queuehttp.NewJoinHandler(uc, false)
 	mux := http.NewServeMux()
 	h.Register(mux)
 
@@ -73,7 +73,7 @@ func TestJoinHandler_DomainError(t *testing.T) {
 	uc := mock_inbound.NewMockIJoinUsecase(ctrl)
 	uc.EXPECT().Join(gomock.Any(), gomock.Any()).Return(dto.QueueEntry{}, entity.ErrNikInQueue)
 
-	h := queuehttp.NewJoinHandler(uc, false, false)
+	h := queuehttp.NewJoinHandler(uc, false)
 	mux := http.NewServeMux()
 	h.Register(mux)
 

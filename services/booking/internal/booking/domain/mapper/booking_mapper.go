@@ -10,11 +10,11 @@ import (
 	vo "github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/domain/valueobject"
 )
 
-// eventStatus is the status the API shows. Only SOLD_OUT and CLOSED are stored states; NOT_STARTED and AVAILABLE
+// eventStatus is the status the API shows. Only SOLD_OUT, CLOSED, and CANCELLED are stored states; NOT_STARTED and AVAILABLE
 // follow the sales window (nothing else moves an event out of DRAFT, and clients only know these four).
 func eventStatus(e entity.Event, now time.Time) string {
 	switch e.Status {
-	case entity.EventSoldOut, entity.EventClosed:
+	case entity.EventSoldOut, entity.EventClosed, entity.EventCancelled:
 		return string(e.Status)
 	}
 	switch {
@@ -91,6 +91,7 @@ func ToEventDetail(d entity.EventDetail, now time.Time) dto.EventDetail {
 		MaxTicketsPerOrder:    d.Event.MaxTicketsPerOrder,
 		MaxTicketsPerBuyerNik: d.Event.MaxTicketsPerBuyerNik,
 		AllowMixedCategories:  d.Event.AllowMixedCategories,
+		Published:             d.Event.Published,
 		Categories:            cats,
 	}
 }

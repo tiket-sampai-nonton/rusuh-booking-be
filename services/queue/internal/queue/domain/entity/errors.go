@@ -14,6 +14,7 @@ var (
 	ErrNikRequired   = errors.New("queue: NIK wajib diisi")
 	ErrEmailMismatch = errors.New("queue: email dan konfirmasi email tidak sama")
 	ErrConsentNik    = errors.New("queue: persetujuan penggunaan NIK wajib true")
+	ErrEmailInvalid  = errors.New("queue: format email tidak valid")
 
 	ErrNikInQueue     = errors.New("queue: NIK sudah berada di antrean")
 	ErrVisitorInQueue = errors.New("queue: perangkat sudah berada di antrean")

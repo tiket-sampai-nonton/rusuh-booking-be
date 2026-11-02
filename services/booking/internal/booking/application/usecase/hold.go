@@ -136,6 +136,9 @@ func (uc *Hold) decide(ctx context.Context, cmd inbound.HoldCommand) (entity.Adm
 	if err != nil {
 		return entity.Admission{}, nil, 0, err
 	}
+	if detail.Event.Status == entity.EventCancelled {
+		return entity.Admission{}, nil, 0, inbound.ErrEventCancelled
+	}
 	if len(req.Items) > detail.Event.MaxTicketsPerOrder {
 		return entity.Admission{}, nil, 0, inbound.ErrQuantityExceeds
 	}

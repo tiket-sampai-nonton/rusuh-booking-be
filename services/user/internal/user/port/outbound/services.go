@@ -31,7 +31,8 @@ type IOTPPublisher interface {
 
 // ITokenIssuer signs access tokens.
 type ITokenIssuer interface {
-	IssueAccess(accountID, email string, nikHash []byte, nikMasked string, now time.Time) (token string, expiresAt time.Time, err error)
+	// IssueAccess signs an access token; sessionID goes into claim "sid" so logout can revoke it before exp.
+	IssueAccess(accountID, sessionID, email string, nikHash []byte, nikMasked string, now time.Time) (token string, expiresAt time.Time, err error)
 }
 
 // ISecretGenerator produces random secrets.

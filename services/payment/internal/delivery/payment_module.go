@@ -84,7 +84,6 @@ func newPaymentRegistrars(cfg config.Config, clients *Clients) ([]registrar, err
 	pageTokens := paymentpg.NewPageTokens(pool)
 
 	auth := paymenthttp.NewPayerAuth(httpx.VisitorAuth(visitorVerifier, now), session, now)
-	secureCookie := cfg.App.Env != "local" // plain http://localhost cannot carry a Secure cookie
 
 	return []registrar{
 		paymenthttp.NewPaymentHandler(
@@ -93,7 +92,7 @@ func newPaymentRegistrars(cfg config.Config, clients *Clients) ([]registrar, err
 			usecase.NewCreateAttempt(bookingClient, attempts, idem, gateway, clk, p.Methods, usecase.ReturnURLs{Success: p.SuccessReturnURL, Failed: p.FailedReturnURL}),
 			usecase.NewCreatePageToken(bookingClient, pageTokens, clk, p.PageTokenTTL),
 			usecase.NewExchangePageToken(pageTokens, session, clk),
-			auth, secureCookie,
+			auth,
 		),
 		paymenthttp.NewWebhookHandler(usecase.NewHandleWebhook(midtrans.NewSignatureVerifier(p.Midtrans.ServerKey), attempts, callbacks, clk)),
 		paymenthttp.NewInternalHandler(usecase.NewResolvePayment(attempts, gateway, clk), httpx.ServiceAuth(now, bookingVerifier)),

@@ -37,7 +37,7 @@ func activeAdmission(mixed bool) entity.Admission {
 
 func detailWith(mixed bool, maxOrder int) entity.EventDetail {
 	return entity.EventDetail{
-		Event: entity.Event{ID: eventID, MaxTicketsPerOrder: maxOrder, AllowMixedCategories: mixed},
+		Event: entity.Event{ID: eventID, Published: true, MaxTicketsPerOrder: maxOrder, AllowMixedCategories: mixed},
 		Categories: []entity.CategoryDetail{
 			{Category: entity.Category{ID: catA, Code: "A", PriceMinor: 1000}, Available: 50},
 			{Category: entity.Category{ID: catB, Code: "B", PriceMinor: 2000}, Available: 50},
@@ -148,4 +148,14 @@ func TestHold_BadIdempotencyKey(t *testing.T) {
 	cmd.IdempotencyKey = "short"
 	_, err := uc.Hold(context.Background(), cmd)
 	assert.Error(t, err)
+}
+
+func TestHold_CancelledEventRefusesNewHolds(t *testing.T) {
+	d := detailWith(true, 3)
+	d.Event.Status = entity.EventCancelled
+	uow := &fakeUoW{}
+	uc := newHoldUC(&fakeAdmissionRepo{admission: activeAdmission(true)}, &fakeEventRepo{detail: d}, &fakeIdem{}, uow)
+	_, err := uc.Hold(context.Background(), holdCmd([]dto.HoldItem{{CategoryID: catA, Attendee: dto.AttendeeInput{NIK: nik1, FullName: "Alice"}}}))
+	assert.ErrorIs(t, err, inbound.ErrEventCancelled)
+	assert.Empty(t, uow.heldSpec.Lines, "tidak ada stok yang ditahan")
 }

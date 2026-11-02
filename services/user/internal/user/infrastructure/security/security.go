@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/crypto"
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/revocation"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/token"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/user/internal/user/port/inbound"
@@ -109,6 +110,7 @@ type Tokens struct {
 	audience string
 	ttl      time.Duration
 	now      func() time.Time
+	denylist revocation.Denylist // nil = pengecekan logout tidak aktif
 }
 
 // NewTokens builds the issuer/verifier pair. Public key dibagikan ke Queue dan Booking untuk memverifikasi token yang sama.
@@ -116,8 +118,15 @@ func NewTokens(signer *token.Signer, verifier *token.Verifier, issuer, audience 
 	return &Tokens{signer: signer, verifier: verifier, issuer: issuer, audience: audience, ttl: ttl, now: now}
 }
 
+// WithDenylist makes VerifyAccess refuse tokens of sessions that logged out (and, if the denylist cannot be read, all
+// tokens: fail closed).
+func (t *Tokens) WithDenylist(d revocation.Denylist) *Tokens {
+	t.denylist = d
+	return t
+}
+
 // IssueAccess signs an access token for accountID with identity claims.
-func (t *Tokens) IssueAccess(accountID, email string, nikHash []byte, nikMasked string, now time.Time) (string, time.Time, error) {
+func (t *Tokens) IssueAccess(accountID, sessionID, email string, nikHash []byte, nikMasked string, now time.Time) (string, time.Time, error) {
 	exp := now.Add(t.ttl)
 	jti, err := Secrets{}.RefreshToken()
 	if err != nil {
@@ -129,6 +138,7 @@ func (t *Tokens) IssueAccess(accountID, email string, nikHash []byte, nikMasked 
 		Audience:  t.audience,
 		ID:        jti[:22],
 		Scope:     "buyer",
+		SessionID: sessionID,
 		IssuedAt:  now.Unix(),
 		ExpiresAt: exp.Unix(),
 		Email:     email,
@@ -145,7 +155,7 @@ func (t *Tokens) IssueAccess(accountID, email string, nikHash []byte, nikMasked 
 // VerifyAccess validates a Bearer token.
 func (t *Tokens) VerifyAccess(tok string) (string, error) {
 	c, err := t.verifier.Verify(tok, t.now())
-	if err != nil {
+	if err != nil || revocation.Check(t.denylist, c) != nil {
 		return "", inbound.ErrUnauthorized
 	}
 	return c.Subject, nil

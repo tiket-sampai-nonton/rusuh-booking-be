@@ -12,19 +12,19 @@ import (
 
 // PaymentHandler serves the customer-facing payment endpoints (payment.yaml).
 type PaymentHandler struct {
-	page         inbound.IGetPaymentPage
-	status       inbound.IGetPaymentStatus
-	attempt      inbound.ICreateAttempt
-	createToken  inbound.ICreatePageToken
-	exchange     inbound.IExchangePageToken
-	auth         *PayerAuth
-	secureCookie bool
+	page        inbound.IGetPaymentPage
+	status      inbound.IGetPaymentStatus
+	attempt     inbound.ICreateAttempt
+	createToken inbound.ICreatePageToken
+	exchange    inbound.IExchangePageToken
+	auth        *PayerAuth
 }
 
-// NewPaymentHandler wires the handler. secureCookie is false only for plain-http local development.
+// NewPaymentHandler wires the handler. The payment-page cookie is always Secure: it travels over https (browsers also
+// accept it on localhost); plain-http clients use the visitor token header instead.
 func NewPaymentHandler(page inbound.IGetPaymentPage, status inbound.IGetPaymentStatus, attempt inbound.ICreateAttempt,
-	createToken inbound.ICreatePageToken, exchange inbound.IExchangePageToken, auth *PayerAuth, secureCookie bool) *PaymentHandler {
-	return &PaymentHandler{page: page, status: status, attempt: attempt, createToken: createToken, exchange: exchange, auth: auth, secureCookie: secureCookie}
+	createToken inbound.ICreatePageToken, exchange inbound.IExchangePageToken, auth *PayerAuth) *PaymentHandler {
+	return &PaymentHandler{page: page, status: status, attempt: attempt, createToken: createToken, exchange: exchange, auth: auth}
 }
 
 // Register mounts the routes.
@@ -102,7 +102,7 @@ func (h *PaymentHandler) exchangePageToken(w stdhttp.ResponseWriter, r *stdhttp.
 	}
 	stdhttp.SetCookie(w, &stdhttp.Cookie{
 		Name: CookiePay, Value: s.Cookie, Path: "/", Expires: s.ExpiresAt,
-		HttpOnly: true, Secure: h.secureCookie, SameSite: stdhttp.SameSiteLaxMode,
+		HttpOnly: true, Secure: true, SameSite: stdhttp.SameSiteLaxMode,
 	})
 	noStore(w)
 	w.WriteHeader(stdhttp.StatusNoContent)

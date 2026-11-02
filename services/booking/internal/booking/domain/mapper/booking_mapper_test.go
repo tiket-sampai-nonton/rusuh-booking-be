@@ -49,11 +49,13 @@ func TestEventStatusFollowsTheSalesWindowAndStock(t *testing.T) {
 		e    entity.Event
 		want string
 	}{
-		"draft before sale":    {ev(entity.EventDraft, time.Hour, 2*time.Hour), "NOT_STARTED"},
-		"draft during sale":    {ev(entity.EventDraft, -time.Hour, time.Hour), "AVAILABLE"},
-		"available after sale": {ev(entity.EventAvailable, -2*time.Hour, -time.Hour), "CLOSED"},
-		"stored sold out wins": {ev(entity.EventSoldOut, -time.Hour, time.Hour), "SOLD_OUT"},
-		"stored closed wins":   {ev(entity.EventClosed, -time.Hour, time.Hour), "CLOSED"},
+		"draft before sale":     {ev(entity.EventDraft, time.Hour, 2*time.Hour), "NOT_STARTED"},
+		"draft during sale":     {ev(entity.EventDraft, -time.Hour, time.Hour), "AVAILABLE"},
+		"available after sale":  {ev(entity.EventAvailable, -2*time.Hour, -time.Hour), "CLOSED"},
+		"stored sold out wins":  {ev(entity.EventSoldOut, -time.Hour, time.Hour), "SOLD_OUT"},
+		"stored closed wins":    {ev(entity.EventClosed, -time.Hour, time.Hour), "CLOSED"},
+		"stored cancelled wins": {ev(entity.EventCancelled, -time.Hour, time.Hour), "CANCELLED"},
+		"cancelled before sale": {ev(entity.EventCancelled, time.Hour, 2*time.Hour), "CANCELLED"},
 	} {
 		assert.Equal(t, c.want, mapper.ToEventList([]entity.Event{c.e}, now).Events[0].Status, name)
 	}

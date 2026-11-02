@@ -156,3 +156,30 @@ func (r *EventWriteRepo) SetImageURL(ctx context.Context, eventID, kind, url str
 	}
 	return nil
 }
+
+// SetPublished publishes the event (published_at is kept when already published) or turns it back into a draft.
+func (r *EventWriteRepo) SetPublished(ctx context.Context, eventID string, published bool) error {
+	tag, err := r.pool.Exec(ctx, `
+		UPDATE booking.events
+		   SET published_at = CASE WHEN $2 THEN COALESCE(published_at, now()) ELSE NULL END
+		 WHERE id = $1::uuid`, eventID, published)
+	if err != nil {
+		return mapEventWriteErr(err, "events: set published")
+	}
+	if tag.RowsAffected() == 0 {
+		return inbound.ErrNotFound
+	}
+	return nil
+}
+
+// Cancel stores status CANCELLED (idempotent).
+func (r *EventWriteRepo) Cancel(ctx context.Context, eventID string) error {
+	tag, err := r.pool.Exec(ctx, `UPDATE booking.events SET status = 'CANCELLED' WHERE id = $1::uuid`, eventID)
+	if err != nil {
+		return mapEventWriteErr(err, "events: cancel")
+	}
+	if tag.RowsAffected() == 0 {
+		return inbound.ErrNotFound
+	}
+	return nil
+}

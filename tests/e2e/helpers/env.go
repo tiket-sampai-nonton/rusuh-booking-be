@@ -4,6 +4,7 @@ package helpers
 
 import (
 	"context"
+	"errors"
 	"os"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -22,7 +23,11 @@ type Env struct {
 
 // NewEnv builds Env from environment variables with local-dev defaults.
 func NewEnv(ctx context.Context) (*Env, error) {
-	dsn := getenv("TEST_POSTGRES_DSN", "postgres://rbt:rbt-local-only@localhost:5432/rbt?sslmode=disable")
+	// Tanpa nilai bawaan: kredensial DB tidak boleh ada di kode. `make test-e2e` mengisinya dari Makefile.
+	dsn := os.Getenv("TEST_POSTGRES_DSN")
+	if dsn == "" {
+		return nil, errors.New("TEST_POSTGRES_DSN wajib diisi (jalankan lewat make test-e2e)")
+	}
 	pool, err := pgxpool.New(ctx, dsn)
 	if err != nil {
 		return nil, err

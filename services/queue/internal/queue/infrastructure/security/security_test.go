@@ -1,7 +1,9 @@
 package security_test
 
 import (
+	"context"
 	"crypto/ed25519"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -10,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/revocation"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/token"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/infrastructure/security"
@@ -155,4 +158,59 @@ func TestVisitorAuthenticator_NoToken(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	_, ok := auth.Resolve(req)
 	assert.False(t, ok)
+}
+
+func TestTokenIssuer_ServiceTokenIsShortLivedCachedAndRenewed(t *testing.T) {
+	signer, verifier := newSigner(t)
+	iss := security.NewTokenIssuer(signer, "rbt-queue", "rbt", time.Minute, time.Hour, time.Hour)
+	t0 := time.Unix(1_700_000_000, 0)
+
+	first, err := iss.ServiceToken(t0)
+	require.NoError(t, err)
+	claims, err := verifier.Verify(first, t0)
+	require.NoError(t, err)
+	assert.Equal(t, "service", claims.Scope)
+	assert.Equal(t, "queue-service", claims.Subject)
+	assert.LessOrEqual(t, claims.ExpiresAt-claims.IssuedAt, int64(5*60), "token service maksimal 5 menit")
+
+	again, _ := iss.ServiceToken(t0.Add(2 * time.Minute))
+	assert.Equal(t, first, again, "dipakai ulang selama sisa umur masih panjang")
+
+	// Setelah 24 jam (umur token lama) tokennya harus baru dan valid, bukan token kedaluwarsa.
+	later := t0.Add(39 * time.Hour)
+	renewed, err := iss.ServiceToken(later)
+	require.NoError(t, err)
+	assert.NotEqual(t, first, renewed)
+	_, err = verifier.Verify(renewed, later)
+	assert.NoError(t, err, "token yang diperbarui harus lolos verifikasi")
+	_, err = verifier.Verify(first, later)
+	assert.Error(t, err, "token awal memang sudah kedaluwarsa")
+}
+
+type stubDenylist struct {
+	revoked map[string]bool
+	err     error
+}
+
+func (s stubDenylist) Revoke(context.Context, string, time.Duration) error { return nil }
+func (s stubDenylist) IsRevoked(_ context.Context, sid string) (bool, error) {
+	return s.revoked[sid], s.err
+}
+
+func TestUserTokenVerifier_RefusesLoggedOutSessionsAndFailsClosed(t *testing.T) {
+	signer, verifier := newSigner(t)
+	now := time.Now().UTC()
+	tok, err := signer.Sign(token.Claims{
+		Issuer: "rbt-queue", Subject: "acc1", Audience: "rbt", SessionID: "sess-1",
+		IssuedAt: now.Unix(), ExpiresAt: now.Add(time.Hour).Unix(), Email: "a@b.id",
+	})
+	require.NoError(t, err)
+	at := func() time.Time { return now }
+
+	_, err = security.NewUserTokenVerifier(verifier, at).WithDenylist(stubDenylist{revoked: map[string]bool{"sess-1": true}}).Verify(tok)
+	assert.ErrorIs(t, err, revocation.ErrRevoked, "pembeli yang sudah logout tidak diterima sebagai akun")
+	_, err = security.NewUserTokenVerifier(verifier, at).WithDenylist(stubDenylist{revoked: map[string]bool{"sess-lain": true}}).Verify(tok)
+	assert.NoError(t, err)
+	_, err = security.NewUserTokenVerifier(verifier, at).WithDenylist(stubDenylist{err: errors.New("valkey mati")}).Verify(tok)
+	assert.Error(t, err, "fail closed")
 }

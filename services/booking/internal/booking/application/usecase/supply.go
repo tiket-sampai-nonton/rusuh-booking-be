@@ -5,6 +5,7 @@ import (
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/domain/dto"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/domain/entity"
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/port/inbound"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/port/outbound"
 )
 
@@ -24,6 +25,9 @@ func (uc *GetEventSupply) GetSupply(ctx context.Context, eventID string) (dto.Su
 	if err != nil {
 		return dto.SupplySnapshot{}, err
 	}
+	if !detail.Event.Published {
+		return dto.SupplySnapshot{}, inbound.ErrNotFound // draf tidak boleh dijual: Queue menolak join
+	}
 
 	remaining := 0
 	cats := make([]dto.SupplyCategory, 0, len(detail.Categories))
@@ -37,7 +41,10 @@ func (uc *GetEventSupply) GetSupply(ctx context.Context, eventID string) (dto.Su
 		})
 	}
 
-	soldOut := detail.Event.Status == entity.EventSoldOut || remaining == 0
+	if detail.Event.Status == entity.EventCancelled {
+		remaining = 0 // dibatalkan: tidak ada tiket yang dijual
+	}
+	soldOut := detail.Event.Status == entity.EventSoldOut || detail.Event.Status == entity.EventCancelled || remaining == 0
 
 	return dto.SupplySnapshot{
 		EventID:          eventID,

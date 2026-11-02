@@ -62,6 +62,7 @@ type EventDetail struct {
 	MaxTicketsPerOrder    int            `json:"maxTicketsPerOrder"`
 	MaxTicketsPerBuyerNik int            `json:"maxTicketsPerBuyerNik"`
 	AllowMixedCategories  bool           `json:"allowMixedCategories"`
+	Published             bool           `json:"published"` // selalu true di katalog publik; draf hanya terlihat oleh admin
 	Categories            []CategoryView `json:"categories"`
 }
 

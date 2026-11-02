@@ -27,7 +27,7 @@ func NewAllocateBatch(admissions outbound.IAdmissionRepo, ids IDGen, clk clock.I
 // AllocateBatch validates the request and reserves each entry.
 func (uc *AllocateBatch) AllocateBatch(ctx context.Context, req dto.AllocationBatchRequest) (dto.AllocationBatchResponse, error) {
 	if !isUUID(req.EventID) {
-		return dto.AllocationBatchResponse{}, inbound.Validation("eventId", "eventId harus UUID")
+		return dto.AllocationBatchResponse{}, inbound.Validation("eventId", errEventIDNotUUID)
 	}
 	if len(req.Entries) == 0 {
 		return dto.AllocationBatchResponse{}, inbound.Validation("entries", "minimal satu entry")

@@ -14,6 +14,7 @@ import (
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/apperror"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/clock"
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/revocation"
 
 	mock_outbound "github.com/tiket-sampai-nonton/rusuh-booking-be/services/user/_mock/user/port/outbound"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/user/internal/user/domain/dto"
@@ -169,7 +170,7 @@ func expectSession(m mocks, rotateFrom string, email string) {
 		m.sessions.EXPECT().Rotate(gomock.Any(), rotateFrom, gomock.Any(), now).Return(sess, nil)
 	}
 	m.accounts.EXPECT().GetNIKHashByID(gomock.Any(), "acc-1").Return(nil, nil) // no NIK
-	m.tokens.EXPECT().IssueAccess("acc-1", email, nil, gomock.Any(), now).Return("access-jwt", now.Add(15*time.Minute), nil)
+	m.tokens.EXPECT().IssueAccess("acc-1", "s-2", email, nil, gomock.Any(), now).Return("access-jwt", now.Add(15*time.Minute), nil)
 }
 
 func TestVerifyOTP_ExistingAccount(t *testing.T) {
@@ -318,7 +319,7 @@ func TestOpenSession_Failures(t *testing.T) {
 		m.secrets.EXPECT().RefreshToken().Return("r", nil)
 		m.sessions.EXPECT().Create(gomock.Any(), gomock.Any()).Return(entity.Session{ID: "s"}, nil)
 		m.accounts.EXPECT().GetNIKHashByID(gomock.Any(), "acc-1").Return(nil, nil)
-		m.tokens.EXPECT().IssueAccess(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return("", time.Time{}, errors.New("sign"))
+		m.tokens.EXPECT().IssueAccess(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return("", time.Time{}, errors.New("sign"))
 		_, err := u.openSession(ctx, activeAcc, email, client, now, "")
 		assert.Equal(t, apperror.CodeInternal, code(err))
 	})
@@ -450,7 +451,37 @@ func TestLogout(t *testing.T) {
 		m.sessions.EXPECT().Revoke(gomock.Any(), gomock.Any(), gomock.Any()).Return(errors.New("db"))
 		assert.Equal(t, apperror.CodeInternal, code(u.Logout(ctx, req, client)))
 	})
+	t.Run("access token of the session is revoked for its remaining life", func(t *testing.T) {
+		u, m := newAuth(t)
+		deny := &fakeDenylist{}
+		u.d.Denylist, u.s.AccessTTL = deny, 15*time.Minute
+		m.sessions.EXPECT().FindByTokenHash(gomock.Any(), []byte("h:tok")).Return(active, true, nil)
+		m.sessions.EXPECT().Revoke(gomock.Any(), "s-1", now).Return(nil)
+		m.audit.EXPECT().Record(gomock.Any(), gomock.Any()).Return(nil)
+		assert.NoError(t, u.Logout(ctx, req, client))
+		assert.Equal(t, "s-1", deny.sid)
+		assert.Equal(t, 15*time.Minute+revocation.Leeway, deny.ttl, "umur access token ditambah jeda; tidak lebih lama")
+	})
+	t.Run("denylist write failure is reported so the client retries", func(t *testing.T) {
+		u, m := newAuth(t)
+		u.d.Denylist = &fakeDenylist{err: errors.New("valkey")}
+		m.sessions.EXPECT().FindByTokenHash(gomock.Any(), gomock.Any()).Return(active, true, nil)
+		m.sessions.EXPECT().Revoke(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+		assert.Equal(t, apperror.CodeInternal, code(u.Logout(ctx, req, client)))
+	})
 }
+
+type fakeDenylist struct {
+	sid string
+	ttl time.Duration
+	err error
+}
+
+func (f *fakeDenylist) Revoke(_ context.Context, sid string, ttl time.Duration) error {
+	f.sid, f.ttl = sid, ttl
+	return f.err
+}
+func (f *fakeDenylist) IsRevoked(context.Context, string) (bool, error) { return false, nil }
 
 func TestAuditFailureDoesNotBreakFlow(t *testing.T) {
 	ctrl := gomock.NewController(t)

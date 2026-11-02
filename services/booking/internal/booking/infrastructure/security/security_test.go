@@ -1,14 +1,17 @@
 package security_test
 
 import (
+	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/revocation"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/token"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/infrastructure/security"
@@ -144,4 +147,43 @@ func TestTicketLinks_BoundToTheBookingAndTheKey(t *testing.T) {
 
 	_, err = security.NewTicketLinks([]byte("pendek"))
 	assert.Error(t, err)
+}
+
+type stubDenylist struct {
+	revoked map[string]bool
+	err     error
+}
+
+func (s stubDenylist) Revoke(context.Context, string, time.Duration) error { return nil }
+func (s stubDenylist) IsRevoked(_ context.Context, sid string) (bool, error) {
+	return s.revoked[sid], s.err
+}
+
+// SCRUM-53: an admin who logged out must not keep admin rights until exp; an unreadable denylist refuses everyone.
+func TestAdminAndBuyerVerifiers_RefuseLoggedOutSessionsAndFailClosed(t *testing.T) {
+	v, sign := signer(t)
+	adminTok := sign(token.Claims{Subject: "a1", Scope: "buyer", Email: "admin@contoh.id", SessionID: "sess-1"})
+	oldTok := sign(token.Claims{Subject: "a1", Scope: "buyer", Email: "admin@contoh.id"}) // tanpa sid (sebelum fitur ini)
+
+	loggedOut := stubDenylist{revoked: map[string]bool{"sess-1": true}}
+	adm := security.NewAdminVerifier(v, time.Now, []string{"admin@contoh.id"}).WithDenylist(loggedOut)
+	_, err := adm.VerifyAccess(adminTok)
+	assert.ErrorIs(t, err, revocation.ErrRevoked, "admin yang sudah logout ditolak")
+	_, err = adm.VerifyAccess(oldTok)
+	assert.NoError(t, err, "token lama tanpa sid tetap berlaku sampai exp")
+
+	buyer := security.NewBearerVerifier(v, time.Now, security.ScopeBuyer).WithDenylist(loggedOut)
+	_, err = buyer.VerifyAccess(sign(token.Claims{Subject: "b1", Scope: "buyer", SessionID: "sess-1"}))
+	assert.ErrorIs(t, err, revocation.ErrRevoked)
+	sub, err := buyer.VerifyAccess(sign(token.Claims{Subject: "b2", Scope: "buyer", SessionID: "sess-2"}))
+	require.NoError(t, err)
+	assert.Equal(t, "b2", sub, "sesi lain tidak terpengaruh")
+
+	down := security.NewAdminVerifier(v, time.Now, []string{"admin@contoh.id"}).WithDenylist(stubDenylist{err: errors.New("valkey mati")})
+	_, err = down.VerifyAccess(adminTok)
+	assert.Error(t, err, "fail closed untuk admin bila denylist tidak bisa dibaca")
+
+	none := security.NewAdminVerifier(v, time.Now, []string{"admin@contoh.id"}).WithDenylist(nil)
+	_, err = none.VerifyAccess(adminTok)
+	assert.NoError(t, err, "tanpa denylist (tidak dikonfigurasi) perilaku lama")
 }

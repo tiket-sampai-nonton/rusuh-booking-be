@@ -37,6 +37,7 @@ var errMappings = []errMapping{
 	{entity.ErrNikRequired, CodeNikRequired, http.StatusUnprocessableEntity},
 	{entity.ErrEmailMismatch, CodeEmailMismatch, http.StatusUnprocessableEntity},
 	{entity.ErrConsentNik, apperror.CodeValidationFailed, http.StatusBadRequest},
+	{entity.ErrEmailInvalid, apperror.CodeValidationFailed, http.StatusBadRequest},
 	{entity.ErrNikInQueue, CodeNikInQueue, http.StatusConflict},
 	{entity.ErrVisitorInQueue, CodeVisitorInQueue, http.StatusConflict},
 	{entity.ErrEmailInQueue, CodeEmailInQueue, http.StatusConflict},

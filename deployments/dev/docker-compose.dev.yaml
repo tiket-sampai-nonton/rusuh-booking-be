@@ -44,6 +44,7 @@ services:
     image: postgres:16-alpine
     restart: unless-stopped
     env_file: ["${RUSUH_DIR:-/opt/rusuh}/env/postgres.env"]
+    ports: ["127.0.0.1:5432:5432"]   # hanya loopback server; dijangkau dari laptop lewat dev-tunnel.sh
     volumes:
       - ../compose/postgres-init.sql:/docker-entrypoint-initdb.d/00-init.sql:ro
       - ./postgres-passwords.sh:/docker-entrypoint-initdb.d/01-passwords.sh:ro
@@ -60,6 +61,7 @@ services:
     image: valkey/valkey:8.1-alpine
     restart: unless-stopped
     env_file: ["${RUSUH_DIR:-/opt/rusuh}/env/valkey.env"]
+    ports: ["127.0.0.1:6379:6379"]   # hanya loopback server; lihat dev-tunnel.sh
     # noeviction: Valkey memegang state antrean; lebih baik menolak tulis daripada membuang data.
     command: ["sh", "-c", "exec valkey-server --requirepass \"$$VALKEY_PASSWORD\" --maxmemory 200mb --maxmemory-policy noeviction --appendonly yes"]
     volumes: [valkeydata:/data]
@@ -131,6 +133,7 @@ services:
     command: ["api"]
     env_file: ["${RUSUH_DIR:-/opt/rusuh}/env/booking.env"]
     expose: ["8082"]
+    ports: ["127.0.0.1:8082:8082"]   # API admin lewat tunnel (Caddy tidak bisa membatasi IP di belakang gateway)
     volumes:
       - ${RUSUH_DIR:-/opt/rusuh}/keys:/run/keys:ro
       - ${RUSUH_DIR:-/opt/rusuh}/data/images:/data/images

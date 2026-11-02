@@ -18,6 +18,7 @@ const (
 	EventAvailable  EventStatus = "AVAILABLE"
 	EventSoldOut    EventStatus = "SOLD_OUT"
 	EventClosed     EventStatus = "CLOSED"
+	EventCancelled  EventStatus = "CANCELLED" // dibatalkan penyelenggara; tersimpan, mengalahkan status turunan waktu
 )
 
 // Event is the catalog + config aggregate (events table).
@@ -50,6 +51,10 @@ type Event struct {
 	SelectionEditEnabled bool
 	MaxSelectionEdits    int
 	SubmitGraceSeconds   int
+
+	// Published is false while the event is a draft (published_at empty, migrasi 0007): drafts are hidden from the
+	// public catalog and cannot be sold. Availability (NOT_STARTED/AVAILABLE/CLOSED) is derived separately.
+	Published bool
 
 	// MinPriceMinor is the catalog minimum price across categories (derived, not a column).
 	MinPriceMinor int64

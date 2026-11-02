@@ -36,6 +36,7 @@ const (
 	CodeDeadlineAlreadyExtended apperror.Code = "DEADLINE_ALREADY_EXTENDED"
 	CodeRulesLocked             apperror.Code = "EVENT_RULES_LOCKED"
 	CodeSupplyMismatch          apperror.Code = "SUPPLY_CATEGORY_MISMATCH"
+	CodeEventCancelled          apperror.Code = "EVENT_CANCELLED"
 )
 
 // Domain errors (design §11). Each carries the exact errorCode + HTTP status.
@@ -65,6 +66,7 @@ var (
 	ErrDeadlineAlreadyExtended = apperror.New(CodeDeadlineAlreadyExtended, http.StatusConflict, "batas waktu sudah pernah diperpanjang")
 	ErrRulesLocked             = apperror.New(CodeRulesLocked, http.StatusConflict, "aturan event sudah terkunci")
 	ErrSupplyMismatch          = apperror.New(CodeSupplyMismatch, http.StatusConflict, "total kapasitas tidak cocok dengan jumlah kategori")
+	ErrEventCancelled          = apperror.New(CodeEventCancelled, http.StatusConflict, "event dibatalkan; penjualan dihentikan")
 )
 
 // Validation returns a VALIDATION_ERROR (400) with the failing field in details.

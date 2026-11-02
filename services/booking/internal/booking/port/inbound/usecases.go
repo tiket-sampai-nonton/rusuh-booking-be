@@ -40,6 +40,18 @@ type IUpdateEventConfigUsecase interface {
 	Update(ctx context.Context, eventID string, req dto.UpdateEventConfigRequest) error
 }
 
+// IPublishEventUsecase publishes, unpublishes, or cancels an event (admin).
+type IPublishEventUsecase interface {
+	Publish(ctx context.Context, eventID string) error
+	Unpublish(ctx context.Context, eventID string) error
+	Cancel(ctx context.Context, eventID string) error
+}
+
+// IAdminEventDetailGetter returns an event including drafts (admin).
+type IAdminEventDetailGetter interface {
+	GetAdminEventDetail(ctx context.Context, eventID string) (dto.EventDetail, error)
+}
+
 // IAllocationUsecase reserves admissions for a batch of queue entries (internal, called by Queue).
 type IAllocationUsecase interface {
 	AllocateBatch(ctx context.Context, req dto.AllocationBatchRequest) (dto.AllocationBatchResponse, error)

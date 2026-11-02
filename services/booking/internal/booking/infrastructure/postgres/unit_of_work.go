@@ -1013,6 +1013,9 @@ func mapHoldErr(err error) error {
 			return inbound.ErrNikRegistered
 		case "uq_booking_item_nik_active":
 			return inbound.ErrNikDuplicate
+		case "bookings_admission_id_key":
+			// Satu admission (sesi) hanya boleh menjadi satu booking; hold kedua dengan key baru bukan 500.
+			return inbound.ErrAdmissionToken
 		}
 	}
 	return err

@@ -12,6 +12,7 @@ import (
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/clock"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/crypto"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/rabbitmq"
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/revocation"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/token"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/user/internal/config"
@@ -82,7 +83,8 @@ func newUserModule(cfg config.Config, clients *Clients, logger *slog.Logger) (re
 		return nil, fmt.Errorf("user: rabbitmq publisher: %w", err)
 	}
 	publisher := userrabbitmq.NewOTPPublisher(rmqPub)
-	tokens := security.NewTokens(signer, verifier, cfg.Token.Issuer, cfg.Token.Audience, cfg.Token.AccessTTL, clk.Now)
+	denylist := revocation.NewStore(clients.VK.VK(), clients.VK) // logout mencabut access token sesi itu (SCRUM-53)
+	tokens := security.NewTokens(signer, verifier, cfg.Token.Issuer, cfg.Token.Audience, cfg.Token.AccessTTL, clk.Now).WithDenylist(denylist)
 	accounts := userpg.NewAccounts(clients.PG.Pool())
 
 	auth := usecase.NewAuth(usecase.AuthDeps{
@@ -97,9 +99,11 @@ func newUserModule(cfg config.Config, clients *Clients, logger *slog.Logger) (re
 		PII:       pii,
 		Clock:     clk,
 		Logger:    logger,
+		Denylist:  denylist,
 	}, usecase.AuthSettings{
 		OTPTTL: cfg.OTP.TTL, ResendCooldown: cfg.OTP.ResendCooldown, MaxAttempts: cfg.OTP.MaxAttempts,
 		MaxPerEmailHour: cfg.OTP.MaxPerEmailHour, MaxPerIPHour: cfg.OTP.MaxPerIPHour, RefreshTTL: cfg.Token.RefreshTTL,
+		AccessTTL: cfg.Token.AccessTTL,
 	})
 	profile := usecase.NewProfile(accounts, pii, clk)
 	// Di luar lokal service berada di belakang ALB: IP klien diambil dari X-Forwarded-For.

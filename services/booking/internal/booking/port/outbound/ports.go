@@ -28,6 +28,15 @@ type IEventWriteRepo interface {
 	SetImageURL(ctx context.Context, eventID, kind, url string) error
 }
 
+// IEventPublicationRepo switches an event between draft and published and cancels it (admin operations).
+type IEventPublicationRepo interface {
+	// SetPublished publishes (published_at = now, unchanged when already published) or unpublishes the event;
+	// inbound.ErrNotFound for an unknown event.
+	SetPublished(ctx context.Context, eventID string, published bool) error
+	// Cancel marks the event CANCELLED (idempotent); inbound.ErrNotFound for an unknown event.
+	Cancel(ctx context.Context, eventID string) error
+}
+
 // IImageStore saves an uploaded image under key and returns its public URL.
 type IImageStore interface {
 	Put(ctx context.Context, key, contentType string, body []byte) (string, error)

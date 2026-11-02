@@ -14,6 +14,7 @@ import (
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/clock"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/crypto"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/httpx"
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/revocation"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/token"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/application/usecase"
@@ -71,7 +72,11 @@ func newBookingModule(cfg config.Config, clients *Clients, logger *slog.Logger) 
 	if err != nil {
 		return nil, err
 	}
-	tv := buildTokenVerifiers(clk.Now)
+	var denylist revocation.Denylist // logout mencabut access token pembeli dan admin (SCRUM-53)
+	if clients.VK != nil {
+		denylist = revocation.NewStore(clients.VK.VK(), clients.VK)
+	}
+	tv := buildTokenVerifiers(clk.Now, denylist)
 	admissionVerifier, visitorVerifier := tv.admission, tv.queue
 	paymentClient := paymentclient.New(os.Getenv("PAYMENT_SERVICE_URL"), buildPaymentAuthorizer(logger, clk.Now))
 	paymentAuth := buildPaymentAuth(logger, clk.Now)
@@ -114,7 +119,8 @@ func newBookingModule(cfg config.Config, clients *Clients, logger *slog.Logger) 
 	if err != nil {
 		return nil, err
 	}
-	adminHandler := bookinghttp.NewAdminHandler(createEvent, updateConfig, tv.admin).WithImages(usecase.NewUploadEventImage(eventWriteRepo, store))
+	adminHandler := bookinghttp.NewAdminHandler(createEvent, updateConfig, tv.admin).WithImages(usecase.NewUploadEventImage(eventWriteRepo, store)).
+		WithPublication(usecase.NewPublishEvent(eventRepo, eventWriteRepo, clk), getDetail)
 	regs := []registrar{
 		bookinghttp.NewCatalogHandler(listEvents, getDetail),
 		bookinghttp.NewSessionHandler(sessions, attendee, cancelSess),
@@ -216,7 +222,7 @@ type tokenVerifiers struct {
 	admin     *security.BearerVerifier // buyer token of an allow-listed email (ADMIN_EMAILS)
 }
 
-func buildTokenVerifiers(now func() time.Time) tokenVerifiers {
+func buildTokenVerifiers(now func() time.Time, denylist revocation.Denylist) tokenVerifiers {
 	// Queue public key: verifies admission tokens, visitor tokens, and the Queue's service token.
 	queueVerifier := loadVerifier(
 		os.Getenv("TOKEN_PUBLIC_KEY_PATH"),
@@ -237,8 +243,8 @@ func buildTokenVerifiers(now func() time.Time) tokenVerifiers {
 		queue:     queueVerifier,
 		admission: security.NewAdmissionVerifier(queueVerifier, now),
 		service:   security.NewBearerVerifier(queueVerifier, now, security.ScopeService),
-		buyer:     security.NewBearerVerifier(userVerifier, now, security.ScopeBuyer),
-		admin:     security.NewAdminVerifier(userVerifier, now, strings.Split(os.Getenv("ADMIN_EMAILS"), ",")),
+		buyer:     security.NewBearerVerifier(userVerifier, now, security.ScopeBuyer).WithDenylist(denylist),
+		admin:     security.NewAdminVerifier(userVerifier, now, strings.Split(os.Getenv("ADMIN_EMAILS"), ",")).WithDenylist(denylist),
 	}
 }
 
