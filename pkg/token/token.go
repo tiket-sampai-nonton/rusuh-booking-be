@@ -28,6 +28,7 @@ type Claims struct {
 	Subject   string `json:"sub"`
 	Audience  string `json:"aud"`
 	ID        string `json:"jti,omitempty"`
+	SessionID string `json:"sid,omitempty"` // sesi login User Service; dipakai untuk mencabut access token saat logout
 	Scope     string `json:"scope,omitempty"`
 	IssuedAt  int64  `json:"iat"`
 	NotBefore int64  `json:"nbf,omitempty"`
