@@ -41,13 +41,13 @@ case "$mode" in
     done
     ;;
   image)
-    for d in "$dir"/scan-*; do
-      [ -d "$d" ] || continue
+    # Satu artifact cocok dengan pola scan-* diekstrak langsung ke $dir (tanpa subfolder scan-<service>), jadi cari berdasarkan nama file.
+    while IFS= read -r f; do
       found=1
-      name="${d##*/scan-}"
-      count "$d/trivy-${name}.json" "$name image (${IMAGE_FAIL_SEVERITY:-CRITICAL})" \
+      name="${f##*/trivy-}"; name="${name%.json}"
+      count "$f" "$name image (${IMAGE_FAIL_SEVERITY:-CRITICAL})" \
         '[.Results[]?.Vulnerabilities[]? | select(.Severity as $s | ($sev | split(",") | index($s)) != null)] | length'
-    done
+    done < <(find "$dir" -name 'trivy-*.json' | sort)
     ;;
   *)
     echo "mode tidak dikenal: $mode" >&2
