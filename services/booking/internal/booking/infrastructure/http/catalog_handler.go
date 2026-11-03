@@ -14,11 +14,11 @@ import (
 type CatalogHandler struct {
 	list   inbound.IEventCatalogUsecase
 	detail inbound.IEventDetailUsecase
-	facets inbound.IEventFacetsUsecase
+	facets inbound.IEventFacetsProvider
 }
 
 // NewCatalogHandler wires the handler.
-func NewCatalogHandler(list inbound.IEventCatalogUsecase, detail inbound.IEventDetailUsecase, facets inbound.IEventFacetsUsecase) *CatalogHandler {
+func NewCatalogHandler(list inbound.IEventCatalogUsecase, detail inbound.IEventDetailUsecase, facets inbound.IEventFacetsProvider) *CatalogHandler {
 	return &CatalogHandler{list: list, detail: detail, facets: facets}
 }
 
