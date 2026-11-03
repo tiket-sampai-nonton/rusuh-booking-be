@@ -11,7 +11,7 @@ import (
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/port/outbound"
 )
 
-// AllocateBatch reserves admissions for a batch of queue entries (invariant #2 — Jangan PHP). The
+// allocateBatch reserves admissions for a batch of queue entries (invariant #2 — Jangan PHP). The
 // reservation is atomic per batch and idempotent per queue_entry_id (handled by the repository).
 type AllocateBatch struct {
 	admissions outbound.IAdmissionRepo
