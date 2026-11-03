@@ -59,6 +59,20 @@ func ToEventList(events []entity.Event, now time.Time) dto.EventList {
 	return out
 }
 
+// ToEventFacets maps the distinct catalog filter values. Both fields are guaranteed non-nil arrays
+// (kontrak: cities/genres selalu array, [] bila kosong, bukan null) — mirrors ToEventSummary genres.
+func ToEventFacets(f entity.EventFacets) dto.EventFacets {
+	cities := f.Cities
+	if cities == nil {
+		cities = []string{}
+	}
+	genres := f.Genres
+	if genres == nil {
+		genres = []string{}
+	}
+	return dto.EventFacets{Cities: cities, Genres: genres}
+}
+
 // summaryWithStock is the event summary of a detail view, where stock is known: no category left means SOLD_OUT.
 func summaryWithStock(d entity.EventDetail, now time.Time) dto.EventSummary {
 	s := ToEventSummary(d.Event, now)

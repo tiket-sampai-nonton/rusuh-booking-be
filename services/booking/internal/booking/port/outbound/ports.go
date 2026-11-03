@@ -18,6 +18,7 @@ type IEventRepo interface {
 	ListEvents(ctx context.Context, q dto.EventListQuery) ([]entity.Event, error)
 	GetDetail(ctx context.Context, eventID string) (entity.EventDetail, error)
 	GetByID(ctx context.Context, eventID string) (entity.Event, error)
+	Facets(ctx context.Context, q dto.EventListQuery) (entity.EventFacets, int, error)
 }
 
 // IEventWriteRepo creates and configures events (admin operations).

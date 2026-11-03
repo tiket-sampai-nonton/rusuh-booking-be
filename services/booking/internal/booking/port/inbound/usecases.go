@@ -22,6 +22,12 @@ type IEventDetailUsecase interface {
 	GetEventDetail(ctx context.Context, eventID string) (dto.EventDetail, error)
 }
 
+// IEventFacetsProvider lists the catalog filter values (cities, genres) as a drill-down over the current
+// event-list query: each facet reflects the other active filters but not its own.
+type IEventFacetsProvider interface {
+	GetFacets(ctx context.Context, q dto.EventListQuery) (dto.EventFacets, error)
+}
+
 // ICreateEventUsecase creates a new event with categories and supply.
 type ICreateEventUsecase interface {
 	Create(ctx context.Context, req dto.CreateEventRequest) (string, error)

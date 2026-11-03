@@ -6,6 +6,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
+	"strconv"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -51,6 +53,51 @@ func scanEvent(row pgx.Row, minPrice *int64) (entity.Event, error) {
 	return e, err
 }
 
+// eventFilterWhere is the catalog filter predicate shared by ListEvents and ListFacets so both endpoints
+// agree on exactly what "visible, matching the query" means (single source of truth, not duplicated).
+// Positional params, in order: $1 status, $2 city, $3 timeframe, $4 genres::text[], $5 startUTC, $6 endUTC.
+// The published + non-cancelled floor is always applied. Callers that want a drill-down facet zero out the
+// dimension being listed (city="" or genres=nil) via filterArgs before binding.
+const eventFilterWhere = `
+		 WHERE ($1 = 'ALL' OR (CASE WHEN e.status IN ('SOLD_OUT','CLOSED','CANCELLED') THEN e.status
+		                            WHEN now() < e.sales_starts_at THEN 'NOT_STARTED'
+		                            WHEN now() > e.sales_ends_at THEN 'CLOSED'
+		                            ELSE 'AVAILABLE' END) = $1)
+		   AND ($2 = '' OR lower(e.city) = lower($2))
+		   AND ($3 = 'ALL'
+		        OR ($3 = 'UPCOMING'   AND (e.starts_at AT TIME ZONE 'Asia/Jakarta')::date >= (now() AT TIME ZONE 'Asia/Jakarta')::date)
+		        OR ($3 = 'THIS_WEEK'  AND date_trunc('week',  e.starts_at AT TIME ZONE 'Asia/Jakarta') = date_trunc('week',  now() AT TIME ZONE 'Asia/Jakarta'))
+		        OR ($3 = 'THIS_MONTH' AND date_trunc('month', e.starts_at AT TIME ZONE 'Asia/Jakarta') = date_trunc('month', now() AT TIME ZONE 'Asia/Jakarta')))
+		   AND (cardinality($4::text[]) = 0 OR e.genre && $4::text[])
+		   AND ($5::timestamptz IS NULL OR e.starts_at >= $5::timestamptz)
+		   AND ($6::timestamptz IS NULL OR e.starts_at <  $6::timestamptz)
+		   AND e.published_at IS NOT NULL
+		   AND (e.status <> 'CANCELLED' OR $1 = 'CANCELLED')`
+
+// filterArgs returns the six positional args for eventFilterWhere, in order, from the query.
+func filterArgs(q dto.EventListQuery) []any {
+	return []any{orAll(q.Status), q.City, orAll(q.Timeframe), genresParam(q.Genres), q.StartUTC, q.EndUTC}
+}
+
+// filterWhereAt returns eventFilterWhere with its $1..$6 placeholders shifted to start at base+1, so the
+// same single-source predicate can be reused several times in one statement, each bound to its own arg
+// block. base=0 yields the original $1..$6; base=6 yields $7..$12; base=12 yields $13..$18. Keeping one
+// predicate constant and renumbering it (rather than copying the SQL) preserves the single source of truth.
+func filterWhereAt(base int) string {
+	if base == 0 {
+		return eventFilterWhere
+	}
+	// Match a whole $N token (one or more digits) and shift it, so renumbering never corrupts a multi-digit
+	// placeholder (a naive per-number string replace would turn $1 inside $13 into garbage).
+	return placeholderRe.ReplaceAllStringFunc(eventFilterWhere, func(tok string) string {
+		n, _ := strconv.Atoi(tok[1:])
+		return fmt.Sprintf("$%d", base+n)
+	})
+}
+
+// placeholderRe matches a positional parameter token like $1 or $12.
+var placeholderRe = regexp.MustCompile(`\$\d+`)
+
 // ListEvents returns catalog rows filtered by the query.
 func (r *EventRepo) ListEvents(ctx context.Context, q dto.EventListQuery) ([]entity.Event, error) {
 	order := "e.starts_at ASC, e.id"
@@ -67,25 +114,11 @@ func (r *EventRepo) ListEvents(ctx context.Context, q dto.EventListQuery) ([]ent
 	sql := fmt.Sprintf(`
 		SELECT %s, COALESCE(MIN(c.price_minor), 0) AS min_price_minor
 		  FROM booking.events e
-		  LEFT JOIN booking.ticket_categories c ON c.event_id = e.id
-		 WHERE ($1 = 'ALL' OR (CASE WHEN e.status IN ('SOLD_OUT','CLOSED','CANCELLED') THEN e.status
-		                            WHEN now() < e.sales_starts_at THEN 'NOT_STARTED'
-		                            WHEN now() > e.sales_ends_at THEN 'CLOSED'
-		                            ELSE 'AVAILABLE' END) = $1)
-		   AND ($2 = '' OR lower(e.city) = lower($2))
-		   AND ($3 = 'ALL'
-		        OR ($3 = 'UPCOMING'   AND (e.starts_at AT TIME ZONE 'Asia/Jakarta')::date >= (now() AT TIME ZONE 'Asia/Jakarta')::date)
-		        OR ($3 = 'THIS_WEEK'  AND date_trunc('week',  e.starts_at AT TIME ZONE 'Asia/Jakarta') = date_trunc('week',  now() AT TIME ZONE 'Asia/Jakarta'))
-		        OR ($3 = 'THIS_MONTH' AND date_trunc('month', e.starts_at AT TIME ZONE 'Asia/Jakarta') = date_trunc('month', now() AT TIME ZONE 'Asia/Jakarta')))
-		   AND (cardinality($4::text[]) = 0 OR e.genre && $4::text[])
-		   AND ($5::timestamptz IS NULL OR e.starts_at >= $5::timestamptz)
-		   AND ($6::timestamptz IS NULL OR e.starts_at <  $6::timestamptz)
-		   AND e.published_at IS NOT NULL
-		   AND (e.status <> 'CANCELLED' OR $1 = 'CANCELLED')
+		  LEFT JOIN booking.ticket_categories c ON c.event_id = e.id%s
 		 GROUP BY e.id
-		 ORDER BY %s`, eventCols, order)
+		 ORDER BY %s`, eventCols, eventFilterWhere, order)
 
-	rows, err := r.pool.Query(ctx, sql, orAll(q.Status), q.City, orAll(q.Timeframe), genresParam(q.Genres), q.StartUTC, q.EndUTC)
+	rows, err := r.pool.Query(ctx, sql, filterArgs(q)...)
 	if err != nil {
 		return nil, fmt.Errorf("events: list: %w", err)
 	}
@@ -101,6 +134,47 @@ func (r *EventRepo) ListEvents(ctx context.Context, q dto.EventListQuery) ([]ent
 		out = append(out, e)
 	}
 	return out, rows.Err()
+}
+
+// Facets returns, in a single round-trip, the drill-down city and genre values plus the count of events
+// matching the full query. All three reuse the one shared filter predicate (eventFilterWhere, renumbered
+// per block) so facet values always agree with what ListEvents can show. Drill-down is intrinsic: the
+// cities block applies every filter except city ($2 blanked), the genres block every filter except genres
+// ($10 → empty array). The count applies the full, unmodified filter — the caller uses it for the option-c
+// empty guard (count 0 ⇒ facets must read empty). Results are distinct and sorted.
+//
+// Param layout: $1..$6 full (count), $7..$12 city-dropped (cities), $13..$18 genres-dropped (genres).
+func (r *EventRepo) Facets(ctx context.Context, q dto.EventListQuery) (entity.EventFacets, int, error) {
+	cityQ := q
+	cityQ.City = "" // drill-down: cities ignore the city filter
+	genreQ := q
+	genreQ.Genres = nil // drill-down: genres ignore the genres filter
+
+	sql := `
+		WITH cnt AS (
+			SELECT count(*) AS n FROM booking.events e` + filterWhereAt(0) + `
+		), cities AS (
+			SELECT DISTINCT e.city AS v FROM booking.events e` + filterWhereAt(6) + `
+			   AND e.city <> ''
+		), genres AS (
+			SELECT DISTINCT g AS v FROM booking.events e, unnest(e.genre) AS g` + filterWhereAt(12) + `
+		)
+		SELECT
+			(SELECT n FROM cnt) AS total,
+			COALESCE((SELECT array_agg(v ORDER BY v) FROM cities), '{}') AS cities,
+			COALESCE((SELECT array_agg(v ORDER BY v) FROM genres), '{}') AS genres`
+
+	args := make([]any, 0, 18)
+	args = append(args, filterArgs(q)...)      // $1..$6  full
+	args = append(args, filterArgs(cityQ)...)  // $7..$12 city-dropped
+	args = append(args, filterArgs(genreQ)...) // $13..$18 genres-dropped
+
+	var out entity.EventFacets
+	var n int
+	if err := r.pool.QueryRow(ctx, sql, args...).Scan(&n, &out.Cities, &out.Genres); err != nil {
+		return entity.EventFacets{}, 0, fmt.Errorf("events: facets: %w", err)
+	}
+	return out, n, nil
 }
 
 // GetByID returns one event or inbound.ErrNotFound.

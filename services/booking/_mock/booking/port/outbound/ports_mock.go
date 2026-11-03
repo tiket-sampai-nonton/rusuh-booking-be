@@ -44,6 +44,22 @@ func (m *MockIEventRepo) EXPECT() *MockIEventRepoMockRecorder {
 	return m.recorder
 }
 
+// Facets mocks base method.
+func (m *MockIEventRepo) Facets(ctx context.Context, q dto.EventListQuery) (entity.EventFacets, int, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Facets", ctx, q)
+	ret0, _ := ret[0].(entity.EventFacets)
+	ret1, _ := ret[1].(int)
+	ret2, _ := ret[2].(error)
+	return ret0, ret1, ret2
+}
+
+// Facets indicates an expected call of Facets.
+func (mr *MockIEventRepoMockRecorder) Facets(ctx, q any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Facets", reflect.TypeOf((*MockIEventRepo)(nil).Facets), ctx, q)
+}
+
 // GetByID mocks base method.
 func (m *MockIEventRepo) GetByID(ctx context.Context, eventID string) (entity.Event, error) {
 	m.ctrl.T.Helper()

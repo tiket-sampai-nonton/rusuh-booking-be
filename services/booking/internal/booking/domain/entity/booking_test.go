@@ -55,6 +55,16 @@ func TestBooking_LockAndEdit(t *testing.T) {
 	assert.False(t, b.CanEdit())
 }
 
+func TestBooking_IsExpired(t *testing.T) {
+	now := time.Now().UTC()
+	b := entity.Booking{PaymentExpiresAt: now.Add(time.Minute)}
+	assert.False(t, b.IsExpired(now), "before the deadline the window is open")
+	assert.False(t, b.IsExpired(now.Add(59*time.Second)), "one second before deadline is still open")
+	// IsExpired uses !now.Before(deadline), so the exact deadline instant counts as expired (inclusive).
+	assert.True(t, b.IsExpired(b.PaymentExpiresAt), "at the exact deadline the window is closed")
+	assert.True(t, b.IsExpired(now.Add(2*time.Minute)), "past the deadline the window is closed")
+}
+
 func TestInventoryAndSupply(t *testing.T) {
 	inv := entity.Inventory{Capacity: 50, HeldQuantity: 30, SoldQuantity: 15}
 	assert.Equal(t, 5, inv.Available())

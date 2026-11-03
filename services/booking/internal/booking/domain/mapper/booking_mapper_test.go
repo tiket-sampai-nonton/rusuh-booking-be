@@ -124,3 +124,40 @@ func TestToEventSummary_GenresAlwaysArray(t *testing.T) {
 	raw, _ := json.Marshal(without)
 	assert.Contains(t, string(raw), `"genres":[]`, "genres selalu array, bukan null/omitempty")
 }
+
+func TestToEventFacets(t *testing.T) {
+	tests := []struct {
+		name       string
+		in         entity.EventFacets
+		wantCities []string
+		wantGenres []string
+	}{
+		{
+			name:       "nil slices map to empty arrays",
+			in:         entity.EventFacets{Cities: nil, Genres: nil},
+			wantCities: []string{},
+			wantGenres: []string{},
+		},
+		{
+			name:       "populated values pass through",
+			in:         entity.EventFacets{Cities: []string{"Bandung", "Jakarta"}, Genres: []string{"JAZZ", "POP"}},
+			wantCities: []string{"Bandung", "Jakarta"},
+			wantGenres: []string{"JAZZ", "POP"},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			out := mapper.ToEventFacets(tc.in)
+			assert.Equal(t, tc.wantCities, out.Cities)
+			assert.Equal(t, tc.wantGenres, out.Genres)
+			assert.NotNil(t, out.Cities, "cities harus non-nil (kontrak: selalu array)")
+			assert.NotNil(t, out.Genres, "genres harus non-nil (kontrak: selalu array)")
+		})
+	}
+}
+
+func TestToEventFacets_JSONAlwaysArray(t *testing.T) {
+	b, err := json.Marshal(mapper.ToEventFacets(entity.EventFacets{}))
+	assert.NoError(t, err)
+	assert.JSONEq(t, `{"cities":[],"genres":[]}`, string(b), "field kosong harus [] bukan null")
+}

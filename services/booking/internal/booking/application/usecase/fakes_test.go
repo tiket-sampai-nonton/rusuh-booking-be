@@ -50,11 +50,14 @@ func itoa(n int) string {
 
 // fakeEventRepo serves a fixed event + detail.
 type fakeEventRepo struct {
-	detail  entity.EventDetail
-	event   entity.Event
-	list    []entity.Event
-	err     error
-	gotList dto.EventListQuery // captured query from the most recent ListEvents call
+	detail    entity.EventDetail
+	event     entity.Event
+	list      []entity.Event
+	facets    entity.EventFacets // returned by Facets
+	count     int                // match count returned by Facets (0 triggers the option-c empty guard)
+	err       error
+	gotList   dto.EventListQuery // captured query from the most recent ListEvents call
+	gotFacets dto.EventListQuery // captured query from the Facets call
 }
 
 func (f *fakeEventRepo) ListEvents(_ context.Context, q dto.EventListQuery) ([]entity.Event, error) {
@@ -69,6 +72,17 @@ func (f *fakeEventRepo) GetByID(context.Context, string) (entity.Event, error) {
 		return f.detail.Event, f.err
 	}
 	return f.event, f.err
+}
+
+// Facets returns the canned facets + count, capturing the (normalised) query the usecase passed. Drill-down
+// (clearing the own-dimension filter) is the real repo's job in SQL, so the fake does not re-implement it;
+// usecase tests assert only what the usecase controls: query pass-through, the count guard, always-array.
+func (f *fakeEventRepo) Facets(_ context.Context, q dto.EventListQuery) (entity.EventFacets, int, error) {
+	f.gotFacets = q
+	if f.err != nil {
+		return entity.EventFacets{}, 0, f.err
+	}
+	return f.facets, f.count, nil
 }
 
 // boolPtr returns a pointer to a bool value (used in tests with releaseResult).

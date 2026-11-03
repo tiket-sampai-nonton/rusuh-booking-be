@@ -98,6 +98,7 @@ Middleware dari `pkg/httpx` (platform R2).
 |--------|------|------|---------|
 | GET | `/api/v1/events` | — | Daftar event + filter, cache 2s |
 | GET | `/api/v1/events/{eventId}` | — | Detail event + kategori, cache 2s |
+| GET | `/api/v1/events/facets` | — | Nilai filter tersedia (cities, genres), cache 2s |
 
 **`GET /api/v1/events`** — query `timeframe` ∈ {ALL,THIS_WEEK,THIS_MONTH,UPCOMING}, `city`, `genres`
 (berulang atau CSV; overlap, kosong = semua), `startDate`/`endDate` (`YYYY-MM-DD`, inklusif WIB, opsional,
@@ -114,6 +115,24 @@ Validasi: enum *fail-soft* ke default; tanggal cacat/terbalik & cap genre (>20 t
 **`GET /api/v1/events/{eventId}`** → `200 EventDetail{ event, maxTicketsPerOrder, maxTicketsPerBuyerNik,
 allowMixedCategories, categories:[{ categoryId, code, name, priceMinor, available }] }`; `available =
 capacity − held_quantity − sold_quantity`. Error: `400 VALIDATION_ERROR`, `404 NOT_FOUND`.
+
+**`GET /api/v1/events/facets`** → `200 EventFacets{ cities: string[], genres: string[] }` (selalu array).
+Menerima parameter filter yang sama dengan `GET /api/v1/events` dan **mengikuti event list saat ini**
+(drill-down): `cities` dihitung dengan semua filter aktif kecuali `city`; `genres` dengan semua filter
+kecuali `genres`. Lantai visibilitas (`published_at IS NOT NULL AND status <> 'CANCELLED'`) selalu
+berlaku. Ketiga hasil (count filter-penuh, `cities`, `genres`) diambil dalam **satu round-trip**: satu
+query dengan tiga CTE yang memakai predikat filter bersama `eventFilterWhere` yang dinomori ulang per blok
+parameter (`$1–6` filter penuh, `$7–12` drop `city`, `$13–18` drop `genres`) — `cities` = `SELECT DISTINCT
+city ... <filter kecuali city>` (btree `idx_events_city`), `genres` = `SELECT DISTINCT g FROM events e,
+unnest(genre) g ... <filter kecuali genres>` (GIN `idx_events_genre`), masing-masing di-`array_agg(... ORDER
+BY)`. Predikat filter tetap satu sumber dengan `ListEvents` (tidak diduplikasi; hanya dinomori ulang, bukan
+disalin). Validasi identik dengan daftar event (enum fail-soft; tanggal/cap genre → `400`).
+Bila filter gabungan (tanpa dimensi dibuang) tidak cocok satu event pun — ditandai oleh count filter-penuh
+= 0 yang dikembalikan query yang sama — usecase mengosongkan facet `{cities:[], genres:[]}` (option c),
+sehingga facet tak pernah bertentangan dengan daftar kosong.
+Tanpa migrasi — kolom sudah ada (0003 city, 0006 genre). Port `IEventRepo.Facets(ctx, q) (EventFacets, int,
+error)` (satu round-trip: drill-down cities/genres + count filter-penuh), inbound
+`IEventFacetsUsecase.GetFacets(ctx, q)`.
 
 ### 3.2 Publik — Sesi (R3, R5, R7, R8, R15, R16)
 

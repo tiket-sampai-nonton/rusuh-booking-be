@@ -47,6 +47,13 @@ type EventList struct {
 	ServerTime time.Time      `json:"serverTime"`
 }
 
+// EventFacets is the GET /api/v1/events/facets response body: the distinct filter values available across
+// the public catalog. Both fields are always arrays ([] bila kosong), never null (kontrak).
+type EventFacets struct {
+	Cities []string `json:"cities"`
+	Genres []string `json:"genres"`
+}
+
 // CategoryView is one category in the event detail.
 type CategoryView struct {
 	CategoryID string `json:"categoryId"`

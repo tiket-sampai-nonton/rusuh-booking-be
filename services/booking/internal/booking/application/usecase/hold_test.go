@@ -2,6 +2,8 @@ package usecase_test
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -140,6 +142,52 @@ func TestHold_IdempotentReplay(t *testing.T) {
 	first, err := uc.Hold(context.Background(), cmd)
 	require.NoError(t, err)
 	assert.Equal(t, "bk-1", first.BookingID)
+}
+
+// hashOf mirrors the usecase's requestHash (json.Marshal + sha256) so the test can build an idempotency
+// record whose RequestHash matches what Hold computes, exercising the replay (matching-hash) branch.
+func hashOf(t *testing.T, req dto.HoldRequest) []byte {
+	t.Helper()
+	raw, err := json.Marshal(req)
+	require.NoError(t, err)
+	sum := sha256.Sum256(raw)
+	return sum[:]
+}
+
+func TestHold_ReplayReturnsStoredBodyOnHashMatch(t *testing.T) {
+	// A COMPLETED record with a matching request hash must be replayed verbatim (no new UoW.Hold call).
+	items := []dto.HoldItem{{CategoryID: catA, Attendee: dto.AttendeeInput{NIK: nik1, FullName: "Alice"}}}
+	cmd := holdCmd(items)
+	stored, err := json.Marshal(dto.Booking{BookingID: "bk-replay", PublicRef: "RB-9", Status: "PENDING_PAYMENT", AmountMinor: 1000})
+	require.NoError(t, err)
+
+	idem := &fakeIdem{found: true, rec: outbound.IdempotencyRecord{
+		State:        "COMPLETED",
+		RequestHash:  hashOf(t, cmd.Request),
+		ResponseBody: stored,
+	}}
+	uow := &fakeUoW{}
+	uc := newHoldUC(&fakeAdmissionRepo{admission: activeAdmission(true)}, &fakeEventRepo{detail: detailWith(true, 3)}, idem, uow)
+
+	resp, err := uc.Hold(context.Background(), cmd)
+	require.NoError(t, err)
+	assert.Equal(t, "bk-replay", resp.BookingID, "returns the stored response, not a fresh hold")
+	assert.Empty(t, uow.heldSpec.Lines, "replay must not call UoW.Hold again")
+	assert.False(t, idem.completed, "replay must not re-Complete the record")
+}
+
+func TestHold_ReplayInFlightIsTransient(t *testing.T) {
+	// Matching hash but the record is not yet COMPLETED => another request with the same key is still
+	// running; the usecase returns a transient error so the client retries.
+	items := []dto.HoldItem{{CategoryID: catA, Attendee: dto.AttendeeInput{NIK: nik1, FullName: "Alice"}}}
+	cmd := holdCmd(items)
+	idem := &fakeIdem{found: true, rec: outbound.IdempotencyRecord{
+		State:       "IN_FLIGHT",
+		RequestHash: hashOf(t, cmd.Request),
+	}}
+	uc := newHoldUC(&fakeAdmissionRepo{admission: activeAdmission(true)}, &fakeEventRepo{detail: detailWith(true, 3)}, idem, &fakeUoW{})
+	_, err := uc.Hold(context.Background(), cmd)
+	assert.ErrorIs(t, err, inbound.ErrDependency)
 }
 
 func TestHold_BadIdempotencyKey(t *testing.T) {

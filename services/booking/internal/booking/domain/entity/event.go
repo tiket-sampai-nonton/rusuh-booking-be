@@ -101,6 +101,13 @@ type EventDetail struct {
 	Categories []CategoryDetail
 }
 
+// EventFacets are the distinct filter values available across the public catalog: the set of cities and
+// the set of genre tokens on events that are visible (published, non-cancelled). Read model for GET facets.
+type EventFacets struct {
+	Cities []string
+	Genres []string
+}
+
 // Supply is the event-level stock counter (event_supply table).
 type Supply struct {
 	EventID        string
