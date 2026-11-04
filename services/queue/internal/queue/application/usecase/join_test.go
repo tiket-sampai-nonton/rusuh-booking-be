@@ -88,6 +88,7 @@ func TestJoin_GuestWaiting(t *testing.T) {
 func TestJoin_DirectAdmission(t *testing.T) {
 	uc, m := newJoin(t)
 	ctx := context.Background()
+	var entryID string
 
 	m.pii.EXPECT().HashEmail(gomock.Any()).Return([]byte{0x01}).AnyTimes()
 	m.pii.EXPECT().HashNIK(gomock.Any()).Return([]byte{0xaa})
@@ -97,10 +98,15 @@ func TestJoin_DirectAdmission(t *testing.T) {
 	m.settings.EXPECT().Get(ctx, "ev1").Return(entity.EventSettings{ActiveSlotCapacity: 10}, true, nil)
 	m.store.EXPECT().Join(ctx, gomock.Any()).DoAndReturn(func(_ context.Context, p outbound.JoinParams) (outbound.JoinResult, error) {
 		assert.Equal(t, "3201********0001", p.NikMasked, "NIK tersamar disimpan di entry")
+		entryID = p.EntryID
 		return outbound.JoinResult{Outcome: outbound.JoinOK, Seq: 1}, nil
 	})
 	m.audit.EXPECT().Append(ctx, gomock.Any()).Return(nil).Times(2) // JOINED + ADMITTED
-	m.store.EXPECT().ActiveCount(ctx, "ev1").Return(0, nil)
+	// direct admission runs under the promoter lease, with the capacity and head re-checked under it (design §5.4a)
+	m.store.EXPECT().ActiveCount(ctx, "ev1").Return(0, nil).Times(2)
+	m.store.EXPECT().TopWaiting(ctx, "ev1", 1).DoAndReturn(func(context.Context, string, int) ([]string, error) { return []string{entryID}, nil }).Times(2)
+	m.store.EXPECT().AcquirePromoterLease(ctx, "ev1", gomock.Any()).Return("tok", true, nil)
+	m.store.EXPECT().ReleasePromoterLease(gomock.Any(), "ev1", "tok").Return(nil)
 	m.booking.EXPECT().ReserveBatch(ctx, gomock.Any()).DoAndReturn(
 		func(_ context.Context, req outbound.AllocationBatchRequest) (outbound.AllocationBatchResponse, error) {
 			// Booking stores the buyer's email (e-ticket) and masked NIK; the plain NIK never leaves the queue.
@@ -108,10 +114,13 @@ func TestJoin_DirectAdmission(t *testing.T) {
 			assert.Equal(t, "c2VhbGVk", req.Entries[0].BuyerEmailEnc, "Booking hanya menerima ciphertext")
 			assert.Equal(t, "3201********0001", req.Entries[0].BuyerNikMasked)
 			return outbound.AllocationBatchResponse{
-				Allocations: []outbound.AllocationResult{{QueueEntryID: "x", AllocationID: "al1", Status: "GRANTED", ClaimDeadline: "2026-10-20T10:01:00Z"}},
+				Allocations: []outbound.AllocationResult{{QueueEntryID: entryID, AllocationID: "al1", Status: "GRANTED", ClaimDeadline: "2026-10-20T10:01:00Z"}},
 			}, nil
 		})
-	m.store.EXPECT().Promote(ctx, "ev1", gomock.Any(), 10, gomock.Any(), gomock.Any()).Return(outbound.PromoteResult{Promoted: []string{"x"}}, nil)
+	m.store.EXPECT().Promote(ctx, "ev1", gomock.Any(), 10, gomock.Any(), outbound.PromoteOpts{RequireHead: true, LeaseToken: "tok"}).
+		DoAndReturn(func(_ context.Context, _ string, c []outbound.PromoteCandidate, _ int, _ int64, _ outbound.PromoteOpts) (outbound.PromoteResult, error) {
+			return outbound.PromoteResult{Promoted: []string{c[0].EntryID}}, nil
+		})
 	m.tokens.EXPECT().IssueQueue(gomock.Any(), gomock.Any(), gomock.Any()).Return("qt", nil)
 	m.tokens.EXPECT().IssueVisitor(gomock.Any(), gomock.Any()).Return("vt", nil)
 

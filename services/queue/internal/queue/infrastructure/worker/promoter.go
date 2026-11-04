@@ -16,17 +16,18 @@ import (
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/port/outbound"
 )
 
-// Counter names (design §5.4a.2 rule 5). The telemetry adapter registers the same names.
+// Counter names live in the outbound port (the one home shared with the join usecase); these aliases keep the worker
+// code and its tests short.
 const (
-	MetricFullAfterGrant = "queue_promote_full_after_grant_total"
-	MetricLeaseLost      = "queue_promote_lease_lost_total"
-	MetricEntryEnded     = "queue_entry_ended_total" // label outcome
-	MetricLapsedReplay   = "queue_promote_lapsed_replay_skipped_total"
-	MetricFifoAdopted    = "queue_promote_fifo_adopted_total"          // label suspect
-	MetricHeadNoSupply   = "queue_promote_head_no_supply_repeat_total" // label adopted
-	MetricUnknownOutcome = "queue_promote_unknown_outcome_total"
-	MetricJoinLeaseRetry = "queue_join_lease_retry_total"
-	MetricUnsealFailed   = "queue_promoter_unseal_failed_total" // label scope
+	MetricFullAfterGrant = outbound.MetricFullAfterGrant
+	MetricLeaseLost      = outbound.MetricLeaseLost
+	MetricEntryEnded     = outbound.MetricEntryEnded
+	MetricLapsedReplay   = outbound.MetricLapsedReplay
+	MetricFifoAdopted    = outbound.MetricFifoAdopted
+	MetricHeadNoSupply   = outbound.MetricHeadNoSupply
+	MetricUnknownOutcome = outbound.MetricUnknownOutcome
+	MetricJoinLeaseRetry = outbound.MetricJoinLeaseRetry
+	MetricUnsealFailed   = outbound.MetricUnsealFailed
 )
 
 // entryUnits is the number of units the Queue requests per entry. Jumper adoption (design §5.4) is only correct for

@@ -3,6 +3,8 @@ package usecase
 import (
 	"context"
 	"encoding/hex"
+	"log/slog"
+	"math/rand/v2"
 	"net/mail"
 	"strings"
 	"time"
@@ -12,6 +14,7 @@ import (
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/clock"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/nik"
 
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/application/compensation"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/domain/dto"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/domain/entity"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/domain/mapper"
@@ -31,6 +34,10 @@ type JoinDeps struct {
 	PII          outbound.IPIIProtector
 	Audit        outbound.IEntryAuditRepo
 	Clock        clock.IClock
+	// Sleep waits d or until ctx ends; Jitter returns the wait before the single lease retry. Both are injectable so
+	// tests never really wait. Zero values get defaults (a ctx-aware timer and 15-35 ms).
+	Sleep  func(ctx context.Context, d time.Duration) error
+	Jitter func() time.Duration
 }
 
 // JoinSettings holds the rate-limit and claim-window tuning read from config.
@@ -41,17 +48,68 @@ type JoinSettings struct {
 	JoinPerIPWindow    time.Duration
 	ClaimWindow        time.Duration
 	StatusURLTemplate  string // e.g. "/api/v1/queue-status/"
+	// AdmissionLeaseTTL is the TTL of the per-event admission lease taken around reserve+promote (default 10s).
+	AdmissionLeaseTTL time.Duration
 }
 
 // JoinQueue implements inbound.IJoinUsecase (design §2.1, §8.1).
 type JoinQueue struct {
-	d JoinDeps
-	s JoinSettings
+	d       JoinDeps
+	s       JoinSettings
+	metrics outbound.IPromoterMetrics
+	logger  *slog.Logger
 }
 
-// NewJoinQueue accepts interfaces and returns the concrete usecase.
+type noopMetrics struct{}
+
+func (noopMetrics) Inc(string, ...string) {}
+
+// NewJoinQueue accepts interfaces and returns the concrete usecase. Zero-valued tuning gets defaults here so the
+// composition root does not need to change until the config is wired.
 func NewJoinQueue(d JoinDeps, s JoinSettings) *JoinQueue {
-	return &JoinQueue{d: d, s: s}
+	if s.AdmissionLeaseTTL <= 0 {
+		s.AdmissionLeaseTTL = 10 * time.Second
+	}
+	if d.Sleep == nil {
+		d.Sleep = sleepCtx
+	}
+	if d.Jitter == nil {
+		d.Jitter = defaultJitter
+	}
+	return &JoinQueue{d: d, s: s, metrics: noopMetrics{}, logger: slog.Default()}
+}
+
+// WithMetrics sets the counter sink (default: no-op).
+func (u *JoinQueue) WithMetrics(m outbound.IPromoterMetrics) *JoinQueue {
+	if m != nil {
+		u.metrics = m
+	}
+	return u
+}
+
+// WithLogger sets the logger (default: slog.Default()).
+func (u *JoinQueue) WithLogger(l *slog.Logger) *JoinQueue {
+	if l != nil {
+		u.logger = l
+	}
+	return u
+}
+
+func sleepCtx(ctx context.Context, d time.Duration) error {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
+}
+
+// defaultJitter returns 15-35 ms: long enough for an idle promoter tick (it holds the lease only across a few
+// Valkey reads and no Booking call) to finish, far below BOOKING_TIMEOUT.
+func defaultJitter() time.Duration {
+	return 15*time.Millisecond + time.Duration(rand.Int64N(int64(20*time.Millisecond)))
 }
 
 // Join validates, resolves auth, rate-limits, joins atomically, then attempts direct admission.
@@ -207,31 +265,55 @@ func (u *JoinQueue) rateLimit(ctx context.Context, in inbound.JoinInput) error {
 	if !ok {
 		return apperrorRateLimited(u.s.JoinPerEmailWindow)
 	}
-	if in.ClientIP != "" {
-		ok, err := u.d.Limiter.Allow(ctx, "join:ip:"+in.ClientIP, u.s.JoinPerIP, u.s.JoinPerIPWindow)
-		if err != nil {
-			return err
-		}
-		if !ok {
-			return apperrorRateLimited(u.s.JoinPerIPWindow)
-		}
+	if in.ClientIP == "" {
+		// Not rejected (a proxy misconfiguration must not stop sales) but visible: the per-IP limit is skipped.
+		u.logger.Warn("join dengan IP klien kosong; batas per-IP dilewati", "eventId", in.EventID)
+		return nil
+	}
+	ok, err = u.d.Limiter.Allow(ctx, "join:ip:"+in.ClientIP, u.s.JoinPerIP, u.s.JoinPerIPWindow)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return apperrorRateLimited(u.s.JoinPerIPWindow)
 	}
 	return nil
 }
 
-// tryDirectAdmission reserves + promotes immediately when a slot is free (design §8.1). Best-effort:
-// on any dependency hiccup the entry simply stays WAITING for the Promotor.
+// tryDirectAdmission reserves + promotes immediately when a slot is free and the entry is the head (design §8.1,
+// §5.4a). Best-effort: on any dependency hiccup the entry simply stays WAITING for the promoter.
+//
+// Order (rule 1): cheap lock-free pre-checks -> promoter lease (one jittered retry) -> re-check under the lease ->
+// ReserveBatch -> Promote(RequireHead, LeaseToken) -> release the lease. Capacity and head are verified BEFORE any
+// Booking call, so an ordinary deferral (slot busy, not head, lease busy) leaves no RESERVED row that could later
+// age into a permanent ALREADY_ACTIVE for a live buyer.
 func (u *JoinQueue) tryDirectAdmission(ctx context.Context, eventID string, ent *entity.Entry, nikHashHex, email string, settings entity.EventSettings, now time.Time) bool {
 	if settings.ActiveSlotCapacity <= 0 {
 		return false
 	}
-	active, err := u.d.Store.ActiveCount(ctx, eventID)
-	if err != nil || active >= settings.ActiveSlotCapacity {
+	if !u.slotAndHeadOK(ctx, eventID, ent.ID, settings.ActiveSlotCapacity) {
+		return false // pre-check without a lock; no Booking call, no lease
+	}
+	token, ok := u.acquireAdmissionLease(ctx, eventID)
+	if !ok {
+		return false
+	}
+	defer func() {
+		// compare-and-delete by token; must run even if the request context was cancelled mid-flight
+		rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+		defer cancel()
+		if err := u.d.Store.ReleasePromoterLease(rctx, eventID, token); err != nil {
+			u.logger.Warn("lease admisi tidak bisa dilepas; kedaluwarsa lewat TTL", "eventId", eventID, "error", err)
+		}
+	}()
+	// Re-check under the lease: between the pre-check and now another path may have taken the slot or a lower seq
+	// may have appeared. This is what makes FULL/NOT_HEAD after a grant unreachable (L1).
+	if !u.slotAndHeadOK(ctx, eventID, ent.ID, settings.ActiveSlotCapacity) {
 		return false
 	}
 	emailEnc, err := u.d.PII.SealBuyerEmail(email)
 	if err != nil {
-		return false // stays WAITING; the Promotor retries
+		return false // stays WAITING; the promoter retries
 	}
 	resp, err := u.d.Booking.ReserveBatch(ctx, outbound.AllocationBatchRequest{
 		EventID: eventID,
@@ -251,10 +333,27 @@ func (u *JoinQueue) tryDirectAdmission(ctx context.Context, eventID string, ent 
 	if dl, derr := time.Parse(time.RFC3339, a.ClaimDeadline); derr == nil {
 		deadline = dl
 	}
+	if !deadline.After(now) {
+		// Lapsed replay (rule 3a): never hand the buyer a turn whose Booking deadline has already passed.
+		return false
+	}
 	pres, err := u.d.Store.Promote(ctx, eventID,
 		[]outbound.PromoteCandidate{{EntryID: ent.ID, AllocationID: a.AllocationID, ClaimDeadlineMs: deadline.UnixMilli()}},
-		settings.ActiveSlotCapacity, now.UnixMilli(), outbound.PromoteOpts{})
-	if err != nil || len(pres.Promoted) == 0 {
+		settings.ActiveSlotCapacity, now.UnixMilli(), outbound.PromoteOpts{RequireHead: true, LeaseToken: token})
+	if err != nil {
+		return false // possibly committed, possibly not: never release; the RESERVED row is replayed by the promoter
+	}
+	if pres.LeaseLost {
+		u.metrics.Inc(outbound.MetricLeaseLost)
+		return false
+	}
+	if pres.Full {
+		u.metrics.Inc(outbound.MetricFullAfterGrant)
+		u.logger.Error("Promote FULL setelah alokasi diberikan pada admisi langsung; baris dipertahankan", "eventId", eventID, "entryId", ent.ID)
+		return false
+	}
+	compensation.ReleaseTerminal(ctx, u.d.Booking, u.logger, pres.Skipped, map[string]string{ent.ID: a.AllocationID})
+	if len(pres.Promoted) == 0 {
 		return false
 	}
 	ent.Status = valueobject.StatusAdmitted
@@ -262,6 +361,37 @@ func (u *JoinQueue) tryDirectAdmission(ctx context.Context, eventID string, ent 
 	ent.AdmittedAtMs = now.UnixMilli()
 	ent.ClaimDeadlineMs = deadline.UnixMilli()
 	return true
+}
+
+// slotAndHeadOK reports whether a slot is free and the entry is the head of waiting (strict FIFO).
+func (u *JoinQueue) slotAndHeadOK(ctx context.Context, eventID, entryID string, capacity int) bool {
+	active, err := u.d.Store.ActiveCount(ctx, eventID)
+	if err != nil || active >= capacity {
+		return false
+	}
+	head, err := u.d.Store.TopWaiting(ctx, eventID, 1)
+	return err == nil && len(head) == 1 && head[0] == entryID
+}
+
+// acquireAdmissionLease takes the per-event promoter lease. If it is held it waits once (jittered, 15-35 ms) and
+// tries once more; still held -> false and the entry stays WAITING with no Booking call (REQ-QSH-03.2 amendment).
+func (u *JoinQueue) acquireAdmissionLease(ctx context.Context, eventID string) (string, bool) {
+	for attempt := 0; attempt < 2; attempt++ {
+		token, acquired, err := u.d.Store.AcquirePromoterLease(ctx, eventID, u.s.AdmissionLeaseTTL)
+		if err != nil {
+			return "", false
+		}
+		if acquired {
+			return token, true
+		}
+		if attempt == 0 {
+			u.metrics.Inc(outbound.MetricJoinLeaseRetry)
+			if err := u.d.Sleep(ctx, u.d.Jitter()); err != nil {
+				return "", false
+			}
+		}
+	}
+	return "", false
 }
 
 func (u *JoinQueue) audit(ctx context.Context, eventID string, ent entity.Entry, nikHash []byte, action string, now time.Time) {

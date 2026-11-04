@@ -41,11 +41,12 @@ func (h *JoinHandler) join(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		return
 	}
 	bearer, _ := httpx.BearerToken(r)
-	// Resolve visitor ID: if a visitor JWT cookie is present and auth is set, decode it to get
-	// the UUID subject (so the constraint key q:{e}:visitor:<uuid> is consistent with the first join).
-	// Without this, the raw JWT is used as the visitor ID, breaking the one-active-per-visitor constraint.
-	vid := visitorID(r)
-	if vid != "" && h.auth != nil {
+	// Resolve visitor ID: ONLY a verified JWT subject is used as the visitor id (TC-QUE-29, INV-3). The raw
+	// cookie/header value is never trusted directly — using it as a fallback let a forged X-Visitor-ID or
+	// rb_visitor cookie impersonate another visitor's queue identity (VISITOR_ALREADY_IN_QUEUE for the attacker,
+	// or an entry keyed to the victim's visitor id). No credential at all simply means a fresh visitor id is minted.
+	vid := ""
+	if h.auth != nil {
 		if decoded, ok := h.auth.Resolve(r); ok {
 			vid = decoded
 		}

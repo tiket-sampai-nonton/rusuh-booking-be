@@ -11,11 +11,9 @@ import (
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/port/inbound"
 )
 
-const (
-	headerVisitorToken = "X-Visitor-Token"
-	headerVisitorID    = "X-Visitor-ID"
-	cookieVisitor      = "rb_visitor"
-)
+// cookieVisitor is the HttpOnly cookie that carries the visitor token set by join. It is only ever WRITTEN here: the
+// visitor identity is read through VisitorAuthenticator, which verifies the token (an unverified id is never used).
+const cookieVisitor = "rb_visitor"
 
 // writeDomainError maps a domain error to the standard envelope, adding Retry-After for 429.
 func writeDomainError(w stdhttp.ResponseWriter, r *stdhttp.Request, err error) {
@@ -26,15 +24,6 @@ func writeDomainError(w stdhttp.ResponseWriter, r *stdhttp.Request, err error) {
 		}
 	}
 	httpx.WriteError(w, r, ae)
-}
-
-// visitorID resolves the caller's visitor id from cookie or header ("" when absent/unverified here;
-// token verification of X-Visitor-Token is deferred to the usecase layer for join).
-func visitorID(r *stdhttp.Request) string {
-	if c, err := r.Cookie(cookieVisitor); err == nil && c.Value != "" {
-		return c.Value
-	}
-	return r.Header.Get(headerVisitorID)
 }
 
 // VisitorAuthenticator resolves and verifies the visitor identity for authenticated endpoints
