@@ -20,6 +20,8 @@ type App struct {
 	Env  string // local | dev | staging | prod
 	Name string
 	Port int
+	// TrustedProxyHops = jumlah proxy tepercaya yang menambah entri X-Forwarded-For (1 = ALB saja, 2 = CloudFront → ALB).
+	TrustedProxyHops int
 }
 
 // HTTP holds server tuning.
@@ -58,6 +60,9 @@ func (c Config) Validate() error {
 	}
 	if c.App.Port <= 0 || c.App.Port > 65535 {
 		errs = append(errs, fmt.Errorf("APP_PORT %d di luar rentang", c.App.Port))
+	}
+	if c.App.TrustedProxyHops < 1 || c.App.TrustedProxyHops > 5 {
+		errs = append(errs, fmt.Errorf("APP_TRUSTED_PROXY_HOPS %d di luar rentang 1–5", c.App.TrustedProxyHops))
 	}
 	if c.HTTP.ShutdownTimeout <= 0 || c.HTTP.HealthTimeout <= 0 || c.Worker.Interval <= 0 {
 		errs = append(errs, errors.New("HTTP_SHUTDOWN_TIMEOUT, HEALTH_TIMEOUT, dan WORKER_INTERVAL harus > 0"))

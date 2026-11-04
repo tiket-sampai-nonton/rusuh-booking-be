@@ -17,6 +17,8 @@ type Token struct {
 	PrivateKeyFile string // PEM PKCS#8 Ed25519; public key-nya dibagikan ke Queue dan Booking
 	AccessTTL      time.Duration
 	RefreshTTL     time.Duration
+	// MaxRefreshPerIPMinute membatasi refresh dan logout per IP per menit.
+	MaxRefreshPerIPMinute int
 }
 
 // Validate checks Token.
@@ -34,6 +36,9 @@ func (t Token) Validate() error {
 	if t.RefreshTTL < time.Hour || t.RefreshTTL > 90*24*time.Hour {
 		errs = append(errs, fmt.Errorf("TOKEN_REFRESH_TTL %s di luar rentang 1h–90d", t.RefreshTTL))
 	}
+	if t.MaxRefreshPerIPMinute < 1 || t.MaxRefreshPerIPMinute > 6000 {
+		errs = append(errs, fmt.Errorf("TOKEN_MAX_REFRESH_PER_IP_MIN %d di luar rentang 1–6000", t.MaxRefreshPerIPMinute))
+	}
 	return errors.Join(errs...)
 }
 
@@ -44,6 +49,8 @@ type OTP struct {
 	MaxAttempts     int
 	MaxPerEmailHour int
 	MaxPerIPHour    int
+	// MaxVerifyPerIPMinute membatasi percobaan verifikasi OTP per IP per menit.
+	MaxVerifyPerIPMinute int
 }
 
 // Validate checks OTP.
@@ -58,8 +65,18 @@ func (o OTP) Validate() error {
 	if o.MaxAttempts < 3 || o.MaxAttempts > 10 {
 		errs = append(errs, fmt.Errorf("OTP_MAX_ATTEMPTS %d di luar rentang 3–10", o.MaxAttempts))
 	}
-	if o.MaxPerEmailHour < 1 || o.MaxPerIPHour < o.MaxPerEmailHour {
-		errs = append(errs, errors.New("OTP_MAX_PER_EMAIL_HOUR ≥ 1 dan OTP_MAX_PER_IP_HOUR ≥ OTP_MAX_PER_EMAIL_HOUR"))
+	if o.MaxPerEmailHour < 1 || o.MaxPerEmailHour > 10 {
+		errs = append(errs, fmt.Errorf("OTP_MAX_PER_EMAIL_HOUR %d di luar rentang 1–10", o.MaxPerEmailHour))
+	}
+	if o.MaxPerIPHour < o.MaxPerEmailHour || o.MaxPerIPHour > 1000 {
+		errs = append(errs, fmt.Errorf("OTP_MAX_PER_IP_HOUR %d harus ≥ OTP_MAX_PER_EMAIL_HOUR dan ≤ 1000", o.MaxPerIPHour))
+	}
+	// Anggaran tebakan per jam per email ≤ 100 dari 10^6 kemungkinan kode.
+	if o.MaxAttempts*o.MaxPerEmailHour > 100 {
+		errs = append(errs, fmt.Errorf("OTP_MAX_ATTEMPTS × OTP_MAX_PER_EMAIL_HOUR = %d melebihi batas 100", o.MaxAttempts*o.MaxPerEmailHour))
+	}
+	if o.MaxVerifyPerIPMinute < 1 || o.MaxVerifyPerIPMinute > 6000 {
+		errs = append(errs, fmt.Errorf("OTP_MAX_VERIFY_PER_IP_MIN %d di luar rentang 1–6000", o.MaxVerifyPerIPMinute))
 	}
 	return errors.Join(errs...)
 }
@@ -79,8 +96,15 @@ func (p PII) Validate() error {
 			errs = append(errs, fmt.Errorf("%s: %w", name, err))
 		}
 	}
-	if p.EncKeyHex != "" && (strings.EqualFold(p.EncKeyHex, p.HashKeyHex) || strings.EqualFold(p.HashKeyHex, p.OTPKeyHex)) {
-		errs = append(errs, errors.New("PII_ENC_KEY, PII_HASH_KEY, dan OTP_HASH_KEY harus berbeda"))
+	// Ketiga pasangan dicek (tanpa syarat kunci terisi) dan pesan hanya menyebut nama variabel, tidak pernah isi kunci.
+	for _, pair := range []struct{ an, bn, a, b string }{
+		{"PII_ENC_KEY", "PII_HASH_KEY", p.EncKeyHex, p.HashKeyHex},
+		{"PII_ENC_KEY", "OTP_HASH_KEY", p.EncKeyHex, p.OTPKeyHex},
+		{"PII_HASH_KEY", "OTP_HASH_KEY", p.HashKeyHex, p.OTPKeyHex},
+	} {
+		if strings.EqualFold(pair.a, pair.b) {
+			errs = append(errs, fmt.Errorf("%s dan %s harus berbeda", pair.an, pair.bn))
+		}
 	}
 	return errors.Join(errs...)
 }
