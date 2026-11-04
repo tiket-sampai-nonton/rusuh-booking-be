@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/clock"
@@ -24,6 +25,7 @@ import (
 	queuepg "github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/infrastructure/postgres"
 	queuerabbitmq "github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/infrastructure/rabbitmq"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/infrastructure/security"
+	queuetelemetry "github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/infrastructure/telemetry"
 	queuevalkey "github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/infrastructure/valkey"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/infrastructure/worker"
 )
@@ -101,14 +103,11 @@ func newQueueModule(cfg config.Config, clients *Clients, logger *slog.Logger) (*
 	}
 	publisher := queuerabbitmq.NewEventPublisher(rmqPub, clk.Now)
 
+	promoterMetrics := sharedPromoterMetrics()
 	joinUC := usecase.NewJoinQueue(usecase.JoinDeps{
 		Store: store, Settings: settingsRepo, Booking: booking, Limiter: limiter,
 		Tokens: tokens, UserVerifier: userVerifier, PII: pii, Audit: auditRepo, Clock: clk,
-	}, usecase.JoinSettings{
-		JoinPerEmail: cfg.RateLimit.JoinPerEmail, JoinPerEmailWindow: cfg.RateLimit.JoinPerEmailWindow,
-		JoinPerIP: cfg.RateLimit.JoinPerIP, JoinPerIPWindow: cfg.RateLimit.JoinPerIPWindow,
-		ClaimWindow: cfg.Token.AdmissionTTL, StatusURLTemplate: "/api/v1/queue-status/",
-	})
+	}, joinSettings(cfg)).WithMetrics(promoterMetrics).WithLogger(logger)
 	statusUC := usecase.NewGetStatus(store)
 	myEntryUC := usecase.NewGetMyEntry(store)
 	claimUC := usecase.NewClaimTurn(store, tokens, clk, cfg.Booking.BaseURL+"/book")
@@ -123,7 +122,8 @@ func newQueueModule(cfg config.Config, clients *Clients, logger *slog.Logger) (*
 		queuehttp.NewLeaveHandler(leaveUC, visitorAuth),
 	}
 
-	promoter := worker.NewPromoter(store, settingsRepo, booking, publisher, auditRepo, pii, clk, logger, promoterTuning(cfg))
+	promoter := worker.NewPromoter(store, settingsRepo, booking, publisher, auditRepo, pii, clk, logger, promoterTuning(cfg)).
+		WithMetrics(promoterMetrics)
 	sweeper := worker.NewSweeper(store, settingsRepo, clk, sweepBatch(cfg))
 	statusPub := worker.NewStatusPublisher(store, settingsRepo, booking, clk, cfg.WorkerTuning.StatusInterval)
 	jobs := []Job{
@@ -137,13 +137,39 @@ func newQueueModule(cfg config.Config, clients *Clients, logger *slog.Logger) (*
 	return &queueModule{handlers: handlers, jobs: jobs, consumer: consumer, rmqConn: rmqConn}, nil
 }
 
-// promoterTuning maps config to the promoter knobs. T01 returns today's literals; T17 wires the new config values.
-func promoterTuning(cfg config.Config) worker.PromoterTuning {
-	return worker.PromoterTuning{BatchMax: cfg.WorkerTuning.PromoteBatchMax, LeaseTTL: 10 * time.Second}
+var (
+	promoterMetricsOnce sync.Once
+	promoterMetricsInst *queuetelemetry.PromoterMetrics
+)
+
+// sharedPromoterMetrics registers the promoter counters on the process-wide registry exactly once (registering the
+// same names twice panics), however many modules a process builds.
+func sharedPromoterMetrics() *queuetelemetry.PromoterMetrics {
+	promoterMetricsOnce.Do(func() { promoterMetricsInst = queuetelemetry.NewPromoterMetrics(telemetry.Default) })
+	return promoterMetricsInst
 }
 
-// sweepBatch is the max number of expired entries the sweeper ends per event and tick (T17 wires config).
-func sweepBatch(config.Config) int { return 500 }
+// promoterTuning maps config to the promoter knobs (validated at start, D-24).
+func promoterTuning(cfg config.Config) worker.PromoterTuning {
+	t := cfg.WorkerTuning
+	return worker.PromoterTuning{
+		BatchMax: t.PromoteBatchMax, LeaseTTL: t.PromoterLeaseTTL,
+		UnsealFailMax: t.UnsealFailMax, UnsealProbe: t.UnsealProbe, NoSupplySuspectTicks: t.NoSupplySuspectTicks,
+	}
+}
+
+// sweepBatch is the max number of expired entries the sweeper ends per event and tick.
+func sweepBatch(cfg config.Config) int { return cfg.WorkerTuning.SweepBatchMax }
+
+// joinSettings maps config to the join usecase settings; the admission lease TTL matches the promoter's.
+func joinSettings(cfg config.Config) usecase.JoinSettings {
+	return usecase.JoinSettings{
+		JoinPerEmail: cfg.RateLimit.JoinPerEmail, JoinPerEmailWindow: cfg.RateLimit.JoinPerEmailWindow,
+		JoinPerIP: cfg.RateLimit.JoinPerIP, JoinPerIPWindow: cfg.RateLimit.JoinPerIPWindow,
+		ClaimWindow: cfg.Token.AdmissionTTL, StatusURLTemplate: "/api/v1/queue-status/",
+		AdmissionLeaseTTL: cfg.WorkerTuning.PromoterLeaseTTL,
+	}
+}
 
 // loadTokens reads the EdDSA private key and builds the signer and the verifier (own public key).
 func loadTokens(cfg config.Config) (ed25519.PrivateKey, *token.Signer, *token.Verifier, error) {
