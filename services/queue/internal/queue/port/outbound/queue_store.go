@@ -21,9 +21,6 @@ type IQueueStore interface {
 	ActiveCount(ctx context.Context, eventID string) (int, error)
 	TopWaiting(ctx context.Context, eventID string, n int) ([]string, error)
 	ExpiredActive(ctx context.Context, eventID string, nowMs int64, limit int) ([]string, error)
-	MarkMissed(ctx context.Context, eventID, entryID string, nowMs int64) (bool, error)
-	// MarkMissedAndClean atomically sets MISSED + cleans NIK/visitor/email constraint keys (TC-QUE-09).
-	MarkMissedAndClean(ctx context.Context, eventID, entryID string, nowMs int64) (bool, error)
 	// NoteUnreadable counts a failed email unseal for a WAITING entry (C6); -1 when the entry is not WAITING.
 	NoteUnreadable(ctx context.Context, eventID, entryID string) (int, error)
 	AddQuotaExhausted(ctx context.Context, eventID, nikHash string) error

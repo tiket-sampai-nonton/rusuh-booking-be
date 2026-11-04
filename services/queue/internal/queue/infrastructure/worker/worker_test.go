@@ -204,7 +204,7 @@ func TestSweeper_MarksMissedOnly(t *testing.T) {
 	ctx := context.Background()
 	m.settings.EXPECT().ListEventIDs(ctx).Return([]string{"ev1"}, nil)
 	m.store.EXPECT().ExpiredActive(ctx, "ev1", gomock.Any(), 500).Return([]string{"e1"}, nil)
-	m.store.EXPECT().MarkMissedAndClean(ctx, "ev1", "e1", gomock.Any()).Return(true, nil)
+	m.store.EXPECT().EndEntry(ctx, "ev1", "e1", outbound.EndSweepMissed, gomock.Any()).Return(outbound.EndResult{Tag: "OK", Status: "MISSED"}, nil)
 	// pub must NOT be called — Booking's own sweeper publishes booking.journey.ended (spec 11.R2, K7).
 
 	s := worker.NewSweeper(m.store, m.settings, wnow, 500)
@@ -216,7 +216,7 @@ func TestSweeper_AlreadyMissedNoPublish(t *testing.T) {
 	ctx := context.Background()
 	m.settings.EXPECT().ListEventIDs(ctx).Return([]string{"ev1"}, nil)
 	m.store.EXPECT().ExpiredActive(ctx, "ev1", gomock.Any(), 500).Return([]string{"e1"}, nil)
-	m.store.EXPECT().MarkMissedAndClean(ctx, "ev1", "e1", gomock.Any()).Return(false, nil) // not ADMITTED anymore
+	m.store.EXPECT().EndEntry(ctx, "ev1", "e1", outbound.EndSweepMissed, gomock.Any()).Return(outbound.EndResult{Tag: "IGNORED", Status: "CLAIMED"}, nil) // not expired anymore
 
 	s := worker.NewSweeper(m.store, m.settings, wnow, 500)
 	require.NoError(t, s.Run(ctx))

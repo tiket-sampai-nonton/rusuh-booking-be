@@ -226,36 +226,6 @@ func (mr *MockIQueueStoreMockRecorder) Leave(ctx, eventID, entryID, visitorID, n
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Leave", reflect.TypeOf((*MockIQueueStore)(nil).Leave), ctx, eventID, entryID, visitorID, nowMs)
 }
 
-// MarkMissed mocks base method.
-func (m *MockIQueueStore) MarkMissed(ctx context.Context, eventID, entryID string, nowMs int64) (bool, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "MarkMissed", ctx, eventID, entryID, nowMs)
-	ret0, _ := ret[0].(bool)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// MarkMissed indicates an expected call of MarkMissed.
-func (mr *MockIQueueStoreMockRecorder) MarkMissed(ctx, eventID, entryID, nowMs any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MarkMissed", reflect.TypeOf((*MockIQueueStore)(nil).MarkMissed), ctx, eventID, entryID, nowMs)
-}
-
-// MarkMissedAndClean mocks base method.
-func (m *MockIQueueStore) MarkMissedAndClean(ctx context.Context, eventID, entryID string, nowMs int64) (bool, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "MarkMissedAndClean", ctx, eventID, entryID, nowMs)
-	ret0, _ := ret[0].(bool)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// MarkMissedAndClean indicates an expected call of MarkMissedAndClean.
-func (mr *MockIQueueStoreMockRecorder) MarkMissedAndClean(ctx, eventID, entryID, nowMs any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MarkMissedAndClean", reflect.TypeOf((*MockIQueueStore)(nil).MarkMissedAndClean), ctx, eventID, entryID, nowMs)
-}
-
 // MarkNotifiedSoon mocks base method.
 func (m *MockIQueueStore) MarkNotifiedSoon(ctx context.Context, eventID, entryID string) error {
 	m.ctrl.T.Helper()

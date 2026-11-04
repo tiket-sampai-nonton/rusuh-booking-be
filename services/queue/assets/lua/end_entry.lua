@@ -1,21 +1,75 @@
--- end_entry.lua — guard idempoten untuk consumer booking.journey.ended (design §4.5)
--- KEYS[1]=entry:<id> KEYS[2]=active KEYS[3..5]=nik/visitor/email keys
+-- end_entry.lua — guard idempoten untuk consumer booking.journey.ended + promoter/sweeper outcomes
+-- (design §5.1, QSH-T02)
+-- KEYS[1]=entry:<id> KEYS[2]=active KEYS[3..5]=nik/visitor/email keys KEYS[6]=waiting
 -- ARGV: 1=entryId 2=outcome 3=nowMs
--- outcome=UNCLAIMED dari sweeper (deadline terlewat); outcome=PAID|REFUNDED dari booking consumer
+-- outcome=SWEEP_MISSED (Queue sweeper, deadline lewat); BUYER_QUOTA_EXHAUSTED|ALREADY_ACTIVE|UNREADABLE_PII
+-- (promoter, WAITING-only); PROMOTER_ORPHAN needs no class (hash gone => NO_ENTRY branch below);
+-- anything else = Booking outcome (PAID|UNCLAIMED|REFUNDED|...).
 local st = redis.call('HGET', KEYS[1], 'status')
-if not st then return {'IGNORED','NO_ENTRY'} end
--- terminal sudah (kecuali MISSED — masih perlu bersihkan constraint keys) → idempoten no-op
-if st=='COMPLETED' or st=='ENDED' or st=='LEFT' then return {'IGNORED', st} end
--- MISSED: hanya bersihkan constraint keys (status sudah di-set oleh sweeper) agar bisa antre lagi
+if not st then
+  -- orphan id: self-heal, remove from both sets so a poison page never blocks later entries (P12).
+  redis.call('ZREM', KEYS[2], ARGV[1])
+  redis.call('ZREM', KEYS[6], ARGV[1])
+  return {'IGNORED', 'NO_ENTRY'}
+end
+if st=='COMPLETED' or st=='ENDED' or st=='LEFT' then
+  if ARGV[2]=='SWEEP_MISSED' then redis.call('ZREM', KEYS[2], ARGV[1]) end -- self-heal stale membership
+  return {'IGNORED', st}
+end
+-- MISSED: hanya bersihkan constraint keys (status sudah di-set oleh claim.lua/class A) agar bisa antre lagi
 if st=='MISSED' then
+  -- OK_CLEANUP only when something was actually cleaned, so a redelivery is a reported no-op (idempotent).
+  local cleaned = redis.call('ZREM', KEYS[2], ARGV[1]) + redis.call('ZREM', KEYS[6], ARGV[1])
+  for i = 3, 5 do
+    if redis.call('GET', KEYS[i])==ARGV[1] then redis.call('DEL', KEYS[i]); cleaned = cleaned + 1 end
+  end
+  if cleaned > 0 then return {'OK_CLEANUP', 'MISSED'} end
+  return {'IGNORED', 'MISSED'}
+end
+
+-- class A: sweeper outcome
+if ARGV[2]=='SWEEP_MISSED' then
+  if st=='ADMITTED' then
+    local dl = tonumber(redis.call('HGET', KEYS[1], 'claimDeadlineMs'))
+    if dl == nil or tonumber(ARGV[3]) >= dl then
+      -- fallthrough to the generic "end" path below with final=MISSED
+    else
+      return {'IGNORED', 'ADMITTED'} -- still live, sweep LIMIT page moves on without blocking
+    end
+  elseif st=='CLAIMED' then
+    redis.call('ZADD', KEYS[2], 'XX', 'inf', ARGV[1]) -- self-heal: legacy CLAIMED still scored by deadline
+    return {'IGNORED', 'CLAIMED'}
+  elseif st=='WAITING' then
+    redis.call('ZREM', KEYS[2], ARGV[1]) -- WAITING must never sit in active
+    return {'IGNORED', 'WAITING'}
+  else
+    return {'IGNORED', st}
+  end
+  redis.call('ZREM', KEYS[2], ARGV[1])
+  redis.call('ZREM', KEYS[6], ARGV[1])
+  redis.call('HSET', KEYS[1], 'status', 'MISSED')
   if redis.call('GET', KEYS[3])==ARGV[1] then redis.call('DEL', KEYS[3]) end
   if redis.call('GET', KEYS[4])==ARGV[1] then redis.call('DEL', KEYS[4]) end
   if redis.call('GET', KEYS[5])==ARGV[1] then redis.call('DEL', KEYS[5]) end
-  return {'OK_CLEANUP', 'MISSED'}
+  return {'OK', 'MISSED'}
 end
-redis.call('ZREM', KEYS[2], ARGV[1])                     -- rilis slot
--- outcome=UNCLAIMED (sweeper): set MISSED agar customer tahu giliran terlewat
--- outcome=PAID: set COMPLETED; lainnya: set ENDED
+
+-- class B: promoter outcomes that only ever end a WAITING entry (never touch ADMITTED/CLAIMED)
+if ARGV[2]=='BUYER_QUOTA_EXHAUSTED' or ARGV[2]=='ALREADY_ACTIVE' or ARGV[2]=='UNREADABLE_PII' then
+  if st ~= 'WAITING' then return {'IGNORED', st} end
+  redis.call('ZREM', KEYS[2], ARGV[1])
+  redis.call('ZREM', KEYS[6], ARGV[1])
+  redis.call('HSET', KEYS[1], 'status', 'ENDED')
+  if redis.call('GET', KEYS[3])==ARGV[1] then redis.call('DEL', KEYS[3]) end
+  if redis.call('GET', KEYS[4])==ARGV[1] then redis.call('DEL', KEYS[4]) end
+  if redis.call('GET', KEYS[5])==ARGV[1] then redis.call('DEL', KEYS[5]) end
+  return {'OK', 'ENDED'}
+end
+
+-- class C: Booking outcomes
+if st ~= 'ADMITTED' and st ~= 'CLAIMED' then
+  return {'IGNORED', st} -- incl. PAID on WAITING (INV-5 idempotent)
+end
 local final
 if ARGV[2]=='UNCLAIMED' then
   final = 'MISSED'
@@ -24,8 +78,9 @@ elseif ARGV[2]=='PAID' then
 else
   final = 'ENDED'
 end
+redis.call('ZREM', KEYS[2], ARGV[1])
+redis.call('ZREM', KEYS[6], ARGV[1])
 redis.call('HSET', KEYS[1], 'status', final)
--- bersihkan constraint agar NIK/visitor/email bisa dipakai lagi
 if redis.call('GET', KEYS[3])==ARGV[1] then redis.call('DEL', KEYS[3]) end
 if redis.call('GET', KEYS[4])==ARGV[1] then redis.call('DEL', KEYS[4]) end
 if redis.call('GET', KEYS[5])==ARGV[1] then redis.call('DEL', KEYS[5]) end

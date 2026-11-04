@@ -219,6 +219,7 @@ func (s *QueueStore) EndEntry(ctx context.Context, eventID, entryID, outcome str
 	keys := []string{
 		s.kEntry(eventID, entryID), s.kActive(eventID),
 		s.kNik(eventID, ent.BuyerNikHashHex()), s.kVisitor(eventID, ent.VisitorID), s.kEmail(eventID, ent.EmailHashHex()),
+		s.kWaiting(eventID),
 	}
 	args := []string{entryID, outcome, strconv.FormatInt(nowMs, 10)}
 	arr, err := s.endEntry.Exec(ctx, s.c, keys, args).ToArray()
@@ -279,87 +280,18 @@ func (s *QueueStore) TopWaiting(ctx context.Context, eventID string, n int) ([]s
 	return ids, nil
 }
 
-// ExpiredActive returns active entry ids whose claim deadline is at or before nowMs.
-func (s *QueueStore) ExpiredActive(ctx context.Context, eventID string, nowMs int64, _ int) ([]string, error) {
+// ExpiredActive returns at most limit active entry ids whose claim deadline is at or before nowMs, oldest first.
+// limit must be positive (REQ-QSH-11.2): an unbounded scan would let a poison page grow without bound.
+func (s *QueueStore) ExpiredActive(ctx context.Context, eventID string, nowMs int64, limit int) ([]string, error) {
+	if limit <= 0 {
+		return nil, fmt.Errorf("valkey: ExpiredActive limit harus positif, dapat %d", limit)
+	}
 	ids, err := s.c.Do(ctx, s.c.B().Zrange().Key(s.kActive(eventID)).Min("0").
-		Max(strconv.FormatInt(nowMs, 10)).Byscore().Build()).AsStrSlice()
+		Max(strconv.FormatInt(nowMs, 10)).Byscore().Limit(0, int64(limit)).Build()).AsStrSlice()
 	if err != nil {
 		return nil, fmt.Errorf("valkey: zrangebyscore active expired: %w", err)
 	}
 	return ids, nil
-}
-
-// MarkMissed atomically removes an expired entry from active and sets status MISSED.
-func (s *QueueStore) MarkMissed(ctx context.Context, eventID, entryID string, nowMs int64) (bool, error) {
-	ent, ok, err := s.GetEntry(ctx, eventID, entryID)
-	if err != nil {
-		return false, err
-	}
-	if !ok || ent.Status != valueobject.StatusAdmitted {
-		return false, nil
-	}
-	for _, resp := range s.c.DoMulti(ctx,
-		s.c.B().Zrem().Key(s.kActive(eventID)).Member(entryID).Build(),
-		s.c.B().Hset().Key(s.kEntry(eventID, entryID)).FieldValue().FieldValue("status", string(valueobject.StatusMissed)).Build(),
-	) {
-		if err := resp.Error(); err != nil {
-			return false, fmt.Errorf("valkey: mark missed: %w", err)
-		}
-	}
-	return true, nil
-}
-
-// MarkMissedAndClean atomically sets status MISSED, removes from active ZSET, and cleans
-// NIK/visitor/email constraint keys so the user can rejoin (TC-QUE-09).
-// Uses raw EVAL (not the LuaScript EVALSHA wrapper) to avoid cluster routing issues.
-func (s *QueueStore) MarkMissedAndClean(ctx context.Context, eventID, entryID string, nowMs int64) (bool, error) {
-	ent, ok, err := s.GetEntry(ctx, eventID, entryID)
-	if err != nil {
-		return false, err
-	}
-	if !ok {
-		return false, nil
-	}
-
-	// If already MISSED (set by claim.lua before sweeper ran), still clean constraint keys.
-	if ent.Status == valueobject.StatusMissed {
-		keys := []string{
-			s.kNik(eventID, ent.BuyerNikHashHex()),
-			s.kVisitor(eventID, ent.VisitorID),
-			s.kEmail(eventID, ent.EmailHashHex()),
-		}
-		for _, resp := range s.c.DoMulti(ctx,
-			s.c.B().Del().Key(keys[0]).Build(),
-			s.c.B().Del().Key(keys[1]).Build(),
-			s.c.B().Del().Key(keys[2]).Build(),
-			s.c.B().Zrem().Key(s.kActive(eventID)).Member(entryID).Build(),
-		) {
-			_ = resp.Error() // best-effort cleanup
-		}
-		return true, nil
-	}
-
-	if ent.Status != valueobject.StatusAdmitted {
-		return false, nil
-	}
-
-	keys := []string{
-		s.kEntry(eventID, entryID), s.kActive(eventID),
-		s.kNik(eventID, ent.BuyerNikHashHex()), s.kVisitor(eventID, ent.VisitorID), s.kEmail(eventID, ent.EmailHashHex()),
-	}
-	args := []string{entryID, "UNCLAIMED", strconv.FormatInt(nowMs, 10)}
-
-	// Use raw EVAL to ensure the current end_entry.lua runs on the correct master node.
-	arr, eerr := s.c.Do(ctx, s.c.B().Eval().Script(lua.EndEntry).
-		Numkeys(int64(len(keys))).Key(keys...).Arg(args...).Build()).ToArray()
-	if eerr != nil {
-		return false, fmt.Errorf("valkey: end_entry (missed+clean): %w", eerr)
-	}
-	if len(arr) == 0 {
-		return false, nil
-	}
-	tag, _ := arr[0].ToString()
-	return tag == "OK", nil
 }
 
 // WasNotifiedSoon reports whether a pre-turn notification was already sent for this entry.

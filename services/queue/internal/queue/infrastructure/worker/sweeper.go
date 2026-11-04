@@ -47,8 +47,7 @@ func (s *Sweeper) runEvent(ctx context.Context, eventID string) error {
 		return err
 	}
 	for _, entryID := range expired {
-		_, merr := s.store.MarkMissedAndClean(ctx, eventID, entryID, nowMs)
-		if merr != nil {
+		if _, merr := s.store.EndEntry(ctx, eventID, entryID, outbound.EndSweepMissed, nowMs); merr != nil {
 			return merr
 		}
 		// Slot is now free; Promoter picks it up next tick.
