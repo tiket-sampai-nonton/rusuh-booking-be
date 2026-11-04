@@ -96,8 +96,16 @@ func (s *fakeStore) removeWaitingLocked(id string) {
 	}
 }
 
-func (s *fakeStore) Join(context.Context, outbound.JoinParams) (outbound.JoinResult, error) {
-	return outbound.JoinResult{}, errors.New("unused")
+// Join mirrors join.lua's effect on the entry and waiting set (constraint keys are not modelled: the differential
+// scripts never rejoin an identity).
+func (s *fakeStore) Join(_ context.Context, p outbound.JoinParams) (outbound.JoinResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.seq++
+	nik, _ := hex.DecodeString(p.NikHash)
+	s.entries[p.EntryID] = &entity.Entry{ID: p.EntryID, VisitorID: p.VisitorID, Seq: valueobject.Seq(s.seq), Status: valueobject.StatusWaiting, BuyerNikHash: nik, EmailEnc: p.EmailEnc}
+	s.waiting = append(s.waiting, p.EntryID)
+	return outbound.JoinResult{Outcome: outbound.JoinOK, Seq: s.seq}, nil
 }
 
 func (s *fakeStore) Promote(_ context.Context, _ string, cands []outbound.PromoteCandidate, capacity int, nowMs int64, opts outbound.PromoteOpts) (outbound.PromoteResult, error) {
@@ -156,25 +164,96 @@ func (s *fakeStore) Claim(context.Context, string, string, string, int64) (outbo
 	return outbound.ClaimResult{}, errors.New("unused")
 }
 
-func (s *fakeStore) Leave(context.Context, string, string, string, int64) (outbound.LeaveResult, error) {
-	return outbound.LeaveResult{}, errors.New("unused")
+// Leave mirrors leave.lua: owner and status are decided together; terminal/CLAIMED are IGNORED and untouched.
+func (s *fakeStore) Leave(_ context.Context, _, entryID, visitorID string, _ int64) (outbound.LeaveResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	e, ok := s.entries[entryID]
+	if !ok || e.VisitorID != visitorID {
+		return outbound.LeaveResult{}, entity.ErrNotFound
+	}
+	switch string(e.Status) {
+	case "COMPLETED", "ENDED", "LEFT", "MISSED", "CLAIMED":
+		return outbound.LeaveResult{Tag: "IGNORED", PrevStatus: string(e.Status)}, nil
+	}
+	prev := string(e.Status)
+	alloc := ""
+	if prev == "ADMITTED" {
+		alloc = e.AllocationID
+	}
+	s.removeWaitingLocked(entryID)
+	delete(s.active, entryID)
+	e.Status = "LEFT"
+	return outbound.LeaveResult{Tag: "OK", PrevStatus: prev, AllocationID: alloc}, nil
 }
 
-func (s *fakeStore) EndEntry(_ context.Context, _, entryID, outcome string, _ int64) (outbound.EndResult, error) {
+// EndEntry mirrors end_entry.lua (design §5.1): outcome classes A (SWEEP_MISSED), B (promoter, WAITING only) and C
+// (Booking outcomes), the MISSED cleanup, and the orphan self-heal.
+func (s *fakeStore) EndEntry(_ context.Context, _, entryID, outcome string, nowMs int64) (outbound.EndResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	e, ok := s.entries[entryID]
 	if !ok {
+		delete(s.active, entryID)
 		s.removeWaitingLocked(entryID)
 		return outbound.EndResult{Tag: "IGNORED", Status: "NO_ENTRY"}, nil
 	}
-	if e.Status != valueobject.StatusWaiting && outcome != outbound.EndSweepMissed {
-		return outbound.EndResult{Tag: "IGNORED", Status: string(e.Status)}, nil
+	st := string(e.Status)
+	switch st {
+	case "COMPLETED", "ENDED", "LEFT":
+		if outcome == outbound.EndSweepMissed {
+			delete(s.active, entryID)
+		}
+		return outbound.EndResult{Tag: "IGNORED", Status: st}, nil
+	case "MISSED":
+		cleaned := s.active[entryID]
+		delete(s.active, entryID)
+		before := len(s.waiting)
+		s.removeWaitingLocked(entryID)
+		if cleaned || len(s.waiting) != before {
+			return outbound.EndResult{Tag: "OK_CLEANUP", Status: "MISSED"}, nil
+		}
+		return outbound.EndResult{Tag: "IGNORED", Status: "MISSED"}, nil
 	}
-	e.Status = "ENDED"
-	s.removeWaitingLocked(entryID)
+	final := ""
+	switch outcome {
+	case outbound.EndSweepMissed:
+		switch st {
+		case "ADMITTED":
+			if e.ClaimDeadlineMs != 0 && nowMs < e.ClaimDeadlineMs {
+				return outbound.EndResult{Tag: "IGNORED", Status: "ADMITTED"}, nil
+			}
+			final = "MISSED"
+		case "CLAIMED":
+			return outbound.EndResult{Tag: "IGNORED", Status: "CLAIMED"}, nil
+		case "WAITING":
+			delete(s.active, entryID)
+			return outbound.EndResult{Tag: "IGNORED", Status: "WAITING"}, nil
+		default:
+			return outbound.EndResult{Tag: "IGNORED", Status: st}, nil
+		}
+	case outbound.EndQuotaExhaust, outbound.EndAlreadyActive, outbound.EndUnreadablePII:
+		if st != "WAITING" {
+			return outbound.EndResult{Tag: "IGNORED", Status: st}, nil
+		}
+		final = "ENDED"
+	default:
+		if st != "ADMITTED" && st != "CLAIMED" {
+			return outbound.EndResult{Tag: "IGNORED", Status: st}, nil
+		}
+		switch outcome {
+		case "UNCLAIMED":
+			final = "MISSED"
+		case "PAID":
+			final = "COMPLETED"
+		default:
+			final = "ENDED"
+		}
+	}
 	delete(s.active, entryID)
-	return outbound.EndResult{Tag: "OK", Status: "ENDED"}, nil
+	s.removeWaitingLocked(entryID)
+	e.Status = valueobject.Status(final)
+	return outbound.EndResult{Tag: "OK", Status: final}, nil
 }
 
 func (s *fakeStore) GetEntry(_ context.Context, _, entryID string) (entity.Entry, bool, error) {
@@ -217,8 +296,32 @@ func (s *fakeStore) TopWaiting(_ context.Context, _ string, n int) ([]string, er
 	return cp, nil
 }
 
-func (s *fakeStore) ExpiredActive(context.Context, string, int64, int) ([]string, error) {
-	return nil, nil
+// ExpiredActive returns the active ids whose claim deadline is at or before nowMs, oldest first (limit applied).
+func (s *fakeStore) ExpiredActive(_ context.Context, _ string, nowMs int64, limit int) ([]string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	deadline := func(id string) int64 {
+		if e, ok := s.entries[id]; ok {
+			return e.ClaimDeadlineMs
+		}
+		return 0
+	}
+	var ids []string
+	for id := range s.active {
+		if deadline(id) <= nowMs {
+			ids = append(ids, id)
+		}
+	}
+	sort.Slice(ids, func(i, j int) bool {
+		if di, dj := deadline(ids[i]), deadline(ids[j]); di != dj {
+			return di < dj
+		}
+		return ids[i] < ids[j]
+	})
+	if limit > 0 && len(ids) > limit {
+		ids = ids[:limit]
+	}
+	return ids, nil
 }
 
 func (s *fakeStore) MarkMissed(context.Context, string, string, int64) (bool, error) {
