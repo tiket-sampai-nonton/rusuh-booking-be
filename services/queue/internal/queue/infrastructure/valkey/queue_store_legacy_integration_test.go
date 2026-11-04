@@ -63,7 +63,9 @@ func TestLegacy(t *testing.T) {
 		now := time.Now().UnixMilli()
 		const limit = 4
 		// A page larger than the sweep limit made of orphans, legacy CLAIMED and stale terminal members.
-		for i := 0; i < 3; i++ {
+		// More orphans than the page limit: if the script did not remove an orphan from active, the oldest `limit`
+		// members would be orphans forever and the genuinely expired entry behind them could never be reached.
+		for i := 0; i < limit+1; i++ {
 			zaddRaw(t, s, s.kActive(ev), float64(now-100_000+int64(i)), fmt.Sprintf("orphan-%d", i))
 		}
 		for i := 0; i < 3; i++ {
@@ -74,7 +76,7 @@ func TestLegacy(t *testing.T) {
 			_ = id
 		}
 		real, _, _ := legacyActive(t, s, ev, 30, "ADMITTED", now-1, now) // genuinely expired, scored after every poison member
-		for round := 0; round < 6; round++ {
+		for round := 0; round < 8; round++ {
 			ids, err := s.ExpiredActive(ctx, ev, now, limit)
 			require.NoError(t, err)
 			for _, id := range ids {
