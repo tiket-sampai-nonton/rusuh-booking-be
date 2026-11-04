@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strconv"
 	"testing"
 	"time"
 
@@ -15,6 +16,21 @@ import (
 	pkgvalkey "github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/valkey"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/port/outbound"
 )
+
+// osEnv fetches TEST_VALKEY_SERVER, failing (never skipping) when unset (plan R9-2 no-silent-skip).
+func osEnv(t *testing.T) string {
+	t.Helper()
+	server := os.Getenv("TEST_VALKEY_SERVER")
+	if server == "" {
+		t.Fatal("TEST_VALKEY_SERVER wajib diset untuk test integrasi QSH (tanpa skip senyap)")
+	}
+	return server
+}
+
+// bucketSuffix mirrors RateLimiter's fixed-window bucket id so a test can read the exact key.
+func bucketSuffix(now time.Time, window time.Duration) string {
+	return strconv.FormatInt(now.UnixMilli()/window.Milliseconds(), 10)
+}
 
 // mustStore returns a QueueStore on the real Valkey named by TEST_VALKEY_SERVER. It never skips: an unset
 // variable or an unreachable server fails the test (no silent skip, plan R9-2).
@@ -33,6 +49,19 @@ func mustStore(t *testing.T) *QueueStore {
 
 // evID returns an event id unique to the test run.
 func evID(t *testing.T) string { return fmt.Sprintf("ev-%s-%d", t.Name(), time.Now().UnixNano()) }
+
+// promoteBatch runs promote.lua under a real lease for the given candidates.
+func promoteBatch(t *testing.T, s *QueueStore, ev string, cands []outbound.PromoteCandidate, capacity int, nowMs int64) outbound.PromoteResult {
+	t.Helper()
+	ctx := context.Background()
+	tok, ok, err := s.AcquirePromoterLease(ctx, ev, 5*time.Second)
+	require.NoError(t, err)
+	require.True(t, ok)
+	defer func() { require.NoError(t, s.ReleasePromoterLease(ctx, ev, tok)) }()
+	res, err := s.Promote(ctx, ev, cands, capacity, nowMs, outbound.PromoteOpts{LeaseToken: tok})
+	require.NoError(t, err)
+	return res
+}
 
 // promoteOne admits one WAITING entry through promote.lua with a real lease token.
 func promoteOne(t *testing.T, s *QueueStore, ev, id, alloc string, deadlineMs, nowMs int64, capacity int) outbound.PromoteResult {

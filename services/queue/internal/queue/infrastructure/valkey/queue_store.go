@@ -5,6 +5,7 @@ package valkey
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -38,6 +39,9 @@ type QueueStore struct {
 	claim    *vk.Lua
 	leave    *vk.Lua
 	endEntry *vk.Lua
+
+	releaseLease   *vk.Lua
+	noteUnreadable *vk.Lua
 }
 
 // NewQueueStore returns the store with the embedded scripts loaded.
@@ -49,6 +53,9 @@ func NewQueueStore(c vk.Client, keyer Keyer, clk clock.IClock) *QueueStore {
 		claim:    vk.NewLuaScript(lua.Claim),
 		leave:    vk.NewLuaScript(lua.Leave),
 		endEntry: vk.NewLuaScript(lua.EndEntry),
+
+		releaseLease:   vk.NewLuaScript(lua.ReleaseLease),
+		noteUnreadable: vk.NewLuaScript(lua.NoteUnreadable),
 	}
 }
 
@@ -65,6 +72,7 @@ func (s *QueueStore) kEmail(e, h string) string   { return s.keyer.Key(s.tag(e) 
 func (s *QueueStore) kQuota(e string) string      { return s.keyer.Key(s.tag(e) + ":quota_exhausted") }
 func (s *QueueStore) kStatus(e string) string     { return s.keyer.Key(s.tag(e) + ":status") }
 func (s *QueueStore) kSale(e string) string       { return s.keyer.Key(s.tag(e) + ":sale") }
+func (s *QueueStore) kLease(e string) string      { return s.keyer.Key(s.tag(e) + ":promoter:lock") }
 
 func bstr(b bool) string {
 	if b {
@@ -117,14 +125,20 @@ func mapJoin(arr []vk.ValkeyMessage) (outbound.JoinResult, error) {
 	return outbound.JoinResult{}, fmt.Errorf("valkey: join.lua tag tak dikenal %q", tag)
 }
 
-// Promote moves reserved candidates waiting→active atomically (design §4.2).
-// T01: thin adapter; opts are ignored until the fenced promote.lua lands.
-func (s *QueueStore) Promote(ctx context.Context, eventID string, cands []outbound.PromoteCandidate, capacity int, nowMs int64, _ outbound.PromoteOpts) (outbound.PromoteResult, error) {
-	keys := []string{s.kWaiting(eventID), s.kActive(eventID)}
+// Promote moves reserved candidates waiting→active atomically, fenced by the promoter lease token
+// (design §5.4, ADR-028). An empty token is an error before any Valkey call: an unfenced promote is a defect.
+func (s *QueueStore) Promote(ctx context.Context, eventID string, cands []outbound.PromoteCandidate, capacity int, nowMs int64, opts outbound.PromoteOpts) (outbound.PromoteResult, error) {
+	if opts.LeaseToken == "" {
+		return outbound.PromoteResult{}, errors.New("valkey: promote: LeaseToken wajib (fence promoter)")
+	}
+	if len(cands) == 0 {
+		return outbound.PromoteResult{}, nil
+	}
+	keys := []string{s.kWaiting(eventID), s.kActive(eventID), s.kLease(eventID)}
 	for _, c := range cands {
 		keys = append(keys, s.kEntry(eventID, c.EntryID))
 	}
-	args := []string{strconv.Itoa(capacity), strconv.FormatInt(nowMs, 10)}
+	args := []string{strconv.Itoa(capacity), strconv.FormatInt(nowMs, 10), bstr(opts.RequireHead), opts.LeaseToken}
 	for _, c := range cands {
 		args = append(args, c.EntryID, c.AllocationID, strconv.FormatInt(c.ClaimDeadlineMs, 10))
 	}
@@ -132,26 +146,61 @@ func (s *QueueStore) Promote(ctx context.Context, eventID string, cands []outbou
 	if err != nil {
 		return outbound.PromoteResult{}, fmt.Errorf("valkey: promote.lua: %w", err)
 	}
-	if len(arr) == 0 {
-		return outbound.PromoteResult{}, nil
-	}
-	tag, _ := arr[0].ToString()
-	if tag == "FULL" || len(arr) < 2 {
-		return outbound.PromoteResult{Full: tag == "FULL"}, nil
-	}
-	ids, err := arr[1].ToArray()
-	if err != nil {
-		return outbound.PromoteResult{}, nil
-	}
-	out := make([]string, 0, len(ids))
-	for _, m := range ids {
-		id, _ := m.ToString()
-		out = append(out, id)
-	}
-	return outbound.PromoteResult{Promoted: out}, nil
+	return mapPromote(arr)
 }
 
-// Claim runs claim.lua (design §4.3). Maps ERR tags to domain errors.
+// mapPromote parses the promote.lua reply. Anything that is not a documented shape is an error: swallowing it
+// as "nothing promoted" would strand a RESERVED allocation without anyone noticing (Q-03).
+func mapPromote(arr []vk.ValkeyMessage) (outbound.PromoteResult, error) {
+	if len(arr) == 0 {
+		return outbound.PromoteResult{}, errors.New("valkey: promote.lua balasan kosong")
+	}
+	tag, _ := arr[0].ToString()
+	switch tag {
+	case "LEASE_LOST":
+		return outbound.PromoteResult{LeaseLost: true}, nil
+	case "FULL":
+		return outbound.PromoteResult{Full: true}, nil
+	case "OK":
+	default:
+		return outbound.PromoteResult{}, fmt.Errorf("valkey: promote.lua tag tak dikenal %q", tag)
+	}
+	if len(arr) < 3 {
+		return outbound.PromoteResult{}, fmt.Errorf("valkey: promote.lua balasan OK terlalu pendek (%d)", len(arr))
+	}
+	promotedArr, err := arr[1].ToArray()
+	if err != nil {
+		return outbound.PromoteResult{}, fmt.Errorf("valkey: promote.lua daftar promoted: %w", err)
+	}
+	skippedArr, err := arr[2].ToArray()
+	if err != nil {
+		return outbound.PromoteResult{}, fmt.Errorf("valkey: promote.lua daftar skipped: %w", err)
+	}
+	res := outbound.PromoteResult{}
+	for _, m := range promotedArr {
+		id, err := m.ToString()
+		if err != nil {
+			return outbound.PromoteResult{}, fmt.Errorf("valkey: promote.lua id promoted: %w", err)
+		}
+		res.Promoted = append(res.Promoted, id)
+	}
+	for _, m := range skippedArr {
+		f, err := m.ToArray()
+		if err != nil || len(f) < 2 {
+			return outbound.PromoteResult{}, fmt.Errorf("valkey: promote.lua baris skipped tidak valid")
+		}
+		sk := outbound.PromoteSkip{}
+		sk.EntryID, _ = f[0].ToString()
+		sk.Status, _ = f[1].ToString()
+		if len(f) >= 3 {
+			sk.AllocationID, _ = f[2].ToString()
+		}
+		res.Skipped = append(res.Skipped, sk)
+	}
+	return res, nil
+}
+
+// Claim runs claim.lua (design §5.3). Maps ERR tags to domain errors; GONE (terminal) is reported as not found.
 func (s *QueueStore) Claim(ctx context.Context, eventID, entryID, visitorID string, nowMs int64) (outbound.ClaimResult, error) {
 	keys := []string{s.kEntry(eventID, entryID), s.kActive(eventID)}
 	args := []string{entryID, strconv.FormatInt(nowMs, 10), visitorID}
@@ -166,17 +215,24 @@ func (s *QueueStore) Claim(ctx context.Context, eventID, entryID, visitorID stri
 	detail, _ := arr[1].ToString()
 	if tag == "ERR" {
 		switch detail {
-		case "NOT_FOUND":
+		case "NOT_FOUND", "GONE":
 			return outbound.ClaimResult{}, entity.ErrNotFound
+		case "NOT_ADMITTED":
+			return outbound.ClaimResult{}, entity.ErrNotAdmitted
 		case "TURN_MISSED":
 			return outbound.ClaimResult{}, entity.ErrTurnMissed
 		}
 		return outbound.ClaimResult{}, fmt.Errorf("valkey: claim.lua err %q", detail)
 	}
-	return outbound.ClaimResult{Status: detail}, nil
+	res := outbound.ClaimResult{Status: detail}
+	if len(arr) >= 3 {
+		res.AllocationID, _ = arr[2].ToString()
+	}
+	return res, nil
 }
 
-// Leave runs leave.lua (design §4.4). wasActive=true means a slot was freed.
+// Leave runs leave.lua (design §5.2). Ownership and status are decided inside the script; the Go pre-read only
+// derives the immutable constraint-key names. NOT_FOUND (also for a wrong owner) is entity.ErrNotFound.
 func (s *QueueStore) Leave(ctx context.Context, eventID, entryID, visitorID string, nowMs int64) (outbound.LeaveResult, error) {
 	ent, ok, err := s.GetEntry(ctx, eventID, entryID)
 	if err != nil {
@@ -196,18 +252,24 @@ func (s *QueueStore) Leave(ctx context.Context, eventID, entryID, visitorID stri
 	if err != nil {
 		return outbound.LeaveResult{}, fmt.Errorf("valkey: leave.lua: %w", err)
 	}
-	if len(arr) < 1 {
-		return outbound.LeaveResult{}, fmt.Errorf("valkey: leave.lua balasan kosong")
+	if len(arr) < 2 {
+		return outbound.LeaveResult{}, fmt.Errorf("valkey: leave.lua balasan tak terduga")
 	}
 	tag, _ := arr[0].ToString()
-	if tag == "ERR" {
+	second, _ := arr[1].ToString()
+	switch tag {
+	case "ERR":
 		return outbound.LeaveResult{}, entity.ErrNotFound
+	case "IGNORED":
+		return outbound.LeaveResult{Tag: "IGNORED", PrevStatus: second}, nil
+	case "OK":
+		res := outbound.LeaveResult{Tag: "OK", PrevStatus: second}
+		if len(arr) >= 3 {
+			res.AllocationID, _ = arr[2].ToString()
+		}
+		return res, nil
 	}
-	res := outbound.LeaveResult{Tag: "OK"}
-	if ok {
-		res.PrevStatus, res.AllocationID = string(ent.Status), ent.AllocationID
-	}
-	return res, nil
+	return outbound.LeaveResult{}, fmt.Errorf("valkey: leave.lua tag tak dikenal %q", tag)
 }
 
 // EndEntry runs end_entry.lua for the booking.journey.ended consumer (design §4.5). Idempotent.
@@ -307,7 +369,11 @@ func (s *QueueStore) WasNotifiedSoon(ctx context.Context, eventID, entryID strin
 // MarkNotifiedSoon records that a pre-turn notification was sent (idempotent SETNX, TTL=600s).
 func (s *QueueStore) MarkNotifiedSoon(ctx context.Context, eventID, entryID string) error {
 	key := s.keyer.Key(s.tag(eventID) + ":notified_soon:" + entryID)
-	return s.c.Do(ctx, s.c.B().Set().Key(key).Value("1").Nx().Ex(600*time.Second).Build()).Error()
+	err := s.c.Do(ctx, s.c.B().Set().Key(key).Value("1").Nx().Ex(600*time.Second).Build()).Error()
+	if vk.IsValkeyNil(err) {
+		return nil // SET NX answers nil when the mark already exists: marking twice is idempotent
+	}
+	return err
 }
 
 // AddQuotaExhausted records a NIK hash in the quota_exhausted set (idempotent SADD).
@@ -377,11 +443,14 @@ func parseMs(v string) int64 {
 	return n
 }
 
-// AcquirePromoterLease tries to set a distributed lock for the promoter on a given event.
-// T01: thin adapter, the value written is "1" and also returned as the token.
+// AcquirePromoterLease tries to set the per-event promoter lease (SET NX PX) with a fresh random token as the
+// value, so release and the promote.lua fence can tell the holder from a later holder (design §5.5, ADR-028).
 func (s *QueueStore) AcquirePromoterLease(ctx context.Context, eventID string, ttl time.Duration) (string, bool, error) {
-	key := s.keyer.Key(s.tag(eventID) + ":promoter:lock")
-	res, err := s.c.Do(ctx, s.c.B().Set().Key(key).Value("1").Nx().Px(ttl).Build()).ToString()
+	tok, err := newLeaseToken()
+	if err != nil {
+		return "", false, err
+	}
+	res, err := s.c.Do(ctx, s.c.B().Set().Key(s.kLease(eventID)).Value(tok).Nx().Px(ttl).Build()).ToString()
 	if vk.IsValkeyNil(err) {
 		return "", false, nil // another instance holds the lease
 	}
@@ -391,16 +460,35 @@ func (s *QueueStore) AcquirePromoterLease(ctx context.Context, eventID string, t
 	if res != "OK" {
 		return "", false, nil
 	}
-	return "1", true, nil
+	return tok, true, nil
 }
 
-// ReleasePromoterLease releases a previously acquired promoter lease (T01: token ignored).
-func (s *QueueStore) ReleasePromoterLease(ctx context.Context, eventID, _ string) error {
-	key := s.keyer.Key(s.tag(eventID) + ":promoter:lock")
-	return s.c.Do(ctx, s.c.B().Del().Key(key).Build()).Error()
+// ReleasePromoterLease deletes the lease only if token still owns it (compare-and-delete). A stale holder whose TTL
+// lapsed must never delete the lease of whoever acquired it afterwards.
+func (s *QueueStore) ReleasePromoterLease(ctx context.Context, eventID, token string) error {
+	if token == "" {
+		return errors.New("valkey: release_promoter_lease: token kosong")
+	}
+	if err := s.releaseLease.Exec(ctx, s.c, []string{s.kLease(eventID)}, []string{token}).Error(); err != nil {
+		return fmt.Errorf("valkey: release_promoter_lease: %w", err)
+	}
+	return nil
 }
 
-// NoteUnreadable is implemented by note_unreadable.lua (T23).
-func (s *QueueStore) NoteUnreadable(_ context.Context, _, _ string) (int, error) {
-	return 0, errors.New("note_unreadable: not implemented")
+// NoteUnreadable counts one failed email unseal for a WAITING entry (note_unreadable.lua, C6). It returns -1 when
+// the entry is not WAITING (or gone) and never creates a hash.
+func (s *QueueStore) NoteUnreadable(ctx context.Context, eventID, entryID string) (int, error) {
+	n, err := s.noteUnreadable.Exec(ctx, s.c, []string{s.kEntry(eventID, entryID)}, nil).AsInt64()
+	if err != nil {
+		return 0, fmt.Errorf("valkey: note_unreadable.lua: %w", err)
+	}
+	return int(n), nil
+}
+
+func newLeaseToken() (string, error) {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("valkey: lease token: %w", err)
+	}
+	return hex.EncodeToString(b), nil
 }

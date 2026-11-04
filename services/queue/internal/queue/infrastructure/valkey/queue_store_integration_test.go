@@ -25,7 +25,7 @@ func newTestStore(t *testing.T) *QueueStore {
 		t.Skip("TEST_VALKEY_SERVER tidak diset")
 	}
 	// Use a unique prefix per test run to avoid cross-test pollution.
-	prefix := "it" + time.Now().Format("150405.000")[7:]
+	prefix := fmt.Sprintf("it%d", time.Now().UnixNano()%1_000_000_000_000)
 	c, err := pkgvalkey.New(context.Background(), pkgvalkey.Config{Server: server, PrefixEnv: prefix})
 	require.NoError(t, err)
 	t.Cleanup(c.Close)

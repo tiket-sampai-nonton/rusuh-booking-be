@@ -50,14 +50,12 @@ func TestQueueStore_EntryLifecycle(t *testing.T) {
 	assert.Equal(t, 0, active)
 
 	// Promote two with different claim deadlines; capacity 2 admits both and refuses a third.
-	promoted, err := s.Promote(ctx, ev, []outbound.PromoteCandidate{
+	promoted := promoteBatch(t, s, ev, []outbound.PromoteCandidate{
 		{EntryID: a, AllocationID: "alloc-a", ClaimDeadlineMs: now + 60_000},
 		{EntryID: b, AllocationID: "alloc-b", ClaimDeadlineMs: now - 1_000}, // already past: will be missed
-	}, 2, now, outbound.PromoteOpts{})
-	require.NoError(t, err)
+	}, 2, now)
 	assert.ElementsMatch(t, []string{a, b}, promoted.Promoted)
-	full, err := s.Promote(ctx, ev, []outbound.PromoteCandidate{{EntryID: c, AllocationID: "alloc-c", ClaimDeadlineMs: now + 60_000}}, 2, now, outbound.PromoteOpts{})
-	require.NoError(t, err)
+	full := promoteBatch(t, s, ev, []outbound.PromoteCandidate{{EntryID: c, AllocationID: "alloc-c", ClaimDeadlineMs: now + 60_000}}, 2, now)
 	assert.Empty(t, full.Promoted, "slot penuh")
 	assert.True(t, full.Full)
 
@@ -98,16 +96,23 @@ func TestQueueStore_EntryLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, missedAgain.Changed())
 
+	// A CLAIMED entry cannot leave (QSH-OQ-3, provisional): the slot is freed by journey.ended, not by leave.
+	ignored, err := s.Leave(ctx, ev, a, visA, now)
+	require.NoError(t, err)
+	assert.Equal(t, "IGNORED", ignored.Tag)
+	assert.Equal(t, "CLAIMED", ignored.PrevStatus)
 	// Leaving frees the slot of an admitted entry; leaving something unknown is not found.
-	left, err := s.Leave(ctx, ev, a, visA, now)
+	d, visD, _ := joinOne(t, s, ev, 4, now)
+	promoteOne(t, s, ev, d, "alloc-d", now+60_000, now, 5)
+	left, err := s.Leave(ctx, ev, d, visD, now)
 	require.NoError(t, err)
 	assert.Equal(t, "OK", left.Tag)
+	assert.Equal(t, "ADMITTED", left.PrevStatus)
 	_, err = s.Leave(ctx, ev, "tidak-ada", "visitor-x", now)
 	assert.ErrorIs(t, err, entity.ErrNotFound)
 
 	// End a promoted entry with the outcome Booking reports (idempotent).
-	_, err = s.Promote(ctx, ev, []outbound.PromoteCandidate{{EntryID: c, AllocationID: "alloc-c", ClaimDeadlineMs: now + 60_000}}, 5, now, outbound.PromoteOpts{})
-	require.NoError(t, err)
+	promoteBatch(t, s, ev, []outbound.PromoteCandidate{{EntryID: c, AllocationID: "alloc-c", ClaimDeadlineMs: now + 60_000}}, 5, now)
 	final, err := s.EndEntry(ctx, ev, c, "PAID", now)
 	require.NoError(t, err)
 	assert.NotEmpty(t, final.Status)
@@ -153,6 +158,7 @@ func TestQueueStore_SaleStatusDocLeaseAndNotifications(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, was)
 	require.NoError(t, s.MarkNotifiedSoon(ctx, ev, "e1"))
+	require.NoError(t, s.MarkNotifiedSoon(ctx, ev, "e1"), "menandai dua kali idempoten, bukan galat 'valkey nil message'")
 	was, err = s.WasNotifiedSoon(ctx, ev, "e1")
 	require.NoError(t, err)
 	assert.True(t, was)

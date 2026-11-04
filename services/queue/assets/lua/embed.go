@@ -16,4 +16,10 @@ var (
 	Leave string
 	//go:embed end_entry.lua
 	EndEntry string
+	//go:embed rate_limit.lua
+	RateLimit string
+	//go:embed release_lease.lua
+	ReleaseLease string
+	//go:embed note_unreadable.lua
+	NoteUnreadable string
 )
