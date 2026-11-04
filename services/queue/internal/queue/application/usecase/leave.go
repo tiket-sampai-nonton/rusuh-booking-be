@@ -6,7 +6,6 @@ import (
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/clock"
 
-	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/application/compensation"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/port/inbound"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/port/outbound"
 )
@@ -36,7 +35,7 @@ func (u *LeaveQueue) Leave(ctx context.Context, in inbound.LeaveInput) error {
 		return err
 	}
 	if res.Tag == "OK" && res.PrevStatus == "ADMITTED" && res.AllocationID != "" {
-		if rerr := u.booking.ReleaseAllocation(ctx, res.AllocationID, compensation.ReleaseReason); rerr != nil {
+		if rerr := u.booking.ReleaseAllocation(ctx, res.AllocationID, outbound.ReleaseReasonEntryGone); rerr != nil {
 			u.logger.Warn("leave: gagal melepas alokasi Booking; sweeper akan membersihkan saat deadline",
 				"eventId", in.EventID, "entryId", in.EntryID, "allocationId", res.AllocationID, "error", rerr)
 		}

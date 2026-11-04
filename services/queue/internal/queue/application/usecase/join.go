@@ -14,7 +14,6 @@ import (
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/clock"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/nik"
 
-	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/application/compensation"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/domain/dto"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/domain/entity"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/domain/mapper"
@@ -352,7 +351,7 @@ func (u *JoinQueue) tryDirectAdmission(ctx context.Context, eventID string, ent 
 		u.logger.Error("Promote FULL setelah alokasi diberikan pada admisi langsung; baris dipertahankan", "eventId", eventID, "entryId", ent.ID)
 		return false
 	}
-	compensation.ReleaseTerminal(ctx, u.d.Booking, u.logger, pres.Skipped, map[string]string{ent.ID: a.AllocationID})
+	outbound.ReleaseTerminal(ctx, u.d.Booking, u.logger, pres.Skipped, map[string]string{ent.ID: a.AllocationID})
 	if len(pres.Promoted) == 0 {
 		return false
 	}

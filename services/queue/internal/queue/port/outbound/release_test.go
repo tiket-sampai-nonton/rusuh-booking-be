@@ -1,4 +1,4 @@
-package compensation_test
+package outbound_test
 
 import (
 	"bytes"
@@ -12,30 +12,8 @@ import (
 	"go.uber.org/mock/gomock"
 
 	mock_outbound "github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/_mock/queue/port/outbound"
-	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/application/compensation"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/port/outbound"
 )
-
-// design §5.4: release iff the script itself reported the entry as provably terminal (or ADMITTED_OTHER).
-func TestShouldRelease(t *testing.T) {
-	tests := []struct {
-		status string
-		want   bool
-	}{
-		{"NO_ENTRY", true}, {"LEFT", true}, {"ENDED", true}, {"COMPLETED", true}, {"MISSED", true}, {"ADMITTED_OTHER", true},
-		{"ADMITTED_SAME", false}, // the entry is ADMITTED with this very allocation: releasing would undo a good admission
-		{"NOT_HEAD", false},      // deferred: the row is replayed by the promoter
-		{"FULL", false},
-		{"", false},
-		{"WAITING", false},
-		{"SOMETHING_NEW", false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.status, func(t *testing.T) {
-			assert.Equal(t, tt.want, compensation.ShouldRelease(tt.status))
-		})
-	}
-}
 
 func TestReleaseTerminal_ReleasesTheGrantedIDForTerminalSkipsOnly(t *testing.T) {
 	ctrl := gomock.NewController(t)
@@ -53,7 +31,7 @@ func TestReleaseTerminal_ReleasesTheGrantedIDForTerminalSkipsOnly(t *testing.T) 
 	booking.EXPECT().ReleaseAllocation(ctx, "a-left", "QUEUE_ENTRY_GONE").Return(nil)
 	booking.EXPECT().ReleaseAllocation(ctx, "a-other-granted", "QUEUE_ENTRY_GONE").Return(nil)
 
-	n := compensation.ReleaseTerminal(ctx, booking, slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil)), skips, granted)
+	n := outbound.ReleaseTerminal(ctx, booking, slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil)), skips, granted)
 	assert.Equal(t, 2, n)
 }
 
@@ -66,7 +44,7 @@ func TestReleaseTerminal_AFailedReleaseIsLoggedAndTheNextSkipIsStillProcessed(t 
 
 	booking.EXPECT().ReleaseAllocation(ctx, "a1", gomock.Any()).Return(errors.New("booking down"))
 	booking.EXPECT().ReleaseAllocation(ctx, "a2", gomock.Any()).Return(nil)
-	n := compensation.ReleaseTerminal(ctx, booking, logger,
+	n := outbound.ReleaseTerminal(ctx, booking, logger,
 		[]outbound.PromoteSkip{{EntryID: "e1", Status: "LEFT"}, {EntryID: "e2", Status: "MISSED"}},
 		map[string]string{"e1": "a1", "e2": "a2"})
 	assert.Equal(t, 1, n, "hanya yang berhasil dihitung")
@@ -77,5 +55,5 @@ func TestReleaseTerminal_AFailedReleaseIsLoggedAndTheNextSkipIsStillProcessed(t 
 func TestReleaseTerminal_NoSkipsMakesNoCalls(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	booking := mock_outbound.NewMockIBookingClient(ctrl)
-	assert.Equal(t, 0, compensation.ReleaseTerminal(context.Background(), booking, nil, nil, nil))
+	assert.Equal(t, 0, outbound.ReleaseTerminal(context.Background(), booking, nil, nil, nil))
 }

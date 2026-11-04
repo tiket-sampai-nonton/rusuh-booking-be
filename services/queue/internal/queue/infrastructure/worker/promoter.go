@@ -12,7 +12,6 @@ import (
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/clock"
 
-	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/application/compensation"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/port/outbound"
 )
 
@@ -198,7 +197,7 @@ func (p *Promoter) runEvent(ctx context.Context, eventID string) error {
 		p.logger.Error("Promote FULL setelah alokasi diberikan; baris RESERVED dipertahankan untuk replay", "eventId", eventID)
 		return nil
 	}
-	compensation.ReleaseTerminal(runCtx, p.booking, p.logger, res.Skipped, out.grantedAlloc)
+	outbound.ReleaseTerminal(runCtx, p.booking, p.logger, res.Skipped, out.grantedAlloc)
 
 	promoted := map[string]bool{}
 	for _, entryID := range res.Promoted {
