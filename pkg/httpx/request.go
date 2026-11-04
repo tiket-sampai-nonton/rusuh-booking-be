@@ -74,6 +74,37 @@ func ClientIP(r *http.Request, trustProxy bool) string {
 	return host
 }
 
+// ClientIPHops returns the client address when `hops` trusted proxies each appended one entry to X-Forwarded-For
+// (1 = ALB only, 2 = CloudFront then ALB). All X-Forwarded-For header lines are joined in order, then the entry
+// `hops` from the right is used, so anything a client wrote to the left stays ignored. Falls back to the
+// connection address when trustProxy is off, hops < 1, there are fewer entries than hops, or the entry is not an IP.
+func ClientIPHops(r *http.Request, trustProxy bool, hops int) string {
+	remote := remoteHost(r)
+	if !trustProxy || hops < 1 {
+		return remote
+	}
+	lines := r.Header.Values("X-Forwarded-For")
+	if len(lines) == 0 {
+		return remote
+	}
+	parts := strings.Split(strings.Join(lines, ","), ",")
+	if len(parts) < hops {
+		return remote
+	}
+	if ip := net.ParseIP(strings.TrimSpace(parts[len(parts)-hops])); ip != nil {
+		return ip.String()
+	}
+	return remote
+}
+
+func remoteHost(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
+}
+
 // BearerToken extracts the token from "Authorization: Bearer <token>".
 func BearerToken(r *http.Request) (string, bool) {
 	h := r.Header.Get("Authorization")

@@ -73,3 +73,39 @@ func TestNewOTPCode(t *testing.T) {
 		assert.ErrorIs(t, err, ErrInvalidOTPCode, bad)
 	}
 }
+
+func TestNewEmail_LengthAndControlChars(t *testing.T) {
+	tests := []struct {
+		name, in string
+		ok       bool
+	}{
+		{"local 64 bytes ok", strings.Repeat("a", 64) + "@x.id", true},
+		{"local 65 bytes rejected", strings.Repeat("a", 65) + "@x.id", false},
+		{"multibyte local over 64 bytes rejected", strings.Repeat("é", 33) + "@x.id", false},
+		{"multibyte local within 64 bytes ok", strings.Repeat("é", 32) + "@x.id", true},
+		{"total over 254 bytes rejected", strings.Repeat("a", 64) + "@" + strings.Repeat("b", 63) + "." + strings.Repeat("c", 63) + "." + strings.Repeat("d", 63) + "." + strings.Repeat("e", 63) + ".id", false},
+		{"NUL in local rejected", "a\x00b@x.id", false},
+		{"BEL in local rejected", "a\x07b@x.id", false},
+		{"DEL in local rejected", "a\x7fb@x.id", false},
+		{"plain ascii ok", "arnu@gmail.com", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := NewEmail(tt.in)
+			if tt.ok {
+				assert.NoError(t, err)
+			} else {
+				assert.ErrorIs(t, err, ErrInvalidEmail)
+			}
+		})
+	}
+}
+
+// H3 regression: normalisation (lowercase+trim) happens before any hashing.
+func TestNewEmail_CaseInsensitiveIdentity(t *testing.T) {
+	a, err := NewEmail("A@X.com")
+	assert.NoError(t, err)
+	b, err := NewEmail(" a@x.com ")
+	assert.NoError(t, err)
+	assert.Equal(t, a.String(), b.String())
+}

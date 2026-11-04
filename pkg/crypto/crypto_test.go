@@ -3,6 +3,7 @@ package crypto
 import (
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -62,4 +63,25 @@ func TestMasking(t *testing.T) {
 	assert.Equal(t, "***", MaskEmail("nope"))
 	assert.Equal(t, "3174********0001", MaskNIK("3174010101900001"))
 	assert.Equal(t, strings.Repeat("*", 16), MaskNIK("123"))
+}
+
+func TestMaskEmail_RuneSafe(t *testing.T) {
+	tests := []struct{ in, want string }{
+		{"ab@x.com", "a***@x.com"},
+		{"a@x.com", "a***@x.com"},
+		{"@x.com", "***"},
+		{"nodomain", "***"},
+		{"arnu@gmail.com", "ar***@gmail.com"},
+		{"é@x.com", "é***@x.com"},
+		{"éé@x.com", "é***@x.com"},
+		{"ééé@x.com", "éé***@x.com"},
+		{"日本語@x.com", "日本***@x.com"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.in, func(t *testing.T) {
+			got := MaskEmail(tt.in)
+			assert.True(t, utf8.ValidString(got), "invalid utf-8: %q", got)
+			assert.Equal(t, tt.want, got)
+		})
+	}
 }

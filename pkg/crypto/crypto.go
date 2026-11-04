@@ -94,11 +94,12 @@ func MaskEmail(email string) string {
 	if !ok || local == "" {
 		return "***"
 	}
+	runes := []rune(local) // potong per rune supaya local part multibyte tidak menghasilkan UTF-8 rusak
 	keep := 2
-	if len(local) <= 2 {
+	if len(runes) <= 2 {
 		keep = 1
 	}
-	return local[:keep] + "***@" + domain
+	return string(runes[:keep]) + "***@" + domain
 }
 
 // MaskNIK returns e.g. "3174********0001" for a 16-digit NIK.
