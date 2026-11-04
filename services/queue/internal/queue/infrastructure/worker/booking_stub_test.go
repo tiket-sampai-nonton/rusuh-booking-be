@@ -42,11 +42,15 @@ func newBookingStub(clk *clock.Fixed, claimWindow time.Duration, stock int) *boo
 	return &bookingStub{clk: clk, cw: claimWindow, stock: stock, rows: map[string]*stubRow{}, failed: map[string]bool{}, afterHooks: map[int]func(){}}
 }
 
-func (s *bookingStub) failEntry(id string)  { s.mu.Lock(); s.failed[id] = true; s.mu.Unlock() }
-func (s *bookingStub) clearFail(id string)  { s.mu.Lock(); delete(s.failed, id); s.mu.Unlock() }
-func (s *bookingStub) afterEntry(k int, fn func()) { s.mu.Lock(); s.afterHooks[k] = fn; s.mu.Unlock() }
+func (s *bookingStub) failEntry(id string)          { s.mu.Lock(); s.failed[id] = true; s.mu.Unlock() }
+func (s *bookingStub) clearFail(id string)          { s.mu.Lock(); delete(s.failed, id); s.mu.Unlock() }
+func (s *bookingStub) afterEntry(k int, fn func())  { s.mu.Lock(); s.afterHooks[k] = fn; s.mu.Unlock() }
 func (s *bookingStub) AdvanceClock(d time.Duration) { s.clk.T = s.clk.T.Add(d) }
-func (s *bookingStub) Calls() (reserve, release int) { s.mu.Lock(); defer s.mu.Unlock(); return s.reserveN, s.releaseN }
+func (s *bookingStub) Calls() (reserve, release int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.reserveN, s.releaseN
+}
 func (s *bookingStub) ReleasedIDs() []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()

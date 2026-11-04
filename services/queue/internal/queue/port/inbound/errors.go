@@ -22,6 +22,7 @@ const (
 	CodeEventNotOnSale apperror.Code = "EVENT_NOT_ON_SALE"
 	CodeEventSoldOut   apperror.Code = "EVENT_SOLD_OUT"
 	CodeTurnMissed     apperror.Code = "TURN_MISSED"
+	CodeNotAdmitted    apperror.Code = "NOT_ADMITTED"
 	CodeEntryMoved     apperror.Code = "ENTRY_MOVED"
 )
 
@@ -45,6 +46,7 @@ var errMappings = []errMapping{
 	{entity.ErrNotOnSale, CodeEventNotOnSale, http.StatusConflict},
 	{entity.ErrSoldOut, CodeEventSoldOut, http.StatusGone},
 	{entity.ErrTurnMissed, CodeTurnMissed, http.StatusGone},
+	{entity.ErrNotAdmitted, CodeNotAdmitted, http.StatusConflict},
 	{entity.ErrEntryMoved, CodeEntryMoved, http.StatusConflict},
 	{entity.ErrNotOwner, apperror.CodeNotFound, http.StatusNotFound},
 	{entity.ErrNotFound, apperror.CodeNotFound, http.StatusNotFound},

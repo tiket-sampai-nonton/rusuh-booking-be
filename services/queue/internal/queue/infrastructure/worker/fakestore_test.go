@@ -96,7 +96,9 @@ func (s *fakeStore) removeWaitingLocked(id string) {
 	}
 }
 
-func (s *fakeStore) Join(context.Context, outbound.JoinParams) (outbound.JoinResult, error) { return outbound.JoinResult{}, errors.New("unused") }
+func (s *fakeStore) Join(context.Context, outbound.JoinParams) (outbound.JoinResult, error) {
+	return outbound.JoinResult{}, errors.New("unused")
+}
 
 func (s *fakeStore) Promote(_ context.Context, _ string, cands []outbound.PromoteCandidate, capacity int, nowMs int64, opts outbound.PromoteOpts) (outbound.PromoteResult, error) {
 	s.mu.Lock()
@@ -215,17 +217,27 @@ func (s *fakeStore) TopWaiting(_ context.Context, _ string, n int) ([]string, er
 	return cp, nil
 }
 
-func (s *fakeStore) ExpiredActive(context.Context, string, int64, int) ([]string, error) { return nil, nil }
+func (s *fakeStore) ExpiredActive(context.Context, string, int64, int) ([]string, error) {
+	return nil, nil
+}
 
-func (s *fakeStore) MarkMissed(context.Context, string, string, int64) (bool, error)          { return false, nil }
-func (s *fakeStore) MarkMissedAndClean(context.Context, string, string, int64) (bool, error)  { return false, nil }
-func (s *fakeStore) AddQuotaExhausted(context.Context, string, string) error                   { return nil }
-func (s *fakeStore) SetSale(context.Context, string, string, bool) error                       { return nil }
-func (s *fakeStore) GetSale(context.Context, string) (outbound.SaleState, error)               { return outbound.SaleState{}, nil }
-func (s *fakeStore) SetStatusDoc(context.Context, string, []byte, time.Duration) error          { return nil }
-func (s *fakeStore) GetStatusDoc(context.Context, string) ([]byte, bool, error)                { return nil, false, nil }
-func (s *fakeStore) WasNotifiedSoon(context.Context, string, string) (bool, error)             { return true, nil } // not under test
-func (s *fakeStore) MarkNotifiedSoon(context.Context, string, string) error                    { return nil }
+func (s *fakeStore) MarkMissed(context.Context, string, string, int64) (bool, error) {
+	return false, nil
+}
+func (s *fakeStore) MarkMissedAndClean(context.Context, string, string, int64) (bool, error) {
+	return false, nil
+}
+func (s *fakeStore) AddQuotaExhausted(context.Context, string, string) error { return nil }
+func (s *fakeStore) SetSale(context.Context, string, string, bool) error     { return nil }
+func (s *fakeStore) GetSale(context.Context, string) (outbound.SaleState, error) {
+	return outbound.SaleState{}, nil
+}
+func (s *fakeStore) SetStatusDoc(context.Context, string, []byte, time.Duration) error { return nil }
+func (s *fakeStore) GetStatusDoc(context.Context, string) ([]byte, bool, error) {
+	return nil, false, nil
+}
+func (s *fakeStore) WasNotifiedSoon(context.Context, string, string) (bool, error) { return true, nil } // not under test
+func (s *fakeStore) MarkNotifiedSoon(context.Context, string, string) error        { return nil }
 func (s *fakeStore) NoteUnreadable(_ context.Context, _, entryID string) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -32,6 +32,7 @@ func TestMapError(t *testing.T) {
 		{"not on sale", entity.ErrNotOnSale, http.StatusConflict, inbound.CodeEventNotOnSale},
 		{"sold out", entity.ErrSoldOut, http.StatusGone, inbound.CodeEventSoldOut},
 		{"turn missed", entity.ErrTurnMissed, http.StatusGone, inbound.CodeTurnMissed},
+		{"not admitted", entity.ErrNotAdmitted, http.StatusConflict, inbound.CodeNotAdmitted},
 		{"not found", entity.ErrNotFound, http.StatusNotFound, apperror.CodeNotFound},
 		{"not owner maps to not found", entity.ErrNotOwner, http.StatusNotFound, apperror.CodeNotFound},
 		{"dependency", entity.ErrDependencyUnavailable, http.StatusServiceUnavailable, apperror.CodeDependencyUnavailable},

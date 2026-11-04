@@ -49,9 +49,11 @@ type fakeSettings struct {
 	s entity.EventSettings
 }
 
-func (f *fakeSettings) Get(context.Context, string) (entity.EventSettings, bool, error) { return f.s, true, nil }
-func (f *fakeSettings) ListEventIDs(context.Context) ([]string, error)                   { return []string{"ev"}, nil }
-func (f *fakeSettings) Ensure(context.Context, string) (entity.EventSettings, error)    { return f.s, nil }
+func (f *fakeSettings) Get(context.Context, string) (entity.EventSettings, bool, error) {
+	return f.s, true, nil
+}
+func (f *fakeSettings) ListEventIDs(context.Context) ([]string, error)               { return []string{"ev"}, nil }
+func (f *fakeSettings) Ensure(context.Context, string) (entity.EventSettings, error) { return f.s, nil }
 
 type fakePub struct {
 	mu      sync.Mutex
@@ -122,8 +124,8 @@ type discard struct{}
 
 func (discard) Write(p []byte) (int, error) { return len(p), nil }
 
-func (h *harness) tick() error { return h.p.Run(context.Background()) }
-func (h *harness) mustTick()   { h.t.Helper(); require.NoError(h.t, h.tick()) }
+func (h *harness) tick() error  { return h.p.Run(context.Background()) }
+func (h *harness) mustTick()    { h.t.Helper(); require.NoError(h.t, h.tick()) }
 func (h *harness) mustTickErr() { h.t.Helper(); require.Error(h.t, h.tick()) }
 
 func (h *harness) status(id string) string {
