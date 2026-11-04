@@ -2,6 +2,8 @@ package worker
 
 import (
 	"context"
+	"errors"
+	"fmt"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/clock"
 
@@ -32,12 +34,13 @@ func (s *Sweeper) Run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	var errs []error
 	for _, eventID := range ids {
 		if err := s.runEvent(ctx, eventID); err != nil {
-			return err
+			errs = append(errs, fmt.Errorf("sweeper event %s: %w", eventID, err))
 		}
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func (s *Sweeper) runEvent(ctx context.Context, eventID string) error {
@@ -46,13 +49,17 @@ func (s *Sweeper) runEvent(ctx context.Context, eventID string) error {
 	if err != nil {
 		return err
 	}
+	var errs []error
 	for _, entryID := range expired {
+		// One entry's failure must not starve the rest of the page; a failed entry is still in active and is
+		// returned by ExpiredActive again on the next tick.
 		if _, merr := s.store.EndEntry(ctx, eventID, entryID, outbound.EndSweepMissed, nowMs); merr != nil {
-			return merr
+			errs = append(errs, fmt.Errorf("end entry %s: %w", entryID, merr))
+			continue
 		}
 		// Slot is now free; Promoter picks it up next tick.
 		// Booking's session sweeper will release the allocation and publish
 		// booking.journey.ended(UNCLAIMED) when its own claim window expires (K7).
 	}
-	return nil
+	return errors.Join(errs...)
 }

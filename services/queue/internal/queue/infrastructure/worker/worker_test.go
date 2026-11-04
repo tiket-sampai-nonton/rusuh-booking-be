@@ -3,6 +3,7 @@ package worker_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -345,4 +346,44 @@ func TestPromoter_SkipsTurnSoon_WhenDisabled(t *testing.T) {
 
 	p := worker.NewPromoter(m.store, m.settings, m.booking, m.pub, m.audit, m.pii, wnow, nil, worker.PromoterTuning{BatchMax: 200})
 	require.NoError(t, p.Run(ctx))
+}
+
+// QSH-T14/T15: fault isolation. A failing entry/event must not stop the rest; errors are aggregated.
+
+func TestSweeper_OneEntrysEndEntryErrorDoesNotStopTheOthers(t *testing.T) {
+	m := newWorkerMocks(t)
+	ctx := context.Background()
+	m.settings.EXPECT().ListEventIDs(gomock.Any()).Return([]string{"ev1"}, nil)
+	m.store.EXPECT().ExpiredActive(gomock.Any(), "ev1", gomock.Any(), 500).Return([]string{"e1", "e2"}, nil)
+	m.store.EXPECT().EndEntry(gomock.Any(), "ev1", "e1", outbound.EndSweepMissed, gomock.Any()).Return(outbound.EndResult{}, errors.New("valkey down"))
+	m.store.EXPECT().EndEntry(gomock.Any(), "ev1", "e2", outbound.EndSweepMissed, gomock.Any()).Return(outbound.EndResult{Tag: "OK", Status: "MISSED"}, nil)
+
+	s := worker.NewSweeper(m.store, m.settings, wnow, 500)
+	require.Error(t, s.Run(ctx), "galat dikumpulkan dan dikembalikan, bukan diabaikan")
+}
+
+func TestSweeper_OneEventsFailureDoesNotStopTheOthers(t *testing.T) {
+	m := newWorkerMocks(t)
+	ctx := context.Background()
+	m.settings.EXPECT().ListEventIDs(gomock.Any()).Return([]string{"ev1", "ev2"}, nil)
+	m.store.EXPECT().ExpiredActive(gomock.Any(), "ev1", gomock.Any(), 500).Return(nil, errors.New("ev1 down"))
+	m.store.EXPECT().ExpiredActive(gomock.Any(), "ev2", gomock.Any(), 500).Return([]string{"e1"}, nil)
+	m.store.EXPECT().EndEntry(gomock.Any(), "ev2", "e1", outbound.EndSweepMissed, gomock.Any()).Return(outbound.EndResult{Tag: "OK"}, nil)
+
+	s := worker.NewSweeper(m.store, m.settings, wnow, 500)
+	require.Error(t, s.Run(ctx))
+}
+
+func TestStatusPublisher_OneEventsFailureDoesNotStopTheOthers(t *testing.T) {
+	m := newWorkerMocks(t)
+	ctx := context.Background()
+	m.settings.EXPECT().ListEventIDs(gomock.Any()).Return([]string{"ev1", "ev2"}, nil)
+	m.settings.EXPECT().Get(gomock.Any(), "ev1").Return(entity.EventSettings{}, false, errors.New("pg down"))
+	m.settings.EXPECT().Get(gomock.Any(), "ev2").Return(entity.EventSettings{ActiveSlotCapacity: 10}, true, nil)
+	m.store.EXPECT().GetSale(gomock.Any(), "ev2").Return(outbound.SaleState{}, nil)
+	m.booking.EXPECT().Supply(gomock.Any(), "ev2").Return(outbound.SupplySnapshot{}, nil)
+	m.store.EXPECT().SetStatusDoc(gomock.Any(), "ev2", gomock.Any(), gomock.Any()).Return(nil)
+
+	sp := worker.NewStatusPublisher(m.store, m.settings, m.booking, wnow, time.Second)
+	require.Error(t, sp.Run(ctx))
 }

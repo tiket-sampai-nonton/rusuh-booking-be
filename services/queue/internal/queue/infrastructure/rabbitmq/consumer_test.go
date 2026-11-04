@@ -98,3 +98,30 @@ func TestConsumer_SubscriptionBindings(t *testing.T) {
 	assert.Equal(t, "queue.booking-events", sub.Queue)
 	assert.ElementsMatch(t, []string{"booking.journey.ended", "booking.quota.exhausted", "booking.sold_out"}, sub.RoutingKeys)
 }
+
+// QSH-T16: an IGNORED result (PAID on a WAITING entry, terminal entry, orphan) is acked, never retried or sent to the
+// DLQ: end_entry.lua already made the redelivery a no-op, so there is nothing for the broker to redo.
+func TestConsumer_JourneyEnded_IgnoredResultIsAcked(t *testing.T) {
+	for _, res := range []outbound.EndResult{
+		{Tag: "IGNORED", Status: "WAITING"}, // PAID on WAITING
+		{Tag: "IGNORED", Status: "ENDED"},
+		{Tag: "IGNORED", Status: "NO_ENTRY"},
+		{Tag: "OK_CLEANUP", Status: "MISSED"},
+	} {
+		c, store := newConsumer(t)
+		store.EXPECT().EndEntry(gomock.Any(), "ev1", "e1", "PAID", gomock.Any()).Return(res, nil)
+		err := c.Subscription().Handler(context.Background(), delivery(t, "booking.journey.ended",
+			map[string]string{"eventId": "ev1", "queueEntryId": "e1", "outcome": "PAID"}))
+		assert.NoError(t, err, res.Tag+"/"+res.Status)
+	}
+}
+
+// A Valkey error is transient: it must be returned (so the broker retries with backoff) and never marked permanent.
+func TestConsumer_JourneyEnded_ValkeyErrorIsRetriedNotPermanent(t *testing.T) {
+	c, store := newConsumer(t)
+	store.EXPECT().EndEntry(gomock.Any(), "ev1", "e1", "PAID", gomock.Any()).Return(outbound.EndResult{}, assert.AnError)
+	err := c.Subscription().Handler(context.Background(), delivery(t, "booking.journey.ended",
+		map[string]string{"eventId": "ev1", "queueEntryId": "e1", "outcome": "PAID"}))
+	require.Error(t, err)
+	assert.False(t, pkgrabbitmq.IsPermanent(err))
+}

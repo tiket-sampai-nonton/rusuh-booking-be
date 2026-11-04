@@ -3,6 +3,7 @@ package worker
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -37,12 +38,13 @@ func (p *StatusPublisher) Run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	var errs []error
 	for _, eventID := range ids {
 		if err := p.runEvent(ctx, eventID); err != nil {
-			return err
+			errs = append(errs, fmt.Errorf("status publisher event %s: %w", eventID, err))
 		}
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func (p *StatusPublisher) runEvent(ctx context.Context, eventID string) error {
