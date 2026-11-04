@@ -1,0 +1,14 @@
+=== RUN   TestLease_TwoAcquirersNeverBothHoldIt
+--- PASS: TestLease_TwoAcquirersNeverBothHoldIt (0.02s)
+=== RUN   TestLease_StaleTokenReleaseDoesNotDeleteTheNewHoldersLease
+    lease_integration_test.go:40: 
+        	Error Trace:	/home/nuzirwan/project/assesment/berebut-tiket/booking-be/rusuh-booking-be/.worktrees/improve/queue-service-hardening/services/queue/internal/queue/infrastructure/valkey/lease_integration_test.go:40
+        	Error:      	Should not be: "1"
+        	Test:       	TestLease_StaleTokenReleaseDoesNotDeleteTheNewHoldersLease
+        	Messages:   	token harus unik per pengambilan (owner-safe)
+--- FAIL: TestLease_StaleTokenReleaseDoesNotDeleteTheNewHoldersLease (0.10s)
+=== RUN   TestLease_HoldersReleaseFreesIt
+--- PASS: TestLease_HoldersReleaseFreesIt (0.02s)
+FAIL
+FAIL	github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/infrastructure/valkey	0.173s
+FAIL

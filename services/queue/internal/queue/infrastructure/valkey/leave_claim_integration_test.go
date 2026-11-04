@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/domain/entity"
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/port/outbound"
 )
 
 // --- leave.lua (T03, REQ-QSH-06) ---
@@ -190,4 +191,39 @@ func TestClaimVsSweep_ClaimedEntryIsNeverMissed(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "IGNORED", r.Tag)
 	assert.Equal(t, "CLAIMED", hget(t, s, s.kEntry(ev, id), "status"))
+}
+
+// TC-QUE-23b (P16, INV-1): a WAITING entry whose Booking grant is RESERVED but whose Promote was deferred (NOT_HEAD)
+// leaves. The leave must clear every Valkey trace so the entry can never be a promoter candidate again, and it must
+// report nothing to release (there is no allocation id in the hash: only Booking's own expiry backstop applies).
+func TestLeaveWaitingReserved_ClearsEveryTraceAndReportsNothingToRelease(t *testing.T) {
+	s := mustStore(t)
+	ctx := context.Background()
+	ev := evID(t)
+	now := time.Now().UnixMilli()
+	head, _, _ := joinOne(t, s, ev, 1, now)
+	later, visLater, nikLater := joinOne(t, s, ev, 2, now)
+	tok, ok, err := s.AcquirePromoterLease(ctx, ev, 5*time.Second)
+	require.NoError(t, err)
+	require.True(t, ok)
+	defer func() { _ = s.ReleasePromoterLease(ctx, ev, tok) }()
+
+	// Booking granted `later`, but it is not the head: promote.lua defers it (NOT_HEAD) and changes nothing.
+	res, err := s.Promote(ctx, ev, []outbound.PromoteCandidate{{EntryID: later, AllocationID: "alloc-reserved", ClaimDeadlineMs: now + 60_000}}, 5, now, outbound.PromoteOpts{RequireHead: true, LeaseToken: tok})
+	require.NoError(t, err)
+	require.Empty(t, res.Promoted)
+	require.Equal(t, "WAITING", hget(t, s, s.kEntry(ev, later), "status"))
+
+	lr, err := s.Leave(ctx, ev, later, visLater, now)
+	require.NoError(t, err)
+	assert.Equal(t, "OK", lr.Tag)
+	assert.Equal(t, "WAITING", lr.PrevStatus)
+	assert.Empty(t, lr.AllocationID, "tidak ada alokasi di hash untuk dilepas")
+	assert.Equal(t, "LEFT", hget(t, s, s.kEntry(ev, later), "status"))
+	top, err := s.TopWaiting(ctx, ev, 10)
+	require.NoError(t, err)
+	assert.Equal(t, []string{head}, top, "entry yang keluar tidak lagi kandidat promoter")
+	assert.Equal(t, int64(0), zcard(t, s, s.kActive(ev)))
+	assert.False(t, keyExists(t, s, s.kNik(ev, nikLater)), "kunci constraint bersih")
+	assert.False(t, keyExists(t, s, s.kVisitor(ev, visLater)))
 }

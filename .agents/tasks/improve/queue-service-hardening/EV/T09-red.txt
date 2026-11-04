@@ -1,0 +1,3 @@
+github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/application/compensation: no non-test Go files in /home/nuzirwan/project/assesment/berebut-tiket/booking-be/rusuh-booking-be/.worktrees/improve/queue-service-hardening/services/queue/internal/queue/application/compensation
+FAIL	github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/application/compensation [build failed]
+FAIL

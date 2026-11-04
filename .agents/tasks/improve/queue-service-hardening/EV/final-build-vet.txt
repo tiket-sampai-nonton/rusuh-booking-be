@@ -1,0 +1,4 @@
+gofmt -l: []
+build exit=0
+vet exit=0
+vet-integration exit=0

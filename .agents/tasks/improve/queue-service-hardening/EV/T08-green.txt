@@ -1,0 +1,1 @@
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/config	1.051s

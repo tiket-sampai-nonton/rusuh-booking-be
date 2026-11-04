@@ -73,3 +73,38 @@ func TestJoinHandler_NoVisitorCredentialStillJoins(t *testing.T) {
 	seen := joinVisitorIDSeen(t, fakeAuth{id: "", ok: false}, func(*stdhttp.Request) {})
 	assert.Empty(t, seen)
 }
+
+// QSH-OQ-9 (XFF review): behind the ALB the LAST X-Forwarded-For element is the one the proxy appended, so it is the
+// only one a client cannot forge; without trustProxy the socket address is used and X-Forwarded-For is ignored.
+// pkg/httpx.ClientIP implements exactly that; this pins that join passes it through unchanged.
+func TestJoinHandler_ClientIPTrustSemantics(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		trustProxy bool
+		want       string
+	}{
+		{"behind the ALB: last XFF element (appended by the proxy)", true, "203.0.113.9"},
+		{"local/no proxy: socket address, XFF ignored", false, "192.0.2.1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			uc := mock_inbound.NewMockIJoinUsecase(ctrl)
+			var seen string
+			uc.EXPECT().Join(gomock.Any(), gomock.Any()).DoAndReturn(func(_ interface{ Done() <-chan struct{} }, in inbound.JoinInput) (dto.QueueEntry, error) {
+				seen = in.ClientIP
+				return dto.QueueEntry{EntryID: "e1"}, nil
+			})
+			h := queuehttp.NewJoinHandler(uc, tc.trustProxy)
+			mux := stdhttp.NewServeMux()
+			h.Register(mux)
+			req := httptest.NewRequest(stdhttp.MethodPost, "/api/v1/events/ev1/queue-entries", strings.NewReader(joinBody))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("X-Forwarded-For", "6.6.6.6, 203.0.113.9") // client-forged first, proxy-appended last
+			req.RemoteAddr = "192.0.2.1:4242"
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
+			require.Equal(t, stdhttp.StatusCreated, rec.Code)
+			assert.Equal(t, tc.want, seen)
+		})
+	}
+}

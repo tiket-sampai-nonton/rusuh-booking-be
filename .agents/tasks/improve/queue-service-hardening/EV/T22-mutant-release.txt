@@ -1,0 +1,116 @@
+=== RUN   TestPromoter_StockReturnedMidBatchAdoptsTheLaterEntryAndNeverEndsIt
+    promoter_batch_test.go:130: 
+        	Error Trace:	/home/nuzirwan/project/assesment/berebut-tiket/booking-be/rusuh-booking-be/.worktrees/improve/queue-service-hardening/services/queue/internal/queue/infrastructure/worker/promoter_batch_test.go:130
+        	Error:      	Not equal: 
+        	            	expected: "ADMITTED"
+        	            	actual  : "WAITING"
+        	            	
+        	            	Diff:
+        	            	--- Expected
+        	            	+++ Actual
+        	            	@@ -1 +1 @@
+        	            	-ADMITTED
+        	            	+WAITING
+        	Test:       	TestPromoter_StockReturnedMidBatchAdoptsTheLaterEntryAndNeverEndsIt
+        	Messages:   	e2 diadopsi
+    promoter_batch_test.go:131: 
+        	Error Trace:	/home/nuzirwan/project/assesment/berebut-tiket/booking-be/rusuh-booking-be/.worktrees/improve/queue-service-hardening/services/queue/internal/queue/infrastructure/worker/promoter_batch_test.go:131
+        	Error:      	Should NOT be empty, but was 
+        	Test:       	TestPromoter_StockReturnedMidBatchAdoptsTheLaterEntryAndNeverEndsIt
+    promoter_batch_test.go:133: 
+        	Error Trace:	/home/nuzirwan/project/assesment/berebut-tiket/booking-be/rusuh-booking-be/.worktrees/improve/queue-service-hardening/services/queue/internal/queue/infrastructure/worker/promoter_batch_test.go:133
+        	Error:      	Not equal: 
+        	            	expected: []string{"e1"}
+        	            	actual  : []string{"e1", "e2"}
+        	            	
+        	            	Diff:
+        	            	--- Expected
+        	            	+++ Actual
+        	            	@@ -1,3 +1,4 @@
+        	            	-([]string) (len=1) {
+        	            	- (string) (len=2) "e1"
+        	            	+([]string) (len=2) {
+        	            	+ (string) (len=2) "e1",
+        	            	+ (string) (len=2) "e2"
+        	            	 }
+        	Test:       	TestPromoter_StockReturnedMidBatchAdoptsTheLaterEntryAndNeverEndsIt
+    promoter_batch_test.go:135: 
+        	Error Trace:	/home/nuzirwan/project/assesment/berebut-tiket/booking-be/rusuh-booking-be/.worktrees/improve/queue-service-hardening/services/queue/internal/queue/infrastructure/worker/promoter_batch_test.go:135
+        	Error:      	Not equal: 
+        	            	expected: 0
+        	            	actual  : 1
+        	Test:       	TestPromoter_StockReturnedMidBatchAdoptsTheLaterEntryAndNeverEndsIt
+        	Messages:   	tidak ada ReleaseAllocation (FIFO_SKIPPED dihapus)
+    promoter_batch_test.go:136: 
+        	Error Trace:	/home/nuzirwan/project/assesment/berebut-tiket/booking-be/rusuh-booking-be/.worktrees/improve/queue-service-hardening/services/queue/internal/queue/infrastructure/worker/promoter_batch_test.go:136
+        	Error:      	Not equal: 
+        	            	expected: 1
+        	            	actual  : 0
+        	Test:       	TestPromoter_StockReturnedMidBatchAdoptsTheLaterEntryAndNeverEndsIt
+    promoter_batch_test.go:143: 
+        	Error Trace:	/home/nuzirwan/project/assesment/berebut-tiket/booking-be/rusuh-booking-be/.worktrees/improve/queue-service-hardening/services/queue/internal/queue/infrastructure/worker/promoter_batch_test.go:143
+        	Error:      	Not equal: 
+        	            	expected: "ADMITTED"
+        	            	actual  : "ENDED"
+        	            	
+        	            	Diff:
+        	            	--- Expected
+        	            	+++ Actual
+        	            	@@ -1 +1 @@
+        	            	-ADMITTED
+        	            	+ENDED
+        	Test:       	TestPromoter_StockReturnedMidBatchAdoptsTheLaterEntryAndNeverEndsIt
+        	Messages:   	e2 tidak pernah diakhiri oleh Queue
+    promoter_batch_test.go:144: 
+        	Error Trace:	/home/nuzirwan/project/assesment/berebut-tiket/booking-be/rusuh-booking-be/.worktrees/improve/queue-service-hardening/services/queue/internal/queue/infrastructure/worker/promoter_batch_test.go:144
+        	Error:      	Should be zero, but was 1
+        	Test:       	TestPromoter_StockReturnedMidBatchAdoptsTheLaterEntryAndNeverEndsIt
+--- FAIL: TestPromoter_StockReturnedMidBatchAdoptsTheLaterEntryAndNeverEndsIt (0.01s)
+=== RUN   TestPromoter_AdoptsEveryGrantAfterAPoisonHead
+    promoter_batch_test.go:160: 
+        	Error Trace:	/home/nuzirwan/project/assesment/berebut-tiket/booking-be/rusuh-booking-be/.worktrees/improve/queue-service-hardening/services/queue/internal/queue/infrastructure/worker/promoter_batch_test.go:160
+        	Error:      	Not equal: 
+        	            	expected: "ADMITTED"
+        	            	actual  : "WAITING"
+        	            	
+        	            	Diff:
+        	            	--- Expected
+        	            	+++ Actual
+        	            	@@ -1 +1 @@
+        	            	-ADMITTED
+        	            	+WAITING
+        	Test:       	TestPromoter_AdoptsEveryGrantAfterAPoisonHead
+    promoter_batch_test.go:161: 
+        	Error Trace:	/home/nuzirwan/project/assesment/berebut-tiket/booking-be/rusuh-booking-be/.worktrees/improve/queue-service-hardening/services/queue/internal/queue/infrastructure/worker/promoter_batch_test.go:161
+        	Error:      	Not equal: 
+        	            	expected: "ADMITTED"
+        	            	actual  : "WAITING"
+        	            	
+        	            	Diff:
+        	            	--- Expected
+        	            	+++ Actual
+        	            	@@ -1 +1 @@
+        	            	-ADMITTED
+        	            	+WAITING
+        	Test:       	TestPromoter_AdoptsEveryGrantAfterAPoisonHead
+    promoter_batch_test.go:164: 
+        	Error Trace:	/home/nuzirwan/project/assesment/berebut-tiket/booking-be/rusuh-booking-be/.worktrees/improve/queue-service-hardening/services/queue/internal/queue/infrastructure/worker/promoter_batch_test.go:164
+        	Error:      	Should be zero, but was 2
+        	Test:       	TestPromoter_AdoptsEveryGrantAfterAPoisonHead
+    promoter_batch_test.go:165: 
+        	Error Trace:	/home/nuzirwan/project/assesment/berebut-tiket/booking-be/rusuh-booking-be/.worktrees/improve/queue-service-hardening/services/queue/internal/queue/infrastructure/worker/promoter_batch_test.go:165
+        	Error:      	Not equal: 
+        	            	expected: 2
+        	            	actual  : 0
+        	Test:       	TestPromoter_AdoptsEveryGrantAfterAPoisonHead
+--- FAIL: TestPromoter_AdoptsEveryGrantAfterAPoisonHead (0.00s)
+=== RUN   TestPromoter_AdoptsAGrantThatFollowsNoSupplyAndNeverReleasesIt
+    promoter.go:240: Unexpected call to *mock_outbound.MockIBookingClient.ReleaseAllocation([context.Background.WithDeadline(2026-11-04 16:19:49.743775938 +0700 WIB m=+9.019961264 [8.999417577s]) a3 FIFO_SKIPPED]) at /home/nuzirwan/project/assesment/berebut-tiket/booking-be/rusuh-booking-be/.worktrees/improve/queue-service-hardening/services/queue/internal/queue/infrastructure/worker/promoter.go:240 because: there are no expected calls of the method "ReleaseAllocation" for that receiver
+    controller.go:97: missing call(s) to *mock_outbound.MockIQueueStore.Promote(is anything, is equal to ev1 (string), is anything, is equal to 10 (int), is anything, is anything) /home/nuzirwan/project/assesment/berebut-tiket/booking-be/rusuh-booking-be/.worktrees/improve/queue-service-hardening/services/queue/internal/queue/infrastructure/worker/worker_test.go:157
+    controller.go:97: missing call(s) to *mock_outbound.MockIEventPublisher.PublishTurnArrived(is anything, is equal to ev1 (string), is equal to e1 (string), is equal to v-e1 (string), is anything) /home/nuzirwan/project/assesment/berebut-tiket/booking-be/rusuh-booking-be/.worktrees/improve/queue-service-hardening/services/queue/internal/queue/infrastructure/worker/worker_test.go:165
+    controller.go:97: missing call(s) to *mock_outbound.MockIEventPublisher.PublishTurnArrived(is anything, is equal to ev1 (string), is equal to e3 (string), is equal to v-e3 (string), is anything) /home/nuzirwan/project/assesment/berebut-tiket/booking-be/rusuh-booking-be/.worktrees/improve/queue-service-hardening/services/queue/internal/queue/infrastructure/worker/worker_test.go:166
+    controller.go:97: aborting test due to missing call(s)
+--- FAIL: TestPromoter_AdoptsAGrantThatFollowsNoSupplyAndNeverReleasesIt (0.00s)
+FAIL
+FAIL	github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/infrastructure/worker	0.047s
+FAIL

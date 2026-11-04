@@ -212,6 +212,18 @@ paths:
                 required:
                 - meta
                 - data
+        '404':
+          description: 'Entry tidak ditemukan, bukan milik visitor ini, atau sudah selesai (LEFT/ENDED/COMPLETED) — errorCode: `NOT_FOUND`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '409':
+          description: 'Entry masih WAITING dan belum mendapat giliran — errorCode: `NOT_ADMITTED`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
         '410':
           description: 'Giliran terlewat atau tiket habis — errorCode: `TURN_MISSED`, `EVENT_SOLD_OUT`'
           content:

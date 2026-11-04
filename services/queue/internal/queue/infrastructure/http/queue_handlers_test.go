@@ -201,3 +201,47 @@ func TestLeaveHandler_Unauthorized(t *testing.T) {
 	mux.ServeHTTP(rec, req)
 	assert.Equal(t, http.StatusNotFound, rec.Code)
 }
+
+// QSH-T10: claim error mapping. A WAITING entry is "not admitted yet" (409), a wrong visitor is answered exactly like an
+// unknown entry (404, same body), and the body never carries internal error text.
+func TestClaimHandler_ErrorMapping(t *testing.T) {
+	tests := []struct {
+		name     string
+		err      error
+		wantCode int
+		wantBody string
+	}{
+		{"waiting entry", entity.ErrNotAdmitted, http.StatusConflict, "NOT_ADMITTED"},
+		{"missed", entity.ErrTurnMissed, http.StatusGone, "TURN_MISSED"},
+		{"left/ended/completed or unknown or wrong visitor", entity.ErrNotFound, http.StatusNotFound, "NOT_FOUND"},
+	}
+	var notFoundBody string
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			uc := mock_inbound.NewMockIClaimUsecase(ctrl)
+			uc.EXPECT().Claim(gomock.Any(), gomock.Any()).Return(dto.ClaimResponse{}, tt.err)
+			h := queuehttp.NewClaimHandler(uc, fakeAuth{id: "v1", ok: true})
+			mux := http.NewServeMux()
+			h.Register(mux)
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/queue-entries/e1/claim?eventId=ev1", nil))
+			assert.Equal(t, tt.wantCode, rec.Code)
+			assert.Contains(t, rec.Body.String(), tt.wantBody)
+			assert.NotContains(t, rec.Body.String(), "valkey")
+			if tt.wantCode == http.StatusNotFound {
+				notFoundBody = rec.Body.String()
+			}
+		})
+	}
+	// An unauthenticated caller gets the same NOT_FOUND family as a stranger (no existence oracle).
+	ctrl := gomock.NewController(t)
+	uc := mock_inbound.NewMockIClaimUsecase(ctrl)
+	h := queuehttp.NewClaimHandler(uc, fakeAuth{ok: false})
+	mux := http.NewServeMux()
+	h.Register(mux)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/queue-entries/e1/claim?eventId=ev1", nil))
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+	assert.Contains(t, notFoundBody, "NOT_FOUND")
+}

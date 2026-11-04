@@ -129,7 +129,7 @@ func TestPromoter_QuotaExhaustedAddsSet(t *testing.T) {
 	require.NoError(t, p.Run(ctx))
 }
 
-// Rev 6 (ADR-028): a GRANTED that follows a NO_SUPPLY_NOW in the same batch is adopted, never released. Releasing it
+// Rev 6 (ADR-029): a GRANTED that follows a NO_SUPPLY_NOW in the same batch is adopted, never released. Releasing it
 // would turn a live WAITING entry's Booking row into RELEASED, after which Booking answers ALREADY_ACTIVE forever and
 // the Queue itself would end the buyer (the defect that motivated this change).
 func TestPromoter_AdoptsAGrantThatFollowsNoSupplyAndNeverReleasesIt(t *testing.T) {

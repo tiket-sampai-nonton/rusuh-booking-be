@@ -25,7 +25,7 @@ func TestLease_TwoAcquirersNeverBothHoldIt(t *testing.T) {
 }
 
 // A stale-token release (after the holder's TTL already expired and someone else re-acquired) must not delete
-// the new holder's lease: release is compare-and-delete by token, not a blind DEL (fence half of ADR-028).
+// the new holder's lease: release is compare-and-delete by token, not a blind DEL (fence half of ADR-029).
 func TestLease_StaleTokenReleaseDoesNotDeleteTheNewHoldersLease(t *testing.T) {
 	s := mustStore(t)
 	ctx := context.Background()

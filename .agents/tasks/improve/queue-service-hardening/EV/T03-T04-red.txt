@@ -1,0 +1,211 @@
+=== RUN   TestLeave_WrongOwnerOrUnknownIsNotFoundAndChangesNothing
+--- PASS: TestLeave_WrongOwnerOrUnknownIsNotFoundAndChangesNothing (0.03s)
+=== RUN   TestLeave_TerminalAndClaimedAreIgnoredWithStatusUnchanged
+    leave_claim_integration_test.go:48: 
+        	Error Trace:	/home/nuzirwan/project/assesment/berebut-tiket/booking-be/rusuh-booking-be/.worktrees/improve/queue-service-hardening/services/queue/internal/queue/infrastructure/valkey/leave_claim_integration_test.go:48
+        	Error:      	Not equal: 
+        	            	expected: "IGNORED"
+        	            	actual  : "OK"
+        	            	
+        	            	Diff:
+        	            	--- Expected
+        	            	+++ Actual
+        	            	@@ -1 +1 @@
+        	            	-IGNORED
+        	            	+OK
+        	Test:       	TestLeave_TerminalAndClaimedAreIgnoredWithStatusUnchanged
+        	Messages:   	COMPLETED
+    leave_claim_integration_test.go:50: 
+        	Error Trace:	/home/nuzirwan/project/assesment/berebut-tiket/booking-be/rusuh-booking-be/.worktrees/improve/queue-service-hardening/services/queue/internal/queue/infrastructure/valkey/leave_claim_integration_test.go:50
+        	Error:      	Not equal: 
+        	            	expected: "COMPLETED"
+        	            	actual  : "LEFT"
+        	            	
+        	            	Diff:
+        	            	--- Expected
+        	            	+++ Actual
+        	            	@@ -1 +1 @@
+        	            	-COMPLETED
+        	            	+LEFT
+        	Test:       	TestLeave_TerminalAndClaimedAreIgnoredWithStatusUnchanged
+        	Messages:   	status COMPLETED tidak boleh berubah
+    leave_claim_integration_test.go:48: 
+        	Error Trace:	/home/nuzirwan/project/assesment/berebut-tiket/booking-be/rusuh-booking-be/.worktrees/improve/queue-service-hardening/services/queue/internal/queue/infrastructure/valkey/leave_claim_integration_test.go:48
+        	Error:      	Not equal: 
+        	            	expected: "IGNORED"
+        	            	actual  : "OK"
+        	            	
+        	            	Diff:
+        	            	--- Expected
+        	            	+++ Actual
+        	            	@@ -1 +1 @@
+        	            	-IGNORED
+        	            	+OK
+        	Test:       	TestLeave_TerminalAndClaimedAreIgnoredWithStatusUnchanged
+        	Messages:   	ENDED
+    leave_claim_integration_test.go:50: 
+        	Error Trace:	/home/nuzirwan/project/assesment/berebut-tiket/booking-be/rusuh-booking-be/.worktrees/improve/queue-service-hardening/services/queue/internal/queue/infrastructure/valkey/leave_claim_integration_test.go:50
+        	Error:      	Not equal: 
+        	            	expected: "ENDED"
+        	            	actual  : "LEFT"
+        	            	
+        	            	Diff:
+        	            	--- Expected
+        	            	+++ Actual
+        	            	@@ -1 +1 @@
+        	            	-ENDED
+        	            	+LEFT
+        	Test:       	TestLeave_TerminalAndClaimedAreIgnoredWithStatusUnchanged
+        	Messages:   	status ENDED tidak boleh berubah
+    leave_claim_integration_test.go:48: 
+        	Error Trace:	/home/nuzirwan/project/assesment/berebut-tiket/booking-be/rusuh-booking-be/.worktrees/improve/queue-service-hardening/services/queue/internal/queue/infrastructure/valkey/leave_claim_integration_test.go:48
+        	Error:      	Not equal: 
+        	            	expected: "IGNORED"
+        	            	actual  : "OK"
+        	            	
+        	            	Diff:
+        	            	--- Expected
+        	            	+++ Actual
+        	            	@@ -1 +1 @@
+        	            	-IGNORED
+        	            	+OK
+        	Test:       	TestLeave_TerminalAndClaimedAreIgnoredWithStatusUnchanged
+        	Messages:   	LEFT
+    leave_claim_integration_test.go:48: 
+        	Error Trace:	/home/nuzirwan/project/assesment/berebut-tiket/booking-be/rusuh-booking-be/.worktrees/improve/queue-service-hardening/services/queue/internal/queue/infrastructure/valkey/leave_claim_integration_test.go:48
+        	Error:      	Not equal: 
+        	            	expected: "IGNORED"
+        	            	actual  : "OK"
+        	            	
+        	            	Diff:
+        	            	--- Expected
+        	            	+++ Actual
+        	            	@@ -1 +1 @@
+        	            	-IGNORED
+        	            	+OK
+        	Test:       	TestLeave_TerminalAndClaimedAreIgnoredWithStatusUnchanged
+        	Messages:   	MISSED
+    leave_claim_integration_test.go:50: 
+        	Error Trace:	/home/nuzirwan/project/assesment/berebut-tiket/booking-be/rusuh-booking-be/.worktrees/improve/queue-service-hardening/services/queue/internal/queue/infrastructure/valkey/leave_claim_integration_test.go:50
+        	Error:      	Not equal: 
+        	            	expected: "MISSED"
+        	            	actual  : "LEFT"
+        	            	
+        	            	Diff:
+        	            	--- Expected
+        	            	+++ Actual
+        	            	@@ -1 +1 @@
+        	            	-MISSED
+        	            	+LEFT
+        	Test:       	TestLeave_TerminalAndClaimedAreIgnoredWithStatusUnchanged
+        	Messages:   	status MISSED tidak boleh berubah
+    leave_claim_integration_test.go:48: 
+        	Error Trace:	/home/nuzirwan/project/assesment/berebut-tiket/booking-be/rusuh-booking-be/.worktrees/improve/queue-service-hardening/services/queue/internal/queue/infrastructure/valkey/leave_claim_integration_test.go:48
+        	Error:      	Not equal: 
+        	            	expected: "IGNORED"
+        	            	actual  : "OK"
+        	            	
+        	            	Diff:
+        	            	--- Expected
+        	            	+++ Actual
+        	            	@@ -1 +1 @@
+        	            	-IGNORED
+        	            	+OK
+        	Test:       	TestLeave_TerminalAndClaimedAreIgnoredWithStatusUnchanged
+        	Messages:   	CLAIMED
+    leave_claim_integration_test.go:50: 
+        	Error Trace:	/home/nuzirwan/project/assesment/berebut-tiket/booking-be/rusuh-booking-be/.worktrees/improve/queue-service-hardening/services/queue/internal/queue/infrastructure/valkey/leave_claim_integration_test.go:50
+        	Error:      	Not equal: 
+        	            	expected: "CLAIMED"
+        	            	actual  : "LEFT"
+        	            	
+        	            	Diff:
+        	            	--- Expected
+        	            	+++ Actual
+        	            	@@ -1 +1 @@
+        	            	-CLAIMED
+        	            	+LEFT
+        	Test:       	TestLeave_TerminalAndClaimedAreIgnoredWithStatusUnchanged
+        	Messages:   	status CLAIMED tidak boleh berubah
+--- FAIL: TestLeave_TerminalAndClaimedAreIgnoredWithStatusUnchanged (0.06s)
+=== RUN   TestLeave_WaitingLeavesAndCanRejoinAtTheBack
+--- PASS: TestLeave_WaitingLeavesAndCanRejoinAtTheBack (0.03s)
+=== RUN   TestLeave_AdmittedReturnsPreviousStatusAndAllocationAndFreesSlot
+--- PASS: TestLeave_AdmittedReturnsPreviousStatusAndAllocationAndFreesSlot (0.03s)
+=== RUN   TestLeave_DoesNotDeleteNewerEntrysConstraintKeys
+--- PASS: TestLeave_DoesNotDeleteNewerEntrysConstraintKeys (0.02s)
+=== RUN   TestClaim_StatusSpecificErrors
+    leave_claim_integration_test.go:118: 
+        	Error Trace:	/home/nuzirwan/project/assesment/berebut-tiket/booking-be/rusuh-booking-be/.worktrees/improve/queue-service-hardening/services/queue/internal/queue/infrastructure/valkey/leave_claim_integration_test.go:118
+        	Error:      	Target error should be in err chain:
+        	            	expected: "queue: entry belum mendapat giliran"
+        	            	in chain: "queue: giliran terlewat"
+        	Test:       	TestClaim_StatusSpecificErrors
+        	Messages:   	WAITING belum punya giliran
+    leave_claim_integration_test.go:124: 
+        	Error Trace:	/home/nuzirwan/project/assesment/berebut-tiket/booking-be/rusuh-booking-be/.worktrees/improve/queue-service-hardening/services/queue/internal/queue/infrastructure/valkey/leave_claim_integration_test.go:124
+        	Error:      	Target error should be in err chain:
+        	            	expected: "queue: entry tidak ditemukan"
+        	            	in chain: "queue: giliran terlewat"
+        	Test:       	TestClaim_StatusSpecificErrors
+        	Messages:   	LEFT
+    leave_claim_integration_test.go:124: 
+        	Error Trace:	/home/nuzirwan/project/assesment/berebut-tiket/booking-be/rusuh-booking-be/.worktrees/improve/queue-service-hardening/services/queue/internal/queue/infrastructure/valkey/leave_claim_integration_test.go:124
+        	Error:      	Target error should be in err chain:
+        	            	expected: "queue: entry tidak ditemukan"
+        	            	in chain: "queue: giliran terlewat"
+        	Test:       	TestClaim_StatusSpecificErrors
+        	Messages:   	ENDED
+    leave_claim_integration_test.go:124: 
+        	Error Trace:	/home/nuzirwan/project/assesment/berebut-tiket/booking-be/rusuh-booking-be/.worktrees/improve/queue-service-hardening/services/queue/internal/queue/infrastructure/valkey/leave_claim_integration_test.go:124
+        	Error:      	Target error should be in err chain:
+        	            	expected: "queue: entry tidak ditemukan"
+        	            	in chain: "queue: giliran terlewat"
+        	Test:       	TestClaim_StatusSpecificErrors
+        	Messages:   	COMPLETED
+--- FAIL: TestClaim_StatusSpecificErrors (0.04s)
+=== RUN   TestClaim_WrongVisitorIsAnsweredLikeUnknown
+--- PASS: TestClaim_WrongVisitorIsAnsweredLikeUnknown (0.04s)
+=== RUN   TestClaim_LiveAdmittedReturnsAllocationAndLeavesTheExpiryScan
+    leave_claim_integration_test.go:164: 
+        	Error Trace:	/home/nuzirwan/project/assesment/berebut-tiket/booking-be/rusuh-booking-be/.worktrees/improve/queue-service-hardening/services/queue/internal/queue/infrastructure/valkey/leave_claim_integration_test.go:164
+        	Error:      	Not equal: 
+        	            	expected: "alloc-1"
+        	            	actual  : ""
+        	            	
+        	            	Diff:
+        	            	--- Expected
+        	            	+++ Actual
+        	            	@@ -1 +1 @@
+        	            	-alloc-1
+        	            	+
+        	Test:       	TestClaim_LiveAdmittedReturnsAllocationAndLeavesTheExpiryScan
+        	Messages:   	allocationId datang dari script, bukan dari GetEntry kedua
+    leave_claim_integration_test.go:168: 
+        	Error Trace:	/home/nuzirwan/project/assesment/berebut-tiket/booking-be/rusuh-booking-be/.worktrees/improve/queue-service-hardening/services/queue/internal/queue/infrastructure/valkey/leave_claim_integration_test.go:168
+        	Error:      	Should be true
+        	Test:       	TestClaim_LiveAdmittedReturnsAllocationAndLeavesTheExpiryScan
+    leave_claim_integration_test.go:172: 
+        	Error Trace:	/home/nuzirwan/project/assesment/berebut-tiket/booking-be/rusuh-booking-be/.worktrees/improve/queue-service-hardening/services/queue/internal/queue/infrastructure/valkey/leave_claim_integration_test.go:172
+        	Error:      	[]string{"entry-1"} should not contain "entry-1"
+        	Test:       	TestClaim_LiveAdmittedReturnsAllocationAndLeavesTheExpiryScan
+        	Messages:   	CLAIMED tidak boleh pernah dikembalikan scan kedaluwarsa (INV-3/4)
+    leave_claim_integration_test.go:177: 
+        	Error Trace:	/home/nuzirwan/project/assesment/berebut-tiket/booking-be/rusuh-booking-be/.worktrees/improve/queue-service-hardening/services/queue/internal/queue/infrastructure/valkey/leave_claim_integration_test.go:177
+        	Error:      	Not equal: 
+        	            	expected: "alloc-1"
+        	            	actual  : ""
+        	            	
+        	            	Diff:
+        	            	--- Expected
+        	            	+++ Actual
+        	            	@@ -1 +1 @@
+        	            	-alloc-1
+        	            	+
+        	Test:       	TestClaim_LiveAdmittedReturnsAllocationAndLeavesTheExpiryScan
+--- FAIL: TestClaim_LiveAdmittedReturnsAllocationAndLeavesTheExpiryScan (0.03s)
+=== RUN   TestClaimVsSweep_ClaimedEntryIsNeverMissed
+--- PASS: TestClaimVsSweep_ClaimedEntryIsNeverMissed (0.04s)
+FAIL
+FAIL	github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/infrastructure/valkey	0.350s
+FAIL

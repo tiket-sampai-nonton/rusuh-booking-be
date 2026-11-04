@@ -118,7 +118,7 @@ func (e *stubErr) Error() string { return e.msg }
 
 // TC-QUE-19k (the reviewer's reproduction as a regression test, run against the correct stub). Stock returns between
 // two entries of one Booking batch (the commit in the savepoint gap), so the batch is [NO_SUPPLY_NOW(E1), GRANTED(E2)].
-// The old promoter released E2 (FIFO_SKIPPED) => RELEASED row => ALREADY_ACTIVE forever => the Queue ended a live
+// The old promoter released E2 (the jumper release) => RELEASED row => ALREADY_ACTIVE forever => the Queue ended a live
 // buyer. Adoption must admit E2 and never end or release it.
 func TestPromoter_StockReturnedMidBatchAdoptsTheLaterEntryAndNeverEndsIt(t *testing.T) {
 	h := newHarness(t, 2, 0, worker.PromoterTuning{})
@@ -132,7 +132,7 @@ func TestPromoter_StockReturnedMidBatchAdoptsTheLaterEntryAndNeverEndsIt(t *test
 	assert.Equal(t, "WAITING", h.status("e1"), "e1 tetap head, tanpa baris Booking")
 	assert.Equal(t, []string{"e1"}, h.waiting())
 	_, release := h.stub.Calls()
-	assert.Equal(t, 0, release, "tidak ada ReleaseAllocation (FIFO_SKIPPED dihapus)")
+	assert.Equal(t, 0, release, "tidak ada ReleaseAllocation (release jumper dihapus)")
 	assert.Equal(t, 1, h.metrics.Count(worker.MetricFifoAdopted, "suspect", "false"))
 
 	// Tick 2, then the claim window passes and Booking's sweeper runs: e2 must never be ended or answered ALREADY_ACTIVE.

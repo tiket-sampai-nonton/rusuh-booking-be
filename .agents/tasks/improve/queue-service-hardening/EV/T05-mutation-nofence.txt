@@ -1,0 +1,79 @@
+=== RUN   TestPromote_FenceRejectsWrongAndExpiredToken
+    promote_integration_test.go:58: 
+        	Error Trace:	/home/nuzirwan/project/assesment/berebut-tiket/booking-be/rusuh-booking-be/.worktrees/improve/queue-service-hardening/services/queue/internal/queue/infrastructure/valkey/promote_integration_test.go:58
+        	Error:      	Should be true
+        	Test:       	TestPromote_FenceRejectsWrongAndExpiredToken
+    promote_integration_test.go:59: 
+        	Error Trace:	/home/nuzirwan/project/assesment/berebut-tiket/booking-be/rusuh-booking-be/.worktrees/improve/queue-service-hardening/services/queue/internal/queue/infrastructure/valkey/promote_integration_test.go:59
+        	Error:      	Should be empty, but was [entry-1]
+        	Test:       	TestPromote_FenceRejectsWrongAndExpiredToken
+    promote_integration_test.go:61: 
+        	Error Trace:	/home/nuzirwan/project/assesment/berebut-tiket/booking-be/rusuh-booking-be/.worktrees/improve/queue-service-hardening/services/queue/internal/queue/infrastructure/valkey/promote_integration_test.go:61
+        	Error:      	Not equal: 
+        	            	expected: valkey.snapshot{status:map[string]string{"entry-1":"WAITING"}, inWaiting:map[string]bool{"entry-1":true}, inActive:map[string]bool{"entry-1":false}, activeCard:0, allocationByID:map[string]string{"entry-1":""}}
+        	            	actual  : valkey.snapshot{status:map[string]string{"entry-1":"ADMITTED"}, inWaiting:map[string]bool{"entry-1":false}, inActive:map[string]bool{"entry-1":true}, activeCard:1, allocationByID:map[string]string{"entry-1":"alloc-entry-1"}}
+        	            	
+        	            	Diff:
+        	            	--- Expected
+        	            	+++ Actual
+        	            	@@ -2,13 +2,13 @@
+        	            	  status: (map[string]string) (len=1) {
+        	            	-  (string) (len=7) "entry-1": (string) (len=7) "WAITING"
+        	            	+  (string) (len=7) "entry-1": (string) (len=8) "ADMITTED"
+        	            	  },
+        	            	  inWaiting: (map[string]bool) (len=1) {
+        	            	+  (string) (len=7) "entry-1": (bool) false
+        	            	+ },
+        	            	+ inActive: (map[string]bool) (len=1) {
+        	            	   (string) (len=7) "entry-1": (bool) true
+        	            	  },
+        	            	- inActive: (map[string]bool) (len=1) {
+        	            	-  (string) (len=7) "entry-1": (bool) false
+        	            	- },
+        	            	- activeCard: (int64) 0,
+        	            	+ activeCard: (int64) 1,
+        	            	  allocationByID: (map[string]string) (len=1) {
+        	            	-  (string) (len=7) "entry-1": (string) ""
+        	            	+  (string) (len=7) "entry-1": (string) (len=13) "alloc-entry-1"
+        	            	  }
+        	Test:       	TestPromote_FenceRejectsWrongAndExpiredToken
+        	Messages:   	LEASE_LOST tidak boleh mengubah apa pun
+    promote_integration_test.go:73: 
+        	Error Trace:	/home/nuzirwan/project/assesment/berebut-tiket/booking-be/rusuh-booking-be/.worktrees/improve/queue-service-hardening/services/queue/internal/queue/infrastructure/valkey/promote_integration_test.go:73
+        	Error:      	Should be true
+        	Test:       	TestPromote_FenceRejectsWrongAndExpiredToken
+        	Messages:   	token yang TTL-nya lewat harus ditolak
+    promote_integration_test.go:74: 
+        	Error Trace:	/home/nuzirwan/project/assesment/berebut-tiket/booking-be/rusuh-booking-be/.worktrees/improve/queue-service-hardening/services/queue/internal/queue/infrastructure/valkey/promote_integration_test.go:74
+        	Error:      	Not equal: 
+        	            	expected: valkey.snapshot{status:map[string]string{"entry-2":"WAITING"}, inWaiting:map[string]bool{"entry-2":true}, inActive:map[string]bool{"entry-2":false}, activeCard:0, allocationByID:map[string]string{"entry-2":""}}
+        	            	actual  : valkey.snapshot{status:map[string]string{"entry-2":"ADMITTED"}, inWaiting:map[string]bool{"entry-2":false}, inActive:map[string]bool{"entry-2":true}, activeCard:1, allocationByID:map[string]string{"entry-2":"alloc-entry-2"}}
+        	            	
+        	            	Diff:
+        	            	--- Expected
+        	            	+++ Actual
+        	            	@@ -2,13 +2,13 @@
+        	            	  status: (map[string]string) (len=1) {
+        	            	-  (string) (len=7) "entry-2": (string) (len=7) "WAITING"
+        	            	+  (string) (len=7) "entry-2": (string) (len=8) "ADMITTED"
+        	            	  },
+        	            	  inWaiting: (map[string]bool) (len=1) {
+        	            	+  (string) (len=7) "entry-2": (bool) false
+        	            	+ },
+        	            	+ inActive: (map[string]bool) (len=1) {
+        	            	   (string) (len=7) "entry-2": (bool) true
+        	            	  },
+        	            	- inActive: (map[string]bool) (len=1) {
+        	            	-  (string) (len=7) "entry-2": (bool) false
+        	            	- },
+        	            	- activeCard: (int64) 0,
+        	            	+ activeCard: (int64) 1,
+        	            	  allocationByID: (map[string]string) (len=1) {
+        	            	-  (string) (len=7) "entry-2": (string) ""
+        	            	+  (string) (len=7) "entry-2": (string) (len=13) "alloc-entry-2"
+        	            	  }
+        	Test:       	TestPromote_FenceRejectsWrongAndExpiredToken
+--- FAIL: TestPromote_FenceRejectsWrongAndExpiredToken (0.15s)
+FAIL
+FAIL	github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/infrastructure/valkey	0.187s
+FAIL

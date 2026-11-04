@@ -324,12 +324,6 @@ func (s *fakeStore) ExpiredActive(_ context.Context, _ string, nowMs int64, limi
 	return ids, nil
 }
 
-func (s *fakeStore) MarkMissed(context.Context, string, string, int64) (bool, error) {
-	return false, nil
-}
-func (s *fakeStore) MarkMissedAndClean(context.Context, string, string, int64) (bool, error) {
-	return false, nil
-}
 func (s *fakeStore) AddQuotaExhausted(context.Context, string, string) error { return nil }
 func (s *fakeStore) SetSale(context.Context, string, string, bool) error     { return nil }
 func (s *fakeStore) GetSale(context.Context, string) (outbound.SaleState, error) {

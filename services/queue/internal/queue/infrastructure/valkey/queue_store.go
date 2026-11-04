@@ -126,7 +126,7 @@ func mapJoin(arr []vk.ValkeyMessage) (outbound.JoinResult, error) {
 }
 
 // Promote moves reserved candidates waiting→active atomically, fenced by the promoter lease token
-// (design §5.4, ADR-028). An empty token is an error before any Valkey call: an unfenced promote is a defect.
+// (design §5.4, ADR-029). An empty token is an error before any Valkey call: an unfenced promote is a defect.
 func (s *QueueStore) Promote(ctx context.Context, eventID string, cands []outbound.PromoteCandidate, capacity int, nowMs int64, opts outbound.PromoteOpts) (outbound.PromoteResult, error) {
 	if opts.LeaseToken == "" {
 		return outbound.PromoteResult{}, errors.New("valkey: promote: LeaseToken wajib (fence promoter)")
@@ -444,7 +444,7 @@ func parseMs(v string) int64 {
 }
 
 // AcquirePromoterLease tries to set the per-event promoter lease (SET NX PX) with a fresh random token as the
-// value, so release and the promote.lua fence can tell the holder from a later holder (design §5.5, ADR-028).
+// value, so release and the promote.lua fence can tell the holder from a later holder (design §5.5, ADR-029).
 func (s *QueueStore) AcquirePromoterLease(ctx context.Context, eventID string, ttl time.Duration) (string, bool, error) {
 	tok, err := newLeaseToken()
 	if err != nil {

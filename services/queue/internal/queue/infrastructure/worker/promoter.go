@@ -108,7 +108,7 @@ func (p *Promoter) Run(ctx context.Context) error {
 
 func (p *Promoter) inc(name string, labels ...string) { p.metrics.Inc(name, labels...) }
 
-// runEvent runs one promoter tick for an event under the per-event lease (design §5.4a, ADR-028).
+// runEvent runs one promoter tick for an event under the per-event lease (design §5.4a, ADR-029).
 func (p *Promoter) runEvent(ctx context.Context, eventID string) error {
 	token, acquired, err := p.store.AcquirePromoterLease(ctx, eventID, p.tuning.LeaseTTL)
 	if err != nil {
@@ -242,7 +242,7 @@ func (p *Promoter) classify(ctx context.Context, eventID string, resp outbound.A
 			out.grantedAlloc[a.QueueEntryID] = a.AllocationID
 			out.deadlineByEntry[a.QueueEntryID] = deadline.UnixMilli()
 			if sawNoSupply {
-				// Jumper path: adopt, never release (design §5.4, ADR-028 amendment). The row at Booking is real and
+				// Jumper path: adopt, never release (design §5.4, ADR-029 amendment). The row at Booking is real and
 				// releasing it would turn a live WAITING entry into a permanent ALREADY_ACTIVE.
 				out.adoptedAfterNoSupply = append(out.adoptedAfterNoSupply, a.QueueEntryID)
 			}

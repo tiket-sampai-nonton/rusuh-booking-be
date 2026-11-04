@@ -39,6 +39,12 @@
 | ADR-021 | Usulan BE-2 yang dicatat sebagai alternatif (gRPC internal, EKS + Helm, API Gateway/Kong) | 2026-10-19 | CN-02, CN-05, CN-09 | NFR-01, NFR-03 |
 | ADR-022 | Runtime dan tooling boilerplate: Go 1.26, verb Cobra, client standar, migrasi tertanam, `/health` | 2026-10-19 | CN-09 | SRS-C-02, SRS-C-08, SRS-F-19-03 |
 | ADR-023 | Observability: log JSON ke stdout, metrik Prometheus, Grafana + Loki (Alloy), korelasi `trace_id` | 2026-10-21 | CN-09 | SRS-Q-MNT-02, SRS-Q-MNT-03, SRS-Q-SEC-03, SRS-F-90-06 |
+| ADR-024 | Midtrans Snap menggantikan Core API charge | 2026-10-31 | CN-04 | FR-23, GR-13 |
+| ADR-025 | Token dibatasi per scope; admin lewat allow-list; tiket hanya untuk pemilik | 2026-10-31 | CN-06 | NFR-07, NFR-08 |
+| ADR-026 | Email pembeli terenkripsi sejak Queue; hanya Notification yang membuka (PDP-1) | 2026-10-31 | CN-06 | SRS-Q-SEC-05 |
+| ADR-027 | Verifikasi OTP dan counter auth adalah satu skrip atomik Valkey; token diterbitkan sebelum commit sesi | 2026-11-04 | CN-06 | SRS-Q-SEC-10..11, SRS-F-01-08 |
+| ADR-028 | Keputusan status dan kepemilikan Queue dipindahkan ke dalam Lua; Go tidak lagi membaca-lalu-bertindak | 2026-11-04 | CN-03, CN-04 | SRS-F-04, SRS-F-25 |
+| ADR-029 | Admisi diserialisasi lewat lease per-event dan `promote.lua` difagar token lease | 2026-11-04 | CN-03, CN-04 | SRS-F-04-07, SRS-F-25-02 |
 
 ---
 
@@ -759,4 +765,26 @@ Pola yang diadopsi dari usulan BE-2: **satu image banyak verb** (`api`, `worker`
 | **Opsi** | (A) Skrip Lua untuk `Verify`, `Start`, `Allow`, `Release`; id sesi dibuat di Go sehingga token diterbitkan sebelum commit. (B) `WATCH/MULTI` optimistik. (C) Baris Postgres untuk OTP. (D) Tetap baca-lalu-tulis dengan kompensasi. |
 | **Keputusan** | A. Satu round trip, benar di bawah pemanggil paralel tanpa loop ulang, sejalan dengan pemakaian Lua di Queue dan aturan "Lua hanya untuk atomisitas" (angka bisnis tetap dari Go lewat ARGV). B butuh loop ulang di jalur panas; C menaruh tulis throttling auth di database stok; D adalah sumber bug. Tambahan: `ClientIPHops` + `APP_TRUSTED_PROXY_HOPS` (default 1) untuk IP klien di belakang lebih dari satu proxy; batas per IP untuk verify (gagal tertutup) dan refresh/logout (gagal terbuka); reuse mencabut access token lewat denylist dalam satu pernyataan SQL; migrasi `0002` hanya menambah indeks. |
 | **Konsekuensi** | Port `IOTPStore` berubah (`Verify`/`Cancel`/`InCooldown` menggantikan `Attempt`/`Clear`); `IRateLimiter.Allow` mengembalikan `RateTicket` agar `Release` tidak pernah mengenai jendela lain; butuh Valkey ≥ 7 (8.1 dipakai); bukti konkurensi memerlukan Valkey nyata; kuota tidak lagi terbakar oleh permintaan yang ditolak, dengan `Release` best-effort (gagal refund hanya membuat limiter lebih ketat). Kegagalan setelah kode terkonsumsi (pembuatan akun/sesi login pertama) mengharuskan pengguna meminta kode baru (diterima: mengembalikan kode membuka lagi jendela replay). Queue/Booking/Payment tetap memakai `ClientIP` lama (baca baris header pertama); mengadopsi `ClientIPHops` di sana adalah perubahan terpisah. |
+
+---
+
+## ADR-028: Keputusan status dan kepemilikan Queue dipindahkan ke dalam Lua; Go tidak lagi membaca-lalu-bertindak
+
+| Field | Isi |
+|---|---|
+| **Status** | Accepted (2026-11-04) |
+| **Konteks** | `leave`, `claim`, dan sweeper memutuskan lewat pembacaan Go yang terpisah dari tulis Lua. Akibat yang terverifikasi: (1) `Leave` melepas alokasi Booking dari hasil `GetEntry` sebelum `leave.lua` menolak non-pemilik, sehingga siapa pun yang tahu `entryId` bisa membebaskan tiket yang sudah direservasi pembeli lain; (2) `leave.lua` menimpa status terminal (`COMPLETED`/`ENDED`) menjadi `LEFT`; (3) `claim.lua` menjawab `TURN_MISSED` untuk semua status selain ADMITTED; (4) pembersihan MISSED menghapus kunci constraint milik entry yang lebih baru; (5) pemindaian kedaluwarsa tanpa batas dan member orphan tidak pernah dihapus. |
+| **Keputusan** | Status, kepemilikan, dan hasil (`OK`/`IGNORED`/`NOT_FOUND`) diputuskan atomik di `end_entry.lua`, `leave.lua`, `claim.lua`, dan `promote.lua`; Go hanya membaca field imutabel dan bertindak sesudah commit (release Booking hanya bila `leave.lua` melaporkan `OK` + `ADMITTED`). Sweeper memakai outcome sendiri `SWEEP_MISSED`; outcome Booking `UNCLAIMED` pada ADMITTED/CLAIMED membebaskan slot. `ExpiredActive` dibatasi (`QUEUE_SWEEP_BATCH_MAX`). Rate limiter atomik (`rate_limit.lua`). |
+| **Konsekuensi** | Skrip lama dan baru kompatibel pada data lama (TC `TestLegacy`). Perilaku terlihat pengguna: claim untuk entry WAITING menjawab `409 NOT_ADMITTED`; leave pada entry CLAIMED/terminal menjawab 204 tanpa mengubah apa pun (QSH-OQ-3, provisional). |
+
+---
+
+## ADR-029: Admisi diserialisasi lewat lease per-event dan `promote.lua` difagar token lease
+
+| Field | Isi |
+|---|---|
+| **Status** | Accepted (2026-11-04) |
+| **Konteks** | Join dan promoter mereservasi di Booking dulu, baru menemukan di `promote.lua` bahwa slot/posisi head sudah hilang (`FULL`/`NOT_HEAD`). Baris RESERVED itu menua jadi `EXPIRED`; Booking lalu menjawab `ALREADY_ACTIVE` selamanya (`UNIQUE(queue_entry_id)`, tak ada jalan kembali ke RESERVED) dan promoter mengakhiri pembeli yang masih hidup. Jalur "jumper" (grant setelah `NO_SUPPLY_NOW` dalam satu batch) melepas baris itu dan menghasilkan akibat yang sama. Lease lama dilepas dengan `DEL` buta sehingga pemegang basi menghapus lease pemegang baru. |
+| **Keputusan** | (1) Join langsung dan promoter mengambil lease yang sama; kapasitas dan head diperiksa di bawah lease **sebelum** `ReserveBatch`. Join mencoba ulang sekali (15-35 ms) sebelum kembali ke WAITING tanpa panggilan Booking. (2) `promote.lua` difagar token lease (`LEASE_LOST` tanpa mutasi). (3) Lease memakai token acak; lepas = compare-and-delete (`release_lease.lua`). (4) Release alokasi hanya bila script melaporkan skip terminal; tidak pernah pada error, `FULL`, `NOT_HEAD`, atau `LEASE_LOST`. (5) Grant yang mengikuti `NO_SUPPLY_NOW` diadopsi, tidak dilepas (inversi FIFO terbatas, dihitung). (6) Head mati (`ALREADY_ACTIVE`) diakhiri dalam satu tick; orphan (`PROMOTER_ORPHAN`) dan email tak terbuka entry-scoped (`UNREADABLE_PII`) juga. (7) Replay `GRANTED` berdeadline lampau dilewati tanpa mutasi. (8) `NO_SUPPLY_NOW` bukan selalu stok (Booking memakainya juga untuk galat DB): Queue tidak pernah mengakhirinya; hanya mendeteksi lewat `{headID, noSupplyTicks, adoptedTicks}` dan menghitung. |
+| **Konsekuensi** | Deviasi dari SRS-F-04-07 (join langsung hanya saat lease didapat) dan SRS-F-25-02 (inversi FIFO terbatas), keduanya ditandai di SRS. Kasus yang diterima tak terbatas oleh Queue: kegagalan kunci PII sistemik (QSH-OQ-16) dan `NO_SUPPLY_NOW` non-stok (C8, QSH-OQ-19; perbaikan akar di Booking). Urutan deploy: worker dulu, lalu API (API lama tanpa lease masih bisa admisi langsung selama jendela rollout). |
 

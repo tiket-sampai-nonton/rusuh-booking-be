@@ -1,0 +1,899 @@
+?   	github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/assets/lua	[no test files]
+=== RUN   TestCommandTree
+--- PASS: TestCommandTree (0.00s)
+=== RUN   TestMigrateFlagsAreIndependent
+--- PASS: TestMigrateFlagsAreIndependent (0.00s)
+PASS
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/cmd	1.142s
+=== RUN   TestEmbeddedMigrationsLoad
+--- PASS: TestEmbeddedMigrationsLoad (0.00s)
+PASS
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/deployments/migrations	1.088s
+=== RUN   TestLoad_Defaults
+--- PASS: TestLoad_Defaults (0.00s)
+=== RUN   TestLoad_QueueExtras
+--- PASS: TestLoad_QueueExtras (0.00s)
+=== RUN   TestConfigValidate_TokenPII
+--- PASS: TestConfigValidate_TokenPII (0.00s)
+=== RUN   TestLoad_ReportsInvalidValues
+=== RUN   TestLoad_ReportsInvalidValues/bad_port
+=== RUN   TestLoad_ReportsInvalidValues/port_range
+=== RUN   TestLoad_ReportsInvalidValues/bad_env
+=== RUN   TestLoad_ReportsInvalidValues/bad_level
+=== RUN   TestLoad_ReportsInvalidValues/bad_timeout
+=== RUN   TestLoad_ReportsInvalidValues/bad_schema
+=== RUN   TestLoad_ReportsInvalidValues/bad_valkey
+=== RUN   TestLoad_ReportsInvalidValues/bad_delays
+=== RUN   TestLoad_ReportsInvalidValues/short_pii_key
+--- PASS: TestLoad_ReportsInvalidValues (0.01s)
+    --- PASS: TestLoad_ReportsInvalidValues/bad_port (0.00s)
+    --- PASS: TestLoad_ReportsInvalidValues/port_range (0.00s)
+    --- PASS: TestLoad_ReportsInvalidValues/bad_env (0.00s)
+    --- PASS: TestLoad_ReportsInvalidValues/bad_level (0.00s)
+    --- PASS: TestLoad_ReportsInvalidValues/bad_timeout (0.00s)
+    --- PASS: TestLoad_ReportsInvalidValues/bad_schema (0.00s)
+    --- PASS: TestLoad_ReportsInvalidValues/bad_valkey (0.00s)
+    --- PASS: TestLoad_ReportsInvalidValues/bad_delays (0.00s)
+    --- PASS: TestLoad_ReportsInvalidValues/short_pii_key (0.00s)
+=== RUN   TestLoad_QueueHardeningDefaults
+--- PASS: TestLoad_QueueHardeningDefaults (0.00s)
+=== RUN   TestLoad_QueueHardeningValidation
+=== RUN   TestLoad_QueueHardeningValidation/lease_ttl_ok
+=== RUN   TestLoad_QueueHardeningValidation/lease_ttl_at_upper_bound
+=== RUN   TestLoad_QueueHardeningValidation/lease_ttl_below_2s
+=== RUN   TestLoad_QueueHardeningValidation/lease_ttl_above_30s
+=== RUN   TestLoad_QueueHardeningValidation/lease_ttl_not_above_2x_booking_timeout
+=== RUN   TestLoad_QueueHardeningValidation/sweep_batch_zero
+=== RUN   TestLoad_QueueHardeningValidation/sweep_batch_too_large
+=== RUN   TestLoad_QueueHardeningValidation/sweep_batch_at_max
+=== RUN   TestLoad_QueueHardeningValidation/unseal_fail_max_zero
+=== RUN   TestLoad_QueueHardeningValidation/unseal_probe_zero
+=== RUN   TestLoad_QueueHardeningValidation/suspect_ticks_1_rejected_(a_single_race_must_never_label)
+=== RUN   TestLoad_QueueHardeningValidation/suspect_ticks_2_ok
+=== RUN   TestLoad_QueueHardeningValidation/rate_window_under_1ms
+=== RUN   TestLoad_QueueHardeningValidation/ip_window_zero
+=== RUN   TestLoad_QueueHardeningValidation/me_window_zero
+--- PASS: TestLoad_QueueHardeningValidation (0.02s)
+    --- PASS: TestLoad_QueueHardeningValidation/lease_ttl_ok (0.00s)
+    --- PASS: TestLoad_QueueHardeningValidation/lease_ttl_at_upper_bound (0.00s)
+    --- PASS: TestLoad_QueueHardeningValidation/lease_ttl_below_2s (0.00s)
+    --- PASS: TestLoad_QueueHardeningValidation/lease_ttl_above_30s (0.00s)
+    --- PASS: TestLoad_QueueHardeningValidation/lease_ttl_not_above_2x_booking_timeout (0.00s)
+    --- PASS: TestLoad_QueueHardeningValidation/sweep_batch_zero (0.00s)
+    --- PASS: TestLoad_QueueHardeningValidation/sweep_batch_too_large (0.00s)
+    --- PASS: TestLoad_QueueHardeningValidation/sweep_batch_at_max (0.00s)
+    --- PASS: TestLoad_QueueHardeningValidation/unseal_fail_max_zero (0.00s)
+    --- PASS: TestLoad_QueueHardeningValidation/unseal_probe_zero (0.00s)
+    --- PASS: TestLoad_QueueHardeningValidation/suspect_ticks_1_rejected_(a_single_race_must_never_label) (0.00s)
+    --- PASS: TestLoad_QueueHardeningValidation/suspect_ticks_2_ok (0.00s)
+    --- PASS: TestLoad_QueueHardeningValidation/rate_window_under_1ms (0.00s)
+    --- PASS: TestLoad_QueueHardeningValidation/ip_window_zero (0.00s)
+    --- PASS: TestLoad_QueueHardeningValidation/me_window_zero (0.00s)
+PASS
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/config	1.083s
+=== RUN   TestPromoterTuningFromConfig
+--- PASS: TestPromoterTuningFromConfig (0.00s)
+=== RUN   TestSweepBatchFromConfig
+--- PASS: TestSweepBatchFromConfig (0.00s)
+=== RUN   TestJoinSettingsFromConfig
+--- PASS: TestJoinSettingsFromConfig (0.00s)
+=== RUN   TestPromoterUsesConfiguredLeaseTTL
+--- PASS: TestPromoterUsesConfiguredLeaseTTL (0.00s)
+=== RUN   TestSweeperUsesConfiguredBatch
+--- PASS: TestSweeperUsesConfiguredBatch (0.00s)
+=== RUN   TestPromoterUsesConfiguredUnsealFailMax
+2026/11/04 16:55:19 ERROR email antrean tidak bisa dibuka; entry dilewati eventId=ev1 entryId=H count=2
+2026/11/04 16:55:19 ERROR email antrean tidak bisa dibuka; entry dilewati eventId=ev1 entryId=H count=2
+--- PASS: TestPromoterUsesConfiguredUnsealFailMax (0.01s)
+=== RUN   TestPromoterWiredMetricsShowLapsedReplayAndDeadHead
+2026/11/04 16:55:19 WARN replay GRANTED dengan deadline lampau dilewati; menunggu sweeper Booking eventId=ev1 entryId=E1
+2026/11/04 16:55:19 WARN ALREADY_ACTIVE dari Booking untuk entry WAITING; baris Booking sudah mati eventId=ev1 entryId=E1
+--- PASS: TestPromoterWiredMetricsShowLapsedReplayAndDeadHead (0.03s)
+=== RUN   TestPromoterUsesConfiguredNoSupplySuspectTicks
+2026/11/04 16:55:19 WARN entry di belakang NO_SUPPLY_NOW diadopsi (inversi FIFO terbatas) eventId=ev1 adopted=1 headId=P
+2026/11/04 16:55:19 WARN entry di belakang NO_SUPPLY_NOW diadopsi (inversi FIFO terbatas) eventId=ev1 adopted=1 headId=P
+2026/11/04 16:55:19 WARN entry di belakang NO_SUPPLY_NOW diadopsi (inversi FIFO terbatas) eventId=ev1 adopted=1 headId=P
+2026/11/04 16:55:19 WARN entry di belakang NO_SUPPLY_NOW diadopsi (inversi FIFO terbatas) eventId=ev1 adopted=1 headId=P
+2026/11/04 16:55:19 WARN entry di belakang NO_SUPPLY_NOW diadopsi (inversi FIFO terbatas) eventId=ev1 adopted=1 headId=P
+2026/11/04 16:55:19 WARN head antrean menjawab NO_SUPPLY_NOW berturut-turut eventId=ev1 entryId=P ticks=5
+2026/11/04 16:55:19 WARN entry di belakang NO_SUPPLY_NOW diadopsi (inversi FIFO terbatas) eventId=ev1 adopted=1 headId=P
+2026/11/04 16:55:19 WARN entry di belakang NO_SUPPLY_NOW diadopsi (inversi FIFO terbatas) eventId=ev1 adopted=1 headId=P
+2026/11/04 16:55:19 WARN entry di belakang NO_SUPPLY_NOW diadopsi (inversi FIFO terbatas) eventId=ev1 adopted=1 headId=P
+2026/11/04 16:55:19 WARN entry di belakang NO_SUPPLY_NOW diadopsi (inversi FIFO terbatas) eventId=ev1 adopted=1 headId=P
+2026/11/04 16:55:19 WARN entry di belakang NO_SUPPLY_NOW diadopsi (inversi FIFO terbatas) eventId=ev1 adopted=1 headId=P
+--- PASS: TestPromoterUsesConfiguredNoSupplySuspectTicks (0.12s)
+=== RUN   TestNewHandler_HealthWithoutClients
+--- PASS: TestNewHandler_HealthWithoutClients (0.00s)
+=== RUN   TestClients_EmptyIsSafe
+--- PASS: TestClients_EmptyIsSafe (0.00s)
+=== RUN   TestLoop_RunsJobsUntilCancelled
+--- PASS: TestLoop_RunsJobsUntilCancelled (0.01s)
+PASS
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/delivery	1.297s
+=== RUN   TestCheckHealth
+=== RUN   TestCheckHealth/up
+=== RUN   TestCheckHealth/down
+--- PASS: TestCheckHealth (0.00s)
+    --- PASS: TestCheckHealth/up (0.00s)
+    --- PASS: TestCheckHealth/down (0.00s)
+=== RUN   TestJoinAdmission_NotHeadMakesNoBookingCallAndTakesNoLease
+--- PASS: TestJoinAdmission_NotHeadMakesNoBookingCallAndTakesNoLease (0.00s)
+=== RUN   TestJoinAdmission_LeaseHeldAcrossBothAttemptsFallsBackToWaiting
+--- PASS: TestJoinAdmission_LeaseHeldAcrossBothAttemptsFallsBackToWaiting (0.00s)
+=== RUN   TestJoinAdmission_LeaseFreedOnTheSecondAttemptAdmitsInTheResponse
+--- PASS: TestJoinAdmission_LeaseFreedOnTheSecondAttemptAdmitsInTheResponse (0.00s)
+=== RUN   TestJoinAdmission_FreeLeaseAdmitsWithoutSleeping
+--- PASS: TestJoinAdmission_FreeLeaseAdmitsWithoutSleeping (0.00s)
+=== RUN   TestJoinAdmission_RecheckUnderTheLeaseFailsMakesNoBookingCall
+--- PASS: TestJoinAdmission_RecheckUnderTheLeaseFailsMakesNoBookingCall (0.00s)
+=== RUN   TestJoinAdmission_PromoteFailuresStayWaitingAndNeverRelease
+=== RUN   TestJoinAdmission_PromoteFailuresStayWaitingAndNeverRelease/not_head
+=== RUN   TestJoinAdmission_PromoteFailuresStayWaitingAndNeverRelease/full
+=== RUN   TestJoinAdmission_PromoteFailuresStayWaitingAndNeverRelease/lease_lost
+=== RUN   TestJoinAdmission_PromoteFailuresStayWaitingAndNeverRelease/empty
+=== RUN   TestJoinAdmission_PromoteFailuresStayWaitingAndNeverRelease/error
+--- PASS: TestJoinAdmission_PromoteFailuresStayWaitingAndNeverRelease (0.01s)
+    --- PASS: TestJoinAdmission_PromoteFailuresStayWaitingAndNeverRelease/not_head (0.00s)
+    --- PASS: TestJoinAdmission_PromoteFailuresStayWaitingAndNeverRelease/full (0.00s)
+    --- PASS: TestJoinAdmission_PromoteFailuresStayWaitingAndNeverRelease/lease_lost (0.00s)
+    --- PASS: TestJoinAdmission_PromoteFailuresStayWaitingAndNeverRelease/empty (0.00s)
+    --- PASS: TestJoinAdmission_PromoteFailuresStayWaitingAndNeverRelease/error (0.00s)
+=== RUN   TestJoinAdmission_LeaseIsReleasedEvenWhenTheRequestContextIsCancelled
+--- PASS: TestJoinAdmission_LeaseIsReleasedEvenWhenTheRequestContextIsCancelled (0.00s)
+=== RUN   TestJoinAdmission_LapsedGrantMakesNoPromote
+--- PASS: TestJoinAdmission_LapsedGrantMakesNoPromote (0.00s)
+=== RUN   TestJoinAdmission_TerminalSkipReleasesTheGrantedAllocation
+--- PASS: TestJoinAdmission_TerminalSkipReleasesTheGrantedAllocation (0.00s)
+=== RUN   TestJoin_EmptyClientIPIsLoggedAndNotRejected
+--- PASS: TestJoin_EmptyClientIPIsLoggedAndNotRejected (0.00s)
+=== RUN   TestJoin_GuestWaiting
+--- PASS: TestJoin_GuestWaiting (0.00s)
+=== RUN   TestJoin_DirectAdmission
+--- PASS: TestJoin_DirectAdmission (0.00s)
+=== RUN   TestJoin_LoggedInWithNIKIgnoresBodyNik
+2026/11/04 16:55:19 WARN join dengan IP klien kosong; batas per-IP dilewati eventId=ev1
+--- PASS: TestJoin_LoggedInWithNIKIgnoresBodyNik (0.00s)
+=== RUN   TestJoin_Validation
+=== RUN   TestJoin_Validation/no_consent
+=== RUN   TestJoin_Validation/email_mismatch
+=== RUN   TestJoin_Validation/email_bukan_alamat
+=== RUN   TestJoin_Validation/email_dengan_nama_tampilan
+--- PASS: TestJoin_Validation (0.00s)
+    --- PASS: TestJoin_Validation/no_consent (0.00s)
+    --- PASS: TestJoin_Validation/email_mismatch (0.00s)
+    --- PASS: TestJoin_Validation/email_bukan_alamat (0.00s)
+    --- PASS: TestJoin_Validation/email_dengan_nama_tampilan (0.00s)
+=== RUN   TestJoin_GuestNikRequired
+--- PASS: TestJoin_GuestNikRequired (0.00s)
+=== RUN   TestJoin_NikInvalidFormat
+--- PASS: TestJoin_NikInvalidFormat (0.00s)
+=== RUN   TestJoin_NikInvalidStructure
+=== RUN   TestJoin_NikInvalidStructure/invalid_province
+=== RUN   TestJoin_NikInvalidStructure/invalid_kab
+=== RUN   TestJoin_NikInvalidStructure/serial_zero
+--- PASS: TestJoin_NikInvalidStructure (0.00s)
+    --- PASS: TestJoin_NikInvalidStructure/invalid_province (0.00s)
+    --- PASS: TestJoin_NikInvalidStructure/invalid_kab (0.00s)
+    --- PASS: TestJoin_NikInvalidStructure/serial_zero (0.00s)
+=== RUN   TestJoin_RateLimited
+--- PASS: TestJoin_RateLimited (0.00s)
+=== RUN   TestJoin_ExistingConflicts
+=== RUN   TestJoin_ExistingConflicts/nik
+=== RUN   TestJoin_ExistingConflicts/visitor
+=== RUN   TestJoin_ExistingConflicts/email
+=== RUN   TestJoin_ExistingConflicts/quota
+--- PASS: TestJoin_ExistingConflicts (0.00s)
+    --- PASS: TestJoin_ExistingConflicts/nik (0.00s)
+    --- PASS: TestJoin_ExistingConflicts/visitor (0.00s)
+    --- PASS: TestJoin_ExistingConflicts/email (0.00s)
+    --- PASS: TestJoin_ExistingConflicts/quota (0.00s)
+=== RUN   TestJoin_StorePropagatesError
+--- PASS: TestJoin_StorePropagatesError (0.00s)
+=== RUN   TestJoin_FirstJoinForKnownEventCreatesDefaultSettings
+--- PASS: TestJoin_FirstJoinForKnownEventCreatesDefaultSettings (0.00s)
+=== RUN   TestJoin_UnknownEventIsRefusedWithoutTouchingTheQueue
+--- PASS: TestJoin_UnknownEventIsRefusedWithoutTouchingTheQueue (0.00s)
+=== RUN   TestClaim_Success
+--- PASS: TestClaim_Success (0.00s)
+=== RUN   TestClaim_EmptyAllocationIDIsDependencyUnavailableAndSignsNothing
+--- PASS: TestClaim_EmptyAllocationIDIsDependencyUnavailableAndSignsNothing (0.00s)
+=== RUN   TestClaim_StoreErrorsAreReturned
+=== RUN   TestClaim_StoreErrorsAreReturned/turn_missed
+=== RUN   TestClaim_StoreErrorsAreReturned/not_admitted
+=== RUN   TestClaim_StoreErrorsAreReturned/not_found
+=== RUN   TestClaim_StoreErrorsAreReturned/valkey_down
+--- PASS: TestClaim_StoreErrorsAreReturned (0.00s)
+    --- PASS: TestClaim_StoreErrorsAreReturned/turn_missed (0.00s)
+    --- PASS: TestClaim_StoreErrorsAreReturned/not_admitted (0.00s)
+    --- PASS: TestClaim_StoreErrorsAreReturned/not_found (0.00s)
+    --- PASS: TestClaim_StoreErrorsAreReturned/valkey_down (0.00s)
+=== RUN   TestLeave_WaitingDoesNotCallBooking
+--- PASS: TestLeave_WaitingDoesNotCallBooking (0.00s)
+=== RUN   TestLeave_AdmittedReleasesTheAllocationAfterTheCommit
+--- PASS: TestLeave_AdmittedReleasesTheAllocationAfterTheCommit (0.00s)
+=== RUN   TestLeave_AdmittedReleaseFailureDoesNotFailTheRequest
+2026/11/04 16:55:19 WARN leave: gagal melepas alokasi Booking; sweeper akan membersihkan saat deadline eventId=ev1 entryId=e1 allocationId=alloc-42 error="booking down"
+--- PASS: TestLeave_AdmittedReleaseFailureDoesNotFailTheRequest (0.00s)
+=== RUN   TestLeave_StrangerCausesNoBookingCall
+--- PASS: TestLeave_StrangerCausesNoBookingCall (0.00s)
+=== RUN   TestLeave_StoreErrorMeansBookingIsNeverCalled
+--- PASS: TestLeave_StoreErrorMeansBookingIsNeverCalled (0.00s)
+=== RUN   TestLeave_IgnoredStatusesReleaseNothing
+=== RUN   TestLeave_IgnoredStatusesReleaseNothing/COMPLETED
+=== RUN   TestLeave_IgnoredStatusesReleaseNothing/ENDED
+=== RUN   TestLeave_IgnoredStatusesReleaseNothing/LEFT
+=== RUN   TestLeave_IgnoredStatusesReleaseNothing/MISSED
+=== RUN   TestLeave_IgnoredStatusesReleaseNothing/CLAIMED
+--- PASS: TestLeave_IgnoredStatusesReleaseNothing (0.00s)
+    --- PASS: TestLeave_IgnoredStatusesReleaseNothing/COMPLETED (0.00s)
+    --- PASS: TestLeave_IgnoredStatusesReleaseNothing/ENDED (0.00s)
+    --- PASS: TestLeave_IgnoredStatusesReleaseNothing/LEFT (0.00s)
+    --- PASS: TestLeave_IgnoredStatusesReleaseNothing/MISSED (0.00s)
+    --- PASS: TestLeave_IgnoredStatusesReleaseNothing/CLAIMED (0.00s)
+=== RUN   TestGetStatus_Found
+--- PASS: TestGetStatus_Found (0.00s)
+=== RUN   TestGetStatus_NotFound
+--- PASS: TestGetStatus_NotFound (0.00s)
+=== RUN   TestGetStatus_StorageError
+--- PASS: TestGetStatus_StorageError (0.00s)
+=== RUN   TestGetMyEntry_WithStatusContext
+--- PASS: TestGetMyEntry_WithStatusContext (0.00s)
+=== RUN   TestGetMyEntry_RemovedAhead
+--- PASS: TestGetMyEntry_RemovedAhead (0.00s)
+=== RUN   TestGetMyEntry_NotFound
+--- PASS: TestGetMyEntry_NotFound (0.00s)
+PASS
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/application/usecase	1.175s
+?   	github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/domain/dto	[no test files]
+=== RUN   TestNewHealth
+=== RUN   TestNewHealth/no_dependencies
+=== RUN   TestNewHealth/all_up
+=== RUN   TestNewHealth/one_down
+--- PASS: TestNewHealth (0.01s)
+    --- PASS: TestNewHealth/no_dependencies (0.00s)
+    --- PASS: TestNewHealth/all_up (0.00s)
+    --- PASS: TestNewHealth/one_down (0.00s)
+=== RUN   TestEntry_HexHelpers
+--- PASS: TestEntry_HexHelpers (0.00s)
+=== RUN   TestEntry_IsTerminal
+--- PASS: TestEntry_IsTerminal (0.00s)
+=== RUN   TestEntry_ExactPosition
+=== RUN   TestEntry_ExactPosition/no_removed
+=== RUN   TestEntry_ExactPosition/with_removed_ahead
+=== RUN   TestEntry_ExactPosition/at_front
+--- PASS: TestEntry_ExactPosition (0.00s)
+    --- PASS: TestEntry_ExactPosition/no_removed (0.00s)
+    --- PASS: TestEntry_ExactPosition/with_removed_ahead (0.00s)
+    --- PASS: TestEntry_ExactPosition/at_front (0.00s)
+PASS
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/domain/entity	1.106s
+=== RUN   TestToHealthResponse
+--- PASS: TestToHealthResponse (0.00s)
+=== RUN   TestToQueueEntry
+--- PASS: TestToQueueEntry (0.00s)
+=== RUN   TestToQueueEntry_Admitted
+--- PASS: TestToQueueEntry_Admitted (0.00s)
+=== RUN   TestToEntryStatus_WaitingComputesPositionAndZone
+--- PASS: TestToEntryStatus_WaitingComputesPositionAndZone (0.00s)
+=== RUN   TestToEntryStatus_NegativePositionClampedToZero
+--- PASS: TestToEntryStatus_NegativePositionClampedToZero (0.00s)
+=== RUN   TestToEntryStatus_AdmittedNoPositionNoZone
+--- PASS: TestToEntryStatus_AdmittedNoPositionNoZone (0.00s)
+PASS
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/domain/mapper	1.081s
+=== RUN   TestNewDependencyName
+=== RUN   TestNewDependencyName/postgres
+=== RUN   TestNewDependencyName/rabbit-mq2
+=== RUN   TestNewDependencyName/#00
+=== RUN   TestNewDependencyName/Postgres
+=== RUN   TestNewDependencyName/9lives
+=== RUN   TestNewDependencyName/this-name-is-way-too-long-for-a-dependency
+--- PASS: TestNewDependencyName (0.00s)
+    --- PASS: TestNewDependencyName/postgres (0.00s)
+    --- PASS: TestNewDependencyName/rabbit-mq2 (0.00s)
+    --- PASS: TestNewDependencyName/#00 (0.00s)
+    --- PASS: TestNewDependencyName/Postgres (0.00s)
+    --- PASS: TestNewDependencyName/9lives (0.00s)
+    --- PASS: TestNewDependencyName/this-name-is-way-too-long-for-a-dependency (0.00s)
+=== RUN   TestStatus_CanTransitionTo
+=== RUN   TestStatus_CanTransitionTo/waiting->admitted
+=== RUN   TestStatus_CanTransitionTo/waiting->left
+=== RUN   TestStatus_CanTransitionTo/waiting->soldout
+=== RUN   TestStatus_CanTransitionTo/waiting->claimed_illegal
+=== RUN   TestStatus_CanTransitionTo/admitted->claimed
+=== RUN   TestStatus_CanTransitionTo/admitted->missed
+=== RUN   TestStatus_CanTransitionTo/admitted->left
+=== RUN   TestStatus_CanTransitionTo/claimed->waiting_illegal
+=== RUN   TestStatus_CanTransitionTo/claimed->completed
+=== RUN   TestStatus_CanTransitionTo/claimed->ended
+=== RUN   TestStatus_CanTransitionTo/terminal_missed->any
+=== RUN   TestStatus_CanTransitionTo/completed->ended_illegal
+=== RUN   TestStatus_CanTransitionTo/same_status_not_a_transition
+--- PASS: TestStatus_CanTransitionTo (0.01s)
+    --- PASS: TestStatus_CanTransitionTo/waiting->admitted (0.00s)
+    --- PASS: TestStatus_CanTransitionTo/waiting->left (0.00s)
+    --- PASS: TestStatus_CanTransitionTo/waiting->soldout (0.00s)
+    --- PASS: TestStatus_CanTransitionTo/waiting->claimed_illegal (0.00s)
+    --- PASS: TestStatus_CanTransitionTo/admitted->claimed (0.00s)
+    --- PASS: TestStatus_CanTransitionTo/admitted->missed (0.00s)
+    --- PASS: TestStatus_CanTransitionTo/admitted->left (0.00s)
+    --- PASS: TestStatus_CanTransitionTo/claimed->waiting_illegal (0.00s)
+    --- PASS: TestStatus_CanTransitionTo/claimed->completed (0.00s)
+    --- PASS: TestStatus_CanTransitionTo/claimed->ended (0.00s)
+    --- PASS: TestStatus_CanTransitionTo/terminal_missed->any (0.00s)
+    --- PASS: TestStatus_CanTransitionTo/completed->ended_illegal (0.00s)
+    --- PASS: TestStatus_CanTransitionTo/same_status_not_a_transition (0.00s)
+=== RUN   TestStatus_IsTerminal
+--- PASS: TestStatus_IsTerminal (0.00s)
+=== RUN   TestZoneFor
+=== RUN   TestZoneFor/within_guaranteed
+=== RUN   TestZoneFor/at_guaranteed_boundary
+=== RUN   TestZoneFor/within_possible
+=== RUN   TestZoneFor/at_possible_boundary
+=== RUN   TestZoneFor/beyond_possible
+--- PASS: TestZoneFor (0.00s)
+    --- PASS: TestZoneFor/within_guaranteed (0.00s)
+    --- PASS: TestZoneFor/at_guaranteed_boundary (0.00s)
+    --- PASS: TestZoneFor/within_possible (0.00s)
+    --- PASS: TestZoneFor/at_possible_boundary (0.00s)
+    --- PASS: TestZoneFor/beyond_possible (0.00s)
+=== RUN   TestValidateNIKFormat
+=== RUN   TestValidateNIKFormat/valid_16_digit
+=== RUN   TestValidateNIKFormat/letters
+=== RUN   TestValidateNIKFormat/too_short
+=== RUN   TestValidateNIKFormat/too_long
+=== RUN   TestValidateNIKFormat/empty
+--- PASS: TestValidateNIKFormat (0.00s)
+    --- PASS: TestValidateNIKFormat/valid_16_digit (0.00s)
+    --- PASS: TestValidateNIKFormat/letters (0.00s)
+    --- PASS: TestValidateNIKFormat/too_short (0.00s)
+    --- PASS: TestValidateNIKFormat/too_long (0.00s)
+    --- PASS: TestValidateNIKFormat/empty (0.00s)
+=== RUN   TestNewSeq
+--- PASS: TestNewSeq (0.00s)
+=== RUN   TestNewIDs
+--- PASS: TestNewIDs (0.00s)
+=== RUN   TestBuyerNikHash_Hex
+--- PASS: TestBuyerNikHash_Hex (0.00s)
+=== RUN   TestShouldRelease
+=== RUN   TestShouldRelease/NO_ENTRY
+=== RUN   TestShouldRelease/LEFT
+=== RUN   TestShouldRelease/ENDED
+=== RUN   TestShouldRelease/COMPLETED
+=== RUN   TestShouldRelease/MISSED
+=== RUN   TestShouldRelease/ADMITTED_OTHER
+=== RUN   TestShouldRelease/ADMITTED_SAME
+=== RUN   TestShouldRelease/NOT_HEAD
+=== RUN   TestShouldRelease/FULL
+=== RUN   TestShouldRelease/#00
+=== RUN   TestShouldRelease/WAITING
+=== RUN   TestShouldRelease/SOMETHING_NEW
+--- PASS: TestShouldRelease (0.00s)
+    --- PASS: TestShouldRelease/NO_ENTRY (0.00s)
+    --- PASS: TestShouldRelease/LEFT (0.00s)
+    --- PASS: TestShouldRelease/ENDED (0.00s)
+    --- PASS: TestShouldRelease/COMPLETED (0.00s)
+    --- PASS: TestShouldRelease/MISSED (0.00s)
+    --- PASS: TestShouldRelease/ADMITTED_OTHER (0.00s)
+    --- PASS: TestShouldRelease/ADMITTED_SAME (0.00s)
+    --- PASS: TestShouldRelease/NOT_HEAD (0.00s)
+    --- PASS: TestShouldRelease/FULL (0.00s)
+    --- PASS: TestShouldRelease/#00 (0.00s)
+    --- PASS: TestShouldRelease/WAITING (0.00s)
+    --- PASS: TestShouldRelease/SOMETHING_NEW (0.00s)
+PASS
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/domain/valueobject	1.097s
+=== RUN   TestReserveBatch_OK
+--- PASS: TestReserveBatch_OK (0.03s)
+=== RUN   TestSupply_OK
+--- PASS: TestSupply_OK (0.01s)
+=== RUN   TestReserveBatch_ServerErrorWrappedDependency
+--- PASS: TestReserveBatch_ServerErrorWrappedDependency (0.01s)
+=== RUN   TestReserveBatch_BreakerOpensAfterFailures
+--- PASS: TestReserveBatch_BreakerOpensAfterFailures (0.01s)
+=== RUN   TestSupply_PropagatesRequestAndTrace
+--- PASS: TestSupply_PropagatesRequestAndTrace (0.00s)
+=== RUN   TestSupply_UnknownEventIsNotFoundAndDoesNotTripTheBreaker
+--- PASS: TestSupply_UnknownEventIsNotFoundAndDoesNotTripTheBreaker (0.01s)
+=== RUN   TestReserveBatch_NotFoundStaysADependencyError
+--- PASS: TestReserveBatch_NotFoundStaysADependencyError (0.01s)
+=== RUN   TestClient_AsksForAFreshServiceTokenOnEveryCall
+--- PASS: TestClient_AsksForAFreshServiceTokenOnEveryCall (0.01s)
+PASS
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/infrastructure/bookingclient	1.184s
+=== RUN   TestCheckAll
+--- PASS: TestCheckAll (0.05s)
+PASS
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/infrastructure/healthcheck	1.152s
+=== RUN   TestHealthHandler
+=== RUN   TestHealthHandler/up
+=== RUN   TestHealthHandler/down
+--- PASS: TestHealthHandler (0.00s)
+    --- PASS: TestHealthHandler/up (0.00s)
+    --- PASS: TestHealthHandler/down (0.00s)
+=== RUN   TestHealthHandler_MethodNotAllowed
+--- PASS: TestHealthHandler_MethodNotAllowed (0.00s)
+=== RUN   TestJoinHandler_ForgedVisitorHeaderIsNeverUsed
+--- PASS: TestJoinHandler_ForgedVisitorHeaderIsNeverUsed (0.00s)
+=== RUN   TestJoinHandler_ForgedVisitorCookieIsNeverUsed
+--- PASS: TestJoinHandler_ForgedVisitorCookieIsNeverUsed (0.00s)
+=== RUN   TestJoinHandler_HeaderIsIgnoredWithoutAnAuthenticator
+--- PASS: TestJoinHandler_HeaderIsIgnoredWithoutAnAuthenticator (0.00s)
+=== RUN   TestJoinHandler_VerifiedVisitorTokenIsUsed
+--- PASS: TestJoinHandler_VerifiedVisitorTokenIsUsed (0.00s)
+=== RUN   TestJoinHandler_NoVisitorCredentialStillJoins
+--- PASS: TestJoinHandler_NoVisitorCredentialStillJoins (0.00s)
+=== RUN   TestJoinHandler_ClientIPTrustSemantics
+=== RUN   TestJoinHandler_ClientIPTrustSemantics/behind_the_ALB:_last_XFF_element_(appended_by_the_proxy)
+=== RUN   TestJoinHandler_ClientIPTrustSemantics/local/no_proxy:_socket_address,_XFF_ignored
+--- PASS: TestJoinHandler_ClientIPTrustSemantics (0.00s)
+    --- PASS: TestJoinHandler_ClientIPTrustSemantics/behind_the_ALB:_last_XFF_element_(appended_by_the_proxy) (0.00s)
+    --- PASS: TestJoinHandler_ClientIPTrustSemantics/local/no_proxy:_socket_address,_XFF_ignored (0.00s)
+=== RUN   TestJoinHandler_Created
+--- PASS: TestJoinHandler_Created (0.00s)
+=== RUN   TestJoinHandler_MobileReturnsTokenInBody
+--- PASS: TestJoinHandler_MobileReturnsTokenInBody (0.00s)
+=== RUN   TestJoinHandler_DomainError
+2026/11/04 16:55:19 INFO request failed status=409 errorCode=NIK_ALREADY_IN_QUEUE error="NIK_ALREADY_IN_QUEUE: queue: NIK sudah berada di antrean: queue: NIK sudah berada di antrean"
+--- PASS: TestJoinHandler_DomainError (0.00s)
+=== RUN   TestStatusHandler_OK
+--- PASS: TestStatusHandler_OK (0.00s)
+=== RUN   TestStatusHandler_NotFound
+2026/11/04 16:55:19 INFO request failed status=404 errorCode=NOT_FOUND error="NOT_FOUND: queue: entry tidak ditemukan: queue: entry tidak ditemukan"
+--- PASS: TestStatusHandler_NotFound (0.00s)
+=== RUN   TestMyEntryHandler_OK
+--- PASS: TestMyEntryHandler_OK (0.00s)
+=== RUN   TestMyEntryHandler_Unauthorized
+2026/11/04 16:55:19 INFO request failed status=404 errorCode=NOT_FOUND error="NOT_FOUND: queue: entry tidak ditemukan: queue: entry tidak ditemukan"
+--- PASS: TestMyEntryHandler_Unauthorized (0.00s)
+=== RUN   TestClaimHandler_OK
+--- PASS: TestClaimHandler_OK (0.00s)
+=== RUN   TestClaimHandler_TurnMissedGone
+2026/11/04 16:55:19 INFO request failed status=410 errorCode=TURN_MISSED error="TURN_MISSED: queue: giliran terlewat: queue: giliran terlewat"
+--- PASS: TestClaimHandler_TurnMissedGone (0.00s)
+=== RUN   TestLeaveHandler_NoContent
+--- PASS: TestLeaveHandler_NoContent (0.00s)
+=== RUN   TestLeaveHandler_Unauthorized
+2026/11/04 16:55:19 INFO request failed status=404 errorCode=NOT_FOUND error="NOT_FOUND: queue: entry tidak ditemukan: queue: entry tidak ditemukan"
+--- PASS: TestLeaveHandler_Unauthorized (0.00s)
+=== RUN   TestClaimHandler_ErrorMapping
+=== RUN   TestClaimHandler_ErrorMapping/waiting_entry
+2026/11/04 16:55:19 INFO request failed status=409 errorCode=NOT_ADMITTED error="NOT_ADMITTED: queue: entry belum mendapat giliran: queue: entry belum mendapat giliran"
+=== RUN   TestClaimHandler_ErrorMapping/missed
+2026/11/04 16:55:19 INFO request failed status=410 errorCode=TURN_MISSED error="TURN_MISSED: queue: giliran terlewat: queue: giliran terlewat"
+=== RUN   TestClaimHandler_ErrorMapping/left/ended/completed_or_unknown_or_wrong_visitor
+2026/11/04 16:55:19 INFO request failed status=404 errorCode=NOT_FOUND error="NOT_FOUND: queue: entry tidak ditemukan: queue: entry tidak ditemukan"
+2026/11/04 16:55:19 INFO request failed status=404 errorCode=NOT_FOUND error="NOT_FOUND: queue: entry tidak ditemukan: queue: entry tidak ditemukan"
+--- PASS: TestClaimHandler_ErrorMapping (0.00s)
+    --- PASS: TestClaimHandler_ErrorMapping/waiting_entry (0.00s)
+    --- PASS: TestClaimHandler_ErrorMapping/missed (0.00s)
+    --- PASS: TestClaimHandler_ErrorMapping/left/ended/completed_or_unknown_or_wrong_visitor (0.00s)
+PASS
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/infrastructure/http	1.122s
+=== RUN   TestEventSettings_GetEnsureAndList
+    repos_integration_test.go:67: TEST_POSTGRES_DSN tidak diset
+--- SKIP: TestEventSettings_GetEnsureAndList (0.00s)
+=== RUN   TestEntryAudit_AppendsForGuestAndAccount
+    repos_integration_test.go:105: TEST_POSTGRES_DSN tidak diset
+--- SKIP: TestEntryAudit_AppendsForGuestAndAccount (0.00s)
+PASS
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/infrastructure/postgres	1.108s
+=== RUN   TestConsumer_JourneyEnded
+--- PASS: TestConsumer_JourneyEnded (0.00s)
+=== RUN   TestConsumer_JourneyEnded_DoubleDeliveryIdempotent
+--- PASS: TestConsumer_JourneyEnded_DoubleDeliveryIdempotent (0.00s)
+=== RUN   TestConsumer_QuotaExhausted
+--- PASS: TestConsumer_QuotaExhausted (0.00s)
+=== RUN   TestConsumer_SoldOut
+--- PASS: TestConsumer_SoldOut (0.00s)
+=== RUN   TestConsumer_CorruptPayloadPermanent
+--- PASS: TestConsumer_CorruptPayloadPermanent (0.00s)
+=== RUN   TestConsumer_MissingFieldsPermanent
+--- PASS: TestConsumer_MissingFieldsPermanent (0.00s)
+=== RUN   TestConsumer_UnknownRoutingKeyPermanent
+--- PASS: TestConsumer_UnknownRoutingKeyPermanent (0.00s)
+=== RUN   TestConsumer_SubscriptionBindings
+--- PASS: TestConsumer_SubscriptionBindings (0.00s)
+=== RUN   TestConsumer_JourneyEnded_IgnoredResultIsAcked
+--- PASS: TestConsumer_JourneyEnded_IgnoredResultIsAcked (0.00s)
+=== RUN   TestConsumer_JourneyEnded_ValkeyErrorIsRetriedNotPermanent
+--- PASS: TestConsumer_JourneyEnded_ValkeyErrorIsRetriedNotPermanent (0.00s)
+=== RUN   TestEventPublisher_NewPublisher
+--- PASS: TestEventPublisher_NewPublisher (0.00s)
+=== RUN   TestEventPublisher_PublishTurnSoon_NilPubPanics
+--- PASS: TestEventPublisher_PublishTurnSoon_NilPubPanics (0.00s)
+=== RUN   TestEventPublisher_PublishTurnArrived_NilPubPanics
+--- PASS: TestEventPublisher_PublishTurnArrived_NilPubPanics (0.00s)
+=== RUN   TestEventPublisher_PublishJourneyEnded_NilPubPanics
+--- PASS: TestEventPublisher_PublishJourneyEnded_NilPubPanics (0.00s)
+PASS
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/infrastructure/rabbitmq	1.100s
+=== RUN   TestSealBuyerEmail_IsCiphertextBoundToTheBuyerEmailContext
+--- PASS: TestSealBuyerEmail_IsCiphertextBoundToTheBuyerEmailContext (0.00s)
+=== RUN   TestPII_HashIsDeterministic
+--- PASS: TestPII_HashIsDeterministic (0.00s)
+=== RUN   TestPII_EmailSealRoundtrip
+--- PASS: TestPII_EmailSealRoundtrip (0.00s)
+=== RUN   TestTokenIssuer_AdmissionTTL
+--- PASS: TestTokenIssuer_AdmissionTTL (0.02s)
+=== RUN   TestTokenIssuer_VisitorAndQueue
+--- PASS: TestTokenIssuer_VisitorAndQueue (0.01s)
+=== RUN   TestUserTokenVerifier
+--- PASS: TestUserTokenVerifier (0.01s)
+=== RUN   TestVisitorAuthenticator_FromCookie
+--- PASS: TestVisitorAuthenticator_FromCookie (0.01s)
+=== RUN   TestVisitorAuthenticator_FromHeader
+--- PASS: TestVisitorAuthenticator_FromHeader (0.01s)
+=== RUN   TestVisitorAuthenticator_RejectsWrongScope
+--- PASS: TestVisitorAuthenticator_RejectsWrongScope (0.00s)
+=== RUN   TestVisitorAuthenticator_NoToken
+--- PASS: TestVisitorAuthenticator_NoToken (0.00s)
+=== RUN   TestTokenIssuer_ServiceTokenIsShortLivedCachedAndRenewed
+--- PASS: TestTokenIssuer_ServiceTokenIsShortLivedCachedAndRenewed (0.01s)
+=== RUN   TestUserTokenVerifier_RefusesLoggedOutSessionsAndFailsClosed
+--- PASS: TestUserTokenVerifier_RefusesLoggedOutSessionsAndFailsClosed (0.01s)
+PASS
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/infrastructure/security	1.168s
+=== RUN   TestPromoterMetrics_EveryCounterAppearsAfterOneInc
+--- PASS: TestPromoterMetrics_EveryCounterAppearsAfterOneInc (0.02s)
+=== RUN   TestPromoterMetrics_UnknownNameOrLabelValueIsDroppedWithoutPanic
+2026/11/04 16:55:19 WARN promoter metric: nama tak dikenal, diabaikan name=queue_something_else_total
+2026/11/04 16:55:19 WARN promoter metric: nilai label di luar himpunan yang diizinkan, diabaikan name=queue_entry_ended_total label=outcome
+2026/11/04 16:55:19 WARN promoter metric: jumlah label tidak cocok, diabaikan name=queue_entry_ended_total
+2026/11/04 16:55:19 WARN promoter metric: kunci label tidak cocok, diabaikan name=queue_promote_fifo_adopted_total want=suspect got=wrong
+2026/11/04 16:55:19 WARN promoter metric: jumlah label tidak cocok, diabaikan name=queue_promote_lease_lost_total
+--- PASS: TestPromoterMetrics_UnknownNameOrLabelValueIsDroppedWithoutPanic (0.02s)
+PASS
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/infrastructure/telemetry	1.185s
+=== RUN   TestEndEntry_SweepMissed_OnlyExpiredAdmittedBecomesMissed
+--- PASS: TestEndEntry_SweepMissed_OnlyExpiredAdmittedBecomesMissed (0.10s)
+=== RUN   TestEndEntry_SweepMissed_LegacyClaimedIsRescoredNotMissed
+--- PASS: TestEndEntry_SweepMissed_LegacyClaimedIsRescoredNotMissed (0.06s)
+=== RUN   TestEndEntry_OrphanIDIsRemovedFromActiveAndWaiting
+--- PASS: TestEndEntry_OrphanIDIsRemovedFromActiveAndWaiting (0.04s)
+=== RUN   TestEndEntry_BookingOutcomes
+--- PASS: TestEndEntry_BookingOutcomes (0.05s)
+=== RUN   TestEndEntry_PromoterOutcomesEndWaitingOnly
+--- PASS: TestEndEntry_PromoterOutcomesEndWaitingOnly (0.06s)
+=== RUN   TestEndEntry_MissedCleanupKeepsNewerConstraintKeys
+--- PASS: TestEndEntry_MissedCleanupKeepsNewerConstraintKeys (0.03s)
+=== RUN   TestExpiredActive_RespectsLimit
+--- PASS: TestExpiredActive_RespectsLimit (0.04s)
+=== RUN   TestExpiredActive_LimitZeroIsError
+--- PASS: TestExpiredActive_LimitZeroIsError (0.01s)
+=== RUN   TestSweep_OrphansBeyondLimitClear
+--- PASS: TestSweep_OrphansBeyondLimitClear (0.07s)
+=== RUN   TestLease_TwoAcquirersNeverBothHoldIt
+--- PASS: TestLease_TwoAcquirersNeverBothHoldIt (0.02s)
+=== RUN   TestLease_StaleTokenReleaseDoesNotDeleteTheNewHoldersLease
+--- PASS: TestLease_StaleTokenReleaseDoesNotDeleteTheNewHoldersLease (0.11s)
+=== RUN   TestLease_HoldersReleaseFreesIt
+--- PASS: TestLease_HoldersReleaseFreesIt (0.03s)
+=== RUN   TestLeave_WrongOwnerOrUnknownIsNotFoundAndChangesNothing
+--- PASS: TestLeave_WrongOwnerOrUnknownIsNotFoundAndChangesNothing (0.03s)
+=== RUN   TestLeave_TerminalAndClaimedAreIgnoredWithStatusUnchanged
+--- PASS: TestLeave_TerminalAndClaimedAreIgnoredWithStatusUnchanged (0.05s)
+=== RUN   TestLeave_WaitingLeavesAndCanRejoinAtTheBack
+--- PASS: TestLeave_WaitingLeavesAndCanRejoinAtTheBack (0.03s)
+=== RUN   TestLeave_AdmittedReturnsPreviousStatusAndAllocationAndFreesSlot
+--- PASS: TestLeave_AdmittedReturnsPreviousStatusAndAllocationAndFreesSlot (0.04s)
+=== RUN   TestLeave_DoesNotDeleteNewerEntrysConstraintKeys
+--- PASS: TestLeave_DoesNotDeleteNewerEntrysConstraintKeys (0.03s)
+=== RUN   TestClaim_StatusSpecificErrors
+--- PASS: TestClaim_StatusSpecificErrors (0.04s)
+=== RUN   TestClaim_WrongVisitorIsAnsweredLikeUnknown
+--- PASS: TestClaim_WrongVisitorIsAnsweredLikeUnknown (0.03s)
+=== RUN   TestClaim_LiveAdmittedReturnsAllocationAndLeavesTheExpiryScan
+--- PASS: TestClaim_LiveAdmittedReturnsAllocationAndLeavesTheExpiryScan (0.03s)
+=== RUN   TestClaimVsSweep_ClaimedEntryIsNeverMissed
+--- PASS: TestClaimVsSweep_ClaimedEntryIsNeverMissed (0.03s)
+=== RUN   TestLeaveWaitingReserved_ClearsEveryTraceAndReportsNothingToRelease
+--- PASS: TestLeaveWaitingReserved_ClearsEveryTraceAndReportsNothingToRelease (0.03s)
+=== RUN   TestNoteUnreadable_CountsOnlyWaitingEntries
+--- PASS: TestNoteUnreadable_CountsOnlyWaitingEntries (0.05s)
+=== RUN   TestPromote_FenceRejectsWrongAndExpiredToken
+--- PASS: TestPromote_FenceRejectsWrongAndExpiredToken (0.14s)
+=== RUN   TestPromote_EmptyTokenIsAnErrorBeforeAnyValkeyCall
+--- PASS: TestPromote_EmptyTokenIsAnErrorBeforeAnyValkeyCall (0.00s)
+=== RUN   TestPromote_RequireHeadRefusesANonHeadCandidate
+--- PASS: TestPromote_RequireHeadRefusesANonHeadCandidate (0.06s)
+=== RUN   TestPromote_LowerSeqWinsTheLastSlot
+--- PASS: TestPromote_LowerSeqWinsTheLastSlot (0.03s)
+=== RUN   TestPromote_FullReportsFullWithoutMutation
+--- PASS: TestPromote_FullReportsFullWithoutMutation (0.04s)
+=== RUN   TestPromote_SkipReportCoversTerminalAndAdmittedStatuses
+--- PASS: TestPromote_SkipReportCoversTerminalAndAdmittedStatuses (0.04s)
+=== RUN   TestPromote_UnreachedCandidatesAreNotReported
+--- PASS: TestPromote_UnreachedCandidatesAreNotReported (0.04s)
+=== RUN   TestMapPromote_MalformedReplyIsAnError
+--- PASS: TestMapPromote_MalformedReplyIsAnError (0.02s)
+=== RUN   TestQueueStore_JoinGaplessSeq
+--- PASS: TestQueueStore_JoinGaplessSeq (0.78s)
+=== RUN   TestQueueStore_JoinNIKConstraint
+--- PASS: TestQueueStore_JoinNIKConstraint (0.01s)
+=== RUN   TestQueueStore_JoinKeepsMaskedNIKAndEmailOnTheEntry
+--- PASS: TestQueueStore_JoinKeepsMaskedNIKAndEmailOnTheEntry (0.04s)
+=== RUN   TestLegacy
+=== RUN   TestLegacy/a_claimed_rescored
+=== RUN   TestLegacy/b_mixed_page_clears
+=== RUN   TestLegacy/c_admitted_expires_missed
+=== RUN   TestLegacy/d_waiting_promote_leave
+=== RUN   TestLegacy/e_emailenc_roundtrip
+--- PASS: TestLegacy (0.29s)
+    --- PASS: TestLegacy/a_claimed_rescored (0.05s)
+    --- PASS: TestLegacy/b_mixed_page_clears (0.12s)
+    --- PASS: TestLegacy/c_admitted_expires_missed (0.04s)
+    --- PASS: TestLegacy/d_waiting_promote_leave (0.05s)
+    --- PASS: TestLegacy/e_emailenc_roundtrip (0.03s)
+=== RUN   TestQueueStore_EntryLifecycle
+--- PASS: TestQueueStore_EntryLifecycle (0.07s)
+=== RUN   TestQueueStore_SaleStatusDocLeaseAndNotifications
+--- PASS: TestQueueStore_SaleStatusDocLeaseAndNotifications (0.06s)
+=== RUN   TestRateLimiter_AllowsUpToTheLimitPerWindow
+--- PASS: TestRateLimiter_AllowsUpToTheLimitPerWindow (0.04s)
+=== RUN   TestRateLimiter_NoKeyIsEverLeftWithoutATTL
+--- PASS: TestRateLimiter_NoKeyIsEverLeftWithoutATTL (0.03s)
+=== RUN   TestRateLimiter_RepairsAMissingTTL
+--- PASS: TestRateLimiter_RepairsAMissingTTL (0.03s)
+=== RUN   TestRateLimiter_WindowBelowOneMillisecondIsAnError
+--- PASS: TestRateLimiter_WindowBelowOneMillisecondIsAnError (0.00s)
+PASS
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/infrastructure/valkey	3.881s
+=== RUN   TestHeadRec_NextRec
+=== RUN   TestHeadRec_NextRec/row1+4:_new_head,_NO_SUPPLY_NOW_without_adoption
+=== RUN   TestHeadRec_NextRec/row1+3:_new_head,_adoption
+=== RUN   TestHeadRec_NextRec/row1+5:_new_head,_granted
+=== RUN   TestHeadRec_NextRec/row2:_head_did_not_reach_a_reply_leaves_the_record_untouched
+=== RUN   TestHeadRec_NextRec/row1+2:_new_head_that_did_not_reach_a_reply_starts_at_zero
+=== RUN   TestHeadRec_NextRec/row3_below_N
+=== RUN   TestHeadRec_NextRec/row3_at_N:_suspect,_repeat_adopted=true,_warn
+=== RUN   TestHeadRec_NextRec/row4_at_N:_repeat_adopted=false_only
+=== RUN   TestHeadRec_NextRec/row4_after_N:_repeat_adopted=false,_no_warn
+=== RUN   TestHeadRec_NextRec/alternating:_noSupply>=N_but_adopted<N_stays_adopted=false
+=== RUN   TestHeadRec_NextRec/alternating_reaches_adopted==N:_first_adopted=true
+=== RUN   TestHeadRec_NextRec/row5_resets_both
+=== RUN   TestHeadRec_NextRec/every_100th_tick_of_a_run_warns
+--- PASS: TestHeadRec_NextRec (0.01s)
+    --- PASS: TestHeadRec_NextRec/row1+4:_new_head,_NO_SUPPLY_NOW_without_adoption (0.00s)
+    --- PASS: TestHeadRec_NextRec/row1+3:_new_head,_adoption (0.00s)
+    --- PASS: TestHeadRec_NextRec/row1+5:_new_head,_granted (0.00s)
+    --- PASS: TestHeadRec_NextRec/row2:_head_did_not_reach_a_reply_leaves_the_record_untouched (0.00s)
+    --- PASS: TestHeadRec_NextRec/row1+2:_new_head_that_did_not_reach_a_reply_starts_at_zero (0.00s)
+    --- PASS: TestHeadRec_NextRec/row3_below_N (0.00s)
+    --- PASS: TestHeadRec_NextRec/row3_at_N:_suspect,_repeat_adopted=true,_warn (0.00s)
+    --- PASS: TestHeadRec_NextRec/row4_at_N:_repeat_adopted=false_only (0.00s)
+    --- PASS: TestHeadRec_NextRec/row4_after_N:_repeat_adopted=false,_no_warn (0.00s)
+    --- PASS: TestHeadRec_NextRec/alternating:_noSupply>=N_but_adopted<N_stays_adopted=false (0.00s)
+    --- PASS: TestHeadRec_NextRec/alternating_reaches_adopted==N:_first_adopted=true (0.00s)
+    --- PASS: TestHeadRec_NextRec/row5_resets_both (0.00s)
+    --- PASS: TestHeadRec_NextRec/every_100th_tick_of_a_run_warns (0.00s)
+=== RUN   TestAdmissionDiff
+=== RUN   TestAdmissionDiff/capacity_limits_promotion
+=== RUN   TestAdmissionDiff/require_head_not_head_then_head
+=== RUN   TestAdmissionDiff/stale_token_is_lease_lost
+=== RUN   TestAdmissionDiff/full_after_slot_taken
+=== RUN   TestAdmissionDiff/left_entry_is_terminal_skip
+=== RUN   TestAdmissionDiff/ended_entry_is_terminal_skip
+=== RUN   TestAdmissionDiff/completed_entry_is_terminal_skip
+=== RUN   TestAdmissionDiff/admitted_same_allocation
+=== RUN   TestAdmissionDiff/admitted_other_allocation
+=== RUN   TestAdmissionDiff/leave_admitted_returns_allocation
+=== RUN   TestAdmissionDiff/sweep_missed_expired_then_repeat
+=== RUN   TestAdmissionDiff/sweep_missed_live_is_ignored
+=== RUN   TestAdmissionDiff/sweep_missed_waiting_is_ignored
+=== RUN   TestAdmissionDiff/booking_unclaimed_frees_slot
+=== RUN   TestAdmissionDiff/paid_on_waiting_is_ignored
+=== RUN   TestAdmissionDiff/promote_unknown_entry_is_no_entry
+=== RUN   TestAdmissionDiff/leave_stranger_and_unknown
+=== RUN   TestAdmissionDiff/promote_past_the_head_then_full
+=== RUN   TestAdmissionDiff/quota_exhausted_end_then_batch
+=== RUN   TestAdmissionDiff/stale_then_valid
+--- PASS: TestAdmissionDiff (1.64s)
+    --- PASS: TestAdmissionDiff/capacity_limits_promotion (0.06s)
+    --- PASS: TestAdmissionDiff/require_head_not_head_then_head (0.05s)
+    --- PASS: TestAdmissionDiff/stale_token_is_lease_lost (0.04s)
+    --- PASS: TestAdmissionDiff/full_after_slot_taken (0.05s)
+    --- PASS: TestAdmissionDiff/left_entry_is_terminal_skip (0.12s)
+    --- PASS: TestAdmissionDiff/ended_entry_is_terminal_skip (0.34s)
+    --- PASS: TestAdmissionDiff/completed_entry_is_terminal_skip (0.30s)
+    --- PASS: TestAdmissionDiff/admitted_same_allocation (0.05s)
+    --- PASS: TestAdmissionDiff/admitted_other_allocation (0.05s)
+    --- PASS: TestAdmissionDiff/leave_admitted_returns_allocation (0.06s)
+    --- PASS: TestAdmissionDiff/sweep_missed_expired_then_repeat (0.06s)
+    --- PASS: TestAdmissionDiff/sweep_missed_live_is_ignored (0.06s)
+    --- PASS: TestAdmissionDiff/sweep_missed_waiting_is_ignored (0.05s)
+    --- PASS: TestAdmissionDiff/booking_unclaimed_frees_slot (0.05s)
+    --- PASS: TestAdmissionDiff/paid_on_waiting_is_ignored (0.04s)
+    --- PASS: TestAdmissionDiff/promote_unknown_entry_is_no_entry (0.06s)
+    --- PASS: TestAdmissionDiff/leave_stranger_and_unknown (0.05s)
+    --- PASS: TestAdmissionDiff/promote_past_the_head_then_full (0.05s)
+    --- PASS: TestAdmissionDiff/quota_exhausted_end_then_batch (0.05s)
+    --- PASS: TestAdmissionDiff/stale_then_valid (0.03s)
+=== RUN   TestAdmissionRace
+--- PASS: TestAdmissionRace (0.58s)
+=== RUN   TestAdmissionDet
+--- PASS: TestAdmissionDet (0.06s)
+=== RUN   TestAdmissionStale
+=== RUN   TestAdmissionStale/promoter_no_competitor
+2026/11/04 16:55:22 WARN lease promoter hilang sebelum Promote; tidak ada yang dipromosikan eventId=ev
+=== RUN   TestAdmissionStale/promoter_competitor_fills_slot
+2026/11/04 16:55:22 WARN lease promoter hilang sebelum Promote; tidak ada yang dipromosikan eventId=ev
+=== RUN   TestAdmissionStale/join_no_competitor
+=== RUN   TestAdmissionStale/join_competitor_fills_slot
+--- PASS: TestAdmissionStale (0.27s)
+    --- PASS: TestAdmissionStale/promoter_no_competitor (0.06s)
+    --- PASS: TestAdmissionStale/promoter_competitor_fills_slot (0.06s)
+    --- PASS: TestAdmissionStale/join_no_competitor (0.06s)
+    --- PASS: TestAdmissionStale/join_competitor_fills_slot (0.09s)
+=== RUN   TestBookingStub_S1_ReplayKeepsOriginalExpiry
+--- PASS: TestBookingStub_S1_ReplayKeepsOriginalExpiry (0.00s)
+=== RUN   TestBookingStub_S2_DeadRowIsPermanent
+--- PASS: TestBookingStub_S2_DeadRowIsPermanent (0.00s)
+=== RUN   TestBookingStub_S2_ExpiredRowIsAlsoPermanent
+--- PASS: TestBookingStub_S2_ExpiredRowIsAlsoPermanent (0.00s)
+=== RUN   TestBookingStub_S3_NoSupplyLeavesNoRowAndNoStockChange
+--- PASS: TestBookingStub_S3_NoSupplyLeavesNoRowAndNoStockChange (0.00s)
+=== RUN   TestBookingStub_S4_AfterEntryHookReturnsStockMidBatch
+--- PASS: TestBookingStub_S4_AfterEntryHookReturnsStockMidBatch (0.00s)
+=== RUN   TestBookingStub_S5_MethodSetHasNoReGrantOperation
+--- PASS: TestBookingStub_S5_MethodSetHasNoReGrantOperation (0.00s)
+=== RUN   TestPromoter_NoFreeSlotNeverReservesAndNeverStrandsARow
+--- PASS: TestPromoter_NoFreeSlotNeverReservesAndNeverStrandsARow (0.00s)
+=== RUN   TestPromoter_InterruptedTickReplaysSameAllocationAndNeverEnds
+--- PASS: TestPromoter_InterruptedTickReplaysSameAllocationAndNeverEnds (0.00s)
+=== RUN   TestPromoter_DeadHeadEndedWithinOneTickWhileSiblingsAdmit
+--- PASS: TestPromoter_DeadHeadEndedWithinOneTickWhileSiblingsAdmit (0.00s)
+=== RUN   TestPromoter_DeadHeadWithOneFreeSlotEndsThenNextTickAdmitsTheNext
+--- PASS: TestPromoter_DeadHeadWithOneFreeSlotEndsThenNextTickAdmitsTheNext (0.00s)
+=== RUN   TestPromoter_StockReturnedMidBatchAdoptsTheLaterEntryAndNeverEndsIt
+--- PASS: TestPromoter_StockReturnedMidBatchAdoptsTheLaterEntryAndNeverEndsIt (0.00s)
+=== RUN   TestPromoter_AdoptsEveryGrantAfterAPoisonHead
+--- PASS: TestPromoter_AdoptsEveryGrantAfterAPoisonHead (0.00s)
+=== RUN   TestPromoter_LapsedReplayIsSkippedWithoutMutationAndDoesNotBlockLaterGrants
+--- PASS: TestPromoter_LapsedReplayIsSkippedWithoutMutationAndDoesNotBlockLaterGrants (0.00s)
+=== RUN   TestPromoter_LapsedHeadWithOneFreeSlotIsANoOpTick
+--- PASS: TestPromoter_LapsedHeadWithOneFreeSlotIsANoOpTick (0.00s)
+=== RUN   TestPromoter_UnknownOutcomeIsCountedAndMutatesNothing
+2026/11/04 16:55:23 WARN outcome Booking tak dikenal; tidak ada mutasi eventId=ev entryId=e1 outcome=SOMETHING_NEW
+--- PASS: TestPromoter_UnknownOutcomeIsCountedAndMutatesNothing (0.00s)
+=== RUN   TestPromoter_TokenReachesPromoteAndReleaseSurvivesCancelledContext
+--- PASS: TestPromoter_TokenReachesPromoteAndReleaseSurvivesCancelledContext (0.00s)
+=== RUN   TestPromoter_TickContextIsBoundedBelowTheLeaseTTL
+--- PASS: TestPromoter_TickContextIsBoundedBelowTheLeaseTTL (0.00s)
+=== RUN   TestPromoter_LeaseLostReleasesNothingAndCounts
+2026/11/04 16:55:23 WARN lease promoter hilang sebelum Promote; tidak ada yang dipromosikan eventId=ev1
+--- PASS: TestPromoter_LeaseLostReleasesNothingAndCounts (0.00s)
+=== RUN   TestPromoter_FullAfterGrantKeepsTheRowAndRaisesTheDefectSignal
+2026/11/04 16:55:23 ERROR Promote FULL setelah alokasi diberikan; baris RESERVED dipertahankan untuk replay eventId=ev1
+--- PASS: TestPromoter_FullAfterGrantKeepsTheRowAndRaisesTheDefectSignal (0.00s)
+=== RUN   TestPromoter_ReleasesOnlyScriptProvenTerminalSkips
+=== RUN   TestPromoter_ReleasesOnlyScriptProvenTerminalSkips/LEFT
+=== RUN   TestPromoter_ReleasesOnlyScriptProvenTerminalSkips/ENDED
+=== RUN   TestPromoter_ReleasesOnlyScriptProvenTerminalSkips/NO_ENTRY
+=== RUN   TestPromoter_ReleasesOnlyScriptProvenTerminalSkips/ADMITTED_OTHER
+=== RUN   TestPromoter_ReleasesOnlyScriptProvenTerminalSkips/ADMITTED_SAME
+=== RUN   TestPromoter_ReleasesOnlyScriptProvenTerminalSkips/NOT_HEAD
+--- PASS: TestPromoter_ReleasesOnlyScriptProvenTerminalSkips (0.01s)
+    --- PASS: TestPromoter_ReleasesOnlyScriptProvenTerminalSkips/LEFT (0.00s)
+    --- PASS: TestPromoter_ReleasesOnlyScriptProvenTerminalSkips/ENDED (0.00s)
+    --- PASS: TestPromoter_ReleasesOnlyScriptProvenTerminalSkips/NO_ENTRY (0.00s)
+    --- PASS: TestPromoter_ReleasesOnlyScriptProvenTerminalSkips/ADMITTED_OTHER (0.00s)
+    --- PASS: TestPromoter_ReleasesOnlyScriptProvenTerminalSkips/ADMITTED_SAME (0.00s)
+    --- PASS: TestPromoter_ReleasesOnlyScriptProvenTerminalSkips/NOT_HEAD (0.00s)
+=== RUN   TestPromoter_OneEventsFailureDoesNotStopTheOthers
+--- PASS: TestPromoter_OneEventsFailureDoesNotStopTheOthers (0.00s)
+=== RUN   TestPromoter_NotifyRunsOnEveryReturnPathAfterTheLease
+=== RUN   TestPromoter_NotifyRunsOnEveryReturnPathAfterTheLease/no_candidates
+=== RUN   TestPromoter_NotifyRunsOnEveryReturnPathAfterTheLease/active_count_error
+--- PASS: TestPromoter_NotifyRunsOnEveryReturnPathAfterTheLease (0.00s)
+    --- PASS: TestPromoter_NotifyRunsOnEveryReturnPathAfterTheLease/no_candidates (0.00s)
+    --- PASS: TestPromoter_NotifyRunsOnEveryReturnPathAfterTheLease/active_count_error (0.00s)
+=== RUN   TestPromoter_PoisonHeadIsNeverEndedAndSuspectSeriesRiseFromTickN
+--- PASS: TestPromoter_PoisonHeadIsNeverEndedAndSuspectSeriesRiseFromTickN (0.00s)
+=== RUN   TestPromoter_PoisonHeadWithOneFreeSlotRaisesOnlyAdoptedFalse
+--- PASS: TestPromoter_PoisonHeadWithOneFreeSlotRaisesOnlyAdoptedFalse (0.00s)
+=== RUN   TestPromoter_OrdinaryStockRaceIsNotFlaggedAsSuspect
+--- PASS: TestPromoter_OrdinaryStockRaceIsNotFlaggedAsSuspect (0.00s)
+=== RUN   TestPromoter_AdversarialStockRaceNeverEndsTheHead
+--- PASS: TestPromoter_AdversarialStockRaceNeverEndsTheHead (0.00s)
+=== RUN   TestPromoter_RecordIsDroppedWhenNothingIsWaiting
+--- PASS: TestPromoter_RecordIsDroppedWhenNothingIsWaiting (0.00s)
+=== RUN   TestPromoter_OrphanHeadIsEndedInOneTickAndNeverReserved
+--- PASS: TestPromoter_OrphanHeadIsEndedInOneTickAndNeverReserved (0.00s)
+=== RUN   TestPromoter_UnreadablePIIEntryScopedEndsAtTheThreshold
+--- PASS: TestPromoter_UnreadablePIIEntryScopedEndsAtTheThreshold (0.00s)
+=== RUN   TestPromoter_UnreadablePIISystemicEndsNothing
+--- PASS: TestPromoter_UnreadablePIISystemicEndsNothing (0.00s)
+=== RUN   TestPromoter_PromotesReservedAndPublishes
+--- PASS: TestPromoter_PromotesReservedAndPublishes (0.00s)
+=== RUN   TestPromoter_SkipsEventWhenLeaseHeld
+--- PASS: TestPromoter_SkipsEventWhenLeaseHeld (0.00s)
+=== RUN   TestPromoter_NoFreeSlotsSkips
+--- PASS: TestPromoter_NoFreeSlotsSkips (0.00s)
+=== RUN   TestPromoter_QuotaExhaustedAddsSet
+--- PASS: TestPromoter_QuotaExhaustedAddsSet (0.00s)
+=== RUN   TestPromoter_AdoptsAGrantThatFollowsNoSupplyAndNeverReleasesIt
+2026/11/04 16:55:23 WARN entry di belakang NO_SUPPLY_NOW diadopsi (inversi FIFO terbatas) eventId=ev1 adopted=1 headId=e1
+--- PASS: TestPromoter_AdoptsAGrantThatFollowsNoSupplyAndNeverReleasesIt (0.00s)
+=== RUN   TestPromoter_NothingGrantedPromotesNothing
+--- PASS: TestPromoter_NothingGrantedPromotesNothing (0.00s)
+=== RUN   TestPromoter_AlreadyActiveEndsEntry
+2026/11/04 16:55:23 WARN ALREADY_ACTIVE dari Booking untuk entry WAITING; baris Booking sudah mati eventId=ev1 entryId=e1
+--- PASS: TestPromoter_AlreadyActiveEndsEntry (0.00s)
+=== RUN   TestSweeper_MarksMissedOnly
+--- PASS: TestSweeper_MarksMissedOnly (0.00s)
+=== RUN   TestSweeper_AlreadyMissedNoPublish
+--- PASS: TestSweeper_AlreadyMissedNoPublish (0.00s)
+=== RUN   TestStatusPublisher_WritesDocument
+--- PASS: TestStatusPublisher_WritesDocument (0.00s)
+=== RUN   TestStatusPublisher_SupplyErrorStillPublishes
+--- PASS: TestStatusPublisher_SupplyErrorStillPublishes (0.00s)
+=== RUN   TestPromoter_PublishesTurnSoon_WhenNearFront
+--- PASS: TestPromoter_PublishesTurnSoon_WhenNearFront (0.00s)
+=== RUN   TestPromoter_SkipsTurnSoon_WhenAlreadyNotified
+--- PASS: TestPromoter_SkipsTurnSoon_WhenAlreadyNotified (0.00s)
+=== RUN   TestPromoter_SkipsTurnSoon_WhenDisabled
+--- PASS: TestPromoter_SkipsTurnSoon_WhenDisabled (0.00s)
+=== RUN   TestSweeper_OneEntrysEndEntryErrorDoesNotStopTheOthers
+--- PASS: TestSweeper_OneEntrysEndEntryErrorDoesNotStopTheOthers (0.00s)
+=== RUN   TestSweeper_OneEventsFailureDoesNotStopTheOthers
+--- PASS: TestSweeper_OneEventsFailureDoesNotStopTheOthers (0.00s)
+=== RUN   TestStatusPublisher_OneEventsFailureDoesNotStopTheOthers
+--- PASS: TestStatusPublisher_OneEventsFailureDoesNotStopTheOthers (0.00s)
+PASS
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/infrastructure/worker	3.653s
+=== RUN   TestMapError
+=== RUN   TestMapError/nik_invalid
+=== RUN   TestMapError/nik_required
+=== RUN   TestMapError/email_mismatch
+=== RUN   TestMapError/consent
+=== RUN   TestMapError/nik_in_queue
+=== RUN   TestMapError/visitor_in_queue
+=== RUN   TestMapError/email_in_queue
+=== RUN   TestMapError/quota
+=== RUN   TestMapError/not_on_sale
+=== RUN   TestMapError/sold_out
+=== RUN   TestMapError/turn_missed
+=== RUN   TestMapError/not_admitted
+=== RUN   TestMapError/not_found
+=== RUN   TestMapError/not_owner_maps_to_not_found
+=== RUN   TestMapError/dependency
+--- PASS: TestMapError (0.01s)
+    --- PASS: TestMapError/nik_invalid (0.00s)
+    --- PASS: TestMapError/nik_required (0.00s)
+    --- PASS: TestMapError/email_mismatch (0.00s)
+    --- PASS: TestMapError/consent (0.00s)
+    --- PASS: TestMapError/nik_in_queue (0.00s)
+    --- PASS: TestMapError/visitor_in_queue (0.00s)
+    --- PASS: TestMapError/email_in_queue (0.00s)
+    --- PASS: TestMapError/quota (0.00s)
+    --- PASS: TestMapError/not_on_sale (0.00s)
+    --- PASS: TestMapError/sold_out (0.00s)
+    --- PASS: TestMapError/turn_missed (0.00s)
+    --- PASS: TestMapError/not_admitted (0.00s)
+    --- PASS: TestMapError/not_found (0.00s)
+    --- PASS: TestMapError/not_owner_maps_to_not_found (0.00s)
+    --- PASS: TestMapError/dependency (0.00s)
+=== RUN   TestMapError_WrappedSentinel
+--- PASS: TestMapError_WrappedSentinel (0.00s)
+=== RUN   TestMapError_PassthroughAppError
+--- PASS: TestMapError_PassthroughAppError (0.00s)
+=== RUN   TestMapError_UnknownBecomesInternal
+--- PASS: TestMapError_UnknownBecomesInternal (0.00s)
+=== RUN   TestMapError_Nil
+--- PASS: TestMapError_Nil (0.00s)
+PASS
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/port/inbound	1.047s
+=== RUN   TestReleaseTerminal_ReleasesTheGrantedIDForTerminalSkipsOnly
+--- PASS: TestReleaseTerminal_ReleasesTheGrantedIDForTerminalSkipsOnly (0.00s)
+=== RUN   TestReleaseTerminal_AFailedReleaseIsLoggedAndTheNextSkipIsStillProcessed
+--- PASS: TestReleaseTerminal_AFailedReleaseIsLoggedAndTheNextSkipIsStillProcessed (0.00s)
+=== RUN   TestReleaseTerminal_NoSkipsMakesNoCalls
+--- PASS: TestReleaseTerminal_NoSkipsMakesNoCalls (0.00s)
+PASS
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/port/outbound	1.041s
+=== RUN   TestMapValidationErrors
+--- PASS: TestMapValidationErrors (0.00s)
+PASS
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/shared/entity	1.029s
+integration exit=0
