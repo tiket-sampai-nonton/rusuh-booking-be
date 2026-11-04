@@ -357,4 +357,4 @@ make mock                                  # regen _mock/ bila port berubah
 | Status Document flat load | TC-PERF-01, TC-PERF-03 | k6 |
 | Sold-out notification ≤ 5s | TC-PERF-05 | k6 |
 
-> **Amandemen Queue hardening (2026-11-04, ADR-027/028):** butir 6.3 ("entry dengan seq lebih besar dalam batch yang sama juga tidak diadmit pada siklus itu") diamandemen menjadi inversi FIFO terbatas: grant yang mengikuti `NO_SUPPLY_NOW` dalam satu batch diadopsi, bukan dilepas, karena melepasnya mengakhiri pembeli yang masih hidup. Lihat `docs/analisa/05-ADR-RBT.md` ADR-029 dan TC-QUE-19b/19k.
+> **Amandemen Queue hardening (2026-11-04, ADR-028/029):** butir 6.3 ("entry dengan seq lebih besar dalam batch yang sama juga tidak diadmit pada siklus itu") diamandemen menjadi inversi FIFO terbatas: grant yang mengikuti `NO_SUPPLY_NOW` dalam satu batch diadopsi, bukan dilepas, karena melepasnya mengakhiri pembeli yang masih hidup. Lihat `docs/analisa/05-ADR-RBT.md` ADR-029 dan TC-QUE-19b/19k.
