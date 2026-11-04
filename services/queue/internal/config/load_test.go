@@ -2,6 +2,7 @@ package config
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -73,6 +74,57 @@ func TestLoad_ReportsInvalidValues(t *testing.T) {
 			setBase(t)
 			t.Setenv(tt.key, tt.value)
 			_, err := Load()
+			assert.ErrorContains(t, err, tt.want)
+		})
+	}
+}
+
+// QSH-T08: new worker knobs are loaded with defaults and validated at start (D-24); each error names its env var.
+func TestLoad_QueueHardeningDefaults(t *testing.T) {
+	setBase(t)
+	cfg, err := Load()
+	require.NoError(t, err)
+	assert.Equal(t, 10*time.Second, cfg.WorkerTuning.PromoterLeaseTTL)
+	assert.Equal(t, 500, cfg.WorkerTuning.SweepBatchMax)
+	assert.Equal(t, 3, cfg.WorkerTuning.UnsealFailMax)
+	assert.Equal(t, 3, cfg.WorkerTuning.UnsealProbe)
+	assert.Equal(t, 50, cfg.WorkerTuning.NoSupplySuspectTicks)
+}
+
+func TestLoad_QueueHardeningValidation(t *testing.T) {
+	tests := []struct {
+		name string
+		env  map[string]string
+		want string // empty = valid
+	}{
+		{"lease ttl ok", map[string]string{"QUEUE_PROMOTER_LEASE_TTL_MS": "7s"}, ""},
+		{"lease ttl at upper bound", map[string]string{"QUEUE_PROMOTER_LEASE_TTL_MS": "30s"}, ""},
+		{"lease ttl below 2s", map[string]string{"QUEUE_PROMOTER_LEASE_TTL_MS": "1s"}, "QUEUE_PROMOTER_LEASE_TTL_MS"},
+		{"lease ttl above 30s", map[string]string{"QUEUE_PROMOTER_LEASE_TTL_MS": "31s"}, "QUEUE_PROMOTER_LEASE_TTL_MS"},
+		{"lease ttl not above 2x booking timeout", map[string]string{"BOOKING_TIMEOUT": "5s", "QUEUE_PROMOTER_LEASE_TTL_MS": "10s"}, "QUEUE_PROMOTER_LEASE_TTL_MS"},
+		{"sweep batch zero", map[string]string{"QUEUE_SWEEP_BATCH_MAX": "0"}, "QUEUE_SWEEP_BATCH_MAX"},
+		{"sweep batch too large", map[string]string{"QUEUE_SWEEP_BATCH_MAX": "5001"}, "QUEUE_SWEEP_BATCH_MAX"},
+		{"sweep batch at max", map[string]string{"QUEUE_SWEEP_BATCH_MAX": "5000"}, ""},
+		{"unseal fail max zero", map[string]string{"QUEUE_UNSEAL_FAIL_MAX": "0"}, "QUEUE_UNSEAL_FAIL_MAX"},
+		{"unseal probe zero", map[string]string{"QUEUE_UNSEAL_PROBE": "0"}, "QUEUE_UNSEAL_PROBE"},
+		{"suspect ticks 1 rejected (a single race must never label)", map[string]string{"QUEUE_NO_SUPPLY_SUSPECT_TICKS": "1"}, "QUEUE_NO_SUPPLY_SUSPECT_TICKS"},
+		{"suspect ticks 2 ok", map[string]string{"QUEUE_NO_SUPPLY_SUSPECT_TICKS": "2"}, ""},
+		{"rate window under 1ms", map[string]string{"RATE_LIMIT_JOIN_PER_EMAIL_WINDOW": "500us"}, "RATE_LIMIT_JOIN_PER_EMAIL_WINDOW"},
+		{"ip window zero", map[string]string{"RATE_LIMIT_JOIN_PER_IP_WINDOW": "0s"}, "RATE_LIMIT_JOIN_PER_IP_WINDOW"},
+		{"me window zero", map[string]string{"RATE_LIMIT_ME_PER_VISITOR_WINDOW": "0s"}, "RATE_LIMIT_ME_PER_VISITOR_WINDOW"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setBase(t)
+			for k, v := range tt.env {
+				t.Setenv(k, v)
+			}
+			_, err := Load()
+			if tt.want == "" {
+				require.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
 			assert.ErrorContains(t, err, tt.want)
 		})
 	}

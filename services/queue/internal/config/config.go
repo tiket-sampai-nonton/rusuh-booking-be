@@ -70,6 +70,7 @@ func (c Config) Validate() error {
 	errs = append(errs, c.Valkey.Validate())
 	errs = append(errs, c.RabbitMQ.Validate())
 	errs = append(errs, c.Token.Validate(), c.PII.Validate(), c.Booking.Validate())
+	errs = append(errs, c.RateLimit.Validate(), c.WorkerTuning.Validate(c.Booking.Timeout))
 	if err := errors.Join(errs...); err != nil {
 		return fmt.Errorf("config tidak valid: %w", err)
 	}

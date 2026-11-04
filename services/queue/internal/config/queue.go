@@ -99,4 +99,63 @@ type WorkerTuning struct {
 	SweeperInterval  time.Duration
 	StatusInterval   time.Duration
 	PromoteBatchMax  int
+
+	// PromoterLeaseTTL is the per-event promoter/admission lease TTL (QUEUE_PROMOTER_LEASE_TTL_MS).
+	PromoterLeaseTTL time.Duration
+	// SweepBatchMax bounds the expired entries the sweeper ends per event and tick (QUEUE_SWEEP_BATCH_MAX).
+	SweepBatchMax int
+	// UnsealFailMax is the number of failed ticks before an unreadable-PII head is ended (QUEUE_UNSEAL_FAIL_MAX).
+	UnsealFailMax int
+	// UnsealProbe is the number of extra ids probed to tell an entry-scoped from a systemic unseal failure.
+	UnsealProbe int
+	// NoSupplySuspectTicks labels a head that answers NO_SUPPLY_NOW this many consecutive ticks as suspect.
+	NoSupplySuspectTicks int
+}
+
+// Bounds of the new worker knobs.
+const (
+	minLeaseTTL        = 2 * time.Second
+	maxLeaseTTL        = 30 * time.Second
+	maxSweepBatch      = 5000
+	minSuspectTicks    = 2
+	minRateLimitWindow = time.Millisecond
+)
+
+// Validate checks WorkerTuning against the booking client timeout (the lease must outlive two Booking calls).
+func (w WorkerTuning) Validate(bookingTimeout time.Duration) error {
+	var errs []error
+	switch {
+	case w.PromoterLeaseTTL < minLeaseTTL || w.PromoterLeaseTTL > maxLeaseTTL:
+		errs = append(errs, fmt.Errorf("QUEUE_PROMOTER_LEASE_TTL_MS %s di luar rentang [%s, %s]", w.PromoterLeaseTTL, minLeaseTTL, maxLeaseTTL))
+	case w.PromoterLeaseTTL <= 2*bookingTimeout:
+		errs = append(errs, fmt.Errorf("QUEUE_PROMOTER_LEASE_TTL_MS %s harus > 2x BOOKING_TIMEOUT (%s)", w.PromoterLeaseTTL, 2*bookingTimeout))
+	}
+	if w.SweepBatchMax < 1 || w.SweepBatchMax > maxSweepBatch {
+		errs = append(errs, fmt.Errorf("QUEUE_SWEEP_BATCH_MAX %d di luar rentang 1..%d", w.SweepBatchMax, maxSweepBatch))
+	}
+	if w.UnsealFailMax < 1 {
+		errs = append(errs, fmt.Errorf("QUEUE_UNSEAL_FAIL_MAX %d harus >= 1", w.UnsealFailMax))
+	}
+	if w.UnsealProbe < 1 {
+		errs = append(errs, fmt.Errorf("QUEUE_UNSEAL_PROBE %d harus >= 1", w.UnsealProbe))
+	}
+	if w.NoSupplySuspectTicks < minSuspectTicks {
+		errs = append(errs, fmt.Errorf("QUEUE_NO_SUPPLY_SUSPECT_TICKS %d harus >= %d", w.NoSupplySuspectTicks, minSuspectTicks))
+	}
+	return errors.Join(errs...)
+}
+
+// Validate checks that every window is at least 1ms: a smaller window divides by zero in the limiter.
+func (r RateLimit) Validate() error {
+	var errs []error
+	for name, w := range map[string]time.Duration{
+		"RATE_LIMIT_JOIN_PER_EMAIL_WINDOW": r.JoinPerEmailWindow,
+		"RATE_LIMIT_JOIN_PER_IP_WINDOW":    r.JoinPerIPWindow,
+		"RATE_LIMIT_ME_PER_VISITOR_WINDOW": r.MePerVisitorWindow,
+	} {
+		if w < minRateLimitWindow {
+			errs = append(errs, fmt.Errorf("%s %s harus >= %s", name, w, minRateLimitWindow))
+		}
+	}
+	return errors.Join(errs...)
 }
