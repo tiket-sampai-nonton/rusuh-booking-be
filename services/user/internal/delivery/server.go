@@ -23,7 +23,13 @@ func RunServer(ctx context.Context, cfg config.Config, logger *slog.Logger, need
 	if err != nil {
 		return err
 	}
-	defer clients.Close()
+	// httpx.Run kembali setelah permintaan yang berjalan selesai, jadi broker ditutup sesudah permintaan terakhir.
+	// Kegagalan menutup hanya di-log (tanpa kredensial) dan tidak menghalangi keluar.
+	defer func() {
+		if err := clients.Close(); err != nil {
+			logger.Warn("gagal menutup client", "error", err)
+		}
+	}()
 
 	handler, err := NewHandler(cfg, clients, logger)
 	if err != nil {

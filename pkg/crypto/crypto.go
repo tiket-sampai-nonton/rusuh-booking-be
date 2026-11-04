@@ -21,7 +21,8 @@ var ErrDecrypt = errors.New("crypto: gagal membuka ciphertext")
 func ParseKey(hexKey string) ([]byte, error) {
 	k, err := hex.DecodeString(strings.TrimSpace(hexKey))
 	if err != nil {
-		return nil, fmt.Errorf("crypto: key bukan hex: %w", err)
+		// Error hex bawaan menyebut byte yang salah (sebagian isi kunci); jangan diteruskan.
+		return nil, errors.New("crypto: key bukan hex")
 	}
 	if len(k) != 32 {
 		return nil, fmt.Errorf("crypto: key harus 32 byte, didapat %d", len(k))

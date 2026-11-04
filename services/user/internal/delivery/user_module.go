@@ -57,10 +57,7 @@ func newUserModule(cfg config.Config, clients *Clients, logger *slog.Logger) (re
 		return nil, err
 	}
 
-	encKey, _ := crypto.ParseKey(cfg.PII.EncKeyHex) // sudah divalidasi config.Load
-	hashKey, _ := crypto.ParseKey(cfg.PII.HashKeyHex)
-	otpKey, _ := crypto.ParseKey(cfg.PII.OTPKeyHex)
-	pii, err := security.NewPII(encKey, hashKey, otpKey)
+	pii, err := newPII(cfg.PII)
 	if err != nil {
 		return nil, err
 	}
@@ -82,6 +79,7 @@ func newUserModule(cfg config.Config, clients *Clients, logger *slog.Logger) (re
 		_ = rmqConn.Close()
 		return nil, fmt.Errorf("user: rabbitmq publisher: %w", err)
 	}
+	clients.AddCloser("rabbitmq", rmqConn.Close)
 	publisher := userrabbitmq.NewOTPPublisher(rmqPub)
 	denylist := revocation.NewStore(clients.VK.VK(), clients.VK) // logout mencabut access token sesi itu (SCRUM-53)
 	tokens := security.NewTokens(signer, verifier, cfg.Token.Issuer, cfg.Token.Audience, cfg.Token.AccessTTL, clk.Now).WithDenylist(denylist)
@@ -91,7 +89,7 @@ func newUserModule(cfg config.Config, clients *Clients, logger *slog.Logger) (re
 		Accounts:  accounts,
 		Sessions:  userpg.NewSessions(clients.PG.Pool()),
 		Audit:     userpg.NewAudit(clients.PG.Pool()),
-		OTP:       uservalkey.NewOTPStore(clients.VK.VK(), clients.VK, cfg.OTP.TTL),
+		OTP:       uservalkey.NewOTPStore(clients.VK.VK(), clients.VK),
 		Limiter:   uservalkey.NewRateLimiter(clients.VK.VK(), clients.VK, clk.Now),
 		Publisher: publisher,
 		Tokens:    tokens,
@@ -103,9 +101,30 @@ func newUserModule(cfg config.Config, clients *Clients, logger *slog.Logger) (re
 	}, usecase.AuthSettings{
 		OTPTTL: cfg.OTP.TTL, ResendCooldown: cfg.OTP.ResendCooldown, MaxAttempts: cfg.OTP.MaxAttempts,
 		MaxPerEmailHour: cfg.OTP.MaxPerEmailHour, MaxPerIPHour: cfg.OTP.MaxPerIPHour, RefreshTTL: cfg.Token.RefreshTTL,
-		AccessTTL: cfg.Token.AccessTTL,
+		AccessTTL: cfg.Token.AccessTTL, MaxVerifyPerIPMinute: cfg.OTP.MaxVerifyPerIPMinute,
+		MaxSessionPerIPMinute: cfg.Token.MaxRefreshPerIPMinute,
 	})
 	profile := usecase.NewProfile(accounts, pii, clk)
-	// Di luar lokal service berada di belakang ALB: IP klien diambil dari X-Forwarded-For.
-	return userhttp.NewAuthHandler(auth, profile, tokens, cfg.App.Env != "local"), nil
+	// Di luar lokal service berada di belakang proxy tepercaya: IP klien diambil dari X-Forwarded-For sebanyak
+	// APP_TRUSTED_PROXY_HOPS entri dari kanan. Hanya angkanya yang di-log.
+	logger.Info("trusted proxy hops", "hops", cfg.App.TrustedProxyHops)
+	return userhttp.NewAuthHandler(auth, profile, tokens, cfg.App.Env != "local", cfg.App.TrustedProxyHops), nil
+}
+
+// newPII parses the three keys and builds the protector. Kesalahan dikembalikan (bukan diabaikan) dan hanya
+// menyebut nama env, tidak pernah isi kunci.
+func newPII(c config.PII) (*security.PII, error) {
+	encKey, err := crypto.ParseKey(c.EncKeyHex)
+	if err != nil {
+		return nil, fmt.Errorf("user: PII_ENC_KEY tidak valid: %w", err)
+	}
+	hashKey, err := crypto.ParseKey(c.HashKeyHex)
+	if err != nil {
+		return nil, fmt.Errorf("user: PII_HASH_KEY tidak valid: %w", err)
+	}
+	otpKey, err := crypto.ParseKey(c.OTPKeyHex)
+	if err != nil {
+		return nil, fmt.Errorf("user: OTP_HASH_KEY tidak valid: %w", err)
+	}
+	return security.NewPII(encKey, hashKey, otpKey)
 }

@@ -29,7 +29,9 @@ type ISessionRepository interface {
 	// Rotate revokes oldID and stores next atomically; entity.ErrRevoked bila oldID sudah dicabut.
 	Rotate(ctx context.Context, oldID string, next entity.NewSession, at time.Time) (entity.Session, error)
 	Revoke(ctx context.Context, id string, at time.Time) error
-	RevokeAllForAccount(ctx context.Context, accountID string, at time.Time) error
+	// RevokeAllForAccount revokes every active session and returns the ids to denylist: the ones just revoked plus
+	// those revoked at or after denylistSince (supaya pengulangan setelah denylist gagal tetap tahu id-nya).
+	RevokeAllForAccount(ctx context.Context, accountID string, at, denylistSince time.Time) ([]string, error)
 }
 
 // ILoginAudit records login events (users.login_audit).

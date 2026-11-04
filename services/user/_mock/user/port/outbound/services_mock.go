@@ -15,6 +15,7 @@ import (
 	time "time"
 
 	entity "github.com/tiket-sampai-nonton/rusuh-booking-be/services/user/internal/user/domain/entity"
+	outbound "github.com/tiket-sampai-nonton/rusuh-booking-be/services/user/internal/user/port/outbound"
 	gomock "go.uber.org/mock/gomock"
 )
 
@@ -42,34 +43,33 @@ func (m *MockIOTPStore) EXPECT() *MockIOTPStoreMockRecorder {
 	return m.recorder
 }
 
-// Attempt mocks base method.
-func (m *MockIOTPStore) Attempt(ctx context.Context, key string) (entity.OTPChallenge, bool, error) {
+// Cancel mocks base method.
+func (m *MockIOTPStore) Cancel(ctx context.Context, key string) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Attempt", ctx, key)
-	ret0, _ := ret[0].(entity.OTPChallenge)
-	ret1, _ := ret[1].(bool)
-	ret2, _ := ret[2].(error)
-	return ret0, ret1, ret2
-}
-
-// Attempt indicates an expected call of Attempt.
-func (mr *MockIOTPStoreMockRecorder) Attempt(ctx, key any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Attempt", reflect.TypeOf((*MockIOTPStore)(nil).Attempt), ctx, key)
-}
-
-// Clear mocks base method.
-func (m *MockIOTPStore) Clear(ctx context.Context, key string) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Clear", ctx, key)
+	ret := m.ctrl.Call(m, "Cancel", ctx, key)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
-// Clear indicates an expected call of Clear.
-func (mr *MockIOTPStoreMockRecorder) Clear(ctx, key any) *gomock.Call {
+// Cancel indicates an expected call of Cancel.
+func (mr *MockIOTPStoreMockRecorder) Cancel(ctx, key any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Clear", reflect.TypeOf((*MockIOTPStore)(nil).Clear), ctx, key)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Cancel", reflect.TypeOf((*MockIOTPStore)(nil).Cancel), ctx, key)
+}
+
+// InCooldown mocks base method.
+func (m *MockIOTPStore) InCooldown(ctx context.Context, key string) (bool, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "InCooldown", ctx, key)
+	ret0, _ := ret[0].(bool)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// InCooldown indicates an expected call of InCooldown.
+func (mr *MockIOTPStoreMockRecorder) InCooldown(ctx, key any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "InCooldown", reflect.TypeOf((*MockIOTPStore)(nil).InCooldown), ctx, key)
 }
 
 // Start mocks base method.
@@ -85,6 +85,21 @@ func (m *MockIOTPStore) Start(ctx context.Context, key string, codeHash []byte, 
 func (mr *MockIOTPStoreMockRecorder) Start(ctx, key, codeHash, ttl, cooldown any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Start", reflect.TypeOf((*MockIOTPStore)(nil).Start), ctx, key, codeHash, ttl, cooldown)
+}
+
+// Verify mocks base method.
+func (m *MockIOTPStore) Verify(ctx context.Context, key string, candidateHash []byte, maxAttempts int) (entity.OTPAttempt, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Verify", ctx, key, candidateHash, maxAttempts)
+	ret0, _ := ret[0].(entity.OTPAttempt)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// Verify indicates an expected call of Verify.
+func (mr *MockIOTPStoreMockRecorder) Verify(ctx, key, candidateHash, maxAttempts any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Verify", reflect.TypeOf((*MockIOTPStore)(nil).Verify), ctx, key, candidateHash, maxAttempts)
 }
 
 // MockIRateLimiter is a mock of IRateLimiter interface.
@@ -112,10 +127,10 @@ func (m *MockIRateLimiter) EXPECT() *MockIRateLimiterMockRecorder {
 }
 
 // Allow mocks base method.
-func (m *MockIRateLimiter) Allow(ctx context.Context, key string, limit int, window time.Duration) (bool, error) {
+func (m *MockIRateLimiter) Allow(ctx context.Context, key string, limit int, window time.Duration) (outbound.RateTicket, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "Allow", ctx, key, limit, window)
-	ret0, _ := ret[0].(bool)
+	ret0, _ := ret[0].(outbound.RateTicket)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
@@ -124,6 +139,20 @@ func (m *MockIRateLimiter) Allow(ctx context.Context, key string, limit int, win
 func (mr *MockIRateLimiterMockRecorder) Allow(ctx, key, limit, window any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Allow", reflect.TypeOf((*MockIRateLimiter)(nil).Allow), ctx, key, limit, window)
+}
+
+// Release mocks base method.
+func (m *MockIRateLimiter) Release(ctx context.Context, t outbound.RateTicket) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Release", ctx, t)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// Release indicates an expected call of Release.
+func (mr *MockIRateLimiterMockRecorder) Release(ctx, t any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Release", reflect.TypeOf((*MockIRateLimiter)(nil).Release), ctx, t)
 }
 
 // MockIOTPPublisher is a mock of IOTPPublisher interface.
@@ -256,6 +285,21 @@ func (m *MockISecretGenerator) RefreshToken() (string, error) {
 func (mr *MockISecretGeneratorMockRecorder) RefreshToken() *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RefreshToken", reflect.TypeOf((*MockISecretGenerator)(nil).RefreshToken))
+}
+
+// SessionID mocks base method.
+func (m *MockISecretGenerator) SessionID() (string, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "SessionID")
+	ret0, _ := ret[0].(string)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// SessionID indicates an expected call of SessionID.
+func (mr *MockISecretGeneratorMockRecorder) SessionID() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SessionID", reflect.TypeOf((*MockISecretGenerator)(nil).SessionID))
 }
 
 // MockIPIIProtector is a mock of IPIIProtector interface.

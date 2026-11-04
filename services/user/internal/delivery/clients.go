@@ -2,6 +2,8 @@ package delivery
 
 import (
 	"context"
+	"errors"
+	"fmt"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/postgres"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/valkey"
@@ -18,8 +20,19 @@ type Need struct {
 
 // Clients holds the infrastructure clients of one process.
 type Clients struct {
-	PG *postgres.Client
-	VK *valkey.Client
+	PG      *postgres.Client
+	VK      *valkey.Client
+	closers []namedCloser
+}
+
+type namedCloser struct {
+	name string
+	fn   func() error
+}
+
+// AddCloser registers a resource (mis. koneksi RabbitMQ) to be closed by Close.
+func (c *Clients) AddCloser(name string, fn func() error) {
+	c.closers = append(c.closers, namedCloser{name: name, fn: fn})
 }
 
 // NewClients connects (and pings) every needed dependency. Gagal satu, semua yang sudah terbuka ditutup.
@@ -29,7 +42,7 @@ func NewClients(ctx context.Context, cfg config.Config, need Need) (*Clients, er
 	if need.Postgres {
 		pg, err := postgres.New(ctx, cfg.Postgres)
 		if err != nil {
-			c.Close()
+			_ = c.Close()
 			return nil, err
 		}
 		c.PG = pg
@@ -38,7 +51,7 @@ func NewClients(ctx context.Context, cfg config.Config, need Need) (*Clients, er
 	if need.Valkey {
 		vk, err := valkey.New(ctx, cfg.Valkey)
 		if err != nil {
-			c.Close()
+			_ = c.Close()
 			return nil, err
 		}
 		c.VK = vk
@@ -59,12 +72,21 @@ func (c *Clients) Pingers() []healthcheck.Pinger {
 	return out
 }
 
-// Close releases everything (urutan kebalikan pembukaan tidak penting: tiap client independen).
-func (c *Clients) Close() {
+// Close releases everything: closers terdaftar dalam urutan terbalik, lalu Postgres dan Valkey. Tiap closer
+// dijalankan paling banyak sekali; error digabung (tanpa nilai kredensial: hanya nama resource dan error-nya).
+func (c *Clients) Close() error {
+	var errs []error
+	for i := len(c.closers) - 1; i >= 0; i-- {
+		if err := c.closers[i].fn(); err != nil {
+			errs = append(errs, fmt.Errorf("tutup %s: %w", c.closers[i].name, err))
+		}
+	}
+	c.closers = nil
 	if c.PG != nil {
 		c.PG.Close()
 	}
 	if c.VK != nil {
 		c.VK.Close()
 	}
+	return errors.Join(errs...)
 }

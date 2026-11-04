@@ -56,16 +56,28 @@ func (s Session) Expired(now time.Time) bool { return !now.Before(s.ExpiresAt) }
 
 // NewSession is what the repository needs to store a session.
 type NewSession struct {
+	ID               string // opsional: kosong = dibuat database; diisi bila token akses diterbitkan sebelum commit
 	AccountID        string
 	RefreshTokenHash []byte
 	UserAgent        string
 	ExpiresAt        time.Time
 }
 
-// OTPChallenge is the stored state of an issued OTP.
-type OTPChallenge struct {
-	CodeHash []byte
-	Attempts int
+// OTPVerdict is the outcome of one atomic OTP verification.
+type OTPVerdict int
+
+// OTP verdicts. OTPNotFound = tidak ada challenge (belum diminta, kedaluwarsa, atau sudah terpakai).
+const (
+	OTPNotFound OTPVerdict = iota
+	OTPMatched
+	OTPMismatch
+	OTPLocked
+)
+
+// OTPAttempt is what the store reports after counting one verification attempt.
+type OTPAttempt struct {
+	Verdict  OTPVerdict
+	Attempts int // jumlah percobaan termasuk yang barusan (0 bila OTPNotFound)
 }
 
 // Login audit outcomes (users.login_audit.outcome).

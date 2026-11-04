@@ -96,7 +96,7 @@ func (p PII) Validate() error {
 			errs = append(errs, fmt.Errorf("%s: %w", name, err))
 		}
 	}
-	// Ketiga pasangan dicek (tanpa syarat kunci terisi) dan pesan hanya menyebut nama variabel, tidak pernah isi kunci.
+	// Ketiga pasangan dicek (tanpa syarat kunci terisi) dan pesan hanya menyebut nama env, tidak pernah isi kunci.
 	for _, pair := range []struct{ an, bn, a, b string }{
 		{"PII_ENC_KEY", "PII_HASH_KEY", p.EncKeyHex, p.HashKeyHex},
 		{"PII_ENC_KEY", "OTP_HASH_KEY", p.EncKeyHex, p.OTPKeyHex},

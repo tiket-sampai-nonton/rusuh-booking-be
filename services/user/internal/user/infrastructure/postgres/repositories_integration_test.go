@@ -167,7 +167,8 @@ func TestSessions_RotateIsSingleWinner(t *testing.T) {
 	old, _, _ := repo.FindByTokenHash(ctx, []byte("r0"))
 	assert.True(t, old.Revoked())
 
-	require.NoError(t, repo.RevokeAllForAccount(ctx, acc.ID, time.Now()))
+	_, err = repo.RevokeAllForAccount(ctx, acc.ID, time.Now(), time.Now().Add(-time.Hour))
+	require.NoError(t, err)
 	var active int
 	require.NoError(t, pool.QueryRow(ctx, `SELECT count(*) FROM sessions WHERE revoked_at IS NULL`).Scan(&active))
 	assert.Equal(t, 0, active)
@@ -175,4 +176,73 @@ func TestSessions_RotateIsSingleWinner(t *testing.T) {
 	_, ok, err = repo.FindByTokenHash(ctx, []byte("nope"))
 	require.NoError(t, err)
 	assert.False(t, ok)
+}
+
+func TestSessions_CreateWithPregeneratedID(t *testing.T) {
+	ctx := context.Background()
+	pool := setup(t)
+	acc, err := NewAccounts(pool).Create(ctx, entity.NewAccount{EmailHash: []byte("h"), EmailEnc: []byte("e"), EmailMasked: "m"})
+	require.NoError(t, err)
+	repo := NewSessions(pool)
+	exp := time.Now().Add(time.Hour)
+
+	gen, err := repo.Create(ctx, entity.NewSession{AccountID: acc.ID, RefreshTokenHash: []byte("g"), ExpiresAt: exp})
+	require.NoError(t, err)
+	assert.NotEmpty(t, gen.ID, "ID kosong dibuat database")
+
+	const given = "6f1c0e7a-0000-4000-8000-0000000000a1"
+	s, err := repo.Create(ctx, entity.NewSession{ID: given, AccountID: acc.ID, RefreshTokenHash: []byte("p"), ExpiresAt: exp})
+	require.NoError(t, err)
+	assert.Equal(t, given, s.ID)
+
+	const given2 = "6f1c0e7a-0000-4000-8000-0000000000a2"
+	r, err := repo.Rotate(ctx, s.ID, entity.NewSession{ID: given2, AccountID: acc.ID, RefreshTokenHash: []byte("q"), ExpiresAt: exp}, time.Now())
+	require.NoError(t, err)
+	assert.Equal(t, given2, r.ID)
+
+	_, err = repo.Create(ctx, entity.NewSession{ID: "bukan-uuid", AccountID: acc.ID, RefreshTokenHash: []byte("z"), ExpiresAt: exp})
+	assert.Error(t, err, "ID tidak valid ditolak")
+}
+
+// P-10: RevokeAllForAccount returns active ids plus ids revoked inside the window; other accounts untouched.
+func TestSessions_RevokeAllForAccountReturnsIDs(t *testing.T) {
+	ctx := context.Background()
+	pool := setup(t)
+	accs := NewAccounts(pool)
+	a, err := accs.Create(ctx, entity.NewAccount{EmailHash: []byte("a"), EmailEnc: []byte("e"), EmailMasked: "m"})
+	require.NoError(t, err)
+	b, err := accs.Create(ctx, entity.NewAccount{EmailHash: []byte("b"), EmailEnc: []byte("e"), EmailMasked: "m"})
+	require.NoError(t, err)
+	repo := NewSessions(pool)
+	exp := time.Now().Add(time.Hour)
+	now := time.Now()
+
+	active1, err := repo.Create(ctx, entity.NewSession{AccountID: a.ID, RefreshTokenHash: []byte("1"), ExpiresAt: exp})
+	require.NoError(t, err)
+	active2, err := repo.Create(ctx, entity.NewSession{AccountID: a.ID, RefreshTokenHash: []byte("2"), ExpiresAt: exp})
+	require.NoError(t, err)
+	recent, err := repo.Create(ctx, entity.NewSession{AccountID: a.ID, RefreshTokenHash: []byte("3"), ExpiresAt: exp})
+	require.NoError(t, err)
+	old, err := repo.Create(ctx, entity.NewSession{AccountID: a.ID, RefreshTokenHash: []byte("4"), ExpiresAt: exp})
+	require.NoError(t, err)
+	other, err := repo.Create(ctx, entity.NewSession{AccountID: b.ID, RefreshTokenHash: []byte("5"), ExpiresAt: exp})
+	require.NoError(t, err)
+	require.NoError(t, repo.Revoke(ctx, recent.ID, now.Add(-time.Minute)))
+	require.NoError(t, repo.Revoke(ctx, old.ID, now.Add(-time.Hour)))
+
+	since := now.Add(-20 * time.Minute)
+	ids, err := repo.RevokeAllForAccount(ctx, a.ID, now, since)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{active1.ID, active2.ID, recent.ID}, ids)
+	assert.NotContains(t, ids, other.ID)
+	assert.NotContains(t, ids, old.ID)
+
+	again, err := repo.RevokeAllForAccount(ctx, a.ID, now.Add(time.Second), since)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, ids, again, "pengulangan di dalam jendela mengembalikan id yang sama")
+
+	o, ok, err := repo.FindByTokenHash(ctx, []byte("5"))
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.False(t, o.Revoked(), "akun lain tidak tersentuh")
 }

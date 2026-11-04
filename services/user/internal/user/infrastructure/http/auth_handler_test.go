@@ -34,7 +34,7 @@ func setup(t *testing.T) fixture {
 		verifier: mock_inbound.NewMockIAccessTokenVerifier(ctrl),
 		mux:      stdhttp.NewServeMux(),
 	}
-	NewAuthHandler(f.auth, f.profile, f.verifier, true).Register(f.mux)
+	NewAuthHandler(f.auth, f.profile, f.verifier, true, 1).Register(f.mux)
 	return f
 }
 
@@ -147,4 +147,38 @@ func TestMe(t *testing.T) {
 	assert.Equal(t, inbound.CodeNIKAlreadyLinked, errCode(t, rec))
 
 	assert.Equal(t, stdhttp.StatusBadRequest, do(f, "PATCH", "/api/v1/me", `{"email":"x"}`, auth).Code)
+}
+
+// HRD-001: with two trusted hops, a forged leftmost entry never becomes the limiter/audit IP.
+func TestClientIP_UsesConfiguredHops(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	auth := mock_inbound.NewMockIAuthUsecase(ctrl)
+	mux := stdhttp.NewServeMux()
+	NewAuthHandler(auth, mock_inbound.NewMockIProfileUsecase(ctrl), mock_inbound.NewMockIAccessTokenVerifier(ctrl), true, 2).Register(mux)
+	f := fixture{auth: auth, mux: mux}
+
+	auth.EXPECT().RequestOTP(gomock.Any(), gomock.Any(), inbound.ClientInfo{IP: "198.51.100.7", UserAgent: "ua"}).
+		Return(dto.RequestOTPResponse{}, nil)
+	rec := do(f, "POST", "/api/v1/auth/otp/request", `{"email":"a@b.id"}`,
+		map[string]string{"X-Forwarded-For": "1.2.3.4, 198.51.100.7, 130.176.0.1", "User-Agent": "ua"})
+	assert.Equal(t, stdhttp.StatusAccepted, rec.Code)
+
+	// terlalu sedikit entri: jatuh ke alamat koneksi, bukan nilai yang dikirim klien
+	auth.EXPECT().Logout(gomock.Any(), gomock.Any(), inbound.ClientInfo{IP: "10.0.0.1"}).Return(nil)
+	rec = do(f, "POST", "/api/v1/auth/logout", `{"refreshToken":"x"}`, map[string]string{"X-Forwarded-For": "1.2.3.4"})
+	assert.Equal(t, stdhttp.StatusNoContent, rec.Code)
+}
+
+// H4 regression: body limit and unknown fields are rejected on every auth route.
+func TestAuthRoutes_RejectOversizedAndUnknownFields(t *testing.T) {
+	f := setup(t) // usecase tidak boleh dipanggil: mock ketat gagal bila ada panggilan
+	for _, path := range []string{"/api/v1/auth/otp/request", "/api/v1/auth/otp/verify", "/api/v1/auth/refresh", "/api/v1/auth/logout"} {
+		t.Run(path, func(t *testing.T) {
+			big := `{"email":"` + strings.Repeat("a", 20<<10) + `"}`
+			rec := do(f, "POST", path, big, nil)
+			assert.Contains(t, []int{stdhttp.StatusRequestEntityTooLarge, stdhttp.StatusBadRequest}, rec.Code)
+			rec = do(f, "POST", path, `{"email":"a@b.id","code":"123456","refreshToken":"x","unexpected":1}`, nil)
+			assert.Equal(t, stdhttp.StatusBadRequest, rec.Code)
+		})
+	}
 }

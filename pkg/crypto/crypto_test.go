@@ -17,6 +17,9 @@ func TestParseKey(t *testing.T) {
 	assert.Len(t, k, 32)
 	_, err = ParseKey("zz")
 	assert.Error(t, err)
+	_, err = ParseKey("q" + strings.Repeat("0", 63))
+	assert.ErrorContains(t, err, "bukan hex")
+	assert.NotContains(t, err.Error(), "'q'", "error tidak boleh menyebut byte kunci")
 	_, err = ParseKey("00ff")
 	assert.ErrorContains(t, err, "32 byte")
 }
