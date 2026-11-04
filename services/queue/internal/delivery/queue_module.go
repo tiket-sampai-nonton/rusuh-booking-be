@@ -123,8 +123,8 @@ func newQueueModule(cfg config.Config, clients *Clients, logger *slog.Logger) (*
 		queuehttp.NewLeaveHandler(leaveUC, visitorAuth),
 	}
 
-	promoter := worker.NewPromoter(store, settingsRepo, booking, publisher, auditRepo, pii, clk, logger, cfg.WorkerTuning.PromoteBatchMax)
-	sweeper := worker.NewSweeper(store, settingsRepo, clk)
+	promoter := worker.NewPromoter(store, settingsRepo, booking, publisher, auditRepo, pii, clk, logger, promoterTuning(cfg))
+	sweeper := worker.NewSweeper(store, settingsRepo, clk, sweepBatch(cfg))
 	statusPub := worker.NewStatusPublisher(store, settingsRepo, booking, clk, cfg.WorkerTuning.StatusInterval)
 	jobs := []Job{
 		{Name: "promoter", Run: promoter.Run},
@@ -136,6 +136,14 @@ func newQueueModule(cfg config.Config, clients *Clients, logger *slog.Logger) (*
 
 	return &queueModule{handlers: handlers, jobs: jobs, consumer: consumer, rmqConn: rmqConn}, nil
 }
+
+// promoterTuning maps config to the promoter knobs. T01 returns today's literals; T17 wires the new config values.
+func promoterTuning(cfg config.Config) worker.PromoterTuning {
+	return worker.PromoterTuning{BatchMax: cfg.WorkerTuning.PromoteBatchMax, LeaseTTL: 10 * time.Second}
+}
+
+// sweepBatch is the max number of expired entries the sweeper ends per event and tick (T17 wires config).
+func sweepBatch(config.Config) int { return 500 }
 
 // loadTokens reads the EdDSA private key and builds the signer and the verifier (own public key).
 func loadTokens(cfg config.Config) (ed25519.PrivateKey, *token.Signer, *token.Verifier, error) {

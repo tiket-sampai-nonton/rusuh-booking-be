@@ -12,18 +12,20 @@ import (
 // IQueueStore is the Valkey-backed hot state of the queue. Lua scripts provide atomicity.
 type IQueueStore interface {
 	Join(ctx context.Context, p JoinParams) (JoinResult, error)
-	Promote(ctx context.Context, eventID string, cands []PromoteCandidate, capacity int, nowMs int64) ([]string, error)
+	Promote(ctx context.Context, eventID string, cands []PromoteCandidate, capacity int, nowMs int64, opts PromoteOpts) (PromoteResult, error)
 	Claim(ctx context.Context, eventID, entryID, visitorID string, nowMs int64) (ClaimResult, error)
-	Leave(ctx context.Context, eventID, entryID, visitorID string, nowMs int64) (wasActive bool, err error)
-	EndEntry(ctx context.Context, eventID, entryID, outcome string, nowMs int64) (final string, err error)
+	Leave(ctx context.Context, eventID, entryID, visitorID string, nowMs int64) (LeaveResult, error)
+	EndEntry(ctx context.Context, eventID, entryID, outcome string, nowMs int64) (EndResult, error)
 	GetEntry(ctx context.Context, eventID, entryID string) (entity.Entry, bool, error)
 	FindByVisitor(ctx context.Context, eventID, visitorID string) (entity.Entry, bool, error)
 	ActiveCount(ctx context.Context, eventID string) (int, error)
 	TopWaiting(ctx context.Context, eventID string, n int) ([]string, error)
-	ExpiredActive(ctx context.Context, eventID string, nowMs int64) ([]string, error)
+	ExpiredActive(ctx context.Context, eventID string, nowMs int64, limit int) ([]string, error)
 	MarkMissed(ctx context.Context, eventID, entryID string, nowMs int64) (bool, error)
 	// MarkMissedAndClean atomically sets MISSED + cleans NIK/visitor/email constraint keys (TC-QUE-09).
 	MarkMissedAndClean(ctx context.Context, eventID, entryID string, nowMs int64) (bool, error)
+	// NoteUnreadable counts a failed email unseal for a WAITING entry (C6); -1 when the entry is not WAITING.
+	NoteUnreadable(ctx context.Context, eventID, entryID string) (int, error)
 	AddQuotaExhausted(ctx context.Context, eventID, nikHash string) error
 	SetSale(ctx context.Context, eventID, saleState string, soldOut bool) error
 	GetSale(ctx context.Context, eventID string) (SaleState, error)
@@ -36,7 +38,7 @@ type IQueueStore interface {
 	// AcquirePromoterLease tries to acquire a per-event distributed lock (SET NX PX) so only one
 	// worker instance promotes a given event per tick (spec 11.R3, req 6.12, Property 7).
 	// Returns true if the lease was acquired, false if another instance holds it.
-	AcquirePromoterLease(ctx context.Context, eventID string, ttlMs int64) (bool, error)
-	// ReleasePromoterLease releases a previously acquired promoter lease.
-	ReleasePromoterLease(ctx context.Context, eventID string) error
+	AcquirePromoterLease(ctx context.Context, eventID string, ttl time.Duration) (token string, acquired bool, err error)
+	// ReleasePromoterLease releases the lease only when token still owns it (compare-and-delete).
+	ReleasePromoterLease(ctx context.Context, eventID, token string) error
 }

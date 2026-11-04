@@ -51,3 +51,9 @@ type IPIIProtector interface {
 	SealBuyerEmail(email string) (string, error)
 	UnsealEmail(enc []byte) (string, error)
 }
+
+// IPromoterMetrics counts promoter and join events (labels as alternating key, value strings).
+// Names and label sets are fixed by the telemetry adapter; an unknown name is dropped.
+type IPromoterMetrics interface {
+	Inc(name string, labels ...string)
+}

@@ -6,6 +6,7 @@ package valkey
 import (
 	"context"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"strconv"
 	"time"
@@ -116,8 +117,9 @@ func mapJoin(arr []vk.ValkeyMessage) (outbound.JoinResult, error) {
 	return outbound.JoinResult{}, fmt.Errorf("valkey: join.lua tag tak dikenal %q", tag)
 }
 
-// Promote moves reserved candidates waiting→active atomically (design §4.2) and returns promoted ids.
-func (s *QueueStore) Promote(ctx context.Context, eventID string, cands []outbound.PromoteCandidate, capacity int, nowMs int64) ([]string, error) {
+// Promote moves reserved candidates waiting→active atomically (design §4.2).
+// T01: thin adapter; opts are ignored until the fenced promote.lua lands.
+func (s *QueueStore) Promote(ctx context.Context, eventID string, cands []outbound.PromoteCandidate, capacity int, nowMs int64, _ outbound.PromoteOpts) (outbound.PromoteResult, error) {
 	keys := []string{s.kWaiting(eventID), s.kActive(eventID)}
 	for _, c := range cands {
 		keys = append(keys, s.kEntry(eventID, c.EntryID))
@@ -128,25 +130,25 @@ func (s *QueueStore) Promote(ctx context.Context, eventID string, cands []outbou
 	}
 	arr, err := s.promote.Exec(ctx, s.c, keys, args).ToArray()
 	if err != nil {
-		return nil, fmt.Errorf("valkey: promote.lua: %w", err)
+		return outbound.PromoteResult{}, fmt.Errorf("valkey: promote.lua: %w", err)
 	}
 	if len(arr) == 0 {
-		return nil, nil
+		return outbound.PromoteResult{}, nil
 	}
 	tag, _ := arr[0].ToString()
 	if tag == "FULL" || len(arr) < 2 {
-		return nil, nil
+		return outbound.PromoteResult{Full: tag == "FULL"}, nil
 	}
 	ids, err := arr[1].ToArray()
 	if err != nil {
-		return nil, nil
+		return outbound.PromoteResult{}, nil
 	}
 	out := make([]string, 0, len(ids))
 	for _, m := range ids {
 		id, _ := m.ToString()
 		out = append(out, id)
 	}
-	return out, nil
+	return outbound.PromoteResult{Promoted: out}, nil
 }
 
 // Claim runs claim.lua (design §4.3). Maps ERR tags to domain errors.
@@ -175,10 +177,10 @@ func (s *QueueStore) Claim(ctx context.Context, eventID, entryID, visitorID stri
 }
 
 // Leave runs leave.lua (design §4.4). wasActive=true means a slot was freed.
-func (s *QueueStore) Leave(ctx context.Context, eventID, entryID, visitorID string, nowMs int64) (bool, error) {
+func (s *QueueStore) Leave(ctx context.Context, eventID, entryID, visitorID string, nowMs int64) (outbound.LeaveResult, error) {
 	ent, ok, err := s.GetEntry(ctx, eventID, entryID)
 	if err != nil {
-		return false, err
+		return outbound.LeaveResult{}, err
 	}
 	nikKey, emailKey := s.kNik(eventID, ""), s.kEmail(eventID, "")
 	if ok {
@@ -192,27 +194,27 @@ func (s *QueueStore) Leave(ctx context.Context, eventID, entryID, visitorID stri
 	args := []string{entryID, visitorID, strconv.FormatInt(nowMs, 10)}
 	arr, err := s.leave.Exec(ctx, s.c, keys, args).ToArray()
 	if err != nil {
-		return false, fmt.Errorf("valkey: leave.lua: %w", err)
+		return outbound.LeaveResult{}, fmt.Errorf("valkey: leave.lua: %w", err)
 	}
 	if len(arr) < 1 {
-		return false, fmt.Errorf("valkey: leave.lua balasan kosong")
+		return outbound.LeaveResult{}, fmt.Errorf("valkey: leave.lua balasan kosong")
 	}
 	tag, _ := arr[0].ToString()
 	if tag == "ERR" {
-		return false, entity.ErrNotFound
+		return outbound.LeaveResult{}, entity.ErrNotFound
 	}
-	wasActive := int64(0)
-	if len(arr) >= 2 {
-		wasActive, _ = arr[1].ToInt64()
+	res := outbound.LeaveResult{Tag: "OK"}
+	if ok {
+		res.PrevStatus, res.AllocationID = string(ent.Status), ent.AllocationID
 	}
-	return wasActive == 1, nil
+	return res, nil
 }
 
 // EndEntry runs end_entry.lua for the booking.journey.ended consumer (design §4.5). Idempotent.
-func (s *QueueStore) EndEntry(ctx context.Context, eventID, entryID, outcome string, nowMs int64) (string, error) {
+func (s *QueueStore) EndEntry(ctx context.Context, eventID, entryID, outcome string, nowMs int64) (outbound.EndResult, error) {
 	ent, _, err := s.GetEntry(ctx, eventID, entryID)
 	if err != nil {
-		return "", err
+		return outbound.EndResult{}, err
 	}
 	keys := []string{
 		s.kEntry(eventID, entryID), s.kActive(eventID),
@@ -221,13 +223,14 @@ func (s *QueueStore) EndEntry(ctx context.Context, eventID, entryID, outcome str
 	args := []string{entryID, outcome, strconv.FormatInt(nowMs, 10)}
 	arr, err := s.endEntry.Exec(ctx, s.c, keys, args).ToArray()
 	if err != nil {
-		return "", fmt.Errorf("valkey: end_entry.lua: %w", err)
+		return outbound.EndResult{}, fmt.Errorf("valkey: end_entry.lua: %w", err)
 	}
 	if len(arr) < 2 {
-		return "", nil
+		return outbound.EndResult{}, nil
 	}
+	tag, _ := arr[0].ToString()
 	final, _ := arr[1].ToString()
-	return final, nil
+	return outbound.EndResult{Tag: tag, Status: final}, nil
 }
 
 // GetEntry reads the entry hash (design §3.2).
@@ -277,7 +280,7 @@ func (s *QueueStore) TopWaiting(ctx context.Context, eventID string, n int) ([]s
 }
 
 // ExpiredActive returns active entry ids whose claim deadline is at or before nowMs.
-func (s *QueueStore) ExpiredActive(ctx context.Context, eventID string, nowMs int64) ([]string, error) {
+func (s *QueueStore) ExpiredActive(ctx context.Context, eventID string, nowMs int64, _ int) ([]string, error) {
 	ids, err := s.c.Do(ctx, s.c.B().Zrange().Key(s.kActive(eventID)).Min("0").
 		Max(strconv.FormatInt(nowMs, 10)).Byscore().Build()).AsStrSlice()
 	if err != nil {
@@ -443,23 +446,29 @@ func parseMs(v string) int64 {
 }
 
 // AcquirePromoterLease tries to set a distributed lock for the promoter on a given event.
-// Uses SET NX PX so only one worker instance holds the lease at a time (spec 11.R3, req 6.12).
-// Returns true if the lease was acquired.
-func (s *QueueStore) AcquirePromoterLease(ctx context.Context, eventID string, ttlMs int64) (bool, error) {
+// T01: thin adapter, the value written is "1" and also returned as the token.
+func (s *QueueStore) AcquirePromoterLease(ctx context.Context, eventID string, ttl time.Duration) (string, bool, error) {
 	key := s.keyer.Key(s.tag(eventID) + ":promoter:lock")
-	ttl := time.Duration(ttlMs) * time.Millisecond
 	res, err := s.c.Do(ctx, s.c.B().Set().Key(key).Value("1").Nx().Px(ttl).Build()).ToString()
 	if vk.IsValkeyNil(err) {
-		return false, nil // another instance holds the lease
+		return "", false, nil // another instance holds the lease
 	}
 	if err != nil {
-		return false, fmt.Errorf("valkey: acquire_promoter_lease: %w", err)
+		return "", false, fmt.Errorf("valkey: acquire_promoter_lease: %w", err)
 	}
-	return res == "OK", nil
+	if res != "OK" {
+		return "", false, nil
+	}
+	return "1", true, nil
 }
 
-// ReleasePromoterLease releases a previously acquired promoter lease.
-func (s *QueueStore) ReleasePromoterLease(ctx context.Context, eventID string) error {
+// ReleasePromoterLease releases a previously acquired promoter lease (T01: token ignored).
+func (s *QueueStore) ReleasePromoterLease(ctx context.Context, eventID, _ string) error {
 	key := s.keyer.Key(s.tag(eventID) + ":promoter:lock")
 	return s.c.Do(ctx, s.c.B().Del().Key(key).Build()).Error()
+}
+
+// NoteUnreadable is implemented by note_unreadable.lua (T23).
+func (s *QueueStore) NoteUnreadable(_ context.Context, _, _ string) (int, error) {
+	return 0, errors.New("note_unreadable: not implemented")
 }

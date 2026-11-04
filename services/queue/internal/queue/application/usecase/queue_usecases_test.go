@@ -61,7 +61,7 @@ func TestLeave_WaitingSkipsRelease(t *testing.T) {
 	ctx := context.Background()
 	// Entry is WAITING — no booking release call expected.
 	store.EXPECT().GetEntry(ctx, "ev1", "e1").Return(entity.Entry{ID: "e1", Status: valueobject.StatusWaiting}, true, nil)
-	store.EXPECT().Leave(ctx, "ev1", "e1", "v1", gomock.Any()).Return(true, nil)
+	store.EXPECT().Leave(ctx, "ev1", "e1", "v1", gomock.Any()).Return(outbound.LeaveResult{Tag: "OK"}, nil)
 
 	uc := usecase.NewLeaveQueue(store, booking, fixedNow)
 	err := uc.Leave(ctx, inbound.LeaveInput{EntryID: "e1", VisitorID: "v1", EventID: "ev1"})
@@ -78,7 +78,7 @@ func TestLeave_AdmittedCallsRelease(t *testing.T) {
 		ID: "e1", Status: valueobject.StatusAdmitted, AllocationID: "alloc-42",
 	}, true, nil)
 	booking.EXPECT().ReleaseAllocation(ctx, "alloc-42", "QUEUE_ENTRY_GONE").Return(nil)
-	store.EXPECT().Leave(ctx, "ev1", "e1", "v1", gomock.Any()).Return(true, nil)
+	store.EXPECT().Leave(ctx, "ev1", "e1", "v1", gomock.Any()).Return(outbound.LeaveResult{Tag: "OK"}, nil)
 
 	uc := usecase.NewLeaveQueue(store, booking, fixedNow)
 	err := uc.Leave(ctx, inbound.LeaveInput{EntryID: "e1", VisitorID: "v1", EventID: "ev1"})
@@ -95,7 +95,7 @@ func TestLeave_AdmittedReleaseFailureContinues(t *testing.T) {
 	}, true, nil)
 	// Release fails — Leave still proceeds (best-effort, spec 14.R1 K7).
 	booking.EXPECT().ReleaseAllocation(ctx, "alloc-42", "QUEUE_ENTRY_GONE").Return(errors.New("booking down"))
-	store.EXPECT().Leave(ctx, "ev1", "e1", "v1", gomock.Any()).Return(true, nil)
+	store.EXPECT().Leave(ctx, "ev1", "e1", "v1", gomock.Any()).Return(outbound.LeaveResult{Tag: "OK"}, nil)
 
 	uc := usecase.NewLeaveQueue(store, booking, fixedNow)
 	err := uc.Leave(ctx, inbound.LeaveInput{EntryID: "e1", VisitorID: "v1", EventID: "ev1"})
@@ -108,7 +108,7 @@ func TestLeave_NotFound(t *testing.T) {
 	booking := mock_outbound.NewMockIBookingClient(ctrl)
 	ctx := context.Background()
 	store.EXPECT().GetEntry(ctx, "ev1", "e1").Return(entity.Entry{}, false, nil)
-	store.EXPECT().Leave(ctx, "ev1", "e1", "v1", gomock.Any()).Return(false, entity.ErrNotFound)
+	store.EXPECT().Leave(ctx, "ev1", "e1", "v1", gomock.Any()).Return(outbound.LeaveResult{}, entity.ErrNotFound)
 
 	uc := usecase.NewLeaveQueue(store, booking, fixedNow)
 	err := uc.Leave(ctx, inbound.LeaveInput{EntryID: "e1", VisitorID: "v1", EventID: "ev1"})

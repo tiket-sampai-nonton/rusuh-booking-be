@@ -44,18 +44,19 @@ func (m *MockIQueueStore) EXPECT() *MockIQueueStoreMockRecorder {
 }
 
 // AcquirePromoterLease mocks base method.
-func (m *MockIQueueStore) AcquirePromoterLease(ctx context.Context, eventID string, ttlMs int64) (bool, error) {
+func (m *MockIQueueStore) AcquirePromoterLease(ctx context.Context, eventID string, ttl time.Duration) (string, bool, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "AcquirePromoterLease", ctx, eventID, ttlMs)
-	ret0, _ := ret[0].(bool)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
+	ret := m.ctrl.Call(m, "AcquirePromoterLease", ctx, eventID, ttl)
+	ret0, _ := ret[0].(string)
+	ret1, _ := ret[1].(bool)
+	ret2, _ := ret[2].(error)
+	return ret0, ret1, ret2
 }
 
 // AcquirePromoterLease indicates an expected call of AcquirePromoterLease.
-func (mr *MockIQueueStoreMockRecorder) AcquirePromoterLease(ctx, eventID, ttlMs any) *gomock.Call {
+func (mr *MockIQueueStoreMockRecorder) AcquirePromoterLease(ctx, eventID, ttl any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AcquirePromoterLease", reflect.TypeOf((*MockIQueueStore)(nil).AcquirePromoterLease), ctx, eventID, ttlMs)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AcquirePromoterLease", reflect.TypeOf((*MockIQueueStore)(nil).AcquirePromoterLease), ctx, eventID, ttl)
 }
 
 // ActiveCount mocks base method.
@@ -103,10 +104,10 @@ func (mr *MockIQueueStoreMockRecorder) Claim(ctx, eventID, entryID, visitorID, n
 }
 
 // EndEntry mocks base method.
-func (m *MockIQueueStore) EndEntry(ctx context.Context, eventID, entryID, outcome string, nowMs int64) (string, error) {
+func (m *MockIQueueStore) EndEntry(ctx context.Context, eventID, entryID, outcome string, nowMs int64) (outbound.EndResult, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "EndEntry", ctx, eventID, entryID, outcome, nowMs)
-	ret0, _ := ret[0].(string)
+	ret0, _ := ret[0].(outbound.EndResult)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
@@ -118,18 +119,18 @@ func (mr *MockIQueueStoreMockRecorder) EndEntry(ctx, eventID, entryID, outcome, 
 }
 
 // ExpiredActive mocks base method.
-func (m *MockIQueueStore) ExpiredActive(ctx context.Context, eventID string, nowMs int64) ([]string, error) {
+func (m *MockIQueueStore) ExpiredActive(ctx context.Context, eventID string, nowMs int64, limit int) ([]string, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ExpiredActive", ctx, eventID, nowMs)
+	ret := m.ctrl.Call(m, "ExpiredActive", ctx, eventID, nowMs, limit)
 	ret0, _ := ret[0].([]string)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // ExpiredActive indicates an expected call of ExpiredActive.
-func (mr *MockIQueueStoreMockRecorder) ExpiredActive(ctx, eventID, nowMs any) *gomock.Call {
+func (mr *MockIQueueStoreMockRecorder) ExpiredActive(ctx, eventID, nowMs, limit any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ExpiredActive", reflect.TypeOf((*MockIQueueStore)(nil).ExpiredActive), ctx, eventID, nowMs)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ExpiredActive", reflect.TypeOf((*MockIQueueStore)(nil).ExpiredActive), ctx, eventID, nowMs, limit)
 }
 
 // FindByVisitor mocks base method.
@@ -211,10 +212,10 @@ func (mr *MockIQueueStoreMockRecorder) Join(ctx, p any) *gomock.Call {
 }
 
 // Leave mocks base method.
-func (m *MockIQueueStore) Leave(ctx context.Context, eventID, entryID, visitorID string, nowMs int64) (bool, error) {
+func (m *MockIQueueStore) Leave(ctx context.Context, eventID, entryID, visitorID string, nowMs int64) (outbound.LeaveResult, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "Leave", ctx, eventID, entryID, visitorID, nowMs)
-	ret0, _ := ret[0].(bool)
+	ret0, _ := ret[0].(outbound.LeaveResult)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
@@ -269,33 +270,48 @@ func (mr *MockIQueueStoreMockRecorder) MarkNotifiedSoon(ctx, eventID, entryID an
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MarkNotifiedSoon", reflect.TypeOf((*MockIQueueStore)(nil).MarkNotifiedSoon), ctx, eventID, entryID)
 }
 
-// Promote mocks base method.
-func (m *MockIQueueStore) Promote(ctx context.Context, eventID string, cands []outbound.PromoteCandidate, capacity int, nowMs int64) ([]string, error) {
+// NoteUnreadable mocks base method.
+func (m *MockIQueueStore) NoteUnreadable(ctx context.Context, eventID, entryID string) (int, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Promote", ctx, eventID, cands, capacity, nowMs)
-	ret0, _ := ret[0].([]string)
+	ret := m.ctrl.Call(m, "NoteUnreadable", ctx, eventID, entryID)
+	ret0, _ := ret[0].(int)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// NoteUnreadable indicates an expected call of NoteUnreadable.
+func (mr *MockIQueueStoreMockRecorder) NoteUnreadable(ctx, eventID, entryID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "NoteUnreadable", reflect.TypeOf((*MockIQueueStore)(nil).NoteUnreadable), ctx, eventID, entryID)
+}
+
+// Promote mocks base method.
+func (m *MockIQueueStore) Promote(ctx context.Context, eventID string, cands []outbound.PromoteCandidate, capacity int, nowMs int64, opts outbound.PromoteOpts) (outbound.PromoteResult, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Promote", ctx, eventID, cands, capacity, nowMs, opts)
+	ret0, _ := ret[0].(outbound.PromoteResult)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // Promote indicates an expected call of Promote.
-func (mr *MockIQueueStoreMockRecorder) Promote(ctx, eventID, cands, capacity, nowMs any) *gomock.Call {
+func (mr *MockIQueueStoreMockRecorder) Promote(ctx, eventID, cands, capacity, nowMs, opts any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Promote", reflect.TypeOf((*MockIQueueStore)(nil).Promote), ctx, eventID, cands, capacity, nowMs)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Promote", reflect.TypeOf((*MockIQueueStore)(nil).Promote), ctx, eventID, cands, capacity, nowMs, opts)
 }
 
 // ReleasePromoterLease mocks base method.
-func (m *MockIQueueStore) ReleasePromoterLease(ctx context.Context, eventID string) error {
+func (m *MockIQueueStore) ReleasePromoterLease(ctx context.Context, eventID, token string) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ReleasePromoterLease", ctx, eventID)
+	ret := m.ctrl.Call(m, "ReleasePromoterLease", ctx, eventID, token)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // ReleasePromoterLease indicates an expected call of ReleasePromoterLease.
-func (mr *MockIQueueStoreMockRecorder) ReleasePromoterLease(ctx, eventID any) *gomock.Call {
+func (mr *MockIQueueStoreMockRecorder) ReleasePromoterLease(ctx, eventID, token any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ReleasePromoterLease", reflect.TypeOf((*MockIQueueStore)(nil).ReleasePromoterLease), ctx, eventID)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ReleasePromoterLease", reflect.TypeOf((*MockIQueueStore)(nil).ReleasePromoterLease), ctx, eventID, token)
 }
 
 // SetSale mocks base method.

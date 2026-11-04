@@ -23,18 +23,48 @@ type Promoter struct {
 	pii      outbound.IPIIProtector
 	clock    clock.IClock
 	logger   *slog.Logger
-	batchMax int
+	tuning   PromoterTuning
+	metrics  outbound.IPromoterMetrics
+}
+
+// PromoterTuning holds the promoter knobs. Zero values keep today's behaviour (PD-2).
+type PromoterTuning struct {
+	BatchMax             int           // max candidates per tick (default 200)
+	LeaseTTL             time.Duration // promoter lease TTL (default 10s)
+	UnsealFailMax        int           // consecutive failed ticks before an unreadable-PII head is ended (default 3)
+	UnsealProbe          int           // extra ids probed to tell an entry-scoped from a systemic unseal failure (default 3)
+	NoSupplySuspectTicks int           // head NO_SUPPLY_NOW ticks before it is labelled suspect (default 50, min 2)
 }
 
 // NewPromoter accepts interfaces and returns the concrete worker.
-func NewPromoter(store outbound.IQueueStore, settings outbound.IEventSettingsRepo, booking outbound.IBookingClient, pub outbound.IEventPublisher, audit outbound.IEntryAuditRepo, pii outbound.IPIIProtector, clk clock.IClock, logger *slog.Logger, batchMax int) *Promoter {
-	if batchMax <= 0 {
-		batchMax = 200
+func NewPromoter(store outbound.IQueueStore, settings outbound.IEventSettingsRepo, booking outbound.IBookingClient, pub outbound.IEventPublisher, audit outbound.IEntryAuditRepo, pii outbound.IPIIProtector, clk clock.IClock, logger *slog.Logger, tuning PromoterTuning) *Promoter {
+	if tuning.BatchMax <= 0 {
+		tuning.BatchMax = 200
+	}
+	if tuning.LeaseTTL <= 0 {
+		tuning.LeaseTTL = 10 * time.Second
+	}
+	if tuning.UnsealFailMax <= 0 {
+		tuning.UnsealFailMax = 3
+	}
+	if tuning.UnsealProbe <= 0 {
+		tuning.UnsealProbe = 3
+	}
+	if tuning.NoSupplySuspectTicks < 2 {
+		tuning.NoSupplySuspectTicks = 50
 	}
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Promoter{store: store, settings: settings, booking: booking, pub: pub, audit: audit, pii: pii, clock: clk, logger: logger, batchMax: batchMax}
+	return &Promoter{store: store, settings: settings, booking: booking, pub: pub, audit: audit, pii: pii, clock: clk, logger: logger, tuning: tuning, metrics: noopMetrics{}}
+}
+
+// WithMetrics sets the counter sink (default: no-op).
+func (p *Promoter) WithMetrics(m outbound.IPromoterMetrics) *Promoter {
+	if m != nil {
+		p.metrics = m
+	}
+	return p
 }
 
 // Run promotes one batch for every configured event.
@@ -53,14 +83,14 @@ func (p *Promoter) Run(ctx context.Context) error {
 
 func (p *Promoter) runEvent(ctx context.Context, eventID string) error {
 	// Acquire a per-event distributed lease so only one worker instance promotes at a time (spec 11.R3).
-	acquired, err := p.store.AcquirePromoterLease(ctx, eventID, 10_000)
+	token, acquired, err := p.store.AcquirePromoterLease(ctx, eventID, p.tuning.LeaseTTL)
 	if err != nil {
 		return err
 	}
 	if !acquired {
 		return nil // another instance is promoting this event this tick
 	}
-	defer func() { _ = p.store.ReleasePromoterLease(ctx, eventID) }()
+	defer func() { _ = p.store.ReleasePromoterLease(ctx, eventID, token) }()
 
 	settings, ok, err := p.settings.Get(ctx, eventID)
 	if err != nil || !ok {
@@ -78,8 +108,8 @@ func (p *Promoter) runEvent(ctx context.Context, eventID string) error {
 		}
 		return nil
 	}
-	if free > p.batchMax {
-		free = p.batchMax
+	if free > p.tuning.BatchMax {
+		free = p.tuning.BatchMax
 	}
 	candidates, err := p.store.TopWaiting(ctx, eventID, free)
 	if err != nil || len(candidates) == 0 {
@@ -168,10 +198,11 @@ func (p *Promoter) runEvent(ctx context.Context, eventID string) error {
 		return nil
 	}
 
-	promoted, err := p.store.Promote(ctx, eventID, promoteCands, settings.ActiveSlotCapacity, now.UnixMilli())
+	res, err := p.store.Promote(ctx, eventID, promoteCands, settings.ActiveSlotCapacity, now.UnixMilli(), outbound.PromoteOpts{LeaseToken: token})
 	if err != nil {
 		return err
 	}
+	promoted := res.Promoted
 	deadlineByEntry := map[string]int64{}
 	for _, c := range promoteCands {
 		deadlineByEntry[c.EntryID] = c.ClaimDeadlineMs

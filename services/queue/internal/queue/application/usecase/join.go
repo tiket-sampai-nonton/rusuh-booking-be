@@ -251,10 +251,10 @@ func (u *JoinQueue) tryDirectAdmission(ctx context.Context, eventID string, ent 
 	if dl, derr := time.Parse(time.RFC3339, a.ClaimDeadline); derr == nil {
 		deadline = dl
 	}
-	promoted, err := u.d.Store.Promote(ctx, eventID,
+	pres, err := u.d.Store.Promote(ctx, eventID,
 		[]outbound.PromoteCandidate{{EntryID: ent.ID, AllocationID: a.AllocationID, ClaimDeadlineMs: deadline.UnixMilli()}},
-		settings.ActiveSlotCapacity, now.UnixMilli())
-	if err != nil || len(promoted) == 0 {
+		settings.ActiveSlotCapacity, now.UnixMilli(), outbound.PromoteOpts{})
+	if err != nil || len(pres.Promoted) == 0 {
 		return false
 	}
 	ent.Status = valueobject.StatusAdmitted

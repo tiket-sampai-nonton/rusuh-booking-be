@@ -15,6 +15,7 @@ import (
 
 	mock_outbound "github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/_mock/queue/port/outbound"
 	queuerabbitmq "github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/infrastructure/rabbitmq"
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/port/outbound"
 )
 
 func delivery(t *testing.T, routingKey string, payload any) pkgrabbitmq.Delivery {
@@ -37,7 +38,7 @@ func newConsumer(t *testing.T) (*queuerabbitmq.Consumer, *mock_outbound.MockIQue
 
 func TestConsumer_JourneyEnded(t *testing.T) {
 	c, store := newConsumer(t)
-	store.EXPECT().EndEntry(gomock.Any(), "ev1", "e1", "PAID", gomock.Any()).Return("COMPLETED", nil)
+	store.EXPECT().EndEntry(gomock.Any(), "ev1", "e1", "PAID", gomock.Any()).Return(outbound.EndResult{Tag: "OK", Status: "COMPLETED"}, nil)
 	err := c.Subscription().Handler(context.Background(), delivery(t, "booking.journey.ended",
 		map[string]string{"eventId": "ev1", "queueEntryId": "e1", "outcome": "PAID"}))
 	assert.NoError(t, err)
@@ -46,7 +47,7 @@ func TestConsumer_JourneyEnded(t *testing.T) {
 func TestConsumer_JourneyEnded_DoubleDeliveryIdempotent(t *testing.T) {
 	c, store := newConsumer(t)
 	// end_entry.lua is idempotent; the consumer just calls it each time.
-	store.EXPECT().EndEntry(gomock.Any(), "ev1", "e1", "PAID", gomock.Any()).Return("COMPLETED", nil).Times(2)
+	store.EXPECT().EndEntry(gomock.Any(), "ev1", "e1", "PAID", gomock.Any()).Return(outbound.EndResult{Tag: "OK", Status: "COMPLETED"}, nil).Times(2)
 	d := delivery(t, "booking.journey.ended", map[string]string{"eventId": "ev1", "queueEntryId": "e1", "outcome": "PAID"})
 	require.NoError(t, c.Subscription().Handler(context.Background(), d))
 	require.NoError(t, c.Subscription().Handler(context.Background(), d))

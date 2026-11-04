@@ -53,12 +53,13 @@ func TestQueueStore_EntryLifecycle(t *testing.T) {
 	promoted, err := s.Promote(ctx, ev, []outbound.PromoteCandidate{
 		{EntryID: a, AllocationID: "alloc-a", ClaimDeadlineMs: now + 60_000},
 		{EntryID: b, AllocationID: "alloc-b", ClaimDeadlineMs: now - 1_000}, // already past: will be missed
-	}, 2, now)
+	}, 2, now, outbound.PromoteOpts{})
 	require.NoError(t, err)
-	assert.ElementsMatch(t, []string{a, b}, promoted)
-	full, err := s.Promote(ctx, ev, []outbound.PromoteCandidate{{EntryID: c, AllocationID: "alloc-c", ClaimDeadlineMs: now + 60_000}}, 2, now)
+	assert.ElementsMatch(t, []string{a, b}, promoted.Promoted)
+	full, err := s.Promote(ctx, ev, []outbound.PromoteCandidate{{EntryID: c, AllocationID: "alloc-c", ClaimDeadlineMs: now + 60_000}}, 2, now, outbound.PromoteOpts{})
 	require.NoError(t, err)
-	assert.Empty(t, full, "slot penuh")
+	assert.Empty(t, full.Promoted, "slot penuh")
+	assert.True(t, full.Full)
 
 	entA, found, err := s.GetEntry(ctx, ev, a)
 	require.NoError(t, err)
@@ -84,7 +85,7 @@ func TestQueueStore_EntryLifecycle(t *testing.T) {
 	assert.ErrorIs(t, err, entity.ErrTurnMissed, "tenggat klaim sudah lewat")
 
 	// Sweeper: the expired turn is found, marked missed, and its constraint keys are cleaned so the buyer can rejoin.
-	expired, err := s.ExpiredActive(ctx, ev, now)
+	expired, err := s.ExpiredActive(ctx, ev, now, 100)
 	require.NoError(t, err)
 	assert.Contains(t, expired, b)
 	cleaned, err := s.MarkMissedAndClean(ctx, ev, b, now)
@@ -98,18 +99,18 @@ func TestQueueStore_EntryLifecycle(t *testing.T) {
 	assert.False(t, missedAgain)
 
 	// Leaving frees the slot of an admitted entry; leaving something unknown is not found.
-	wasActive, err := s.Leave(ctx, ev, a, visA, now)
+	left, err := s.Leave(ctx, ev, a, visA, now)
 	require.NoError(t, err)
-	assert.True(t, wasActive)
+	assert.Equal(t, "OK", left.Tag)
 	_, err = s.Leave(ctx, ev, "tidak-ada", "visitor-x", now)
 	assert.ErrorIs(t, err, entity.ErrNotFound)
 
 	// End a promoted entry with the outcome Booking reports (idempotent).
-	_, err = s.Promote(ctx, ev, []outbound.PromoteCandidate{{EntryID: c, AllocationID: "alloc-c", ClaimDeadlineMs: now + 60_000}}, 5, now)
+	_, err = s.Promote(ctx, ev, []outbound.PromoteCandidate{{EntryID: c, AllocationID: "alloc-c", ClaimDeadlineMs: now + 60_000}}, 5, now, outbound.PromoteOpts{})
 	require.NoError(t, err)
 	final, err := s.EndEntry(ctx, ev, c, "PAID", now)
 	require.NoError(t, err)
-	assert.NotEmpty(t, final)
+	assert.NotEmpty(t, final.Status)
 	_, err = s.EndEntry(ctx, ev, c, "PAID", now)
 	require.NoError(t, err, "idempoten")
 	_, _, _ = visC, nikC, c
@@ -157,17 +158,17 @@ func TestQueueStore_SaleStatusDocLeaseAndNotifications(t *testing.T) {
 	assert.True(t, was)
 
 	// Only one worker instance promotes an event at a time.
-	got, err := s.AcquirePromoterLease(ctx, ev, 5_000)
+	tok, got, err := s.AcquirePromoterLease(ctx, ev, 5*time.Second)
 	require.NoError(t, err)
 	assert.True(t, got)
-	got, err = s.AcquirePromoterLease(ctx, ev, 5_000)
+	_, got, err = s.AcquirePromoterLease(ctx, ev, 5*time.Second)
 	require.NoError(t, err)
 	assert.False(t, got, "lease dipegang instance lain")
-	require.NoError(t, s.ReleasePromoterLease(ctx, ev))
-	got, err = s.AcquirePromoterLease(ctx, ev, 5_000)
+	require.NoError(t, s.ReleasePromoterLease(ctx, ev, tok))
+	tok, got, err = s.AcquirePromoterLease(ctx, ev, 5*time.Second)
 	require.NoError(t, err)
 	assert.True(t, got)
-	require.NoError(t, s.ReleasePromoterLease(ctx, ev))
+	require.NoError(t, s.ReleasePromoterLease(ctx, ev, tok))
 }
 
 func TestRateLimiter_AllowsUpToTheLimitPerWindow(t *testing.T) {

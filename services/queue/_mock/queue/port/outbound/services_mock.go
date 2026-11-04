@@ -396,3 +396,44 @@ func (mr *MockIPIIProtectorMockRecorder) UnsealEmail(enc any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UnsealEmail", reflect.TypeOf((*MockIPIIProtector)(nil).UnsealEmail), enc)
 }
+
+// MockIPromoterMetrics is a mock of IPromoterMetrics interface.
+type MockIPromoterMetrics struct {
+	ctrl     *gomock.Controller
+	recorder *MockIPromoterMetricsMockRecorder
+	isgomock struct{}
+}
+
+// MockIPromoterMetricsMockRecorder is the mock recorder for MockIPromoterMetrics.
+type MockIPromoterMetricsMockRecorder struct {
+	mock *MockIPromoterMetrics
+}
+
+// NewMockIPromoterMetrics creates a new mock instance.
+func NewMockIPromoterMetrics(ctrl *gomock.Controller) *MockIPromoterMetrics {
+	mock := &MockIPromoterMetrics{ctrl: ctrl}
+	mock.recorder = &MockIPromoterMetricsMockRecorder{mock}
+	return mock
+}
+
+// EXPECT returns an object that allows the caller to indicate expected use.
+func (m *MockIPromoterMetrics) EXPECT() *MockIPromoterMetricsMockRecorder {
+	return m.recorder
+}
+
+// Inc mocks base method.
+func (m *MockIPromoterMetrics) Inc(name string, labels ...string) {
+	m.ctrl.T.Helper()
+	varargs := []any{name}
+	for _, a := range labels {
+		varargs = append(varargs, a)
+	}
+	m.ctrl.Call(m, "Inc", varargs...)
+}
+
+// Inc indicates an expected call of Inc.
+func (mr *MockIPromoterMetricsMockRecorder) Inc(name any, labels ...any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	varargs := append([]any{name}, labels...)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Inc", reflect.TypeOf((*MockIPromoterMetrics)(nil).Inc), varargs...)
+}

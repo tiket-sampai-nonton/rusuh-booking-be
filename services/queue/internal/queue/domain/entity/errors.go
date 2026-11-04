@@ -24,6 +24,8 @@ var (
 	ErrNotOnSale  = errors.New("queue: event tidak dalam masa penjualan")
 	ErrSoldOut    = errors.New("queue: tiket sudah habis")
 	ErrTurnMissed = errors.New("queue: giliran terlewat")
+	// ErrNotAdmitted: claim for an entry that is still WAITING (it has no admitted turn yet).
+	ErrNotAdmitted = errors.New("queue: entry belum mendapat giliran")
 
 	ErrNotFound      = errors.New("queue: entry tidak ditemukan")
 	ErrEventNotFound = errors.New("queue: event tidak ditemukan")

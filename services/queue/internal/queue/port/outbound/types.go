@@ -50,7 +50,54 @@ type PromoteCandidate struct {
 // ClaimResult is the mapped outcome of claim.lua.
 type ClaimResult struct {
 	Status          string // CLAIMED | ALREADY
+	AllocationID    string // allocation reserved at Booking (JTI of the admission token)
 	ClaimDeadlineMs int64
+}
+
+// End outcomes originated by the Queue itself (Booking outcomes such as PAID/UNCLAIMED pass through unchanged).
+const (
+	EndSweepMissed    = "SWEEP_MISSED"          // Queue sweeper only: deadline passed
+	EndQuotaExhaust   = "BUYER_QUOTA_EXHAUSTED" // promoter, WAITING entries only
+	EndAlreadyActive  = "ALREADY_ACTIVE"        // promoter, WAITING entries only (Booking row is dead)
+	EndPromoterOrphan = "PROMOTER_ORPHAN"       // promoter: id in waiting without an entry hash (C5)
+	EndUnreadablePII  = "UNREADABLE_PII"        // promoter: WAITING entry whose email cannot be opened, entry-scoped (C6)
+)
+
+// EndResult is the typed reply of end_entry.lua.
+type EndResult struct {
+	Tag    string // OK | OK_CLEANUP | IGNORED
+	Status string // final status for OK/OK_CLEANUP; current status (or NO_ENTRY) for IGNORED
+}
+
+// Changed reports whether the script mutated the entry.
+func (r EndResult) Changed() bool { return r.Tag == "OK" || r.Tag == "OK_CLEANUP" }
+
+// LeaveResult is the typed reply of leave.lua (NOT_FOUND is reported as entity.ErrNotFound).
+type LeaveResult struct {
+	Tag          string // OK | IGNORED
+	PrevStatus   string // status before the script ran
+	AllocationID string // set when PrevStatus was ADMITTED
+}
+
+// PromoteOpts tunes promote.lua.
+type PromoteOpts struct {
+	RequireHead bool   // the first candidate must be the head of waiting, otherwise nothing is promoted
+	LeaseToken  string // mandatory: promoter lease token, the script is fenced by it
+}
+
+// PromoteSkip reports a candidate that promote.lua did not promote.
+type PromoteSkip struct {
+	EntryID      string
+	Status       string // NO_ENTRY | LEFT | ENDED | COMPLETED | MISSED | ADMITTED_SAME | ADMITTED_OTHER | NOT_HEAD
+	AllocationID string // stored allocation id for ADMITTED_OTHER
+}
+
+// PromoteResult is the typed reply of promote.lua.
+type PromoteResult struct {
+	Promoted  []string
+	Skipped   []PromoteSkip
+	Full      bool // no free slot: nothing promoted
+	LeaseLost bool // the lease token no longer matches: nothing mutated
 }
 
 // SaleState is the q:{e}:sale hash.

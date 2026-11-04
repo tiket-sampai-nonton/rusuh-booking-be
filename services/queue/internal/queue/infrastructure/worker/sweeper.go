@@ -15,11 +15,15 @@ type Sweeper struct {
 	store    outbound.IQueueStore
 	settings outbound.IEventSettingsRepo
 	clock    clock.IClock
+	batchMax int
 }
 
 // NewSweeper accepts interfaces and returns the concrete worker.
-func NewSweeper(store outbound.IQueueStore, settings outbound.IEventSettingsRepo, clk clock.IClock) *Sweeper {
-	return &Sweeper{store: store, settings: settings, clock: clk}
+func NewSweeper(store outbound.IQueueStore, settings outbound.IEventSettingsRepo, clk clock.IClock, batchMax int) *Sweeper {
+	if batchMax <= 0 {
+		batchMax = 500
+	}
+	return &Sweeper{store: store, settings: settings, clock: clk, batchMax: batchMax}
 }
 
 // Run sweeps every configured event once.
@@ -38,7 +42,7 @@ func (s *Sweeper) Run(ctx context.Context) error {
 
 func (s *Sweeper) runEvent(ctx context.Context, eventID string) error {
 	nowMs := s.clock.Now().UnixMilli()
-	expired, err := s.store.ExpiredActive(ctx, eventID, nowMs)
+	expired, err := s.store.ExpiredActive(ctx, eventID, nowMs, s.batchMax)
 	if err != nil {
 		return err
 	}

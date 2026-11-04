@@ -111,7 +111,7 @@ func TestJoin_DirectAdmission(t *testing.T) {
 				Allocations: []outbound.AllocationResult{{QueueEntryID: "x", AllocationID: "al1", Status: "GRANTED", ClaimDeadline: "2026-10-20T10:01:00Z"}},
 			}, nil
 		})
-	m.store.EXPECT().Promote(ctx, "ev1", gomock.Any(), 10, gomock.Any()).Return([]string{"x"}, nil)
+	m.store.EXPECT().Promote(ctx, "ev1", gomock.Any(), 10, gomock.Any(), gomock.Any()).Return(outbound.PromoteResult{Promoted: []string{"x"}}, nil)
 	m.tokens.EXPECT().IssueQueue(gomock.Any(), gomock.Any(), gomock.Any()).Return("qt", nil)
 	m.tokens.EXPECT().IssueVisitor(gomock.Any(), gomock.Any()).Return("vt", nil)
 
