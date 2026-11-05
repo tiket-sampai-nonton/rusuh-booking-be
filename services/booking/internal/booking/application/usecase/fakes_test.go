@@ -100,7 +100,7 @@ func boolPtr(b bool) *bool { return &b }
 type fakeAdmissionRepo struct {
 	admission     entity.Admission
 	getErr        error
-	getCalls      int
+	getCalls      int // number of GetByID calls (REQ-4: assert malformed ids never reach the repo)
 	activated     entity.Admission
 	activErr      error
 	reserve       []outbound.ReserveOutcome

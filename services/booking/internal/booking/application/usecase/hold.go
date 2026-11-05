@@ -176,7 +176,7 @@ func (uc *Hold) execute(ctx context.Context, cmd inbound.HoldCommand, v validate
 		Version:          res.Version,
 		CanEdit:          admission.CanEdit(),
 		EditsRemaining:   admission.EditsRemaining(),
-		Items:            holdItemViews(lines),
+		Items:            holdItemViews(lines, res.ItemIDs),
 	}, nil
 }
 
@@ -338,10 +338,19 @@ func bytesEqual(a, b []byte) bool {
 	return true
 }
 
-func holdItemViews(lines []outbound.HoldLine) []dto.BookingItemView {
+// holdItemViews maps each hold line to its BookingItemView, attaching the DB-generated booking_items.id.
+// Precondition: itemIDs[i] is the id created for lines[i] (same request-line order), so len(itemIDs) must
+// equal len(lines); a shorter slice leaves later items with an empty ItemID (defensive — the UoW guarantees
+// the lengths match).
+func holdItemViews(lines []outbound.HoldLine, itemIDs []string) []dto.BookingItemView {
 	out := make([]dto.BookingItemView, 0, len(lines))
-	for _, l := range lines {
+	for i, l := range lines {
+		var id string
+		if i < len(itemIDs) {
+			id = itemIDs[i]
+		}
 		out = append(out, dto.BookingItemView{
+			ItemID:            id,
 			CategoryID:        l.CategoryID,
 			AttendeeNIKMasked: l.AttendeeNIKMasked,
 			AttendeeName:      l.AttendeeName,

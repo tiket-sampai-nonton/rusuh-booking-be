@@ -92,12 +92,26 @@ type WorkerTuning struct {
 	StatusInterval   time.Duration
 	PromoteBatchMax  int
 
+	// StatusTTLMultiplier sets the published status-doc Valkey TTL as a multiple of the effective publish
+	// cadence (Worker.Interval), decoupling the key lifetime from the status publish interval so a direct
+	// uncached GET /queue-status/{eventId} does not intermittently 404 between republishes
+	// (QUEUE_STATUS_TTL_MULTIPLIER, bounds minStatusTTLMult..maxStatusTTLMult). Grounded in [[caching-strategy]].
+	StatusTTLMultiplier int
+
 	// PromoterLeaseTTL is the per-event promoter/admission lease TTL (QUEUE_PROMOTER_LEASE_TTL_MS).
 	PromoterLeaseTTL time.Duration
 	// SweepBatchMax bounds the expired entries the sweeper ends per event and tick (QUEUE_SWEEP_BATCH_MAX).
 	SweepBatchMax int
 	// NoSupplySuspectTicks labels a head that answers NO_SUPPLY_NOW this many consecutive ticks as suspect.
 	NoSupplySuspectTicks int
+}
+
+// StatusTTL returns the Valkey TTL for the published status document: StatusTTLMultiplier times the
+// effective publish cadence (interval). Validate keeps the multiplier in minStatusTTLMult..maxStatusTTLMult,
+// so the TTL is always a few publish cycles long — never a single interval that would expire before the next
+// republish (REQ-5). The status document stays a cache, never the source of truth (INV-4, [[caching-strategy]]).
+func (w WorkerTuning) StatusTTL(interval time.Duration) time.Duration {
+	return time.Duration(w.StatusTTLMultiplier) * interval
 }
 
 // Bounds of the new worker knobs.
@@ -107,6 +121,8 @@ const (
 	maxSweepBatch      = 5000
 	minSuspectTicks    = 2
 	minRateLimitWindow = time.Millisecond
+	minStatusTTLMult   = 3
+	maxStatusTTLMult   = 5
 )
 
 // Validate checks WorkerTuning against the booking client timeout (the lease must outlive two Booking calls).
@@ -123,6 +139,9 @@ func (w WorkerTuning) Validate(bookingTimeout time.Duration) error {
 	}
 	if w.NoSupplySuspectTicks < minSuspectTicks {
 		errs = append(errs, fmt.Errorf("QUEUE_NO_SUPPLY_SUSPECT_TICKS %d harus >= %d", w.NoSupplySuspectTicks, minSuspectTicks))
+	}
+	if w.StatusTTLMultiplier < minStatusTTLMult || w.StatusTTLMultiplier > maxStatusTTLMult {
+		errs = append(errs, fmt.Errorf("QUEUE_STATUS_TTL_MULTIPLIER %d di luar rentang %d..%d", w.StatusTTLMultiplier, minStatusTTLMult, maxStatusTTLMult))
 	}
 	return errors.Join(errs...)
 }

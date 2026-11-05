@@ -51,6 +51,10 @@ func NewStreamSession(
 // The session is verified once up front (owner + not expired); the connection cap is enforced
 // per instance, and the counter is always decremented on exit.
 func (uc *StreamSession) Stream(ctx context.Context, sessionID, visitorID string, w io.Writer, flush func()) error {
+	// (0) Validate the path id up front: a malformed sessionId is a 400, not a 404 (REQ-4).
+	if !isUUID(sessionID) {
+		return inbound.Validation("sessionId", "sessionId harus UUID")
+	}
 	// (1) Verify session: it must exist, belong to the caller, and still be live.
 	adm, err := uc.admissions.GetByID(ctx, sessionID)
 	if err != nil {

@@ -97,6 +97,8 @@ func Load() (Config, error) {
 		StatusInterval:   r.Duration("QUEUE_STATUS_INTERVAL_MS", time.Second),
 		PromoteBatchMax:  r.Int("QUEUE_PROMOTE_BATCH_MAX", 200),
 
+		StatusTTLMultiplier: r.Int("QUEUE_STATUS_TTL_MULTIPLIER", 4),
+
 		PromoterLeaseTTL:     r.Duration("QUEUE_PROMOTER_LEASE_TTL_MS", 10*time.Second),
 		SweepBatchMax:        r.Int("QUEUE_SWEEP_BATCH_MAX", 500),
 		NoSupplySuspectTicks: r.Int("QUEUE_NO_SUPPLY_SUSPECT_TICKS", 50),

@@ -51,6 +51,8 @@ type HoldResult struct {
 	// Refused is set when the hold was refused for a reason whose attempt counter must survive (the
 	// transaction committed): currently only "BUYER_NIK_LIMIT_REACHED".
 	Refused string
+	// ItemIDs holds the DB-generated booking_items.id per line, in spec.Lines order; len == len(spec.Lines).
+	ItemIDs []string
 }
 
 // RefusedBuyerNikLimit is HoldResult.Refused when the buyer NIK is at its ticket cap.

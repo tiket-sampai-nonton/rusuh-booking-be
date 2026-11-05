@@ -23,6 +23,9 @@ func NewGetBooking(repo outbound.IBookingRepo, clk clock.IClock) *GetBooking {
 
 // GetBooking returns the booking DTO for the given ID. A visitor may only read its own booking.
 func (uc *GetBooking) GetBooking(ctx context.Context, bookingID, visitorID string) (dto.Booking, error) {
+	if !isUUID(bookingID) {
+		return dto.Booking{}, inbound.Validation("bookingId", "bookingId harus UUID")
+	}
 	b, err := uc.repo.GetByID(ctx, bookingID)
 	if err != nil {
 		return dto.Booking{}, err

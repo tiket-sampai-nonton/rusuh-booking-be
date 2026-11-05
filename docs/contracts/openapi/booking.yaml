@@ -1415,7 +1415,7 @@ components:
                       plaintext)
                   fullName:
                     type: string
-                    minLength: 1
+                    minLength: 2
                     maxLength: 100
                 required:
                 - nik
@@ -1453,7 +1453,7 @@ components:
                         plaintext)
                     fullName:
                       type: string
-                      minLength: 1
+                      minLength: 2
                       maxLength: 100
                   required:
                   - nik
