@@ -1,2 +1,0 @@
-0 issues.
-lint queue exit=0

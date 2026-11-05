@@ -1,8 +1,0 @@
-# github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/config [github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/config.test]
-internal/config/load_test.go:87:51: cfg.WorkerTuning.PromoterLeaseTTL undefined (type WorkerTuning has no field or method PromoterLeaseTTL)
-internal/config/load_test.go:88:40: cfg.WorkerTuning.SweepBatchMax undefined (type WorkerTuning has no field or method SweepBatchMax)
-internal/config/load_test.go:89:38: cfg.WorkerTuning.UnsealFailMax undefined (type WorkerTuning has no field or method UnsealFailMax)
-internal/config/load_test.go:90:38: cfg.WorkerTuning.UnsealProbe undefined (type WorkerTuning has no field or method UnsealProbe)
-internal/config/load_test.go:91:39: cfg.WorkerTuning.NoSupplySuspectTicks undefined (type WorkerTuning has no field or method NoSupplySuspectTicks)
-FAIL	github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/config [build failed]
-FAIL

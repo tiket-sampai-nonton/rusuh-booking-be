@@ -40,7 +40,7 @@ services:
       POSTGRES_USER: rbt
       POSTGRES_PASSWORD: rbt-local-only
       POSTGRES_DB: rbt
-    ports: ["5432:5432"]
+    ports: ["5433:5432"]  # host 5433 to avoid clash with telkomsel_db_postgresql on 5432
     volumes:
       - ./deployments/compose/postgres-init.sql:/docker-entrypoint-initdb.d/00-init.sql:ro
       - ./deployments/compose/postgres-local-passwords.sql:/docker-entrypoint-initdb.d/01-local-passwords.sql:ro
@@ -53,7 +53,7 @@ services:
 
   valkey:
     image: valkey/valkey:8.1-alpine
-    ports: ["6379:6379"]
+    ports: ["6380:6379"]  # host 6380 to avoid clash with telkomsel_redis on 6379
     healthcheck:
       test: ["CMD", "valkey-cli", "ping"]
       interval: 5s

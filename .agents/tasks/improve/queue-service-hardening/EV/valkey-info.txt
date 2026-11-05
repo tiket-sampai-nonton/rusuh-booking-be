@@ -1,2 +1,0 @@
-valkey_version:8.1.10
-server_mode:standalone

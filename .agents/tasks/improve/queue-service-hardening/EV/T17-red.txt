@@ -1,4 +1,0 @@
-# github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/delivery [github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/delivery.test]
-internal/delivery/queue_module_test.go:42:8: undefined: joinSettings
-FAIL	github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/delivery [build failed]
-FAIL
