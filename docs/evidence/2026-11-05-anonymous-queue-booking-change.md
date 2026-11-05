@@ -143,3 +143,31 @@ marginal sweep < 1,2 ms, B=16) dan mencatat tick_ratio hanya untuk transparansi;
   `TestAbuseSim_*` (FIFO a/a2/c/d) → hijau (210 s). `TestLivenessSweeper_StaleEntriesAreNotAdmitted` → hijau.
 - Catatan flake di luar cakupan: `pkg/rabbitmq` `TestConsume_TransientFailureIsRetriedThenAcked` kadang flake;
   paket `pkg/rabbitmq` TIDAK disentuh tugas ini — tidak diperbaiki, dicatat saja.
+
+## 4bis. Run gate penuh 2026-11-06 (kriteria opsi A diratifikasi pemilik) — exit code asli
+
+Semua pada infra khusus proyek (override env eksplisit, BUKAN default Makefile :6379/:5432/:5672):
+`TEST_VALKEY_SERVER=[{"host":"localhost","port":16379}]` (aqb-valkey),
+`TEST_POSTGRES_* → :15432` (aqb-pg, rbt/rbt-local-only/rbt),
+`TEST_RABBITMQ_URL=amqp://guest:guest@localhost:15673/` (aqb-rabbit), `QUEUE_LIVENESS_SHARDS=16`.
+
+- **Gerbang CHANGE 1** (removal): `grep -ri DRAWING services/queue` dan `grep -ri shuffle services/queue` → kosong
+  (exit 1). gofmt pada test yang diubah → bersih.
+- **build** (6 modul) exit 0; **lint** (6 modul) 0 isu; **isolation** (5 service) exit 0; **contracts** exit 0.
+- **cover** (cara CI, `GO_TEST_TAGS=integration`):
+  - pkg/* semua hijau KECUALI flake di luar cakupan `pkg/rabbitmq::TestConsume_TransientFailureIsRetriedThenAcked`
+    (paket `pkg/rabbitmq` **nol diff vs base feature/rework**; lulus saat dijalankan ulang sendiri — flake pra-ada,
+    dicatat bukan diperbaiki, sesuai instruksi tugas). `make ci` berhenti di sini karena `make` abort pada kegagalan
+    stage pertama; stage service diverifikasi terpisah di bawah.
+  - `services/queue`: **coverage logika 85,6% ≥ 80%** (exit 0) pada aqb-valkey.
+  - `services/booking`: **coverage logika 83,8% ≥ 80%** (exit 0) pada aqb-pg + aqb-valkey + aqb-rabbit.
+- **Load-test gate `TestHeartbeatLoad` (RUN_HEARTBEAT_LOAD=1)** pada aqb-valkey :16379, 100k entri, 3.333 hb/dtk, 30 dtk:
+  - **B=16 (gerbang opsi A)**: achieved 3.333/dtk, 0 galat, hb p99 3,63 ms ≤ 200 ms, tick loaded **1,27 ms < 2,5 ms**
+    (tak regresi vs ~3,3 ms pra-perubahan), **marginal sweep 0,35 ms < 1,2 ms** → **LULUS** (assertion mesin). tick_ratio
+    1,29 / noop_ratio 1,63 dicatat hanya untuk transparansi (bukan gerbang).
+  - **B=1 (referensi single-key, bukan gerbang)**: tick loaded 1,13 ms, tick_ratio 1,40, noop_ratio 1,69, marginal
+    0,25 ms — mengonfirmasi floor single-thread (bahkan GET sepele +69%).
+
+**Kesimpulan gate**: seluruh stage `make ci` yang dalam-cakupan hijau pada infra khusus proyek; satu-satunya kegagalan
+adalah flake `pkg/rabbitmq` yang di luar cakupan dan paketnya tak disentuh. Gerbang CHANGE 2 (kriteria opsi A yang
+diratifikasi pemilik 2026-11-06) LULUS dan di-assert mesin. Semua perubahan tetap UNCOMMITTED (HEAD di base 53e74da).
