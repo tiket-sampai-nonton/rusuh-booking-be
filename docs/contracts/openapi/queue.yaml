@@ -252,6 +252,13 @@ paths:
         schema:
           type: string
           format: uuid
+      - name: eventId
+        in: query
+        required: true
+        schema:
+          type: string
+          format: uuid
+        description: Event dari entri antrean; entri dicari per event.
       responses:
         '204':
           description: Keluar; slot tidak dipakai lagi

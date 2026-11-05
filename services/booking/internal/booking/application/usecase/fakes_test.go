@@ -92,6 +92,7 @@ func boolPtr(b bool) *bool { return &b }
 type fakeAdmissionRepo struct {
 	admission     entity.Admission
 	getErr        error
+	getCalls      int // number of GetByID calls (REQ-4: assert malformed ids never reach the repo)
 	activated     entity.Admission
 	activErr      error
 	reserve       []outbound.ReserveOutcome
@@ -112,6 +113,7 @@ func (f *fakeAdmissionRepo) FindActiveByEvent(context.Context, string, string) (
 	return f.admission, f.getErr
 }
 func (f *fakeAdmissionRepo) GetByID(context.Context, string) (entity.Admission, error) {
+	f.getCalls++
 	return f.admission, f.getErr
 }
 func (f *fakeAdmissionRepo) Activate(context.Context, string, time.Time) (entity.Admission, error) {

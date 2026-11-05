@@ -42,6 +42,7 @@ type HoldResult struct {
 	Status           string
 	AmountMinor      int64
 	PaymentExpiresAt time.Time
+	ItemIDs          []string // DB-generated booking_items.id per line, in spec.Lines order; len == len(spec.Lines)
 }
 
 // ReplaceSpec is everything IUnitOfWork.ReplaceItems needs for an atomic edit (no TTL reset).

@@ -120,15 +120,18 @@ func (u *UnitOfWork) hold(ctx context.Context, tx pgx.Tx, spec outbound.HoldSpec
 		spec.BuyerEmailEnc, spec.AmountMinor, n, spec.PaymentExpiresAt, spec.AccountID); err != nil {
 		return outbound.HoldResult{}, mapHoldErr(err)
 	}
+	itemIDs := make([]string, 0, len(spec.Lines))
 	for _, l := range spec.Lines {
-		if _, err := tx.Exec(ctx, `
+		var itemID string
+		if err := tx.QueryRow(ctx, `
 			INSERT INTO booking.booking_items (booking_id, event_id, category_id, unit_price_minor,
 				attendee_nik_hash, attendee_nik_enc, attendee_nik_masked, attendee_name, item_status)
-			VALUES ($1::uuid,$2::uuid,$3::uuid,$4,$5,$6,$7,$8,'HELD')`,
+			VALUES ($1::uuid,$2::uuid,$3::uuid,$4,$5,$6,$7,$8,'HELD') RETURNING id`,
 			spec.BookingID, spec.EventID, l.CategoryID, l.UnitPriceMinor,
-			l.AttendeeNIKHash, l.AttendeeNIKEnc, l.AttendeeNIKMasked, l.AttendeeName); err != nil {
+			l.AttendeeNIKHash, l.AttendeeNIKEnc, l.AttendeeNIKMasked, l.AttendeeName).Scan(&itemID); err != nil {
 			return outbound.HoldResult{}, mapHoldErr(err)
 		}
+		itemIDs = append(itemIDs, itemID) // loop iteration order == spec.Lines order
 	}
 
 	// (8) bump counters — anti-oversell CHECKs validated here.
@@ -190,6 +193,7 @@ func (u *UnitOfWork) hold(ctx context.Context, tx pgx.Tx, spec outbound.HoldSpec
 	return outbound.HoldResult{
 		BookingID: spec.BookingID, PublicRef: spec.PublicRef, Version: version,
 		Status: string(vo.BookingPendingPayment), AmountMinor: spec.AmountMinor, PaymentExpiresAt: spec.PaymentExpiresAt,
+		ItemIDs: itemIDs,
 	}, nil
 }
 

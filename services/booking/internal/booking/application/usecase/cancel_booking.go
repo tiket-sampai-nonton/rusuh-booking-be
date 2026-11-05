@@ -35,6 +35,9 @@ func NewCancelBooking(
 
 // Cancel cancels the booking, or settles it if a gateway payment is found.
 func (uc *CancelBooking) Cancel(ctx context.Context, bookingID, visitorID string) (dto.Booking, error) {
+	if !isUUID(bookingID) {
+		return dto.Booking{}, inbound.Validation("bookingId", "bookingId harus UUID")
+	}
 	b, err := uc.bookings.GetByID(ctx, bookingID)
 	if err != nil {
 		return dto.Booking{}, err

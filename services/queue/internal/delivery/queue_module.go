@@ -125,7 +125,7 @@ func newQueueModule(cfg config.Config, clients *Clients, logger *slog.Logger) (*
 	promoter := worker.NewPromoter(store, settingsRepo, booking, publisher, auditRepo, pii, clk, logger, promoterTuning(cfg)).
 		WithMetrics(promoterMetrics)
 	sweeper := worker.NewSweeper(store, settingsRepo, clk, sweepBatch(cfg))
-	statusPub := worker.NewStatusPublisher(store, settingsRepo, booking, clk, cfg.WorkerTuning.StatusInterval)
+	statusPub := worker.NewStatusPublisher(store, settingsRepo, booking, clk, cfg.WorkerTuning.StatusTTL(cfg.Worker.Interval))
 	jobs := []Job{
 		{Name: "promoter", Run: promoter.Run},
 		{Name: "sweeper", Run: sweeper.Run},

@@ -66,7 +66,7 @@ func TestSSEHandler_NoFlusher_Returns503(t *testing.T) {
 	mux := newSSEServer(stream)
 
 	w := &nonFlushWriter{}
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/booking-sessions/s-1/stream", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/booking-sessions/11111111-1111-1111-1111-111111111111/stream", nil)
 	mux.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusServiceUnavailable, w.code)
@@ -79,7 +79,7 @@ func TestSSEHandler_Flusher_SetsSSEHeaders(t *testing.T) {
 
 	// httptest.ResponseRecorder implements http.Flusher and records Flushed.
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/booking-sessions/s-1/stream", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/booking-sessions/11111111-1111-1111-1111-111111111111/stream", nil)
 	mux.ServeHTTP(rec, req)
 
 	assert.Equal(t, http.StatusOK, rec.Code)
@@ -89,4 +89,20 @@ func TestSSEHandler_Flusher_SetsSSEHeaders(t *testing.T) {
 	assert.True(t, stream.called)
 	assert.True(t, rec.Flushed, "handler must flush through the ResponseWriter")
 	assert.Contains(t, rec.Body.String(), "event: timer")
+}
+
+// REQ-4: a malformed sessionId must be rejected with 400 VALIDATION_ERROR BEFORE the SSE 200 headers are
+// committed. Because SSE flushes the 200 status up front, the format check has to run in the handler (the
+// usecase guard alone can never change a status that is already on the wire).
+func TestSSEHandler_MalformedSessionID_Returns400(t *testing.T) {
+	stream := &fakeStream{}
+	mux := newSSEServer(stream)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/booking-sessions/not-a-uuid/stream", nil)
+	mux.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Contains(t, rec.Body.String(), "VALIDATION_ERROR")
+	assert.False(t, stream.called, "usecase must not run for a malformed sessionId")
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"regexp"
 	"testing"
 	"time"
 
@@ -60,7 +61,7 @@ func holdCmd(items []dto.HoldItem) inbound.HoldCommand {
 }
 
 func TestHold_Success(t *testing.T) {
-	uow := &fakeUoW{holdRes: outbound.HoldResult{BookingID: "bk-1", PublicRef: "RB-1", Version: 1, Status: "PENDING_PAYMENT", AmountMinor: 3000, PaymentExpiresAt: time.Now().Add(time.Hour)}}
+	uow := &fakeUoW{holdRes: outbound.HoldResult{BookingID: "bk-1", PublicRef: "RB-1", Version: 1, Status: "PENDING_PAYMENT", AmountMinor: 3000, PaymentExpiresAt: time.Now().Add(time.Hour), ItemIDs: []string{"77777777-7777-7777-7777-777777777777", "88888888-8888-8888-8888-888888888888"}}}
 	idem := &fakeIdem{}
 	adm := activeAdmission(true)
 	adm.BuyerNIKMasked = "3174********0001"
@@ -79,6 +80,47 @@ func TestHold_Success(t *testing.T) {
 	assert.Equal(t, "RB-1", resp.OrderID)
 	assert.Equal(t, 2, resp.TicketQuantity)
 	assert.Equal(t, "3174********0001", resp.BuyerNIKMasked)
+}
+
+// REQ-3: the hold response carries a real, DB-generated booking_items.id per item, in request-line order
+// (per-index correspondence), and the item count equals the number of lines.
+func TestHold_ResponseCarriesPerLineItemIDs(t *testing.T) {
+	itemIDs := []string{
+		"77777777-7777-7777-7777-777777777777",
+		"88888888-8888-8888-8888-888888888888",
+	}
+	uow := &fakeUoW{holdRes: outbound.HoldResult{
+		BookingID: "bk-1", PublicRef: "RB-1", Version: 1, Status: "PENDING_PAYMENT",
+		AmountMinor: 3000, PaymentExpiresAt: time.Now().Add(time.Hour), ItemIDs: itemIDs,
+	}}
+	uc := newHoldUC(&fakeAdmissionRepo{admission: activeAdmission(true)}, &fakeEventRepo{detail: detailWith(true, 3)}, &fakeIdem{}, uow)
+
+	resp, err := uc.Hold(context.Background(), holdCmd([]dto.HoldItem{
+		{CategoryID: catA, Attendee: dto.AttendeeInput{NIK: nik1, FullName: "Alice"}},
+		{CategoryID: catB, Attendee: dto.AttendeeInput{NIK: nik2, FullName: "Bob"}},
+	}))
+	require.NoError(t, err)
+	require.Len(t, resp.Items, 2, "item count equals line count")
+	// Per-index correspondence: Items[i].ItemID is the id generated for request line i, and each is a non-empty UUID.
+	uuidPat := regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+	for i, it := range resp.Items {
+		assert.Equal(t, itemIDs[i], it.ItemID, "Items[%d].ItemID must be the id for line %d", i, i)
+		assert.True(t, uuidPat.MatchString(it.ItemID), "Items[%d].ItemID %q must be a UUID", i, it.ItemID)
+	}
+	// The category/attendee of each item still comes from the matching request line (order preserved).
+	assert.Equal(t, catA, resp.Items[0].CategoryID)
+	assert.Equal(t, catB, resp.Items[1].CategoryID)
+}
+
+// REQ-3 / INV-1: a would-be-oversell hold is refused with the same typed error and produces no items.
+func TestHold_RefusedOnOversellReturnsNoItems(t *testing.T) {
+	uow := &fakeUoW{holdErr: inbound.ErrCategoryUnavailable}
+	uc := newHoldUC(&fakeAdmissionRepo{admission: activeAdmission(true)}, &fakeEventRepo{detail: detailWith(true, 3)}, &fakeIdem{}, uow)
+	resp, err := uc.Hold(context.Background(), holdCmd([]dto.HoldItem{
+		{CategoryID: catA, Attendee: dto.AttendeeInput{NIK: nik1, FullName: "Alice"}},
+	}))
+	assert.ErrorIs(t, err, inbound.ErrCategoryUnavailable)
+	assert.Empty(t, resp.Items, "a refused hold must carry no items")
 }
 
 func TestHold_QuantityExceeds(t *testing.T) {

@@ -27,6 +27,18 @@ func codeOf(t *testing.T, err error) apperror.Code {
 	return ae.Code
 }
 
+// validationField returns the single field name carried in a VALIDATION_ERROR's details.
+func validationField(t *testing.T, err error) string {
+	t.Helper()
+	var ae *apperror.Error
+	require.True(t, errors.As(err, &ae), "bukan apperror: %v", err)
+	require.Len(t, ae.Details, 1, "harus tepat satu field pada validation error")
+	for f := range ae.Details {
+		return f
+	}
+	return ""
+}
+
 func TestListEvents_GenreNormalization(t *testing.T) {
 	tests := []struct {
 		name string

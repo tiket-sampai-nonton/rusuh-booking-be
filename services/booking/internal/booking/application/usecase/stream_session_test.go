@@ -7,7 +7,9 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/apperror"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/application/usecase"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/port/inbound"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/port/outbound"
@@ -78,4 +80,35 @@ func TestStreamSession_VisitorMismatch(t *testing.T) {
 	)
 	err := uc.Stream(context.Background(), sessionID, "someone-else", &bytes.Buffer{}, func() {})
 	assert.ErrorIs(t, err, inbound.ErrVisitorMismatch)
+}
+
+// REQ-4: a malformed sessionId is rejected with VALIDATION_ERROR (400) BEFORE the admission repo is touched;
+// a well-formed-but-absent UUID still reaches the repo and surfaces 404.
+func TestStreamSession_PathUUIDValidation(t *testing.T) {
+	tests := []struct {
+		name      string
+		sessionID string
+		wantField string
+		repoErr   error
+		wantErrIs error
+	}{
+		{name: "non-uuid rejected before repo", sessionID: "not-a-uuid", wantField: "sessionId"},
+		{name: "valid-but-absent uuid reaches repo and 404s", sessionID: sessionID, repoErr: inbound.ErrNotFound, wantErrIs: inbound.ErrNotFound},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := &fakeAdmissionRepo{getErr: tt.repoErr}
+			uc := usecase.NewStreamSession(repo, &fakeAvailCache{connN: 1}, fixedClock{t: time.Now()}, 80*time.Millisecond, 100)
+			err := uc.Stream(context.Background(), tt.sessionID, visitor, &bytes.Buffer{}, func() {})
+			require.Error(t, err)
+			if tt.wantField != "" {
+				assert.Equal(t, apperror.CodeValidationFailed, codeOf(t, err))
+				assert.Equal(t, tt.wantField, validationField(t, err))
+				assert.Zero(t, repo.getCalls, "repo must not be called for a malformed id")
+				return
+			}
+			assert.ErrorIs(t, err, tt.wantErrIs)
+			assert.Positive(t, repo.getCalls, "valid uuid must reach the repo")
+		})
+	}
 }

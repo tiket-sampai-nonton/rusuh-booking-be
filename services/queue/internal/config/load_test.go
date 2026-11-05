@@ -89,6 +89,64 @@ func TestLoad_QueueHardeningDefaults(t *testing.T) {
 	assert.Equal(t, 3, cfg.WorkerTuning.UnsealFailMax)
 	assert.Equal(t, 3, cfg.WorkerTuning.UnsealProbe)
 	assert.Equal(t, 50, cfg.WorkerTuning.NoSupplySuspectTicks)
+	// REQ-5: status-doc TTL multiplier defaults to 4 (within the 3..5 bound).
+	assert.Equal(t, 4, cfg.WorkerTuning.StatusTTLMultiplier)
+}
+
+// REQ-5 AC7: StatusTTL returns the configured multiple of the effective publish cadence (Worker.Interval),
+// computed by shipped production code — never a single interval.
+func TestWorkerTuning_StatusTTL(t *testing.T) {
+	tests := []struct {
+		name     string
+		mult     int
+		interval time.Duration
+		want     time.Duration
+	}{
+		{name: "min multiplier 3", mult: 3, interval: 5 * time.Second, want: 15 * time.Second},
+		{name: "default multiplier 4", mult: 4, interval: 5 * time.Second, want: 20 * time.Second},
+		{name: "max multiplier 5", mult: 5, interval: 5 * time.Second, want: 25 * time.Second},
+		{name: "different cadence", mult: 4, interval: 2 * time.Second, want: 8 * time.Second},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := WorkerTuning{StatusTTLMultiplier: tt.mult}
+			got := w.StatusTTL(tt.interval)
+			assert.Equal(t, tt.want, got)
+			assert.NotEqual(t, tt.interval, got, "TTL must never equal a single publish interval")
+			assert.Greater(t, got, tt.interval, "TTL must outlive the publish cadence")
+		})
+	}
+}
+
+// REQ-5 AC1/AC5: the multiplier is validated at start-up; a value outside 3..5 is rejected and names its env var.
+func TestLoad_StatusTTLMultiplierValidation(t *testing.T) {
+	tests := []struct {
+		name string
+		env  map[string]string
+		want string // empty = valid
+	}{
+		{"multiplier 2 rejected (TTL would be too short vs cadence)", map[string]string{"QUEUE_STATUS_TTL_MULTIPLIER": "2"}, "QUEUE_STATUS_TTL_MULTIPLIER"},
+		{"multiplier 3 ok (lower bound)", map[string]string{"QUEUE_STATUS_TTL_MULTIPLIER": "3"}, ""},
+		{"multiplier 4 ok (default)", map[string]string{"QUEUE_STATUS_TTL_MULTIPLIER": "4"}, ""},
+		{"multiplier 5 ok (upper bound)", map[string]string{"QUEUE_STATUS_TTL_MULTIPLIER": "5"}, ""},
+		{"multiplier 6 rejected (TTL too long, stale risk)", map[string]string{"QUEUE_STATUS_TTL_MULTIPLIER": "6"}, "QUEUE_STATUS_TTL_MULTIPLIER"},
+		{"multiplier 0 rejected", map[string]string{"QUEUE_STATUS_TTL_MULTIPLIER": "0"}, "QUEUE_STATUS_TTL_MULTIPLIER"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setBase(t)
+			for k, v := range tt.env {
+				t.Setenv(k, v)
+			}
+			_, err := Load()
+			if tt.want == "" {
+				require.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
+			assert.ErrorContains(t, err, tt.want)
+		})
+	}
 }
 
 func TestLoad_QueueHardeningValidation(t *testing.T) {
