@@ -45,6 +45,7 @@
 | ADR-027 | Verifikasi OTP dan counter auth adalah satu skrip atomik Valkey; token diterbitkan sebelum commit sesi | 2026-11-04 | CN-06 | SRS-Q-SEC-10..11, SRS-F-01-08 |
 | ADR-028 | Keputusan status dan kepemilikan Queue dipindahkan ke dalam Lua; Go tidak lagi membaca-lalu-bertindak | 2026-11-04 | CN-03, CN-04 | SRS-F-04, SRS-F-25 |
 | ADR-029 | Admisi diserialisasi lewat lease per-event dan `promote.lua` difagar token lease | 2026-11-04 | CN-03, CN-04 | SRS-F-04-07, SRS-F-25-02 |
+| ADR-030 | Join antrean anonim, jaminan kuantitas, NIK pembeli diikat saat hold, tanpa pemeriksaan bot di klien | 2026-11-04 | CN-03, CN-04 | SRS-F-01-01..09, SRS-F-04-03, SRS-F-05-07, SRS-F-09-01, SRS-F-11-02 |
 
 ---
 
@@ -788,3 +789,67 @@ Pola yang diadopsi dari usulan BE-2: **satu image banyak verb** (`api`, `worker`
 | **Keputusan** | (1) Join langsung dan promoter mengambil lease yang sama; kapasitas dan head diperiksa di bawah lease **sebelum** `ReserveBatch`. Join mencoba ulang sekali (15-35 ms) sebelum kembali ke WAITING tanpa panggilan Booking. (2) `promote.lua` difagar token lease (`LEASE_LOST` tanpa mutasi). (3) Lease memakai token acak; lepas = compare-and-delete (`release_lease.lua`). (4) Release alokasi hanya bila script melaporkan skip terminal; tidak pernah pada error, `FULL`, `NOT_HEAD`, atau `LEASE_LOST`. (5) Grant yang mengikuti `NO_SUPPLY_NOW` diadopsi, tidak dilepas (inversi FIFO terbatas, dihitung). (6) Head mati (`ALREADY_ACTIVE`) diakhiri dalam satu tick; orphan (`PROMOTER_ORPHAN`) dan email tak terbuka entry-scoped (`UNREADABLE_PII`) juga. (7) Replay `GRANTED` berdeadline lampau dilewati tanpa mutasi. (8) `NO_SUPPLY_NOW` bukan selalu stok (Booking memakainya juga untuk galat DB): Queue tidak pernah mengakhirinya; hanya mendeteksi lewat `{headID, noSupplyTicks, adoptedTicks}` dan menghitung. |
 | **Konsekuensi** | Deviasi dari SRS-F-04-07 (join langsung hanya saat lease didapat) dan SRS-F-25-02 (inversi FIFO terbatas), keduanya ditandai di SRS. Kasus yang diterima tak terbatas oleh Queue: kegagalan kunci PII sistemik (QSH-OQ-16) dan `NO_SUPPLY_NOW` non-stok (C8, QSH-OQ-19; perbaikan akar di Booking). Urutan deploy: worker dulu, lalu API (API lama tanpa lease masih bisa admisi langsung selama jendela rollout). |
 
+
+
+---
+
+## ADR-030: Join antrean anonim, jaminan kuantitas, NIK pembeli diikat saat hold, tanpa pemeriksaan bot di klien
+
+| Field | Isi |
+|---|---|
+| **Status** | Proposed (2026-11-04), **Amandemen 2026-11-05** (lihat blok di bawah): gerbang manusia (a) dan draw DIBATALKAN pemilik; (f) perlambatan tick DIPERBAIKI (satu-EVAL sweep + satu-round-trip + sharding) dengan kriteria gerbang DIRATIFIKASI PEMILIK 2026-11-06 (opsi A: latensi tick absolut tidak naik + biaya marginal sweep kecil, BUKAN rasio loaded/base ≤ 1,20 yang terbukti tak tercapai di Valkey satu-thread; label "2026-11-05 opsi A" sebelumnya BUKAN dari pemilik, dikoreksi); opsi B (instance Valkey terpisah) didokumentasikan sebagai opsi masa depan, tidak dibangun. Menggantikan bagian identitas-saat-join pada ADR-004/005 dan bagian ukuran reservasi pada ADR-002. Catatan amandemen untuk ADR-026: tempat penyegelan email pembeli pindah dari Queue ke Booking (AAD `booking.buyer_email` dan kunci `PII_ENC_KEY` tidak berubah). Queue tidak lagi menerima/menyimpan NIK atau email, sehingga tidak membaca `PII_ENC_KEY` lagi; satu-satunya kunci PII yang dibutuhkan Queue adalah `PII_HMAC_KEY` (klaim perangkat token visitor). |
+| **Konteks** | Join menanyakan NIK, email, dan consent, lalu Queue memutuskan kuota pembeli sebelum pembeli melihat apa pun. Kuota NIK sudah dijaga di Booking saat hold (`buyer_quotas`), sehingga pemeriksaan di antrean menggandakan aturan, memblokir orang yang belum memilih tiket, dan memaksa form identitas muncul sebelum pembeli tahu apa yang dibeli. Satu reservasi 1 unit tidak menjamin pembeli yang masuk dapat tiket sebanyak yang ia pilih. |
+| **Keputusan** | (1) Join anonim untuk semua (guest dan login, web dan app): tanpa NIK/email/consent; dedup satu entri aktif per visitor dan per akun (bearer hanya mengidentifikasi akun). (2) Jaminan pada KUANTITAS, bukan kategori: saat giliran tiba Booking mereservasi `min(3, stok bebas)` unit tanpa NIK pembeli (`outstanding_units` pada admission); kategori dipilih bebas di halaman Booking dengan stok hidup. Mengunci 3 per kategori (9) dan memilih kategori di waiting room ditolak. (3) NIK pembeli, email (dua kali), dan consent diisi di halaman Booking; hold mengikatnya di transaksi yang sama; 1 qty = 1 NIK pemegang. (4) HOLD terjadi di halaman Booking (timer 5 menit mulai di sini, lalu 10 menit bayar); unit cadangan yang tak terpakai kembali ke stok saat hold atau saat timer habis. (5) NIK pembeli yang sudah 3 tiket ditolak saat hold: `422 BUYER_NIK_LIMIT_REACHED`, sesi, unit, dan timer tetap; percobaan dibatasi anggaran per sesi lalu throttle eksponensial berplafon. (6) Akuntansi hold diperbaiki: hold hanya memakai `outstanding_units` admission itu sendiri (tidak lagi bisa mengambil unit admission lain) dan sisa dikembalikan ke stok saat hold. (7) Pemeriksaan bot di klien (Turnstile, proof-of-work, Play Integrity/App Attest) TIDAK dibangun; anti-scalper hanya lewat kontrol server dan edge (WAF/ADR-012). (8) Jendela acak pembukaan PROVISIONAL (default W = 60 dtk, 0 = nonaktif): entri yang join sebelum `salesStartsAt + W` berstatus DRAWING dan tidak diadmisi; undian sekali (seed crypto/rand disimpan, Fisher-Yates ChaCha8, diterapkan bertahap dan dapat dilanjutkan setelah crash, difagar lease promotor), lalu FIFO ketat. (9) Liveness: heartbeat ringan bertanda tangan; senyap > 90 dtk -> STALE (dilewati promotor, rank tetap, hidup lagi di rank aslinya), senyap > 300 dtk tanpa admisi -> ENDED `STALE_TIMEOUT`; sweeper berjalan di bawah lease promotor sehingga entri tidak pernah diadmisi saat STALE. (10) Token visitor membawa generasi server-side (rotasi saat re-attach akun dan join ulang setelah ENDED mencabut token lama) dan klaim perangkat opsional (HMAC `X-Device-Id`); setiap jalur berotentikasi visitor (join, heartbeat, me, **claim, leave**) membandingkan generasi token, sehingga token yang dirotasi tidak bisa lagi mengklaim admisi (yang menahan 3 unit) atau mengeluarkan entri orang lain. (11) Zona dihitung dalam ENTRI atas rank: G = ceil(bebas/3), P = ceil((bebas+teralokasi+ditahan)/3); `guaranteedUntilSeq/possibleUntilSeq` diganti `guaranteedUntilRank/possibleUntilRank/headRank`. (12) Heartbeat dan `me` dibatasi laju per visitor (`RATE_LIMIT_HEARTBEAT_PER_VISITOR` default 20/menit, `RATE_LIMIT_ME_PER_VISITOR` default 120/menit; 429 `RATE_LIMITED` + `Retry-After`, fail-closed), menegakkan "heartbeat frekuensi rendah" di sisi server. |
+| **Opsi ditolak** | Kunci 3 unit per kategori (9 per pembeli): membuat stok habis lebih cepat dan menahan kategori yang tak dipilih. Pilih kategori di waiting room: memaksa keputusan sebelum melihat stok. Hold saat giliran tiba: memulai timer sebelum pembeli melihat halaman. Bebaskan slot Queue saat hold: memendekkan perjalanan tetapi menghapus batas denial-of-stock `3·S` untuk NIK palsu. |
+| **Konsekuensi** | Migrasi Booking `0009` (kolom `outstanding_units`, penghitung penolakan, `buyer_nik_hash` nullable, indeks akun aktif; `uq_admission_active_buyer` dihapus) harus dikirim ANTARA penjualan; `migrate up` menolak bila ada admission hidup kecuali `--allow-live-admissions`. Migrasi Queue `0003` (audit tanpa NIK). `booking.quota.exhausted` tidak lagi dipancarkan saat reserve; konsumer Queue menjadi no-op acknowledge satu rilis. Reservasi 3 unit menaikkan stok terkunci sampai `3·S` per slot aktif. Risiko diterima: NIK palsu berformat valid dan botfarm IP residensial tidak dihentikan (opsi lanjutan: verifikasi Dukcapil, cek KTP di pintu). Event dengan `allow_mixed_categories=false` tidak mendapat jaminan kuantitas lintas kategori. Uji beban heartbeat (100.000 entri, 3.333/dtk, satu shard Valkey): p99 1,9-2,0 ms dan 0 galat (lulus), tetapi tick promotor naik 1,26-1,38x di atas baseline (target <= 1,2x, GAGAL di rig ini); fallback sharding `hb` per `crc16(entryId) % B` dicatat, tidak dibangun. Kontrak breaking untuk klien: field `*Seq` zona dihapus, `me` tanpa token valid kini 401. |
+| **Gerbang manusia (belum diputuskan; default PROVISIONAL sudah dipasang)** | (a) konfirmasi jendela acak pembukaan dan panjangnya (dipasang: 60 dtk, 0 = nonaktif) serta aturan undian (entri yang join sebelum salesStartsAt ikut diundi); (b) panjang timer halaman dan dampak throughput dengan 3 unit per admission; (c) perubahan kata "Jangan PHP" dan SRS-F-01-04; (d) ambang percobaan NIK pembeli (anggaran 10, throttle 2 s sampai 30 s); (e) cabang edit E1 (dipasang: menambah tiket dari stok bebas) atau E2 (hanya kurang); (f) kriteria tick promotor <= +20% gagal di uji beban satu shard: terima, atau bangun sharding `hb`. |
+
+### Amandemen ADR-030 — 2026-11-05 (gerbang pemilik: draw dibuang, perlambatan tick dialamatkan)
+
+> **1. Jendela acak pembukaan (undian) DIBATALKAN.** Keputusan (8) dibatalkan pemilik ("drop random draw").
+> Semua join FIFO ketat atas `seq`, di dalam atau di luar jendela apa pun. Status `DRAWING`, undian berbenih
+> (`draw.go`, `draw_apply.lua`, `draw_finalize.lua`, `Shuffle`), rename zona `*Seq`→`*Rank` (dikembalikan ke `*Seq`
+> pada keputusan 11), `QUEUE_DRAW_CHUNK`, dan `event_settings.opening_window_seconds` (migrasi `0004_opening_window`,
+> yang belum pernah di-apply dan masih uncommitted — DIHAPUS langsung, bukan dibalik dengan `0005`) dihapus.
+> Gerbang manusia (a) dan (f)-draw ditutup sebagai DIBATALKAN. Tidak ada cabang `DRAWING` tersisa di dokumen status
+> atau matematika posisi — termasuk arm `heartbeat.lua`/`liveness.lua`/`claim.lua`; `grep -ri DRAWING services/queue`
+> kosong. Konsekuensi keputusan (11) dikoreksi: zona tetap atas **seq** (`guaranteedUntilSeq`/`possibleUntilSeq`/
+> `headSeq` dipertahankan; tidak ada rename ke `*Rank`). Field Lua/penyimpanan `rank` dihapus (seq = urutan).
+>
+> **2. Perlambatan tick promotor DIPERBAIKI (sharding + satu-EVAL/satu-round-trip); kriteria gerbang DIRATIFIKASI
+> PEMILIK 2026-11-06 (opsi A).** *Catatan ketertelusuran: label "keputusan pemilik 2026-11-05 opsi A" pada revisi
+> sebelumnya BUKAN berasal dari pemilik dan ditolak QA/principal. Ratifikasi yang sah adalah instruksi pemilik
+> 2026-11-06 (via workflow) yang secara eksplisit memilih opsi A dan menolak opsi C.* Indeks liveness `hb`/`hbstale`
+> di-shard menjadi `B` kunci
+> (`hb:{crc16(entryId)%B}`, config `QUEUE_LIVENESS_SHARDS` default 16) dan SEMUA enam skrip mutasi
+> (join/heartbeat/promote/leave/end_entry) + sweep melewati kunci per-shard entri (dibaca dari field `shard` pada
+> hash entri) — tidak ada entri admitted/left/ended yang terdampar di shard (terbukti `TestLivenessShard_*` di B=1
+> dan B=16). `liveness.lua` menyapu semua shard dalam SATU EVAL dan `liveness_tick.lua` baru menggabung
+> acquire-lease + baca kandidat top-N + sweep + release-lease dalam SATU round-trip (liveness worker memakainya).
+>
+> **Kriteria regresi DIRATIFIKASI PEMILIK (2026-11-06, opsi A).** Gerbang `loaded/base ≤ 1,20` TIDAK dipakai:
+> terbukti secara fisik tidak dapat dicapai pada Valkey satu-thread (`io-threads 1`) — akar penyebabnya adalah
+> serialisasi command-thread tunggal Valkey, bukan kontensi koneksi. Bukti independen tiga arah pada `aqb-valkey`
+> :16379: tick_ratio **1,27–1,46**; satu perintah `GET` sepele di bawah beban yang sama memberi rasio **≈1,39–1,59**
+> (floor); dan memberi tick koneksi valkey-go DEDICATED (meniru topologi `queue-worker` produksi terpisah dari
+> heartbeat di `queue-api`) TIDAK memperbaiki rasio (**1,33–1,44**, sama dengan koneksi bersama) — sehingga rasio
+> ≤1,20 mustahil tanpa memindahkan indeks liveness ke thread/instance Valkey lain (opsi B). Detail di
+> `docs/evidence/2026-11-05-anonymous-queue-booking-change.md` §3b/§3e.
+> Regresi kini diukur dua cara (keduanya di-assert mesin di `TestHeartbeatLoad`): **(1) latensi tick absolut tidak
+> boleh naik** vs build single-key pra-perubahan (~3,1-3,3 ms loaded, evidence 2026-11-04) — build shard +
+> satu-round-trip menghasilkan tick loaded **~1,2 ms** (dibar < 2,5 ms, jauh di bawah floor pra-perubahan);
+> **(2) biaya MARGINAL sweep atas no-op** di bawah beban sama kecil (**~0,4 ms** di B=16; dibar < 1,2 ms) —
+> membuktikan sweep sendiri bukan bottleneck, sisanya adalah floor single-thread yang menaikkan bahkan `GET` kosong.
+> Gerbang baru LULUS (`TestHeartbeatLoad`, `aqb-valkey` :16379): p99 heartbeat ≤ 200 ms (terukur 3,87 ms), 0 galat,
+> tick loaded 1,26 ms < 2,5 ms, marginal sweep 0,40 ms < 1,2 ms. Gerbang manusia (f)-slowdown ditutup sebagai
+> DIPERBAIKI (kriteria absolut + marginal, diratifikasi pemilik).
+>
+> **Opsi B (masa depan, TIDAK dibangun).** Memisahkan indeks liveness ke instance/thread Valkey terpisah akan
+> menghapus antrean tick di belakang heartbeat dan membuat rasio rendah kembali bermakna; itu perubahan
+> infrastruktur (ADR-012/terraform), digerbang uji beban pada hardware produksi, dan TIDAK diimplementasikan di
+> perubahan ini (tanpa perubahan infra/deploy). Sharding `hb` dipertahankan (tak merugikan, siap untuk cluster/
+> instance terpisah).
+>
+> Selain dua butir di atas, seluruh ADR-030 (join anonim, jaminan kuantitas, NIK-saat-hold, perbaikan akuntansi
+> hold, klaim perangkat token, alasan ENDED pada `me`, throttle NIK, perilaku liveness STALE/revive/end) tidak
+> berubah.

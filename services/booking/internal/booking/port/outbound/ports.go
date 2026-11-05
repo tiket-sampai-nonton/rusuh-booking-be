@@ -18,6 +18,8 @@ type IEventRepo interface {
 	ListEvents(ctx context.Context, q dto.EventListQuery) ([]entity.Event, error)
 	GetDetail(ctx context.Context, eventID string) (entity.EventDetail, error)
 	GetByID(ctx context.Context, eventID string) (entity.Event, error)
+	// GetSupply returns the event-level stock ledger (event_supply); inbound.ErrNotFound when missing.
+	GetSupply(ctx context.Context, eventID string) (entity.Supply, error)
 	Facets(ctx context.Context, q dto.EventListQuery) (entity.EventFacets, int, error)
 }
 
@@ -67,9 +69,9 @@ type ReserveEntry struct {
 	QueueEntryID   string
 	Seq            int64
 	VisitorID      string
-	BuyerNIKHash   []byte
+	BuyerNIKHash   []byte // optional: absent in the anonymous flow (ADR-030)
 	BuyerNIKMasked string
-	BuyerEmailEnc  string // sealed by Queue
+	BuyerEmailEnc  string // optional
 	AccountID      string
 	Units          int
 	AdmissionJTI   string
@@ -78,7 +80,7 @@ type ReserveEntry struct {
 // ReserveOutcome is the result of reserving one entry.
 type ReserveOutcome struct {
 	QueueEntryID  string
-	Outcome       string // GRANTED | NO_SUPPLY_NOW | SOLD_OUT | BUYER_QUOTA_EXHAUSTED | ALREADY_ACTIVE
+	Outcome       string // GRANTED | NO_SUPPLY_NOW | SOLD_OUT | ALREADY_ACTIVE
 	AllocationID  string
 	Units         int
 	ClaimDeadline *time.Time

@@ -101,6 +101,12 @@ services:
       TOKEN_PRIVATE_KEY_FILE: /run/keys/queue-token.pem
       TOKEN_PUBLIC_KEY_FILE: /run/keys/user-token.pub.pem
       BOOKING_SERVICE_URL: http://booking-api:8082
+      # ADR-030 liveness (R03.8 defaults; OQ-2 owner may change). end > stale > 2 x interval.
+      QUEUE_HEARTBEAT_INTERVAL_SECONDS: "30"
+      QUEUE_HEARTBEAT_NEAR_INTERVAL_SECONDS: "10"
+      QUEUE_STALE_AFTER_SECONDS: "90"
+      QUEUE_END_AFTER_SECONDS: "300"
+      RATE_LIMIT_JOIN_PER_IP: "200" # soft cap per minute (mobile NAT), never a block
     depends_on: { postgres: { condition: service_healthy } }
     volumes: *keys-volume
     restart: "no"
@@ -124,6 +130,10 @@ services:
       PAYMENT_TOKEN_PUBLIC_KEY_PATH: /run/keys/payment-token.pub.pem
       # Admin endpoints: buyer tokens of these emails only; empty = nobody (fail closed).
       ADMIN_EMAILS: ${ADMIN_EMAILS:-}
+      # ADR-030 buyer-NIK attempt budget at hold, then 2 s doubling to 30 s (PROVISIONAL, human gate OQ-15).
+      BUYER_NIK_ATTEMPT_BUDGET: "10"
+      BUYER_NIK_THROTTLE_BASE_SECONDS: "2"
+      BUYER_NIK_THROTTLE_MAX_SECONDS: "30"
     depends_on: { postgres: { condition: service_healthy } }
     restart: "no"
 

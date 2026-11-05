@@ -30,6 +30,9 @@ func NewLeaveQueue(store outbound.IQueueStore, booking outbound.IBookingClient, 
 // the stranger was only rejected afterwards. Release failure is best-effort: Booking's own session sweeper
 // releases the allocation when the claim window expires (K7).
 func (u *LeaveQueue) Leave(ctx context.Context, in inbound.LeaveInput) error {
+	if err := checkTokenGen(ctx, u.store, in.EventID, in.VisitorID, in.Gen); err != nil {
+		return err
+	}
 	res, err := u.store.Leave(ctx, in.EventID, in.EntryID, in.VisitorID, u.clock.Now().UnixMilli())
 	if err != nil {
 		return err

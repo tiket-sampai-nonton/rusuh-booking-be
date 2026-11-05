@@ -4,7 +4,6 @@ package worker_test
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -21,11 +20,10 @@ import (
 func seedWaiting(t *testing.T, s *queuevalkey.QueueStore, id string, n int) {
 	t.Helper()
 	res, err := s.Join(context.Background(), outbound.JoinParams{
-		EventID: "ev", EntryID: id, VisitorID: "v-" + id, NikHash: fmt.Sprintf("%064x", 7000+n), EmailHashHex: fmt.Sprintf("%064x", 8000+n),
-		EmailEnc: []byte("sealed"), NikMasked: "3201********0001", NowMs: time.Now().UnixMilli(), OneActivePerVisitor: true, OneActivePerEmail: true,
+		EventID: "ev", EntryID: id, NewVisitorID: "v-" + id, NowMs: time.Now().UnixMilli(), OneActivePerVisitor: true,
 	})
 	require.NoError(t, err)
-	require.Equal(t, outbound.JoinOK, res.Outcome)
+	require.Equal(t, outbound.JoinCreated, res.Outcome)
 }
 
 // TC-QUE-19c-INT (-race): joiners and the promoter loop race for a small capacity on the REAL store and real Lua.

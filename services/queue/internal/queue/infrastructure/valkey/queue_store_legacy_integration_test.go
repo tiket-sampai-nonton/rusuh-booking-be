@@ -24,7 +24,6 @@ func legacyWaiting(t *testing.T, s *QueueStore, ev string, n int, seq int64, now
 		"emailHash", fmt.Sprintf("%064x", 6000+n), "accountId", "", "nikMasked", "3174********0001",
 		"status", "WAITING", "joinedAtMs", fmt.Sprint(now))
 	zaddRaw(t, s, s.kWaiting(ev), float64(seq), id)
-	require.NoError(t, s.c.Do(context.Background(), s.c.B().Set().Key(s.kNik(ev, nik)).Value(id).Build()).Error())
 	require.NoError(t, s.c.Do(context.Background(), s.c.B().Set().Key(s.kVisitor(ev, vis)).Value(id).Build()).Error())
 	return
 }
@@ -92,13 +91,12 @@ func TestLegacy(t *testing.T) {
 		ctx := context.Background()
 		ev := evID(t)
 		now := time.Now().UnixMilli()
-		id, vis, nik := legacyActive(t, s, ev, 1, "ADMITTED", now-1_000, now)
+		id, vis, _ := legacyActive(t, s, ev, 1, "ADMITTED", now-1_000, now)
 		r, err := s.EndEntry(ctx, ev, id, outbound.EndSweepMissed, now)
 		require.NoError(t, err)
 		assert.Equal(t, "MISSED", r.Status)
 		_, inActive := zscore(t, s, s.kActive(ev), id)
 		assert.False(t, inActive)
-		assert.False(t, keyExists(t, s, s.kNik(ev, nik)))
 		assert.False(t, keyExists(t, s, s.kVisitor(ev, vis)))
 	})
 
@@ -124,15 +122,4 @@ func TestLegacy(t *testing.T) {
 		assert.False(t, inW, "entry yang keluar tidak boleh tersisa di waiting")
 	})
 
-	t.Run("e_emailenc_roundtrip", func(t *testing.T) {
-		s := mustStore(t)
-		ctx := context.Background()
-		ev := evID(t)
-		now := time.Now().UnixMilli()
-		id, _, _ := legacyWaiting(t, s, ev, 1, 1, now)
-		ent, found, err := s.GetEntry(ctx, ev, id)
-		require.NoError(t, err)
-		require.True(t, found)
-		assert.Equal(t, []byte("\xff\xfe\x00bin\x80"), ent.EmailEnc, "emailEnc biner harus utuh byte demi byte")
-	})
 }

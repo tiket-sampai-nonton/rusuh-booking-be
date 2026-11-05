@@ -22,7 +22,7 @@ func expectGrantedFlow(m workerMocks, token string, promoteFn func(context.Conte
 	m.settings.EXPECT().Get(gomock.Any(), "ev1").Return(entity.EventSettings{ActiveSlotCapacity: 10}, true, nil)
 	m.store.EXPECT().ActiveCount(gomock.Any(), "ev1").Return(0, nil)
 	m.store.EXPECT().TopWaiting(gomock.Any(), "ev1", 10).Return([]string{"e1"}, nil)
-	m.store.EXPECT().GetEntry(gomock.Any(), "ev1", "e1").Return(entity.Entry{ID: "e1", VisitorID: "v1", BuyerNikHash: []byte{0xaa}}, true, nil)
+	m.store.EXPECT().GetEntry(gomock.Any(), "ev1", "e1").Return(entity.Entry{ID: "e1", VisitorID: "v1"}, true, nil)
 	m.booking.EXPECT().ReserveBatch(gomock.Any(), gomock.Any()).Return(outbound.AllocationBatchResponse{
 		Allocations: []outbound.AllocationResult{{QueueEntryID: "e1", AllocationID: "a1", Status: "GRANTED", ClaimDeadline: "2026-10-20T10:01:00Z"}},
 	}, nil)
@@ -44,7 +44,7 @@ func TestPromoter_TokenReachesPromoteAndReleaseSurvivesCancelledContext(t *testi
 		assert.NoError(t, rctx.Err(), "pelepasan lease tidak ikut dibatalkan")
 		return nil
 	})
-	p := worker.NewPromoter(m.store, m.settings, m.booking, m.pub, m.audit, m.pii, wnow, nil, worker.PromoterTuning{BatchMax: 200})
+	p := worker.NewPromoter(m.store, m.settings, m.booking, m.pub, m.audit, wnow, nil, worker.PromoterTuning{BatchMax: 200})
 	require.NoError(t, p.Run(ctx))
 }
 
@@ -64,7 +64,7 @@ func TestPromoter_TickContextIsBoundedBelowTheLeaseTTL(t *testing.T) {
 		return entity.EventSettings{ActiveSlotCapacity: 1}, true, nil
 	})
 	m.store.EXPECT().ActiveCount(gomock.Any(), "ev1").Return(1, nil) // full: nothing more to do
-	p := worker.NewPromoter(m.store, m.settings, m.booking, m.pub, m.audit, m.pii, wnow, nil, worker.PromoterTuning{BatchMax: 200, LeaseTTL: 5 * time.Second})
+	p := worker.NewPromoter(m.store, m.settings, m.booking, m.pub, m.audit, wnow, nil, worker.PromoterTuning{BatchMax: 200, LeaseTTL: 5 * time.Second})
 	require.NoError(t, p.Run(ctx))
 	remaining := deadline.Sub(start)
 	assert.InDelta(t, (4 * time.Second).Seconds(), remaining.Seconds(), 0.5, "deadline == ttl - 1s")
@@ -80,7 +80,7 @@ func TestPromoter_LeaseLostReleasesNothingAndCounts(t *testing.T) {
 	})
 	m.store.EXPECT().ReleasePromoterLease(gomock.Any(), "ev1", "tok").Return(nil)
 	// no ReleaseAllocation, no PublishTurnArrived expectations
-	p := worker.NewPromoter(m.store, m.settings, m.booking, m.pub, m.audit, m.pii, wnow, nil, worker.PromoterTuning{BatchMax: 200}).WithMetrics(h)
+	p := worker.NewPromoter(m.store, m.settings, m.booking, m.pub, m.audit, wnow, nil, worker.PromoterTuning{BatchMax: 200}).WithMetrics(h)
 	require.NoError(t, p.Run(ctx))
 	assert.Equal(t, 1, h.Count(worker.MetricLeaseLost))
 }
@@ -93,7 +93,7 @@ func TestPromoter_FullAfterGrantKeepsTheRowAndRaisesTheDefectSignal(t *testing.T
 		return outbound.PromoteResult{Full: true}, nil
 	})
 	m.store.EXPECT().ReleasePromoterLease(gomock.Any(), "ev1", "tok").Return(nil)
-	p := worker.NewPromoter(m.store, m.settings, m.booking, m.pub, m.audit, m.pii, wnow, nil, worker.PromoterTuning{BatchMax: 200}).WithMetrics(h)
+	p := worker.NewPromoter(m.store, m.settings, m.booking, m.pub, m.audit, wnow, nil, worker.PromoterTuning{BatchMax: 200}).WithMetrics(h)
 	require.NoError(t, p.Run(context.Background()))
 	assert.Equal(t, 1, h.Count(worker.MetricFullAfterGrant))
 }
@@ -113,7 +113,7 @@ func TestPromoter_ReleasesOnlyScriptProvenTerminalSkips(t *testing.T) {
 			if tc.wantRelease {
 				m.booking.EXPECT().ReleaseAllocation(gomock.Any(), "a1", "QUEUE_ENTRY_GONE").Return(nil)
 			}
-			p := worker.NewPromoter(m.store, m.settings, m.booking, m.pub, m.audit, m.pii, wnow, nil, worker.PromoterTuning{BatchMax: 200})
+			p := worker.NewPromoter(m.store, m.settings, m.booking, m.pub, m.audit, wnow, nil, worker.PromoterTuning{BatchMax: 200})
 			require.NoError(t, p.Run(context.Background()))
 		})
 	}
@@ -128,7 +128,7 @@ func TestPromoter_OneEventsFailureDoesNotStopTheOthers(t *testing.T) {
 	m.store.EXPECT().ReleasePromoterLease(gomock.Any(), "ev2", "t2").Return(nil)
 	m.settings.EXPECT().Get(gomock.Any(), "ev2").Return(entity.EventSettings{ActiveSlotCapacity: 1}, true, nil)
 	m.store.EXPECT().ActiveCount(gomock.Any(), "ev2").Return(1, nil)
-	p := worker.NewPromoter(m.store, m.settings, m.booking, m.pub, m.audit, m.pii, wnow, nil, worker.PromoterTuning{BatchMax: 200})
+	p := worker.NewPromoter(m.store, m.settings, m.booking, m.pub, m.audit, wnow, nil, worker.PromoterTuning{BatchMax: 200})
 	err := p.Run(context.Background())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "ev1")
@@ -160,7 +160,7 @@ func TestPromoter_NotifyRunsOnEveryReturnPathAfterTheLease(t *testing.T) {
 			// notify: reads the near-front window, finds one entry already notified => no publish
 			m.store.EXPECT().TopWaiting(gomock.Any(), "ev1", 10).Return([]string{"n1"}, nil)
 			m.store.EXPECT().WasNotifiedSoon(gomock.Any(), "ev1", "n1").Return(true, nil)
-			p := worker.NewPromoter(m.store, m.settings, m.booking, m.pub, m.audit, m.pii, wnow, nil, worker.PromoterTuning{BatchMax: 200})
+			p := worker.NewPromoter(m.store, m.settings, m.booking, m.pub, m.audit, wnow, nil, worker.PromoterTuning{BatchMax: 200})
 			err := p.Run(context.Background())
 			if wantErr != nil {
 				require.Error(t, err)

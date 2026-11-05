@@ -629,14 +629,20 @@ components:
                 format: uuid
               buyerNikHash:
                 type: string
-                description: hex HMAC
+                description: |
+                  OPSIONAL dan tidak lagi dikirim Queue (ADR-030). Bila ada, Booking menjalankan gerbang kuota pembeli
+                  saat reservasi seperti dulu; bila tidak ada, gerbang itu dilewati dan kuota dicek saat hold.
               buyerNikMasked:
                 type: string
                 example: 3174********0001
-                description: NIK tersamar
+                description: OPSIONAL (lihat buyerNikHash). NIK pembeli diikat saat hold, bukan saat reservasi.
               buyerEmailEnc:
                 type: string
-                description: Email pembeli, AES-256-GCM (AAD booking.buyer_email) base64. Dibuat Queue; Booking hanya menyimpan dan meneruskannya; hanya Notification yang membuka.
+                description: OPSIONAL. Email pembeli disegel dan diikat Booking saat hold (AES-256-GCM, AAD booking.buyer_email); hanya Notification yang membuka.
+              units:
+                type: integer
+                minimum: 1
+                description: Jaminan kuantitas (keputusan 3). Queue meminta 3; Booking memotong ke max_tickets_per_order dan ke stok bebas (grant parsial).
               accountId:
                 type:
                 - string
@@ -647,9 +653,6 @@ components:
             - queueEntryId
             - seq
             - visitorId
-            - buyerNikHash
-            - buyerNikMasked
-            - buyerEmailEnc
       required:
       - eventId
       - entries
@@ -670,7 +673,6 @@ components:
                 - GRANTED
                 - NO_SUPPLY_NOW
                 - SOLD_OUT
-                - BUYER_QUOTA_EXHAUSTED
                 - ALREADY_ACTIVE
               allocationId:
                 type: string
@@ -716,6 +718,23 @@ components:
           type: integer
         maxPerOrder:
           type: integer
+        allocatedUnits:
+          type: integer
+          description: Unit yang dicadangkan untuk admission yang belum hold (ADR-030, aditif)
+        heldUnits:
+          type: integer
+        freeUnits:
+          type: integer
+        maxTicketsPerOrder:
+          type: integer
+          description: Batas unit per admission (aditif; sumber untuk ukuran admission dan zona status Queue)
+        salesStartsAt:
+          type: string
+          format: date-time
+          description: Awal penjualan (aditif; dasar jendela acak pembukaan)
+        salesEndsAt:
+          type: string
+          format: date-time
         saleState:
           type: string
           enum:

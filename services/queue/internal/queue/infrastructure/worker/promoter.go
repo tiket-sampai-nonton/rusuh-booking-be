@@ -26,12 +26,13 @@ const (
 	MetricHeadNoSupply   = outbound.MetricHeadNoSupply
 	MetricUnknownOutcome = outbound.MetricUnknownOutcome
 	MetricJoinLeaseRetry = outbound.MetricJoinLeaseRetry
-	MetricUnsealFailed   = outbound.MetricUnsealFailed
 )
 
-// entryUnits is the number of units the Queue requests per entry. Jumper adoption (design §5.4) is only correct for
-// Units == 1, so a test pins this constant.
-const entryUnits = 1
+// entryUnits is the quantity guarantee per admission (ADR-030, decision 3): Booking reserves min(3, free) units for
+// the event with no buyer NIK and clamps to the event's max_tickets_per_order. Jumper adoption (design §5.4) stays
+// correct with 3: a partial grant is honoured, an adopted row is never released, and the head still holds what it
+// was reserved. Tests pin the constant and the adoption rules.
+const entryUnits = 3
 
 // Promoter promotes waiting entries to active after Booking reserves their allocation (design §7.1).
 // It never admits an entry that is not RESERVED ("Jangan PHP" invariant).
@@ -41,7 +42,6 @@ type Promoter struct {
 	booking  outbound.IBookingClient
 	pub      outbound.IEventPublisher
 	audit    outbound.IEntryAuditRepo
-	pii      outbound.IPIIProtector
 	clock    clock.IClock
 	logger   *slog.Logger
 	tuning   PromoterTuning
@@ -55,24 +55,16 @@ type Promoter struct {
 type PromoterTuning struct {
 	BatchMax             int           // max candidates per tick (default 200)
 	LeaseTTL             time.Duration // promoter lease TTL (default 10s)
-	UnsealFailMax        int           // consecutive failed ticks before an unreadable-PII head is ended (default 3)
-	UnsealProbe          int           // extra ids probed to tell an entry-scoped from a systemic unseal failure (default 3)
 	NoSupplySuspectTicks int           // head NO_SUPPLY_NOW ticks before it is labelled suspect (default 50, min 2)
 }
 
 // NewPromoter accepts interfaces and returns the concrete worker.
-func NewPromoter(store outbound.IQueueStore, settings outbound.IEventSettingsRepo, booking outbound.IBookingClient, pub outbound.IEventPublisher, audit outbound.IEntryAuditRepo, pii outbound.IPIIProtector, clk clock.IClock, logger *slog.Logger, tuning PromoterTuning) *Promoter {
+func NewPromoter(store outbound.IQueueStore, settings outbound.IEventSettingsRepo, booking outbound.IBookingClient, pub outbound.IEventPublisher, audit outbound.IEntryAuditRepo, clk clock.IClock, logger *slog.Logger, tuning PromoterTuning) *Promoter {
 	if tuning.BatchMax <= 0 {
 		tuning.BatchMax = 200
 	}
 	if tuning.LeaseTTL <= 0 {
 		tuning.LeaseTTL = 10 * time.Second
-	}
-	if tuning.UnsealFailMax <= 0 {
-		tuning.UnsealFailMax = 3
-	}
-	if tuning.UnsealProbe <= 0 {
-		tuning.UnsealProbe = 3
 	}
 	if tuning.NoSupplySuspectTicks < 2 {
 		tuning.NoSupplySuspectTicks = 50
@@ -80,7 +72,7 @@ func NewPromoter(store outbound.IQueueStore, settings outbound.IEventSettingsRep
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Promoter{store: store, settings: settings, booking: booking, pub: pub, audit: audit, pii: pii, clock: clk, logger: logger, tuning: tuning, metrics: noopMetrics{}, recs: map[string]*headRec{}}
+	return &Promoter{store: store, settings: settings, booking: booking, pub: pub, audit: audit, clock: clk, logger: logger, tuning: tuning, metrics: noopMetrics{}, recs: map[string]*headRec{}}
 }
 
 // WithMetrics sets the counter sink (default: no-op).
@@ -166,7 +158,7 @@ func (p *Promoter) runEvent(ctx context.Context, eventID string) error {
 	headID := candidates[0]
 	now := p.clock.Now()
 
-	entries, visitorByEntry := p.buildEntries(runCtx, eventID, candidates, free, now)
+	entries, visitorByEntry := p.buildEntries(runCtx, eventID, candidates, now)
 	if len(entries) == 0 {
 		return nil
 	}
@@ -246,16 +238,6 @@ func (p *Promoter) classify(ctx context.Context, eventID string, resp outbound.A
 				// releasing it would turn a live WAITING entry into a permanent ALREADY_ACTIVE.
 				out.adoptedAfterNoSupply = append(out.adoptedAfterNoSupply, a.QueueEntryID)
 			}
-		case "BUYER_QUOTA_EXHAUSTED", "QUOTA_EXHAUSTED":
-			if ent, found, gerr := p.store.GetEntry(ctx, eventID, a.QueueEntryID); gerr == nil && found {
-				_ = p.store.AddQuotaExhausted(ctx, eventID, ent.BuyerNikHashHex())
-			}
-			// End the entry so it does not permanently block the queue head (spec 11.R1).
-			if _, err := p.store.EndEntry(ctx, eventID, a.QueueEntryID, outbound.EndQuotaExhaust, now.UnixMilli()); err != nil {
-				p.logger.Warn("gagal mengakhiri entry BUYER_QUOTA_EXHAUSTED", "eventId", eventID, "entryId", a.QueueEntryID, "error", err)
-			} else {
-				p.inc(MetricEntryEnded, "outcome", outbound.EndQuotaExhaust)
-			}
 		case "SOLD_OUT":
 			_ = p.store.SetSale(ctx, eventID, "CLOSED", true)
 		case "NO_SUPPLY_NOW":
@@ -280,13 +262,10 @@ func (p *Promoter) classify(ctx context.Context, eventID string, resp outbound.A
 	return out
 }
 
-// buildEntries reads each candidate and prepares the Booking request. Orphans are ended at once (C5); entries whose
-// email cannot be opened follow C6 (entry-scoped vs systemic).
-func (p *Promoter) buildEntries(ctx context.Context, eventID string, candidates []string, free int, now time.Time) ([]outbound.AllocationEntryRequest, map[string]string) {
+// buildEntries reads each candidate and prepares the anonymous Booking request. Orphans are ended at once (C5).
+func (p *Promoter) buildEntries(ctx context.Context, eventID string, candidates []string, now time.Time) ([]outbound.AllocationEntryRequest, map[string]string) {
 	entries := make([]outbound.AllocationEntryRequest, 0, len(candidates))
 	visitorByEntry := map[string]string{}
-	var bad []string
-	ok := 0
 	for _, entryID := range candidates {
 		ent, found, gerr := p.store.GetEntry(ctx, eventID, entryID)
 		if gerr != nil {
@@ -302,92 +281,14 @@ func (p *Promoter) buildEntries(ctx context.Context, eventID string, candidates 
 			}
 			continue
 		}
-		emailEnc, uerr := p.sealForBooking(ent.EmailEnc)
-		if uerr != nil {
-			bad = append(bad, entryID)
-			continue
-		}
-		ok++
 		visitorByEntry[entryID] = ent.VisitorID
+		// No buyer fields (ADR-030): the admission is anonymous; the buyer NIK/email are bound at hold.
 		entries = append(entries, outbound.AllocationEntryRequest{
-			QueueEntryID: entryID, VisitorID: ent.VisitorID, BuyerNikHash: ent.BuyerNikHashHex(), Units: entryUnits,
-			Seq: int64(ent.Seq), BuyerNikMasked: ent.BuyerNikMasked, BuyerEmailEnc: emailEnc, AccountID: ent.AccountID,
+			QueueEntryID: entryID, VisitorID: ent.VisitorID, Units: entryUnits,
+			Seq: int64(ent.Seq), AccountID: ent.AccountID,
 		})
 	}
-	if len(bad) > 0 {
-		p.handleUnreadable(ctx, eventID, candidates, bad, ok, free, now)
-	}
 	return entries, visitorByEntry
-}
-
-func (p *Promoter) sealForBooking(emailEnc []byte) (string, error) {
-	email, err := p.pii.UnsealEmail(emailEnc)
-	if err != nil {
-		return "", err
-	}
-	return p.pii.SealBuyerEmail(email)
-}
-
-// handleUnreadable implements C6. An unseal failure is deterministic per stored blob and key, so retrying does not
-// help; the danger is ending the whole queue because a key is mis-set. It is therefore only entry-scoped (a sibling
-// or probe id opens fine) failures that count towards ending an entry.
-func (p *Promoter) handleUnreadable(ctx context.Context, eventID string, candidates, bad []string, ok, free int, now time.Time) {
-	entryScoped := ok > 0
-	if !entryScoped {
-		entryScoped = p.probeOpens(ctx, eventID, candidates, free)
-	}
-	if !entryScoped {
-		p.inc(MetricUnsealFailed, "scope", "systemic")
-		p.logger.Error("tidak ada email antrean yang bisa dibuka; kemungkinan kunci PII salah. Tidak ada entry yang diakhiri", "eventId", eventID)
-		return
-	}
-	for _, entryID := range bad {
-		p.inc(MetricUnsealFailed, "scope", "entry")
-		n, err := p.store.NoteUnreadable(ctx, eventID, entryID)
-		if err != nil {
-			p.logger.Warn("NoteUnreadable gagal", "eventId", eventID, "entryId", entryID, "error", err)
-			continue
-		}
-		p.logger.Error("email antrean tidak bisa dibuka; entry dilewati", "eventId", eventID, "entryId", entryID, "count", n)
-		if n >= p.tuning.UnsealFailMax {
-			if _, err := p.store.EndEntry(ctx, eventID, entryID, outbound.EndUnreadablePII, now.UnixMilli()); err != nil {
-				p.logger.Warn("gagal mengakhiri entry UNREADABLE_PII", "eventId", eventID, "entryId", entryID, "error", err)
-			} else {
-				p.inc(MetricEntryEnded, "outcome", outbound.EndUnreadablePII)
-			}
-		}
-	}
-}
-
-// probeOpens reads up to UnsealProbe waiting ids beyond the candidate window (read-only) and reports whether any of
-// them opens: if one does the failure is entry-scoped, otherwise it is systemic.
-func (p *Promoter) probeOpens(ctx context.Context, eventID string, candidates []string, free int) bool {
-	wider, err := p.store.TopWaiting(ctx, eventID, free+p.tuning.UnsealProbe)
-	if err != nil {
-		return false
-	}
-	inWindow := map[string]bool{}
-	for _, id := range candidates {
-		inWindow[id] = true
-	}
-	probed := 0
-	for _, id := range wider {
-		if inWindow[id] {
-			continue
-		}
-		if probed >= p.tuning.UnsealProbe {
-			break
-		}
-		probed++
-		ent, found, gerr := p.store.GetEntry(ctx, eventID, id)
-		if gerr != nil || !found {
-			continue
-		}
-		if _, uerr := p.sealForBooking(ent.EmailEnc); uerr == nil {
-			return true
-		}
-	}
-	return false
 }
 
 func (p *Promoter) dropRec(eventID string) {

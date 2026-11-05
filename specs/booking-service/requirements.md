@@ -570,3 +570,11 @@ Coverage dihitung atas kode logika; `cmd/`, `internal/delivery/`, `internal/conf
 | tiket sebelum PAID | `BOOKING_NOT_PAYABLE` (409) |
 | sesi TTL + grace habis | `SESSION_EXPIRED` (410) |
 | giliran lewat | `TURN_MISSED` (410) |
+
+
+## Pembaruan ADR-030 (NIK pembeli saat hold)
+
+- Reservasi tanpa NIK (`outstanding_units`); hold menerima blok `buyer`, mengikat NIK/email di transaksi hold, memeriksa kuota NIK pembeli dan
+  mengembalikan `422 BUYER_NIK_LIMIT_REACHED` tanpa mengubah sesi; anggaran percobaan + throttle per sesi.
+- Hold hanya memakai unit admission itu sendiri; sisa kembali ke stok saat hold.
+- Edit E1: tambah tiket dari stok bebas, kurangi mengembalikan stok.

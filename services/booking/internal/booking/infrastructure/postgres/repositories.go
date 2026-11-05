@@ -162,3 +162,16 @@ func (s *IdempotencyStore) Complete(ctx context.Context, scope, ownerID, key str
 	}
 	return nil
 }
+
+// Abort removes an IN_PROGRESS record (same request hash) after a typed business refusal, so the client
+// can retry with the same key. A COMPLETED record is never touched.
+func (s *IdempotencyStore) Abort(ctx context.Context, scope, ownerID, key string, requestHash []byte) error {
+	_, err := s.pool.Exec(ctx, `
+		DELETE FROM booking.idempotency_records
+		 WHERE scope=$1 AND owner_id=$2::uuid AND idempotency_key=$3 AND state='IN_PROGRESS' AND request_hash=$4`,
+		scope, ownerID, key, requestHash)
+	if err != nil {
+		return fmt.Errorf("idem: abort: %w", err)
+	}
+	return nil
+}

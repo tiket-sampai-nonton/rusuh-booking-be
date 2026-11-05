@@ -60,15 +60,14 @@ var diffScripts = []script{
 	{"promote_unknown_entry_is_no_entry", []op{{kind: "join", n: 1}, {kind: "promote", ns: []int{99}, cap: 5}}},
 	{"leave_stranger_and_unknown", []op{{kind: "join", n: 1}, {kind: "leave", n: 1, stranger: true}, {kind: "leave", n: 77}}},
 	{"promote_past_the_head_then_full", []op{{kind: "join", n: 1}, {kind: "join", n: 2}, {kind: "join", n: 3}, {kind: "join", n: 4}, {kind: "promote", ns: []int{2, 3}, cap: 2}, {kind: "promote", ns: []int{1}, cap: 2}}},
-	{"quota_exhausted_end_then_batch", []op{{kind: "join", n: 1}, {kind: "join", n: 2}, {kind: "end", n: 1, outcome: "BUYER_QUOTA_EXHAUSTED"}, {kind: "promote", ns: []int{1, 2}, cap: 5}}},
+	{"already_active_end_then_batch", []op{{kind: "join", n: 1}, {kind: "join", n: 2}, {kind: "end", n: 1, outcome: "ALREADY_ACTIVE"}, {kind: "promote", ns: []int{1, 2}, cap: 5}}},
 	{"stale_then_valid", []op{{kind: "join", n: 1}, {kind: "promote", ns: []int{1}, stale: true, cap: 5}, {kind: "promote", ns: []int{1}, cap: 5}}},
 }
 
 func joinParamsFor(n int) outbound.JoinParams {
 	return outbound.JoinParams{
-		EventID: "ev", EntryID: id(n), VisitorID: fmt.Sprintf("dv-%d", n), NikHash: fmt.Sprintf("%064x", 100+n),
-		EmailHashHex: fmt.Sprintf("%064x", 200+n), EmailEnc: []byte("sealed"), NikMasked: "3201********0001",
-		NowMs: diffNow, OneActivePerVisitor: true, OneActivePerEmail: true,
+		EventID: "ev", EntryID: id(n), NewVisitorID: fmt.Sprintf("dv-%d", n),
+		NowMs: diffNow, OneActivePerVisitor: true,
 	}
 }
 

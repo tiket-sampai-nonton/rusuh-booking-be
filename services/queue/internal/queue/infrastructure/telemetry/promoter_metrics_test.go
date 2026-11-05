@@ -30,8 +30,7 @@ func TestPromoterMetrics_EveryCounterAppearsAfterOneInc(t *testing.T) {
 	m.Inc(outbound.MetricLeaseLost)
 	m.Inc(outbound.MetricEntryEnded, "outcome", "ALREADY_ACTIVE")
 	m.Inc(outbound.MetricEntryEnded, "outcome", "PROMOTER_ORPHAN")
-	m.Inc(outbound.MetricEntryEnded, "outcome", "UNREADABLE_PII")
-	m.Inc(outbound.MetricEntryEnded, "outcome", "BUYER_QUOTA_EXHAUSTED")
+	m.Inc(outbound.MetricEntryEnded, "outcome", "STALE_TIMEOUT")
 	m.Inc(outbound.MetricLapsedReplay)
 	m.Inc(outbound.MetricFifoAdopted, "suspect", "false")
 	m.Inc(outbound.MetricFifoAdopted, "suspect", "true")
@@ -39,8 +38,6 @@ func TestPromoterMetrics_EveryCounterAppearsAfterOneInc(t *testing.T) {
 	m.Inc(outbound.MetricHeadNoSupply, "adopted", "false")
 	m.Inc(outbound.MetricUnknownOutcome)
 	m.Inc(outbound.MetricJoinLeaseRetry)
-	m.Inc(outbound.MetricUnsealFailed, "scope", "entry")
-	m.Inc(outbound.MetricUnsealFailed, "scope", "systemic")
 
 	out := scrape(t, reg)
 	for _, want := range []string{
@@ -48,8 +45,7 @@ func TestPromoterMetrics_EveryCounterAppearsAfterOneInc(t *testing.T) {
 		"queue_promote_lease_lost_total 1",
 		`queue_entry_ended_total{outcome="ALREADY_ACTIVE"} 1`,
 		`queue_entry_ended_total{outcome="PROMOTER_ORPHAN"} 1`,
-		`queue_entry_ended_total{outcome="UNREADABLE_PII"} 1`,
-		`queue_entry_ended_total{outcome="BUYER_QUOTA_EXHAUSTED"} 1`,
+		`queue_entry_ended_total{outcome="STALE_TIMEOUT"} 1`,
 		"queue_promote_lapsed_replay_skipped_total 1",
 		`queue_promote_fifo_adopted_total{suspect="false"} 1`,
 		`queue_promote_fifo_adopted_total{suspect="true"} 1`,
@@ -57,8 +53,6 @@ func TestPromoterMetrics_EveryCounterAppearsAfterOneInc(t *testing.T) {
 		`queue_promote_head_no_supply_repeat_total{adopted="false"} 1`,
 		"queue_promote_unknown_outcome_total 1",
 		"queue_join_lease_retry_total 1",
-		`queue_promoter_unseal_failed_total{scope="entry"} 1`,
-		`queue_promoter_unseal_failed_total{scope="systemic"} 1`,
 	} {
 		assert.Contains(t, out, want)
 	}

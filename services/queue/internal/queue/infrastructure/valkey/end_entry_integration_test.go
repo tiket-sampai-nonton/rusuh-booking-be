@@ -24,9 +24,8 @@ func joinAdmit(t *testing.T, s *QueueStore, ev string, n int, deadlineMs, now in
 
 func constraintKeysGone(t *testing.T, s *QueueStore, ev, nik, vis string, n int) {
 	t.Helper()
-	assert.False(t, keyExists(t, s, s.kNik(ev, nik)), "kunci NIK harus bersih")
+	assert.False(t, keyExists(t, s, s.kAccount(ev, nik)), "kunci NIK harus bersih")
 	assert.False(t, keyExists(t, s, s.kVisitor(ev, vis)), "kunci visitor harus bersih")
-	assert.False(t, keyExists(t, s, s.kEmail(ev, fmt.Sprintf("%064x", n+1000))), "kunci email harus bersih")
 }
 
 // TC-QUE-21 / P4: SWEEP_MISSED only ever ends an ADMITTED entry whose deadline has passed.
@@ -158,7 +157,7 @@ func TestEndEntry_PromoterOutcomesEndWaitingOnly(t *testing.T) {
 	ev := evID(t)
 	now := time.Now().UnixMilli()
 
-	for i, outcome := range []string{"BUYER_QUOTA_EXHAUSTED", "ALREADY_ACTIVE", "UNREADABLE_PII"} {
+	for i, outcome := range []string{"ALREADY_ACTIVE"} { // ADR-030 removed BUYER_QUOTA_EXHAUSTED and UNREADABLE_PII
 		n := 10 + i
 		id, vis, nik := joinOne(t, s, ev, n, now)
 		r, err := s.EndEntry(ctx, ev, id, outcome, now)
@@ -187,20 +186,20 @@ func TestEndEntry_MissedCleanupKeepsNewerConstraintKeys(t *testing.T) {
 	old, _, nik := joinAdmit(t, s, ev, 1, now-1_000, now)
 	hsetRaw(t, s, s.kEntry(ev, old), "status", "MISSED") // claim.lua marked it after the deadline
 	// Rejoin with the same NIK: simulate by pointing the NIK key at a newer entry.
-	require.NoError(t, s.c.Do(ctx, s.c.B().Set().Key(s.kNik(ev, nik)).Value("entry-newer").Build()).Error())
+	require.NoError(t, s.c.Do(ctx, s.c.B().Set().Key(s.kAccount(ev, nik)).Value("entry-newer").Build()).Error())
 
 	r, err := s.EndEntry(ctx, ev, old, "SWEEP_MISSED", now)
 	require.NoError(t, err)
 	assert.Equal(t, "OK_CLEANUP", r.Tag)
 	_, inA := zscore(t, s, s.kActive(ev), old)
 	assert.False(t, inA, "MISSED harus melepas slot di active")
-	got, err := s.c.Do(ctx, s.c.B().Get().Key(s.kNik(ev, nik)).Build()).ToString()
+	got, err := s.c.Do(ctx, s.c.B().Get().Key(s.kAccount(ev, nik)).Build()).ToString()
 	require.NoError(t, err)
 	assert.Equal(t, "entry-newer", got, "kunci milik entry baru tidak boleh terhapus")
 
 	r, err = s.EndEntry(ctx, ev, old, "SWEEP_MISSED", now)
 	require.NoError(t, err)
-	got, _ = s.c.Do(ctx, s.c.B().Get().Key(s.kNik(ev, nik)).Build()).ToString()
+	got, _ = s.c.Do(ctx, s.c.B().Get().Key(s.kAccount(ev, nik)).Build()).ToString()
 	assert.Equal(t, "entry-newer", got, "diproses dua kali tetap aman")
 	_ = r
 }

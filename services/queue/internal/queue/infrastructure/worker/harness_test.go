@@ -116,7 +116,7 @@ func newHarness(t *testing.T, capacity, stock int, tuning worker.PromoterTuning)
 	if tuning.BatchMax == 0 {
 		tuning.BatchMax = 200
 	}
-	h.p = worker.NewPromoter(h.store, h.settings, h.stub, h.pub, fakeAudit{}, h.pii, h.clk, slog.New(slog.NewTextHandler(discard{}, nil)), tuning).WithMetrics(h.metrics)
+	h.p = worker.NewPromoter(h.store, h.settings, h.stub, h.pub, fakeAudit{}, h.clk, slog.New(slog.NewTextHandler(discard{}, nil)), tuning).WithMetrics(h.metrics)
 	return h
 }
 

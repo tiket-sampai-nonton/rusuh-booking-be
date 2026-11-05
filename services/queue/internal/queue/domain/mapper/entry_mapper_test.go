@@ -34,22 +34,27 @@ func TestToQueueEntry_Admitted(t *testing.T) {
 	assert.Equal(t, time.UnixMilli(dl).UTC().Format(time.RFC3339), got.ClaimDeadline)
 }
 
-func TestToEntryStatus_WaitingComputesPositionAndZone(t *testing.T) {
-	e := entity.Entry{ID: "e1", Seq: valueobject.Seq(100), Status: valueobject.StatusWaiting}
-	got := mapper.ToEntryStatus(e, 55, 5, 150, 200)
-	assert.Equal(t, int64(40), got.ExactPosition) // 100-55-5
-	assert.Equal(t, "GUARANTEED", got.Zone)
-}
-
-func TestToEntryStatus_NegativePositionClampedToZero(t *testing.T) {
-	e := entity.Entry{ID: "e1", Seq: valueobject.Seq(50), Status: valueobject.StatusWaiting}
-	got := mapper.ToEntryStatus(e, 60, 0, 150, 200)
-	assert.Equal(t, int64(0), got.ExactPosition)
-}
-
-func TestToEntryStatus_AdmittedNoPositionNoZone(t *testing.T) {
-	e := entity.Entry{ID: "e1", Seq: valueobject.Seq(10), Status: valueobject.StatusAdmitted}
-	got := mapper.ToEntryStatus(e, 5, 0, 150, 200)
-	assert.Equal(t, int64(0), got.ExactPosition)
-	assert.Empty(t, got.Zone)
+func TestToEntryStatus_StatesAndNullRank(t *testing.T) {
+	tests := []struct {
+		status valueobject.Status
+		state  string
+		rank   bool
+	}{
+		{valueobject.StatusWaiting, "WAITING", true},
+		{valueobject.StatusStale, "STALE", true},
+		{valueobject.StatusAdmitted, "ADMITTED", true},
+		{valueobject.StatusLeft, "ENDED", false},
+		{valueobject.StatusCompleted, "ENDED", false},
+	}
+	for _, tt := range tests {
+		t.Run(string(tt.status), func(t *testing.T) {
+			got := mapper.ToEntryStatus(entity.Entry{ID: "e", Seq: 3, Status: tt.status})
+			assert.Equal(t, tt.state, got.State)
+			assert.Equal(t, tt.rank, got.Rank != nil)
+			if tt.rank {
+				assert.Equal(t, int64(3), *got.Rank, "rank is the seq (strict FIFO)")
+			}
+			assert.Nil(t, got.Zone, "zone is added by the usecase")
+		})
+	}
 }

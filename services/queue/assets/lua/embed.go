@@ -20,6 +20,10 @@ var (
 	RateLimit string
 	//go:embed release_lease.lua
 	ReleaseLease string
-	//go:embed note_unreadable.lua
-	NoteUnreadable string
+	//go:embed heartbeat.lua
+	Heartbeat string
+	//go:embed liveness.lua
+	Liveness string
+	//go:embed liveness_tick.lua
+	LivenessTick string
 )

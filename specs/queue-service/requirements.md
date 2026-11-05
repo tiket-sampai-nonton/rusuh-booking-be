@@ -358,3 +358,22 @@ make mock                                  # regen _mock/ bila port berubah
 | Sold-out notification ≤ 5s | TC-PERF-05 | k6 |
 
 > **Amandemen Queue hardening (2026-11-04, ADR-028/029):** butir 6.3 ("entry dengan seq lebih besar dalam batch yang sama juga tidak diadmit pada siklus itu") diamandemen menjadi inversi FIFO terbatas: grant yang mengikuti `NO_SUPPLY_NOW` dalam satu batch diadopsi, bukan dilepas, karena melepasnya mengakhiri pembeli yang masih hidup. Lihat `docs/analisa/05-ADR-RBT.md` ADR-029 dan TC-QUE-19b/19k.
+
+
+## Pembaruan ADR-030 (join anonim)
+
+- Join tidak membawa NIK, email, atau consent; dedup satu entri aktif per visitor dan per akun (bearer = identitas saja).
+- Promoter dan join langsung meminta 3 unit per admission tanpa field pembeli; `booking.quota.exhausted` no-op acknowledge satu rilis.
+- Heartbeat/STALE/revive/akhir (sweeper liveness di bawah lease), **zona berbasis seq (FIFO ketat; jendela acak
+  pembukaan/undian DIBUANG — ADR-030 Amandemen 2026-11-05)**, generasi token visitor + klaim perangkat, dan `me`
+  ENDED dengan alasan sudah diimplementasikan.
+- Indeks liveness `hb`/`hbstale` di-shard (`QUEUE_LIVENESS_SHARDS`, default 16) dan sweep dijalankan dalam satu EVAL
+  (`liveness_tick.lua`: acquire-lease + baca kandidat + sweep + release dalam satu round-trip). Kriteria penerimaan
+  tick promotor DIRATIFIKASI PEMILIK 2026-11-06 (opsi A — MENGGANTIKAN label "keputusan pemilik 2026-11-05 opsi A"
+  sebelumnya yang BUKAN dari pemilik): **(1) latensi tick absolut tidak regresi vs baseline pra-perubahan** (loaded
+  ~1,2 ms vs ~3,3 ms pra-perubahan) + **(2) biaya marginal sweep atas no-op kecil** — BUKAN rasio loaded/base ≤ 1,20
+  yang terbukti tak tercapai secara fisik pada Valkey satu-thread (tick_ratio 1,27–1,46, floor `GET` ~1,39–1,59, dan
+  rasio tak berubah pada koneksi dedicated → penyebab = command-thread tunggal, bukan kontensi koneksi). Kedua
+  kriteria di-assert mesin di `TestHeartbeatLoad` (B=16). Pemisahan indeks liveness ke instance/thread Valkey terpisah
+  (opsi B) didokumentasikan sebagai opsi infra MASA DEPAN (tidak dibangun). Lihat ADR-030 Amandemen dan evidence
+  2026-11-05 §3b/§3e.

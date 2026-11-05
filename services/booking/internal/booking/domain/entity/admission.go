@@ -9,20 +9,21 @@ import (
 // Admission is an allocation + selection session (admissions table). It carries a config snapshot taken
 // when the turn was granted, so live event-config changes never affect a running session (invariant #4).
 type Admission struct {
-	ID             string
-	EventID        string
-	QueueEntryID   string
-	QueueSeq       int64
-	VisitorID      string
-	BuyerNIKHash   []byte
-	BuyerEmailEnc  string // AES-GCM base64 sealed by Queue; Booking forwards it, never opens it
-	BuyerNIKMasked string
-	Units          int
-	Status         vo.AdmissionStatus
-	AdmissionJTI   string
-	AttendeeChecks int
-	EditCount      int
-	AccountID      string // empty when guest
+	ID               string
+	EventID          string
+	QueueEntryID     string
+	QueueSeq         int64
+	VisitorID        string
+	BuyerNIKHash     []byte
+	BuyerEmailEnc    string // AES-GCM base64 sealed by Queue; Booking forwards it, never opens it
+	BuyerNIKMasked   string
+	Units            int
+	OutstandingUnits int // units still counted in event_supply.allocated_units (0 once held)
+	Status           vo.AdmissionStatus
+	AdmissionJTI     string
+	AttendeeChecks   int
+	EditCount        int
+	AccountID        string // empty when guest
 
 	// Config snapshot (cfg_* columns).
 	CfgSelectionTTLSeconds  int

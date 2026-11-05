@@ -12,18 +12,14 @@ import (
 // Queue-specific error codes (design §9). Shared codes (VALIDATION_ERROR, NOT_FOUND,
 // RATE_LIMITED, DEPENDENCY_UNAVAILABLE) live in pkg/apperror and are reused.
 const (
-	CodeNikInvalid     apperror.Code = "NIK_INVALID"
-	CodeNikRequired    apperror.Code = "NIK_REQUIRED"
-	CodeEmailMismatch  apperror.Code = "EMAIL_MISMATCH"
-	CodeNikInQueue     apperror.Code = "NIK_ALREADY_IN_QUEUE"
-	CodeVisitorInQueue apperror.Code = "VISITOR_ALREADY_IN_QUEUE"
-	CodeEmailInQueue   apperror.Code = "EMAIL_ALREADY_IN_QUEUE"
-	CodeQuotaExhausted apperror.Code = "BUYER_QUOTA_EXHAUSTED"
-	CodeEventNotOnSale apperror.Code = "EVENT_NOT_ON_SALE"
-	CodeEventSoldOut   apperror.Code = "EVENT_SOLD_OUT"
-	CodeTurnMissed     apperror.Code = "TURN_MISSED"
-	CodeNotAdmitted    apperror.Code = "NOT_ADMITTED"
-	CodeEntryMoved     apperror.Code = "ENTRY_MOVED"
+	CodeAccountInQueue      apperror.Code = "ACCOUNT_ALREADY_IN_QUEUE"
+	CodeVisitorTokenInvalid apperror.Code = "VISITOR_TOKEN_INVALID"
+	CodeEntryNotFound       apperror.Code = "ENTRY_NOT_FOUND"
+	CodeEventNotOnSale      apperror.Code = "EVENT_NOT_ON_SALE"
+	CodeEventSoldOut        apperror.Code = "EVENT_SOLD_OUT"
+	CodeTurnMissed          apperror.Code = "TURN_MISSED"
+	CodeNotAdmitted         apperror.Code = "NOT_ADMITTED"
+	CodeEntryMoved          apperror.Code = "ENTRY_MOVED"
 )
 
 // errMapping pairs a domain sentinel with its stable code and HTTP status.
@@ -34,15 +30,9 @@ type errMapping struct {
 }
 
 var errMappings = []errMapping{
-	{entity.ErrNikInvalid, CodeNikInvalid, http.StatusUnprocessableEntity},
-	{entity.ErrNikRequired, CodeNikRequired, http.StatusUnprocessableEntity},
-	{entity.ErrEmailMismatch, CodeEmailMismatch, http.StatusUnprocessableEntity},
-	{entity.ErrConsentNik, apperror.CodeValidationFailed, http.StatusBadRequest},
-	{entity.ErrEmailInvalid, apperror.CodeValidationFailed, http.StatusBadRequest},
-	{entity.ErrNikInQueue, CodeNikInQueue, http.StatusConflict},
-	{entity.ErrVisitorInQueue, CodeVisitorInQueue, http.StatusConflict},
-	{entity.ErrEmailInQueue, CodeEmailInQueue, http.StatusConflict},
-	{entity.ErrQuotaExhausted, CodeQuotaExhausted, http.StatusConflict},
+	{entity.ErrAccountInQueue, CodeAccountInQueue, http.StatusConflict},
+	{entity.ErrVisitorTokenInvalid, CodeVisitorTokenInvalid, http.StatusUnauthorized},
+	{entity.ErrEntryNotFound, CodeEntryNotFound, http.StatusNotFound},
 	{entity.ErrNotOnSale, CodeEventNotOnSale, http.StatusConflict},
 	{entity.ErrSoldOut, CodeEventSoldOut, http.StatusGone},
 	{entity.ErrTurnMissed, CodeTurnMissed, http.StatusGone},

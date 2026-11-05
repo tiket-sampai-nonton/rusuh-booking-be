@@ -44,6 +44,19 @@ func (p *PII) HashNIK(nik string) []byte { return p.hasher.Hash(nik) }
 // SealNIK returns the AES-256-GCM ciphertext bound to the NIK column context.
 func (p *PII) SealNIK(nik string) ([]byte, error) { return p.sealer.Seal([]byte(nik), []byte(aadNIK)) }
 
+// SealBuyerEmail seals the buyer email with the AAD the Notification Service opens (crypto.AADBuyerEmail) and
+// returns base64 text, the form stored in admissions/bookings and carried in booking.* events.
+func (p *PII) SealBuyerEmail(email string) (string, error) {
+	enc, err := p.sealer.Seal([]byte(email), []byte(crypto.AADBuyerEmail))
+	if err != nil {
+		return "", err
+	}
+	return base64.StdEncoding.EncodeToString(enc), nil
+}
+
+// Fingerprint returns a keyed HMAC of data (idempotency request hash that holds no plaintext).
+func (p *PII) Fingerprint(data []byte) []byte { return p.hasher.Hash(string(data)) }
+
 // AdmissionVerifier verifies the one-time EdDSA admission token minted by the Queue Service. It
 // satisfies outbound.IAdmissionTokenVerifier.
 type AdmissionVerifier struct {

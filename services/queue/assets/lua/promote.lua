@@ -1,7 +1,9 @@
 -- promote.lua — atomic batch promotion waiting → active, fenced by the promoter lease (design §5.4, ADR-028)
 -- KEYS[1]=waiting  KEYS[2]=active  KEYS[3]=<tag>:promoter:lock  KEYS[4..]=entry:<id> untuk tiap kandidat
--- ARGV: 1=capacity 2=nowMs 3=requireHead("1"/"0") 4=leaseToken ; lalu triplet per entry dari ARGV[5]:
---       entryId, allocationId, claimDeadlineMs
+-- ARGV: 1=capacity 2=nowMs 3=requireHead("1"/"0") 4=leaseToken ; lalu quadruplet per entry dari ARGV[5]:
+--       entryId, allocationId, claimDeadlineMs, hbShardKey
+-- ADR-030: hanya status WAITING yang dipromosikan; STALE dilewati (masuk 'skipped', tidak pernah dirilis).
+-- Admitted entries leave the liveness set via their stored shard key hb:{s} (ADR-030 Amendment: hb is sharded).
 -- Dipanggil Go HANYA untuk entry yang sudah RESERVED oleh Booking (invarian "Jangan PHP").
 -- Fence pertama: token yang tidak cocok (termasuk lease yang sudah lewat TTL) tidak mengubah apa pun.
 if redis.call('GET', KEYS[3]) ~= ARGV[4] then
@@ -21,16 +23,18 @@ end
 
 local promoted = {}
 local skipped = {}
-local i = 5                     -- index ARGV triplet pertama
+local i = 5                     -- index ARGV quadruplet pertama
 local k = 4                     -- index KEYS entry pertama
 while ARGV[i] do
   local entryId   = ARGV[i]
   local allocId   = ARGV[i+1]
   local deadline  = ARGV[i+2]
+  local hbShard   = ARGV[i+3]
   if free > 0 then
     local st = redis.call('HGET', KEYS[k], 'status')
     if st == 'WAITING' then
       redis.call('ZREM', KEYS[1], entryId)
+      redis.call('ZREM', hbShard, entryId) -- admitted entries leave the liveness set (sharded hb:{s})
       redis.call('ZADD', KEYS[2], deadline, entryId)
       redis.call('HSET', KEYS[k], 'status','ADMITTED',
         'admittedAtMs', ARGV[2], 'allocationId', allocId, 'claimDeadlineMs', deadline)
@@ -52,7 +56,7 @@ while ARGV[i] do
     end
   end
   -- kandidat yang tak terjangkau karena free sudah 0 TIDAK dilaporkan (tetap WAITING, tak disentuh)
-  i = i + 3
+  i = i + 4
   k = k + 1
 end
 return {'OK', promoted, skipped}

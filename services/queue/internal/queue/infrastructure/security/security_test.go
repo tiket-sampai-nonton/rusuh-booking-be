@@ -16,6 +16,7 @@ import (
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/token"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/infrastructure/security"
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/port/outbound"
 )
 
 var (
@@ -29,24 +30,6 @@ func bytesSeq(start byte) []byte {
 		b[i] = start + byte(i)
 	}
 	return b
-}
-
-func TestPII_HashIsDeterministic(t *testing.T) {
-	p, err := security.NewPII(encKey, hashKey)
-	require.NoError(t, err)
-	assert.Equal(t, p.HashNIK("3201234567890123"), p.HashNIK("3201234567890123"))
-	assert.NotEqual(t, p.HashNIK("3201234567890123"), p.HashNIK("9999999999999999"))
-}
-
-func TestPII_EmailSealRoundtrip(t *testing.T) {
-	p, err := security.NewPII(encKey, hashKey)
-	require.NoError(t, err)
-	enc, err := p.SealEmail("a@b.id")
-	require.NoError(t, err)
-	assert.NotContains(t, string(enc), "a@b.id")
-	got, err := p.UnsealEmail(enc)
-	require.NoError(t, err)
-	assert.Equal(t, "a@b.id", got)
 }
 
 func newSigner(t *testing.T) (*token.Signer, *token.Verifier) {
@@ -78,7 +61,7 @@ func TestTokenIssuer_VisitorAndQueue(t *testing.T) {
 	now := time.Now().UTC()
 	iss := security.NewTokenIssuer(signer, "rbt-queue", "rbt", time.Minute, time.Hour, time.Hour)
 
-	vt, err := iss.IssueVisitor("v1", now)
+	vt, err := iss.IssueVisitor(outbound.VisitorClaim{VisitorID: "v1", Gen: 1}, now)
 	require.NoError(t, err)
 	c, err := verifier.Verify(vt, now)
 	require.NoError(t, err)
@@ -114,7 +97,7 @@ func TestVisitorAuthenticator_FromCookie(t *testing.T) {
 	signer, verifier := newSigner(t)
 	now := time.Now().UTC()
 	iss := security.NewTokenIssuer(signer, "rbt-queue", "rbt", time.Minute, time.Hour, time.Hour)
-	vt, err := iss.IssueVisitor("v-123", now)
+	vt, err := iss.IssueVisitor(outbound.VisitorClaim{VisitorID: "v-123", Gen: 1}, now)
 	require.NoError(t, err)
 
 	auth := security.NewVisitorAuthenticator(verifier, func() time.Time { return now })
@@ -129,7 +112,7 @@ func TestVisitorAuthenticator_FromHeader(t *testing.T) {
 	signer, verifier := newSigner(t)
 	now := time.Now().UTC()
 	iss := security.NewTokenIssuer(signer, "rbt-queue", "rbt", time.Minute, time.Hour, time.Hour)
-	vt, _ := iss.IssueVisitor("v-456", now)
+	vt, _ := iss.IssueVisitor(outbound.VisitorClaim{VisitorID: "v-456", Gen: 1}, now)
 
 	auth := security.NewVisitorAuthenticator(verifier, func() time.Time { return now })
 	req := httptest.NewRequest(http.MethodGet, "/", nil)

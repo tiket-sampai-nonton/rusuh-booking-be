@@ -57,24 +57,23 @@ func newAdmission(t *testing.T) *admissionEnv {
 		limiter:  mock_outbound.NewMockIRateLimiter(ctrl),
 		tokens:   mock_outbound.NewMockITokenIssuer(ctrl),
 		verifier: mock_outbound.NewMockIUserTokenVerifier(ctrl),
-		pii:      mock_outbound.NewMockIPIIProtector(ctrl),
 		audit:    mock_outbound.NewMockIEntryAuditRepo(ctrl),
 	}
 	e.uc = usecase.NewJoinQueue(usecase.JoinDeps{
 		Store: e.m.store, Settings: e.m.settings, Booking: e.m.booking, Limiter: e.m.limiter,
-		Tokens: e.m.tokens, UserVerifier: e.m.verifier, PII: e.m.pii, Audit: e.m.audit,
+		Tokens: e.m.tokens, UserVerifier: e.m.verifier, Audit: e.m.audit,
 		Clock:  clock.Fixed{T: time.Date(2026, 10, 20, 10, 0, 0, 0, time.UTC)},
 		Sleep:  func(_ context.Context, d time.Duration) error { e.sleeps = append(e.sleeps, d); return nil },
 		Jitter: func() time.Duration { return 25 * time.Millisecond },
 	}, usecase.JoinSettings{
-		JoinPerEmail: 5, JoinPerEmailWindow: time.Minute, JoinPerIP: 60, JoinPerIPWindow: time.Minute,
+		JoinPerIP: 60, JoinPerIPWindow: time.Minute,
 		ClaimWindow: time.Minute, StatusURLTemplate: "/api/v1/queue-status/", AdmissionLeaseTTL: 10 * time.Second,
 	}).WithMetrics(e.metrics).WithLogger(slog.New(slog.NewTextHandler(e.logs, nil)))
 	return e
 }
 
 func (e *admissionEnv) join(ctx context.Context) (string, error) {
-	resp, err := e.uc.Join(ctx, inbound.JoinInput{EventID: "ev1", Body: validBody(), ClientIP: "1.2.3.4"})
+	resp, err := e.uc.Join(ctx, inbound.JoinInput{EventID: "ev1", ClientIP: "1.2.3.4"})
 	return resp.Status, err
 }
 
@@ -84,15 +83,12 @@ type captureID struct{ id string }
 func (e *admissionEnv) joinCapturing(ctx context.Context, c *captureID) {
 	e.m.store.EXPECT().Join(ctx, gomock.Any()).DoAndReturn(func(_ context.Context, p outbound.JoinParams) (outbound.JoinResult, error) {
 		c.id = p.EntryID
-		return outbound.JoinResult{Outcome: outbound.JoinOK, Seq: 1}, nil
+		return outbound.JoinResult{Outcome: outbound.JoinCreated, EntryID: p.EntryID, Seq: 1, VisitorID: p.NewVisitorID, Status: "WAITING"}, nil
 	})
 }
 
 func (e *admissionEnv) preambleCapturing(ctx context.Context, capacity int, c *captureID) {
 	m := e.m
-	m.pii.EXPECT().HashEmail(gomock.Any()).Return([]byte{0x01}).AnyTimes()
-	m.pii.EXPECT().HashNIK(gomock.Any()).Return([]byte{0xaa})
-	m.pii.EXPECT().SealEmail(gomock.Any()).Return([]byte("enc"), nil)
 	m.limiter.EXPECT().Allow(ctx, gomock.Any(), gomock.Any(), gomock.Any()).Return(true, nil).AnyTimes()
 	m.settings.EXPECT().Get(ctx, "ev1").Return(entity.EventSettings{ActiveSlotCapacity: capacity}, true, nil)
 	e.joinCapturing(ctx, c)
@@ -150,7 +146,6 @@ func TestJoinAdmission_LeaseFreedOnTheSecondAttemptAdmitsInTheResponse(t *testin
 	ctx := context.Background()
 	var c captureID
 	e.preambleCapturing(ctx, 10, &c)
-	e.m.pii.EXPECT().SealBuyerEmail("a@b.id").Return("c2VhbGVk", nil)
 	e.m.store.EXPECT().ActiveCount(ctx, "ev1").Return(0, nil).Times(2) // pre-check + under the lease
 	e.m.store.EXPECT().TopWaiting(ctx, "ev1", 1).DoAndReturn(c.topWaiting()).Times(2)
 	gomock.InOrder(
@@ -175,7 +170,6 @@ func TestJoinAdmission_FreeLeaseAdmitsWithoutSleeping(t *testing.T) {
 	ctx := context.Background()
 	var c captureID
 	e.preambleCapturing(ctx, 10, &c)
-	e.m.pii.EXPECT().SealBuyerEmail("a@b.id").Return("c2VhbGVk", nil)
 	e.m.store.EXPECT().ActiveCount(ctx, "ev1").Return(0, nil).Times(2)
 	e.m.store.EXPECT().TopWaiting(ctx, "ev1", 1).DoAndReturn(c.topWaiting()).Times(2)
 	e.m.store.EXPECT().AcquirePromoterLease(ctx, "ev1", 10*time.Second).Return("tok", true, nil)
@@ -230,7 +224,6 @@ func TestJoinAdmission_PromoteFailuresStayWaitingAndNeverRelease(t *testing.T) {
 			ctx := context.Background()
 			var c captureID
 			e.preambleCapturing(ctx, 10, &c)
-			e.m.pii.EXPECT().SealBuyerEmail("a@b.id").Return("c2VhbGVk", nil)
 			e.m.store.EXPECT().ActiveCount(ctx, "ev1").Return(0, nil).Times(2)
 			e.m.store.EXPECT().TopWaiting(ctx, "ev1", 1).DoAndReturn(c.topWaiting()).Times(2)
 			e.m.store.EXPECT().AcquirePromoterLease(ctx, "ev1", 10*time.Second).Return("tok", true, nil)
@@ -252,7 +245,6 @@ func TestJoinAdmission_LeaseIsReleasedEvenWhenTheRequestContextIsCancelled(t *te
 	ctx, cancel := context.WithCancel(base)
 	var c captureID
 	e.preambleCapturing(ctx, 10, &c)
-	e.m.pii.EXPECT().SealBuyerEmail("a@b.id").Return("c2VhbGVk", nil)
 	e.m.store.EXPECT().ActiveCount(ctx, "ev1").Return(0, nil).Times(2)
 	e.m.store.EXPECT().TopWaiting(ctx, "ev1", 1).DoAndReturn(c.topWaiting()).Times(2)
 	e.m.store.EXPECT().AcquirePromoterLease(ctx, "ev1", 10*time.Second).Return("tok", true, nil)
@@ -278,7 +270,6 @@ func TestJoinAdmission_LapsedGrantMakesNoPromote(t *testing.T) {
 	ctx := context.Background()
 	var c captureID
 	e.preambleCapturing(ctx, 10, &c)
-	e.m.pii.EXPECT().SealBuyerEmail("a@b.id").Return("c2VhbGVk", nil)
 	e.m.store.EXPECT().ActiveCount(ctx, "ev1").Return(0, nil).Times(2)
 	e.m.store.EXPECT().TopWaiting(ctx, "ev1", 1).DoAndReturn(c.topWaiting()).Times(2)
 	e.m.store.EXPECT().AcquirePromoterLease(ctx, "ev1", 10*time.Second).Return("tok", true, nil)
@@ -297,7 +288,6 @@ func TestJoinAdmission_TerminalSkipReleasesTheGrantedAllocation(t *testing.T) {
 	ctx := context.Background()
 	var c captureID
 	e.preambleCapturing(ctx, 10, &c)
-	e.m.pii.EXPECT().SealBuyerEmail("a@b.id").Return("c2VhbGVk", nil)
 	e.m.store.EXPECT().ActiveCount(ctx, "ev1").Return(0, nil).Times(2)
 	e.m.store.EXPECT().TopWaiting(ctx, "ev1", 1).DoAndReturn(c.topWaiting()).Times(2)
 	e.m.store.EXPECT().AcquirePromoterLease(ctx, "ev1", 10*time.Second).Return("tok", true, nil)
@@ -318,17 +308,16 @@ func TestJoinAdmission_TerminalSkipReleasesTheGrantedAllocation(t *testing.T) {
 func TestJoin_EmptyClientIPIsLoggedAndNotRejected(t *testing.T) {
 	e := newAdmission(t)
 	ctx := context.Background()
-	e.m.pii.EXPECT().HashEmail(gomock.Any()).Return([]byte{0x01}).AnyTimes()
-	e.m.pii.EXPECT().HashNIK(gomock.Any()).Return([]byte{0xaa})
-	e.m.pii.EXPECT().SealEmail(gomock.Any()).Return([]byte("enc"), nil)
-	e.m.limiter.EXPECT().Allow(ctx, gomock.Any(), 5, time.Minute).Return(true, nil) // only the per-email limit
+	// no limiter call at all: the per-email limit is gone and an empty IP skips the per-IP limit
 	e.m.settings.EXPECT().Get(ctx, "ev1").Return(entity.EventSettings{ActiveSlotCapacity: 0}, true, nil)
-	e.m.store.EXPECT().Join(ctx, gomock.Any()).Return(outbound.JoinResult{Outcome: outbound.JoinOK, Seq: 1}, nil)
+	e.m.store.EXPECT().Join(ctx, gomock.Any()).DoAndReturn(func(_ context.Context, p outbound.JoinParams) (outbound.JoinResult, error) {
+		return outbound.JoinResult{Outcome: outbound.JoinCreated, EntryID: p.EntryID, Seq: 1, VisitorID: p.NewVisitorID, Status: "WAITING"}, nil
+	})
 	e.m.audit.EXPECT().Append(ctx, gomock.Any()).Return(nil).AnyTimes()
 	e.m.tokens.EXPECT().IssueQueue(gomock.Any(), gomock.Any(), gomock.Any()).Return("qt", nil)
 	e.m.tokens.EXPECT().IssueVisitor(gomock.Any(), gomock.Any()).Return("vt", nil)
 
-	_, err := e.uc.Join(ctx, inbound.JoinInput{EventID: "ev1", Body: validBody(), ClientIP: ""})
+	_, err := e.uc.Join(ctx, inbound.JoinInput{EventID: "ev1", ClientIP: ""})
 	require.NoError(t, err)
 	assert.Contains(t, e.logs.String(), "IP klien kosong")
 	assert.NotContains(t, e.logs.String(), "a@b.id")

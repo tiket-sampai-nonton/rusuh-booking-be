@@ -14,6 +14,9 @@ const (
 	StatusClosed    Status = "CLOSED"
 	StatusCompleted Status = "COMPLETED"
 	StatusEnded     Status = "ENDED"
+	// StatusStale: a WAITING entry whose heartbeat went silent (ADR-030). Skipped by the promoter, keeps its seq,
+	// revived by the next valid heartbeat.
+	StatusStale Status = "STALE"
 )
 
 // IsTerminal reports whether the status has no outgoing transition.
@@ -34,7 +37,12 @@ func (s Status) CanTransitionTo(to Status) bool {
 	switch s {
 	case StatusWaiting:
 		switch to {
-		case StatusAdmitted, StatusLeft, StatusSoldOut, StatusClosed:
+		case StatusAdmitted, StatusLeft, StatusSoldOut, StatusClosed, StatusStale, StatusEnded:
+			return true
+		}
+	case StatusStale:
+		switch to {
+		case StatusWaiting, StatusLeft, StatusEnded:
 			return true
 		}
 	case StatusAdmitted:

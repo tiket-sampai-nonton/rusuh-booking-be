@@ -15,15 +15,16 @@ import (
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/port/outbound"
 )
 
-func joinOne(t *testing.T, s *QueueStore, ev string, n int, nowMs int64) (entryID, visitorID, nikHash string) {
+// joinOne joins an anonymous entry bound to account "acct-<n>" (so both constraint keys exist) and returns
+// (entryID, visitorID, accountID). Anonymous join has no NIK/email (ADR-030).
+func joinOne(t *testing.T, s *QueueStore, ev string, n int, nowMs int64) (entryID, visitorID, accountID string) {
 	t.Helper()
-	entryID, visitorID, nikHash = fmt.Sprintf("entry-%d", n), fmt.Sprintf("visitor-%d", n), fmt.Sprintf("%064x", n)
+	entryID, visitorID, accountID = fmt.Sprintf("entry-%d", n), fmt.Sprintf("visitor-%d", n), fmt.Sprintf("acct-%d", n)
 	res, err := s.Join(context.Background(), outbound.JoinParams{
-		EventID: ev, EntryID: entryID, VisitorID: visitorID, NikHash: nikHash, EmailHashHex: fmt.Sprintf("%064x", n+1000),
-		EmailEnc: []byte("sealed"), NikMasked: "3174********0001", NowMs: nowMs, OneActivePerVisitor: true, OneActivePerEmail: true,
+		EventID: ev, EntryID: entryID, NewVisitorID: visitorID, AccountID: accountID, NowMs: nowMs, OneActivePerVisitor: true,
 	})
 	require.NoError(t, err)
-	require.Equal(t, outbound.JoinOK, res.Outcome)
+	require.Equal(t, outbound.JoinCreated, res.Outcome)
 	return
 }
 
@@ -145,13 +146,6 @@ func TestQueueStore_SaleStatusDocLeaseAndNotifications(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, ok)
 	assert.JSONEq(t, `{"x":1}`, string(doc))
-
-	// A buyer whose quota is spent cannot join again.
-	nik := fmt.Sprintf("%064x", 999)
-	require.NoError(t, s.AddQuotaExhausted(ctx, ev, nik))
-	res, err := s.Join(ctx, outbound.JoinParams{EventID: ev, EntryID: "e-q", VisitorID: "v-q", NikHash: nik, EmailHashHex: fmt.Sprintf("%064x", 998), NowMs: time.Now().UnixMilli()})
-	require.NoError(t, err)
-	assert.Equal(t, outbound.JoinQuotaExhausted, res.Outcome)
 
 	// "Your turn is soon" is sent once per entry.
 	was, err := s.WasNotifiedSoon(ctx, ev, "e1")

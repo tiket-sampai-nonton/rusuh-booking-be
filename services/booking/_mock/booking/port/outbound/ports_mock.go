@@ -90,6 +90,21 @@ func (mr *MockIEventRepoMockRecorder) GetDetail(ctx, eventID any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetDetail", reflect.TypeOf((*MockIEventRepo)(nil).GetDetail), ctx, eventID)
 }
 
+// GetSupply mocks base method.
+func (m *MockIEventRepo) GetSupply(ctx context.Context, eventID string) (entity.Supply, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetSupply", ctx, eventID)
+	ret0, _ := ret[0].(entity.Supply)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetSupply indicates an expected call of GetSupply.
+func (mr *MockIEventRepoMockRecorder) GetSupply(ctx, eventID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetSupply", reflect.TypeOf((*MockIEventRepo)(nil).GetSupply), ctx, eventID)
+}
+
 // ListEvents mocks base method.
 func (m *MockIEventRepo) ListEvents(ctx context.Context, q dto.EventListQuery) ([]entity.Event, error) {
 	m.ctrl.T.Helper()

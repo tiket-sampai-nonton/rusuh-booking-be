@@ -9,6 +9,7 @@ import (
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/httpx"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/port/inbound"
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/port/outbound"
 )
 
 // cookieVisitor is the HttpOnly cookie that carries the visitor token set by join. It is only ever WRITTEN here: the
@@ -30,4 +31,12 @@ func writeDomainError(w stdhttp.ResponseWriter, r *stdhttp.Request, err error) {
 // (me/claim/leave). It returns the visitor id encoded in the rb_visitor cookie or X-Visitor-Token.
 type VisitorAuthenticator interface {
 	Resolve(r *stdhttp.Request) (string, bool)
+}
+
+// VisitorTokenAuthenticator also exposes the token generation and the device claim (ADR-030): join, heartbeat and me
+// compare the generation with the server record and bind tokens to the X-Device-Id hash.
+type VisitorTokenAuthenticator interface {
+	VisitorAuthenticator
+	ResolveToken(r *stdhttp.Request) (outbound.VisitorClaim, bool)
+	DeviceHash(r *stdhttp.Request) string
 }

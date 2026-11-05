@@ -23,6 +23,7 @@ type HoldSpec struct {
 	AdmissionID      string
 	VisitorID        string
 	BuyerNIKHash     []byte
+	BuyerNIKMasked   string
 	BuyerEmailEnc    string
 	AccountID        string
 	AmountMinor      int64
@@ -31,7 +32,12 @@ type HoldSpec struct {
 	CorrelationID    string
 	// For admission lock (6.R2) and EDITABLE transition (6.R3):
 	CfgEditEnabled bool // from admission.CfgEditEnabled — if false, lock immediately after hold
-	AdmissionUnits int  // admission.Units — to compute release = Units - len(Lines) on CONVERTED
+
+	// Buyer-NIK refusal policy (R10.6) and the app clock used for the throttle window.
+	Now           time.Time
+	RefusalBudget int           // refusals allowed before the throttle starts
+	ThrottleBase  time.Duration // first throttle step; doubles per extra refusal
+	ThrottleMax   time.Duration
 }
 
 // HoldResult is the committed hold outcome.
@@ -42,7 +48,13 @@ type HoldResult struct {
 	Status           string
 	AmountMinor      int64
 	PaymentExpiresAt time.Time
+	// Refused is set when the hold was refused for a reason whose attempt counter must survive (the
+	// transaction committed): currently only "BUYER_NIK_LIMIT_REACHED".
+	Refused string
 }
+
+// RefusedBuyerNikLimit is HoldResult.Refused when the buyer NIK is at its ticket cap.
+const RefusedBuyerNikLimit = "BUYER_NIK_LIMIT_REACHED"
 
 // ReplaceSpec is everything IUnitOfWork.ReplaceItems needs for an atomic edit (no TTL reset).
 type ReplaceSpec struct {
@@ -126,4 +138,17 @@ type IIdempotencyStore interface {
 	// Begin inserts an IN_PROGRESS record, or returns the existing one (found=true) for replay/conflict.
 	Begin(ctx context.Context, scope, ownerID, key string, requestHash []byte, ttl time.Duration) (rec IdempotencyRecord, found bool, err error)
 	Complete(ctx context.Context, scope, ownerID, key string, status int, body []byte) error
+	// Abort deletes an IN_PROGRESS record with the same request hash so a refused request can be retried
+	// under the same key. It never deletes a COMPLETED record.
+	Abort(ctx context.Context, scope, ownerID, key string, requestHash []byte) error
+}
+
+// IBuyerPII hashes, seals and fingerprints buyer data at hold (ADR-030). Plaintext never reaches storage,
+// logs or events: the NIK is kept as HMAC + mask, the email as AES-256-GCM base64 with the Notification AAD.
+type IBuyerPII interface {
+	HashNIK(nik string) []byte
+	SealNIK(nik string) ([]byte, error)
+	SealBuyerEmail(email string) (string, error)
+	// Fingerprint is a keyed HMAC of arbitrary bytes, used for the idempotency request hash.
+	Fingerprint(data []byte) []byte
 }

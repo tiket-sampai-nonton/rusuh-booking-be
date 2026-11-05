@@ -44,16 +44,8 @@ func newFakeStore() *fakeStore {
 func (s *fakeStore) addWaitingAt(id string, seq int64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.entries[id] = &entity.Entry{ID: id, VisitorID: "v-" + id, Seq: valueobject.Seq(seq), Status: valueobject.StatusWaiting, BuyerNikHash: []byte{byte(seq)}}
+	s.entries[id] = &entity.Entry{ID: id, VisitorID: "v-" + id, Seq: valueobject.Seq(seq), Status: valueobject.StatusWaiting}
 	s.waiting = append(s.waiting, id)
-}
-
-// addWaitingWithEmail adds a WAITING entry whose sealed email bytes are given (fakePII fails on "bad").
-func (s *fakeStore) addWaitingWithEmail(id string, nikHash byte, emailEnc string) {
-	s.addWaiting(id, nikHash)
-	s.mu.Lock()
-	s.entries[id].EmailEnc = []byte(emailEnc)
-	s.mu.Unlock()
 }
 
 // addOrphanWaiting puts an id in waiting without any entry hash (C5).
@@ -68,7 +60,7 @@ func (s *fakeStore) addWaiting(id string, nikHash byte) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.seq++
-	s.entries[id] = &entity.Entry{ID: id, VisitorID: "v-" + id, Seq: valueobject.Seq(s.seq), Status: valueobject.StatusWaiting, BuyerNikHash: []byte{nikHash}}
+	s.entries[id] = &entity.Entry{ID: id, VisitorID: "v-" + id, Seq: valueobject.Seq(s.seq), Status: valueobject.StatusWaiting}
 	s.waiting = append(s.waiting, id)
 }
 
@@ -102,10 +94,9 @@ func (s *fakeStore) Join(_ context.Context, p outbound.JoinParams) (outbound.Joi
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.seq++
-	nik, _ := hex.DecodeString(p.NikHash)
-	s.entries[p.EntryID] = &entity.Entry{ID: p.EntryID, VisitorID: p.VisitorID, Seq: valueobject.Seq(s.seq), Status: valueobject.StatusWaiting, BuyerNikHash: nik, EmailEnc: p.EmailEnc}
+	s.entries[p.EntryID] = &entity.Entry{ID: p.EntryID, VisitorID: p.NewVisitorID, Seq: valueobject.Seq(s.seq), Status: valueobject.StatusWaiting}
 	s.waiting = append(s.waiting, p.EntryID)
-	return outbound.JoinResult{Outcome: outbound.JoinOK, Seq: s.seq}, nil
+	return outbound.JoinResult{Outcome: outbound.JoinCreated, EntryID: p.EntryID, Seq: s.seq, VisitorID: p.NewVisitorID, Status: "WAITING"}, nil
 }
 
 func (s *fakeStore) Promote(_ context.Context, _ string, cands []outbound.PromoteCandidate, capacity int, nowMs int64, opts outbound.PromoteOpts) (outbound.PromoteResult, error) {
@@ -232,7 +223,7 @@ func (s *fakeStore) EndEntry(_ context.Context, _, entryID, outcome string, nowM
 		default:
 			return outbound.EndResult{Tag: "IGNORED", Status: st}, nil
 		}
-	case outbound.EndQuotaExhaust, outbound.EndAlreadyActive, outbound.EndUnreadablePII:
+	case outbound.EndAlreadyActive:
 		if st != "WAITING" {
 			return outbound.EndResult{Tag: "IGNORED", Status: st}, nil
 		}
@@ -324,8 +315,7 @@ func (s *fakeStore) ExpiredActive(_ context.Context, _ string, nowMs int64, limi
 	return ids, nil
 }
 
-func (s *fakeStore) AddQuotaExhausted(context.Context, string, string) error { return nil }
-func (s *fakeStore) SetSale(context.Context, string, string, bool) error     { return nil }
+func (s *fakeStore) SetSale(context.Context, string, string, bool) error { return nil }
 func (s *fakeStore) GetSale(context.Context, string) (outbound.SaleState, error) {
 	return outbound.SaleState{}, nil
 }
@@ -335,17 +325,6 @@ func (s *fakeStore) GetStatusDoc(context.Context, string) ([]byte, bool, error) 
 }
 func (s *fakeStore) WasNotifiedSoon(context.Context, string, string) (bool, error) { return true, nil } // not under test
 func (s *fakeStore) MarkNotifiedSoon(context.Context, string, string) error        { return nil }
-func (s *fakeStore) NoteUnreadable(_ context.Context, _, entryID string) (int, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	e, ok := s.entries[entryID]
-	if !ok || e.Status != valueobject.StatusWaiting {
-		return -1, nil
-	}
-	s.unreadable[entryID]++
-	return s.unreadable[entryID], nil
-}
-
 func (s *fakeStore) AcquirePromoterLease(_ context.Context, _ string, _ time.Duration) (string, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -366,3 +345,37 @@ func (s *fakeStore) ReleasePromoterLease(_ context.Context, _, token string) err
 	}
 	return nil
 }
+
+// --- ADR-030 surface: the fake models W = 0 (rank = seq, always drawn) and no liveness; those paths are proven on
+// the real store in the valkey integration tests. ---
+
+func (s *fakeStore) Heartbeat(context.Context, string, string, int64, int64) (outbound.HeartbeatResult, error) {
+	return outbound.HeartbeatResult{Tag: outbound.HeartbeatOK, Status: "WAITING"}, nil
+}
+func (s *fakeStore) TokenGen(context.Context, string, string) (int64, bool, error) {
+	return 1, true, nil
+}
+func (s *fakeStore) FindLastByVisitor(context.Context, string, string) (entity.Entry, bool, error) {
+	return entity.Entry{}, false, nil
+}
+func (s *fakeStore) SweepLiveness(context.Context, string, string, int64, int64, int, int64) (outbound.LivenessResult, error) {
+	return outbound.LivenessResult{}, nil
+}
+func (s *fakeStore) SweepLivenessTick(context.Context, string, int64, int64, int, int64, time.Duration, int) (outbound.LivenessResult, []string, error) {
+	return outbound.LivenessResult{}, nil, nil
+}
+func (s *fakeStore) WaitingSeqAt(ctx context.Context, ev string, idx int64) (int64, bool, error) {
+	ids, _ := s.TopWaiting(ctx, ev, int(idx)+1)
+	if int(idx) >= len(ids) {
+		return 0, false, nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return int64(s.entries[ids[idx]].Seq), true, nil
+}
+func (s *fakeStore) WaitingCount(context.Context, string) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return int64(len(s.waiting)), nil
+}
+func (s *fakeStore) LivePosition(context.Context, string, int64) (int64, error) { return 1, nil }

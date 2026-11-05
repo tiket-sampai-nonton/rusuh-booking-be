@@ -13,6 +13,7 @@ type BookingSession struct {
 	EventID              string         `json:"eventId"`
 	Phase                string         `json:"phase"` // SELECTING | EDITABLE | LOCKED | ENDED
 	ReservedUnits        int            `json:"reservedUnits"`
+	OutstandingUnits     int            `json:"outstandingUnits"` // reserved units not yet held (0 after hold)
 	MaxSelectable        int            `json:"maxSelectable"`
 	BuyerNIKMasked       string         `json:"buyerNikMasked,omitempty"`
 	AllowMixedCategories bool           `json:"allowMixedCategories"`
@@ -29,9 +30,9 @@ type AllocationEntry struct {
 	QueueEntryID   string `json:"queueEntryId"`
 	Seq            int64  `json:"seq"`
 	VisitorID      string `json:"visitorId"`
-	BuyerNIKHash   string `json:"buyerNikHash"` // hex HMAC
-	BuyerNIKMasked string `json:"buyerNikMasked"`
-	BuyerEmailEnc  string `json:"buyerEmailEnc"`
+	BuyerNIKHash   string `json:"buyerNikHash,omitempty"` // hex HMAC; absent in the anonymous flow
+	BuyerNIKMasked string `json:"buyerNikMasked,omitempty"`
+	BuyerEmailEnc  string `json:"buyerEmailEnc,omitempty"`
 	AccountID      string `json:"accountId"`
 	Units          int    `json:"units"`
 }
@@ -45,7 +46,7 @@ type AllocationBatchRequest struct {
 // AllocationResult is the outcome for one entry.
 type AllocationResult struct {
 	QueueEntryID  string     `json:"queueEntryId"`
-	Outcome       string     `json:"outcome"` // GRANTED | NO_SUPPLY_NOW | SOLD_OUT | BUYER_QUOTA_EXHAUSTED | ALREADY_ACTIVE
+	Outcome       string     `json:"outcome"` // GRANTED | NO_SUPPLY_NOW | SOLD_OUT | ALREADY_ACTIVE
 	AllocationID  string     `json:"allocationId,omitempty"`
 	Units         int        `json:"units,omitempty"`
 	ClaimDeadline *time.Time `json:"claimDeadline,omitempty"`

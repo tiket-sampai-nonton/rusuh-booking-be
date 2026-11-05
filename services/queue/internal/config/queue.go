@@ -3,7 +3,6 @@ package config
 import (
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/crypto"
@@ -45,24 +44,18 @@ func (t Token) Validate() error {
 	return errors.Join(errs...)
 }
 
-// PII holds the 32-byte hex keys for field protection. PII_HMAC_KEY MUST match User Service.
+// PII holds the HMAC key used for the visitor-token device claim (ADR-030). Queue no longer receives or stores NIK or
+// email, so it has no encryption key (PII_ENC_KEY is not read; leaving it set in the environment is harmless).
 type PII struct {
-	EncKeyHex  string // PII_ENC_KEY: AES-256-GCM for email_enc
-	HashKeyHex string // PII_HMAC_KEY: HMAC for nik_hash/email_hash (must equal User Service key)
+	HashKeyHex string // PII_HMAC_KEY: HMAC-SHA256 of X-Device-Id (the raw value is never stored)
 }
 
-// Validate checks PII keys.
+// Validate checks the PII key.
 func (p PII) Validate() error {
-	var errs []error
-	for name, v := range map[string]string{"PII_ENC_KEY": p.EncKeyHex, "PII_HMAC_KEY": p.HashKeyHex} {
-		if _, err := crypto.ParseKey(v); err != nil {
-			errs = append(errs, fmt.Errorf("%s: %w", name, err))
-		}
+	if _, err := crypto.ParseKey(p.HashKeyHex); err != nil {
+		return fmt.Errorf("PII_HMAC_KEY: %w", err)
 	}
-	if p.EncKeyHex != "" && strings.EqualFold(p.EncKeyHex, p.HashKeyHex) {
-		errs = append(errs, errors.New("PII_ENC_KEY dan PII_HMAC_KEY harus berbeda"))
-	}
-	return errors.Join(errs...)
+	return nil
 }
 
 // Booking holds the outbound Booking Service client config.
@@ -85,12 +78,11 @@ func (b Booking) Validate() error {
 
 // RateLimit holds the per-endpoint fixed-window rate limits (design §2.1, §2.3, §2.4).
 type RateLimit struct {
-	JoinPerEmailWindow time.Duration
-	JoinPerIPWindow    time.Duration
-	MePerVisitorWindow time.Duration
-	JoinPerEmail       int
-	JoinPerIP          int
-	MePerVisitor       int
+	JoinPerIPWindow     time.Duration
+	MePerVisitorWindow  time.Duration
+	JoinPerIP           int
+	MePerVisitor        int
+	HeartbeatPerVisitor int // per MePerVisitorWindow
 }
 
 // WorkerTuning holds fallback intervals for the background jobs (design §7).
@@ -104,10 +96,6 @@ type WorkerTuning struct {
 	PromoterLeaseTTL time.Duration
 	// SweepBatchMax bounds the expired entries the sweeper ends per event and tick (QUEUE_SWEEP_BATCH_MAX).
 	SweepBatchMax int
-	// UnsealFailMax is the number of failed ticks before an unreadable-PII head is ended (QUEUE_UNSEAL_FAIL_MAX).
-	UnsealFailMax int
-	// UnsealProbe is the number of extra ids probed to tell an entry-scoped from a systemic unseal failure.
-	UnsealProbe int
 	// NoSupplySuspectTicks labels a head that answers NO_SUPPLY_NOW this many consecutive ticks as suspect.
 	NoSupplySuspectTicks int
 }
@@ -133,12 +121,6 @@ func (w WorkerTuning) Validate(bookingTimeout time.Duration) error {
 	if w.SweepBatchMax < 1 || w.SweepBatchMax > maxSweepBatch {
 		errs = append(errs, fmt.Errorf("QUEUE_SWEEP_BATCH_MAX %d di luar rentang 1..%d", w.SweepBatchMax, maxSweepBatch))
 	}
-	if w.UnsealFailMax < 1 {
-		errs = append(errs, fmt.Errorf("QUEUE_UNSEAL_FAIL_MAX %d harus >= 1", w.UnsealFailMax))
-	}
-	if w.UnsealProbe < 1 {
-		errs = append(errs, fmt.Errorf("QUEUE_UNSEAL_PROBE %d harus >= 1", w.UnsealProbe))
-	}
 	if w.NoSupplySuspectTicks < minSuspectTicks {
 		errs = append(errs, fmt.Errorf("QUEUE_NO_SUPPLY_SUSPECT_TICKS %d harus >= %d", w.NoSupplySuspectTicks, minSuspectTicks))
 	}
@@ -149,13 +131,46 @@ func (w WorkerTuning) Validate(bookingTimeout time.Duration) error {
 func (r RateLimit) Validate() error {
 	var errs []error
 	for name, w := range map[string]time.Duration{
-		"RATE_LIMIT_JOIN_PER_EMAIL_WINDOW": r.JoinPerEmailWindow,
 		"RATE_LIMIT_JOIN_PER_IP_WINDOW":    r.JoinPerIPWindow,
 		"RATE_LIMIT_ME_PER_VISITOR_WINDOW": r.MePerVisitorWindow,
 	} {
 		if w < minRateLimitWindow {
 			errs = append(errs, fmt.Errorf("%s %s harus >= %s", name, w, minRateLimitWindow))
 		}
+	}
+	return errors.Join(errs...)
+}
+
+// Liveness holds the heartbeat/STALE knobs (ADR-030, R03.8) and the liveness-index shard count.
+type Liveness struct {
+	HeartbeatInterval time.Duration // QUEUE_HEARTBEAT_INTERVAL_SECONDS (±20% jitter)
+	NearInterval      time.Duration // QUEUE_HEARTBEAT_NEAR_INTERVAL_SECONDS, used near the head
+	StaleAfter        time.Duration // QUEUE_STALE_AFTER_SECONDS: silent longer than this -> STALE
+	EndAfter          time.Duration // QUEUE_END_AFTER_SECONDS: silent longer than this -> ENDED (only without admission)
+	BatchMax          int           // QUEUE_LIVENESS_BATCH_MAX entries marked/ended per event and shard per tick
+	Shards            int           // QUEUE_LIVENESS_SHARDS: hb/hbstale index is split across this many keys (ADR-030 Amendment)
+}
+
+// Validate checks end > stale > 2·interval and the ranges.
+func (l Liveness) Validate() error {
+	var errs []error
+	if l.HeartbeatInterval < time.Second {
+		errs = append(errs, fmt.Errorf("QUEUE_HEARTBEAT_INTERVAL_SECONDS %s harus >= 1s", l.HeartbeatInterval))
+	}
+	if l.NearInterval < time.Second || l.NearInterval > l.HeartbeatInterval {
+		errs = append(errs, fmt.Errorf("QUEUE_HEARTBEAT_NEAR_INTERVAL_SECONDS %s harus di [1s, interval]", l.NearInterval))
+	}
+	if l.StaleAfter <= 2*l.HeartbeatInterval {
+		errs = append(errs, fmt.Errorf("QUEUE_STALE_AFTER_SECONDS %s harus > 2x interval heartbeat (%s)", l.StaleAfter, 2*l.HeartbeatInterval))
+	}
+	if l.EndAfter <= l.StaleAfter {
+		errs = append(errs, fmt.Errorf("QUEUE_END_AFTER_SECONDS %s harus > QUEUE_STALE_AFTER_SECONDS (%s)", l.EndAfter, l.StaleAfter))
+	}
+	if l.BatchMax < 1 || l.BatchMax > 10000 {
+		errs = append(errs, fmt.Errorf("QUEUE_LIVENESS_BATCH_MAX %d di luar rentang 1..10000", l.BatchMax))
+	}
+	if l.Shards < 1 || l.Shards > 256 {
+		errs = append(errs, fmt.Errorf("QUEUE_LIVENESS_SHARDS %d di luar rentang 1..256", l.Shards))
 	}
 	return errors.Join(errs...)
 }

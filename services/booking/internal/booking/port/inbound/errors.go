@@ -4,6 +4,9 @@ package inbound
 
 import (
 	"net/http"
+	"sort"
+	"strconv"
+	"strings"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/apperror"
 )
@@ -20,7 +23,11 @@ const (
 	CodeQuantityExceeds         apperror.Code = "QUANTITY_EXCEEDS_LIMIT"
 	CodeMixedNotAllowed         apperror.Code = "MIXED_CATEGORIES_NOT_ALLOWED"
 	CodeCategoryUnavailable     apperror.Code = "CATEGORY_UNAVAILABLE"
-	CodeBuyerQuota              apperror.Code = "BUYER_QUOTA_EXHAUSTED"
+	CodeBuyerNikLimitReached    apperror.Code = "BUYER_NIK_LIMIT_REACHED"
+	CodeBuyerNikThrottled       apperror.Code = "BUYER_NIK_THROTTLED"
+	CodeConsentRequired         apperror.Code = "CONSENT_REQUIRED"
+	CodeQuantityInvalid         apperror.Code = "QUANTITY_INVALID"
+	CodeEmailMismatch           apperror.Code = "EMAIL_MISMATCH"
 	CodeNikRegistered           apperror.Code = "ATTENDEE_NIK_ALREADY_REGISTERED"
 	CodeNikDuplicate            apperror.Code = "ATTENDEE_NIK_DUPLICATE_IN_ORDER"
 	CodeIdemReused              apperror.Code = "IDEMPOTENCY_KEY_REUSED"
@@ -50,7 +57,10 @@ var (
 	ErrQuantityExceeds         = apperror.New(CodeQuantityExceeds, http.StatusUnprocessableEntity, "jumlah tiket melebihi batas per pesanan")
 	ErrMixedNotAllowed         = apperror.New(CodeMixedNotAllowed, http.StatusUnprocessableEntity, "kategori campuran tidak diizinkan")
 	ErrCategoryUnavailable     = apperror.New(CodeCategoryUnavailable, http.StatusConflict, "kategori tidak tersedia")
-	ErrBuyerQuota              = apperror.New(CodeBuyerQuota, http.StatusConflict, "kuota pembeli untuk NIK ini sudah habis")
+	ErrBuyerNikLimitReached    = apperror.New(CodeBuyerNikLimitReached, http.StatusUnprocessableEntity, "NIK ini sudah mencapai batas, gunakan NIK lain")
+	ErrConsentRequired         = apperror.New(CodeConsentRequired, http.StatusUnprocessableEntity, "persetujuan pemrosesan NIK wajib")
+	ErrQuantityInvalid         = apperror.New(CodeQuantityInvalid, http.StatusUnprocessableEntity, "jumlah tiket tidak valid untuk sesi ini")
+	ErrEmailMismatch           = apperror.New(CodeEmailMismatch, http.StatusUnprocessableEntity, "email dan konfirmasi email tidak sama")
 	ErrNikRegistered           = apperror.New(CodeNikRegistered, http.StatusConflict, "NIK pemegang sudah terdaftar pada event ini")
 	ErrNikDuplicate            = apperror.New(CodeNikDuplicate, http.StatusConflict, "NIK pemegang duplikat dalam satu pesanan")
 	ErrIdemReused              = apperror.New(CodeIdemReused, http.StatusConflict, "Idempotency-Key dipakai ulang dengan isi berbeda")
@@ -72,4 +82,19 @@ var (
 // Validation returns a VALIDATION_ERROR (400) with the failing field in details.
 func Validation(field, msg string) *apperror.Error {
 	return apperror.New(CodeValidation, http.StatusBadRequest, msg).WithDetails(map[string]string{field: msg})
+}
+
+// BuyerNikThrottled returns BUYER_NIK_THROTTLED (429) carrying the wait in seconds; pkg/httpx promotes the
+// retryAfter detail to the Retry-After header.
+func BuyerNikThrottled(retryAfterSeconds int) *apperror.Error {
+	return apperror.New(CodeBuyerNikThrottled, http.StatusTooManyRequests, "terlalu banyak percobaan NIK; coba lagi nanti").
+		WithDetails(map[string]string{"retryAfter": strconv.Itoa(retryAfterSeconds)})
+}
+
+// CategoryUnavailable returns CATEGORY_UNAVAILABLE (409) whose message lists the refused category ids
+// (sorted, comma separated); the ids are request data, never PII.
+func CategoryUnavailable(ids []string) *apperror.Error {
+	sorted := append([]string(nil), ids...)
+	sort.Strings(sorted)
+	return apperror.New(CodeCategoryUnavailable, http.StatusConflict, strings.Join(sorted, ","))
 }

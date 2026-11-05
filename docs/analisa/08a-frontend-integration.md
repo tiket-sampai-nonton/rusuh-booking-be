@@ -61,18 +61,17 @@
 
 **Endpoint:** `POST /api/v1/events/{eventId}/queue-entries`
 
-**Request:**
-```json
-{
-  "buyerNik": "3201010101010001",
-  "email": "buyer@example.com"
-}
-```
+**Request:** tanpa body (ADR-030). Join anonim untuk semua pembeli; NIK, email, dan consent diisi di halaman
+Booking saat hold. Klien lama yang masih mengirim `buyerNik`/`email`/`consentNik` ditoleransi, nilainya dibuang.
 
 **Headers:**
-- `X-Visitor-ID`: UUID perangkat (wajib, disimpan di localStorage/SecureStorage)
-- `Authorization: Bearer <token>` (opsional, untuk login user)
-- `Idempotency-Key`: UUID (untuk retry)
+- Visitor token: cookie HttpOnly `rb_visitor` (web) atau header `X-Visitor-Token` (app). `X-Visitor-ID` tidak
+  pernah ada di server dan dihapus dari dokumen ini (drift lama).
+- `Authorization: Bearer <token>` (opsional): hanya mengidentifikasi akun untuk dedup; claim NIK token diabaikan.
+- `Idempotency-Key`: 16..64 karakter (opsional; replay mengembalikan entri yang sama dengan 200).
+
+**Respons:** `201` entri baru, `200` entri aktif yang sudah ada (token valid, re-attach akun, replay key), `409
+ACCOUNT_ALREADY_IN_QUEUE`, `429` batas lunak per IP (hormati `Retry-After`).
 
 **Responses:**
 
@@ -447,3 +446,39 @@ Subscribe untuk notifikasi giliran:
 - HLD §4.4 Runtime View: Sequence diagrams
 - SRS §3.2.25: Near-Real-Time Notification
 - ADR-003: Waiting room via polling Status Document
+
+
+## Perubahan yang dibutuhkan web dan app (ADR-030, tanpa edit repo frontend)
+
+Antrean (Queue):
+1. Hapus form NIK/email/consent dari langkah join; panggil `POST .../queue-entries` tanpa body (kirim visitor token dan
+   bearer bila ada, serta `Idempotency-Key` untuk retry).
+2. Tangani `200` (entri sudah ada) sama dengan `201`; simpan visitor token baru bila ada di respons (re-attach akun).
+3. Tangani `409 ACCOUNT_ALREADY_IN_QUEUE`: tampilkan bahwa akun sudah antre di perangkat lain.
+4. Hapus pemeriksaan bot di klien (Turnstile, proof-of-work, Play Integrity/App Attest): tidak dibangun.
+5. Tangani 429 dengan `Retry-After` pada join (batas lunak per IP).
+
+Halaman Booking (urutan seperti tiket pesawat):
+1. Bagian pembeli dahulu: NIK pembeli, email dua kali, consent. Pengguna login: prefill dari akun lalu konfirmasi.
+2. Daftar kategori memakai ketersediaan hidup; setiap +1 qty menambah satu form pemegang (NIK + nama); 1 qty = 1 NIK.
+3. Batas qty = `outstandingUnits` pada session view (sampai 3), bukan 3 per kategori.
+4. Tombol lanjut mengirim `POST /api/v1/bookings` dengan blok `buyer` dan `items`; timer 5 menit booking mulai di sini.
+5. `422 BUYER_NIK_LIMIT_REACHED`: tampilkan "NIK ini sudah mencapai batas, gunakan NIK lain"; sesi dan timer tetap; kirim ulang
+   dengan NIK lain dan Idempotency-Key yang sama. `429 BUYER_NIK_THROTTLED`: tunggu `Retry-After`.
+6. `409 CATEGORY_UNAVAILABLE: <id>[,<id>]`: tandai kategori itu habis (baca id setelah awalan `: `), baca ulang
+   ketersediaan, biarkan pembeli memilih kategori lain; unit cadangan tetap ada.
+
+Antrean, liveness dan posisi (ADR-030):
+1. Kirim `X-Device-Id` (id acak per instalasi/profil browser, dibuat sekali) di join, heartbeat dan me. Token yang
+   terbit bersama header ini hanya berlaku dengan header yang sama.
+2. Selalu simpan visitor token terbaru dari setiap respons join (generasi token dirotasi saat re-attach akun atau join
+   ulang); `401 VISITOR_TOKEN_INVALID` di heartbeat/me berarti token lama: join ulang (dengan bearer bila login).
+3. Kirim `POST /api/v1/queue-entries/me/heartbeat?eventId=` tiap `nextHeartbeatMs` (dari heartbeat/me) selama
+   WAITING/STALE. `404 ENTRY_NOT_FOUND` = entri berakhir: panggil me untuk `reason` dan tawarkan gabung ulang.
+4. Posisi: bandingkan `seq` milik sendiri dengan `guaranteedUntilSeq`/`possibleUntilSeq`/`headSeq` di status
+   document; `zone` dari me otoritatif. (Draw dibuang — ADR-030 Amandemen 2026-11-05; semua join FIFO ketat atas seq,
+   tidak ada field `*Rank`.)
+5. (Dihapus — draw dibuang; tidak ada status `DRAWING`/`drawing:true` dan tidak ada field rank null.)
+6. `me` untuk entri berakhir menjawab 200 `state: ENDED` + `reason` (LEFT, STALE_TIMEOUT, CLAIM_WINDOW_EXPIRED,
+   PAGE_TIMER_EXPIRED, JOURNEY_ENDED); tampilkan pesan sesuai reason.
+7. Deteksi "giliran sebentar lagi" dari status document yang di-cache CDN (`seq` sendiri vs `headSeq`); push hanya bonus.

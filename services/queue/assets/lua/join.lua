@@ -1,34 +1,105 @@
--- join.lua — atomic join dengan semua constraint (design §4.1)
--- KEYS[1]=seq  KEYS[2]=waiting  KEYS[3]=entry:<id>
--- KEYS[4]=nik:<h>  KEYS[5]=visitor:<v>  KEYS[6]=email:<eh>  KEYS[7]=quota_exhausted
--- ARGV: 1=entryId 2=visitorId 3=nikHash 4=emailEnc 5=accountId 6=nowMs
---       7=oneActivePerVisitor("1"/"0") 8=oneActivePerEmail("1"/"0") 9=emailHash(hex) 10=nikMasked
+-- join.lua — anonymous atomic join (ADR-030). The join carries no NIK, email or consent: it ranks a principal.
+-- Identity is a visitor id (from a verified visitor token or freshly minted) and, optionally, the account id
+-- of a verified User bearer. The bearer identifies the principal only; it never binds a NIK.
+-- Every key shares the event hash tag (one slot); keys are built from the prefix P in ARGV[1].
+--
+-- All joins are strict FIFO by seq (ADR-030 Amendment: the opening-window draw was dropped). There is no rank
+-- field: seq is the admission order. The liveness index hb is sharded (ADR-030 Amendment): Go passes the entry's
+-- shard index s in ARGV[12] and the full key hb:{s} in ARGV[13]; the shard index is stored on the entry hash
+-- (field `shard`) so every later liveness mutation addresses the shard the entry lives in.
+--
+-- ARGV: 1=P 2=newEntryId 3=newVisitorId 4=tokenVisitorId('' = none) 5=tokenGen 6=accountId('' = none)
+--       7=idemKeySuffix('' = none) 8=nowMs 9=oneActivePerVisitor('1'/'0') 10=idemTTLSeconds 11=tokenTTLSeconds
+--       12=shardIndex 13=hbShardKey (liveness shard key hb:{s} for the new entry)
+-- Reply: {OUTCOME, entryId, seq, visitorId, status, gen}
+--   OUTCOME = CREATED | EXISTING | REATTACH | ERR_ACCOUNT_ALREADY_IN_QUEUE
+-- Token generation (vtok:<v>): a token is honoured only when its generation equals the stored one. Rotation (INCR)
+-- happens on re-attach and when a visitor id is reused after its entry ENDED; nowhere else.
 
--- (1) kuota habis?
-if redis.call('SISMEMBER', KEYS[7], ARGV[3]) == 1 then
-  return {'ERR', 'BUYER_QUOTA_EXHAUSTED'}
+local P = ARGV[1]
+local tokV, tokGen, acct, idem = ARGV[4], ARGV[5], ARGV[6], ARGV[7]
+local now = ARGV[8]
+local tokenTTL = tonumber(ARGV[11])
+local shardIdx = ARGV[12]
+local hbShard = ARGV[13]
+
+local function ekey(id) return P .. 'entry:' .. id end
+local function gen(v) return tonumber(redis.call('GET', P .. 'vtok:' .. v) or '0') end
+local function rotate(v)
+  local g = redis.call('INCR', P .. 'vtok:' .. v)
+  redis.call('EXPIRE', P .. 'vtok:' .. v, tokenTTL)
+  return g
 end
--- (2) NIK sudah antre? (idempoten: kembalikan entry yang ada)
-local nik = redis.call('GET', KEYS[4])
-if nik then return {'EXISTING', 'NIK', nik} end
--- (3) visitor sudah antre?
-if ARGV[7] == '1' then
-  local v = redis.call('GET', KEYS[5])
-  if v then return {'EXISTING', 'VISITOR', v} end
+
+local function describe(outcome, id, g)
+  local h = redis.call('HMGET', ekey(id), 'seq', 'visitorId', 'status')
+  local vid = h[2] or ''
+  if g == nil then g = gen(vid) end
+  return {outcome, id, tostring(h[1] or '0'), vid, h[3] or '', g}
 end
--- (4) email sudah antre?
-if ARGV[8] == '1' then
-  local em = redis.call('GET', KEYS[6])
-  if em then return {'EXISTING', 'EMAIL', em} end
+
+local function active(key)
+  local id = redis.call('GET', key)
+  if not id then return nil end
+  local st = redis.call('HGET', ekey(id), 'status')
+  if (not st) or st == 'COMPLETED' or st == 'ENDED' or st == 'LEFT' or st == 'MISSED' then return nil end
+  return id
 end
--- (5) sequence + entry + waiting + constraint keys (semua-atau-tidak)
-local seq = redis.call('INCR', KEYS[1])
-redis.call('HSET', KEYS[3],
-  'seq', seq, 'visitorId', ARGV[2], 'buyerNikHash', ARGV[3],
-  'emailEnc', ARGV[4], 'emailHash', ARGV[9], 'accountId', ARGV[5], 'nikMasked', ARGV[10],
-  'status', 'WAITING', 'joinedAtMs', ARGV[6])
-redis.call('ZADD', KEYS[2], seq, ARGV[1])
-redis.call('SET', KEYS[4], ARGV[1])
-if ARGV[7] == '1' then redis.call('SET', KEYS[5], ARGV[1]) end
-if ARGV[8] == '1' then redis.call('SET', KEYS[6], ARGV[1]) end
-return {'OK', seq, 'WAITING'}
+
+-- 1. Idempotency-Key replay: same scope + key returns the same entry, never a second one, no rotation.
+local idemKey = P .. 'idem:' .. idem
+if idem ~= '' then
+  local id = redis.call('GET', idemKey)
+  if id and redis.call('EXISTS', ekey(id)) == 1 then return describe('EXISTING', id) end
+end
+
+-- 0. Token normalisation (never an error): a rotated-out generation, or a token of ANOTHER account's entry, is ignored.
+local v = tokV
+if v ~= '' and (tokGen == '0' or tostring(gen(v)) ~= tokGen) then v = '' end
+local ev = nil
+if v ~= '' then ev = active(P .. 'visitor:' .. v) end
+if acct ~= '' and ev then
+  local owner = redis.call('HGET', ekey(ev), 'accountId')
+  if owner and owner ~= '' and owner ~= acct then v = ''; ev = nil end
+end
+
+local acctKey = P .. 'account:' .. acct
+if acct ~= '' then
+  local ea = active(acctKey)
+  if ea then
+    if ev and ev ~= ea then return {'ERR_ACCOUNT_ALREADY_IN_QUEUE', ev, '0', v, '', 0} end
+    if ev then return describe('EXISTING', ea) end
+    -- re-attach (lost token, new device, or ended/rotated token): last device wins
+    local vid = redis.call('HGET', ekey(ea), 'visitorId')
+    return describe('REATTACH', ea, rotate(vid))
+  end
+  if ev then
+    -- associate the anonymous entry of this token with the account (no rotation)
+    redis.call('SET', acctKey, ev)
+    redis.call('HSET', ekey(ev), 'accountId', acct)
+    return describe('EXISTING', ev)
+  end
+elseif ev then
+  -- anonymous caller holding a valid token of an active entry: the token is the credential
+  return describe('EXISTING', ev)
+end
+
+-- 5. Create. A valid token of an ENDED entry keeps its visitor id (rotated); otherwise the minted id starts at gen 1.
+local vid, g = ARGV[3], 1
+if v ~= '' then
+  vid = v
+  g = rotate(vid)
+else
+  redis.call('SET', P .. 'vtok:' .. vid, 1, 'EX', tokenTTL)
+end
+local seq = redis.call('INCR', P .. 'seq')
+local id = ARGV[2]
+redis.call('HSET', ekey(id), 'seq', seq, 'visitorId', vid, 'accountId', acct, 'status', 'WAITING',
+  'joinedAtMs', now, 'lastSignalMs', now, 'shard', shardIdx)
+redis.call('ZADD', P .. 'waiting', seq, id)
+redis.call('ZADD', hbShard, now, id)
+if ARGV[9] == '1' then redis.call('SET', P .. 'visitor:' .. vid, id) end
+redis.call('SET', P .. 'vlast:' .. vid, id, 'EX', tokenTTL)
+if acct ~= '' then redis.call('SET', acctKey, id) end
+if idem ~= '' then redis.call('SET', idemKey, id, 'EX', tonumber(ARGV[10])) end
+return {'CREATED', id, tostring(seq), vid, 'WAITING', g}

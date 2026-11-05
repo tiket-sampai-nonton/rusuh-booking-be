@@ -55,9 +55,21 @@ func (h *BookingHandler) createBooking(w stdhttp.ResponseWriter, r *stdhttp.Requ
 		httpx.WriteError(w, r, err)
 		return
 	}
+	// Optional bearer: identifies the account (principal) only. It never supplies or binds a NIK.
+	var accountID string
+	if tok, ok := httpx.BearerToken(r); ok && h.buyer != nil {
+		id, verr := h.buyer.VerifyAccess(tok)
+		if verr != nil || id == "" {
+			w.Header().Set("WWW-Authenticate", `Bearer realm="rbt", error="invalid_token"`)
+			httpx.WriteError(w, r, inbound.ErrUnauthorized)
+			return
+		}
+		accountID = id
+	}
 	resp, err := h.hold.Hold(r.Context(), inbound.HoldCommand{
 		Request:        req,
 		VisitorID:      VisitorID(r),
+		AccountID:      accountID,
 		IdempotencyKey: r.Header.Get("Idempotency-Key"),
 		CorrelationID:  httpx.RequestIDFrom(r.Context()),
 	})

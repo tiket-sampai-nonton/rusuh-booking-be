@@ -1537,3 +1537,22 @@ Semua TTL, jendela, batas, dan flag dapat dikonfigurasi (daftar lengkap, default
 Lokasi: per event di database (`booking.events`, `queue.event_settings`), setelan teknis per service di env (perubahan lewat deploy), dan nilai cadangan di klien. Perubahan per event dilakukan lewat migration/seed atau endpoint internal admin (back-office di luar scope).
 
 ---
+
+---
+
+## Catatan perubahan ADR-030 (join anonim, NIK di halaman Booking)
+
+Status: diusulkan, menunggu konfirmasi pemilik untuk butir bertanda "menunggu konfirmasi". Menimpa persyaratan lama
+bila bertentangan.
+
+| Persyaratan | Perubahan |
+|---|---|
+| SRS-F-01-01..09 (identitas pembeli saat join) | NIK, email, dan consent dipindah dari join ke halaman Booking (blok `buyer` pada hold). Join anonim untuk guest dan login. |
+| SRS-F-01-04 | menunggu konfirmasi: "tidak ada aturan pembelian baru setelah masuk halaman beli" diartikan sebagai: pembeli yang masuk selalu mendapat tiket sebanyak yang dipilih sampai 3 (jaminan KUANTITAS). Penolakan NIK pembeli yang sudah mencapai batas saat hold (`BUYER_NIK_LIMIT_REACHED`) dipertahankan sebagai aturan yang diterima pemilik. |
+| SRS-F-04-03/05/06/09 | Dedup antrean per visitor dan per akun (bearer); kuota NIK bukan lagi syarat antrean (tetap dijaga di hold lewat `buyer_quotas`). |
+| SRS-F-05-07/09 | Admission mereservasi `min(3, stok bebas)` unit tanpa NIK; kategori dipilih bebas dengan stok hidup. |
+| SRS-F-09-01 / 09-04 | Hold memakai hanya unit admission itu sendiri; sisa unit kembali ke stok saat hold (menggantikan "sisa tertahan sampai payment-lock"). |
+| SRS-F-11-02 | Hold terjadi di halaman Booking; timer 5 menit mulai saat tombol lanjut ditekan. |
+| SRS-F-25-02 | **WITHDRAWN (draw dibuang, pemilik 2026-11-05):** jendela acak pembukaan dibatalkan. Urutan klaim SELALU FIFO ketat atas `seq` untuk SEMUA join, tanpa jendela. (ADR-030 Amandemen 2026-11-05.) |
+| SRS-F-05-04/06, SRS-F-06-02 | Heartbeat liveness: STALE setelah 90 dtk senyap (dilewati, rank tetap, revive), ENDED setelah 300 dtk tanpa admisi. |
+| SRS-F-05-09 | Zona dalam ENTRI atas **seq** (FIFO ketat; draw dibuang): G = ceil(bebas/3), P = ceil((bebas+teralokasi+ditahan)/3); field zona tetap `guaranteedUntilSeq`/`possibleUntilSeq`/`headSeq` (tidak ada rename ke `*Rank`). (ADR-030 Amandemen 2026-11-05.) |

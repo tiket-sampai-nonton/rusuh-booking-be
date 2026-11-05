@@ -1,10 +1,17 @@
 -- end_entry.lua — guard idempoten untuk consumer booking.journey.ended + promoter/sweeper outcomes
 -- (design §5.1, QSH-T02)
 -- KEYS[1]=entry:<id> KEYS[2]=active KEYS[3..5]=nik/visitor/email keys KEYS[6]=waiting
--- ARGV: 1=entryId 2=outcome 3=nowMs
--- outcome=SWEEP_MISSED (Queue sweeper, deadline lewat); BUYER_QUOTA_EXHAUSTED|ALREADY_ACTIVE|UNREADABLE_PII
--- (promoter, WAITING-only); PROMOTER_ORPHAN needs no class (hash gone => NO_ENTRY branch below);
+-- ARGV: 1=entryId 2=outcome 3=nowMs 4=P (prefix for the global stale/pending sets)
+--       5=hbShardKey 6=hbstaleShardKey (the entry's sharded liveness keys; ADR-030 Amendment)
+-- outcome=SWEEP_MISSED (Queue sweeper, deadline lewat); ALREADY_ACTIVE (promoter, WAITING-only; ADR-030 removed
+-- BUYER_QUOTA_EXHAUSTED and UNREADABLE_PII); PROMOTER_ORPHAN needs no class (hash gone => NO_ENTRY branch below);
 -- anything else = Booking outcome (PAID|UNCLAIMED|REFUNDED|...).
+local function dropSets()
+  redis.call('ZREM', ARGV[5], ARGV[1])              -- sharded hb:{s}
+  redis.call('ZREM', ARGV[6], ARGV[1])              -- sharded hbstale:{s}
+  redis.call('ZREM', ARGV[4] .. 'stale', ARGV[1])   -- global ordering set
+  redis.call('ZREM', ARGV[4] .. 'pending', ARGV[1]) -- global (draw dropped; harmless)
+end
 local st = redis.call('HGET', KEYS[1], 'status')
 if not st then
   -- orphan id: self-heal, remove from both sets so a poison page never blocks later entries (P12).
@@ -47,7 +54,8 @@ if ARGV[2]=='SWEEP_MISSED' then
   end
   redis.call('ZREM', KEYS[2], ARGV[1])
   redis.call('ZREM', KEYS[6], ARGV[1])
-  redis.call('HSET', KEYS[1], 'status', 'MISSED')
+  redis.call('HSET', KEYS[1], 'status', 'MISSED', 'endReason', ARGV[2], 'endedAtMs', ARGV[3])
+  dropSets()
   if redis.call('GET', KEYS[3])==ARGV[1] then redis.call('DEL', KEYS[3]) end
   if redis.call('GET', KEYS[4])==ARGV[1] then redis.call('DEL', KEYS[4]) end
   if redis.call('GET', KEYS[5])==ARGV[1] then redis.call('DEL', KEYS[5]) end
@@ -55,11 +63,12 @@ if ARGV[2]=='SWEEP_MISSED' then
 end
 
 -- class B: promoter outcomes that only ever end a WAITING entry (never touch ADMITTED/CLAIMED)
-if ARGV[2]=='BUYER_QUOTA_EXHAUSTED' or ARGV[2]=='ALREADY_ACTIVE' or ARGV[2]=='UNREADABLE_PII' then
+if ARGV[2]=='ALREADY_ACTIVE' then
   if st ~= 'WAITING' then return {'IGNORED', st} end
   redis.call('ZREM', KEYS[2], ARGV[1])
   redis.call('ZREM', KEYS[6], ARGV[1])
-  redis.call('HSET', KEYS[1], 'status', 'ENDED')
+  dropSets()
+  redis.call('HSET', KEYS[1], 'status', 'ENDED', 'endReason', ARGV[2], 'endedAtMs', ARGV[3])
   if redis.call('GET', KEYS[3])==ARGV[1] then redis.call('DEL', KEYS[3]) end
   if redis.call('GET', KEYS[4])==ARGV[1] then redis.call('DEL', KEYS[4]) end
   if redis.call('GET', KEYS[5])==ARGV[1] then redis.call('DEL', KEYS[5]) end
@@ -80,7 +89,8 @@ else
 end
 redis.call('ZREM', KEYS[2], ARGV[1])
 redis.call('ZREM', KEYS[6], ARGV[1])
-redis.call('HSET', KEYS[1], 'status', final)
+dropSets()
+redis.call('HSET', KEYS[1], 'status', final, 'endReason', ARGV[2], 'endedAtMs', ARGV[3])
 if redis.call('GET', KEYS[3])==ARGV[1] then redis.call('DEL', KEYS[3]) end
 if redis.call('GET', KEYS[4])==ARGV[1] then redis.call('DEL', KEYS[4]) end
 if redis.call('GET', KEYS[5])==ARGV[1] then redis.call('DEL', KEYS[5]) end

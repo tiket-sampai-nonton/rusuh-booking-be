@@ -224,7 +224,7 @@ func TestPromoter_UnknownOutcomeIsCountedAndMutatesNothing(t *testing.T) {
 	h.store.addWaiting("e1", 1)
 	h.store.addWaiting("e2", 2)
 	wrapped := &unknownOutcomeBooking{inner: h.stub, entry: "e1"}
-	p := worker.NewPromoter(h.store, h.settings, wrapped, h.pub, fakeAudit{}, h.pii, h.clk, nil, worker.PromoterTuning{BatchMax: 200}).WithMetrics(h.metrics)
+	p := worker.NewPromoter(h.store, h.settings, wrapped, h.pub, fakeAudit{}, h.clk, nil, worker.PromoterTuning{BatchMax: 200}).WithMetrics(h.metrics)
 	require.NoError(t, p.Run(ctxTODO()))
 	assert.Equal(t, 1, h.metrics.Count(worker.MetricUnknownOutcome))
 	assert.Equal(t, "WAITING", h.status("e1"))

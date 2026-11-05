@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -81,4 +82,21 @@ func TestGetEventSupply_MultipleCategories(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 15, snap.RemainingTickets)
 	require.Len(t, snap.Categories, 3)
+}
+
+func TestGetEventSupply_LedgerFieldsAndWindow(t *testing.T) {
+	start := time.Date(2030, 1, 1, 10, 0, 0, 0, time.UTC)
+	detail := entity.EventDetail{
+		Event: entity.Event{ID: eventID, Published: true, Status: entity.EventAvailable, MaxTicketsPerOrder: 3,
+			SalesStartsAt: start, SalesEndsAt: start.Add(4 * time.Hour)},
+		Categories: []entity.CategoryDetail{{Category: entity.Category{Code: "A"}, Available: 2}},
+	}
+	repo := &fakeEventRepo{detail: detail, supply: entity.Supply{TotalCapacity: 12, AllocatedUnits: 6, HeldUnits: 4}}
+	snap, err := usecase.NewGetEventSupply(repo).GetSupply(context.Background(), eventID)
+	require.NoError(t, err)
+	assert.Equal(t, 6, snap.AllocatedUnits)
+	assert.Equal(t, 4, snap.HeldUnits)
+	assert.Equal(t, 2, snap.FreeUnits)
+	assert.Equal(t, 3, snap.MaxTicketsPerOrder)
+	assert.Equal(t, start, snap.SalesStartsAt)
 }

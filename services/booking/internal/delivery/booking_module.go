@@ -92,7 +92,11 @@ func newBookingModule(cfg config.Config, clients *Clients, logger *slog.Logger) 
 	sessions := usecase.NewSession(admissionRepo, eventRepo, admissionVerifier, clk)
 	attendee := usecase.NewCheckAttendee(admissionRepo, eventRepo, attendeeRepo, pii, clk)
 	cancelSess := usecase.NewCancelSession(admissionRepo)
-	hold := usecase.NewHold(admissionRepo, eventRepo, idemStore, uow, pii, idGen, clk)
+	hold := usecase.NewHold(admissionRepo, eventRepo, idemStore, uow, pii, idGen, clk, usecase.HoldPolicy{
+		RefusalBudget: cfg.Hold.BuyerNikAttemptBudget,
+		ThrottleBase:  cfg.Hold.ThrottleBase,
+		ThrottleMax:   cfg.Hold.ThrottleMax,
+	})
 	edit := usecase.NewEdit(bookingRepo, admissionRepo, eventRepo, uow, pii, clk)
 	links, err := buildTicketLinks()
 	if err != nil {

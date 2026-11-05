@@ -4,7 +4,6 @@ package worker_test
 
 import (
 	"context"
-	"crypto/sha256"
 	"fmt"
 	"os"
 	"testing"
@@ -43,27 +42,18 @@ func twoStores(t *testing.T) (a, b *queuevalkey.QueueStore) {
 		c, err := pkgvalkey.New(context.Background(), pkgvalkey.Config{Server: server, PrefixEnv: prefix})
 		require.NoError(t, err)
 		t.Cleanup(c.Close)
-		return queuevalkey.NewQueueStore(c.VK(), c, clock.System{})
+		return queuevalkey.NewQueueStore(c.VK(), c, clock.System{}, 16)
 	}
 	return mk(), mk()
 }
-
-// itPII hashes deterministically so distinct NIK/email values never collide on the constraint keys.
-type itPII struct{}
-
-func (itPII) HashNIK(s string) []byte               { h := sha256.Sum256([]byte("nik" + s)); return h[:] }
-func (itPII) HashEmail(s string) []byte             { h := sha256.Sum256([]byte("mail" + s)); return h[:] }
-func (itPII) SealEmail(string) ([]byte, error)      { return []byte("sealed"), nil }
-func (itPII) SealBuyerEmail(string) (string, error) { return "c2VhbGVk", nil }
-func (itPII) UnsealEmail([]byte) (string, error)    { return "pembeli@contoh.id", nil }
 
 type itTokens struct{}
 
 func (itTokens) IssueAdmission(string, string, string, time.Time) (string, time.Time, error) {
 	return "adm", time.Now().Add(time.Minute), nil
 }
-func (itTokens) IssueVisitor(string, time.Time) (string, error)       { return "vt", nil }
-func (itTokens) IssueQueue(string, string, time.Time) (string, error) { return "qt", nil }
+func (itTokens) IssueVisitor(outbound.VisitorClaim, time.Time) (string, error) { return "vt", nil }
+func (itTokens) IssueQueue(string, string, time.Time) (string, error)          { return "qt", nil }
 
 type itLimiter struct{}
 
@@ -77,31 +67,26 @@ func (itAudit) Append(context.Context, outbound.AuditRecord) error { return nil 
 func newJoinUC(store outbound.IQueueStore, booking outbound.IBookingClient, settings *fakeSettings, metrics outbound.IPromoterMetrics) *usecase.JoinQueue {
 	return usecase.NewJoinQueue(usecase.JoinDeps{
 		Store: store, Settings: settings, Booking: booking, Limiter: itLimiter{}, Tokens: itTokens{},
-		PII: itPII{}, Audit: itAudit{}, Clock: clock.System{},
+		Audit: itAudit{}, Clock: clock.System{},
 		Sleep:  func(context.Context, time.Duration) error { return nil },
 		Jitter: func() time.Duration { return time.Millisecond },
 	}, usecase.JoinSettings{
-		JoinPerEmail: 1000, JoinPerEmailWindow: time.Minute, JoinPerIP: 1000, JoinPerIPWindow: time.Minute,
+		JoinPerIP: 1000, JoinPerIPWindow: time.Minute,
 		ClaimWindow: 3 * time.Minute, StatusURLTemplate: "/s/", AdmissionLeaseTTL: 10 * time.Second,
 	}).WithMetrics(metrics)
 }
 
-// joinBodyFor returns a structurally valid, distinct buyer for joiner n (n in 1..9999).
-func joinBodyFor(n int) dto.JoinRequest {
-	email := fmt.Sprintf("u%d@b.id", n)
-	return dto.JoinRequest{BuyerNik: fmt.Sprintf("320101010190%04d", n), Email: email, EmailConfirmation: email, ConsentNik: true}
-}
-
-func joinAs(ctx context.Context, uc *usecase.JoinQueue, n int) (dto.QueueEntry, error) {
-	return uc.Join(ctx, inbound.JoinInput{EventID: "ev", Body: joinBodyFor(n), ClientIP: "10.0.0.1"})
+// joinAs joins an anonymous, untokened visitor; the join carries no buyer data (ADR-030).
+func joinAs(ctx context.Context, uc *usecase.JoinQueue, _ int) (dto.QueueEntry, error) {
+	return uc.Join(ctx, inbound.JoinInput{EventID: "ev", ClientIP: "10.0.0.1"})
 }
 
 func settingsFor(capacity int) *fakeSettings {
-	return &fakeSettings{s: entity.EventSettings{EventID: "ev", ActiveSlotCapacity: capacity, OneActivePerVisitor: true, OneActivePerEmail: true}}
+	return &fakeSettings{s: entity.EventSettings{EventID: "ev", ActiveSlotCapacity: capacity, OneActivePerVisitor: true}}
 }
 
 func newIntegrationPromoter(store outbound.IQueueStore, booking outbound.IBookingClient, settings *fakeSettings, metrics outbound.IPromoterMetrics, clk clock.IClock) *worker.Promoter {
-	return worker.NewPromoter(store, settings, booking, &fakePub{}, itAudit{}, itPII{}, clk, nil, worker.PromoterTuning{BatchMax: 200}).WithMetrics(metrics)
+	return worker.NewPromoter(store, settings, booking, &fakePub{}, itAudit{}, clk, nil, worker.PromoterTuning{BatchMax: 200}).WithMetrics(metrics)
 }
 
 // realStatus reads the entry status straight from the real store.

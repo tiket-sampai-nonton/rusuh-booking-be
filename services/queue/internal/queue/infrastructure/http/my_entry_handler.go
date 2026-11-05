@@ -12,11 +12,11 @@ import (
 // MyEntryHandler serves GET /api/v1/queue-entries/me?eventId= (design §2.3). Visitor-authenticated.
 type MyEntryHandler struct {
 	uc   inbound.IMyEntryUsecase
-	auth VisitorAuthenticator
+	auth VisitorTokenAuthenticator
 }
 
 // NewMyEntryHandler creates the handler.
-func NewMyEntryHandler(uc inbound.IMyEntryUsecase, auth VisitorAuthenticator) *MyEntryHandler {
+func NewMyEntryHandler(uc inbound.IMyEntryUsecase, auth VisitorTokenAuthenticator) *MyEntryHandler {
 	return &MyEntryHandler{uc: uc, auth: auth}
 }
 
@@ -26,14 +26,15 @@ func (h *MyEntryHandler) Register(mux *stdhttp.ServeMux) {
 }
 
 func (h *MyEntryHandler) me(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-	vid, ok := h.auth.Resolve(r)
+	c, ok := h.auth.ResolveToken(r)
 	if !ok {
-		writeDomainError(w, r, entity.ErrNotFound)
+		writeDomainError(w, r, entity.ErrVisitorTokenInvalid) // R01.6: invalid/expired/device mismatch -> 401
 		return
 	}
 	resp, err := h.uc.GetMyEntry(r.Context(), inbound.MyEntryInput{
 		EventID:   r.URL.Query().Get("eventId"),
-		VisitorID: vid,
+		VisitorID: c.VisitorID,
+		Gen:       c.Gen,
 	})
 	if err != nil {
 		writeDomainError(w, r, err)

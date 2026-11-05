@@ -24,10 +24,8 @@ func TestPromoterTuningFromConfig(t *testing.T) {
 	cfg := testConfig(t)
 	cfg.WorkerTuning.PromoterLeaseTTL = 7 * time.Second
 	cfg.WorkerTuning.PromoteBatchMax = 33
-	cfg.WorkerTuning.UnsealFailMax = 2
-	cfg.WorkerTuning.UnsealProbe = 4
 	cfg.WorkerTuning.NoSupplySuspectTicks = 5
-	assert.Equal(t, worker.PromoterTuning{BatchMax: 33, LeaseTTL: 7 * time.Second, UnsealFailMax: 2, UnsealProbe: 4, NoSupplySuspectTicks: 5}, promoterTuning(cfg))
+	assert.Equal(t, worker.PromoterTuning{BatchMax: 33, LeaseTTL: 7 * time.Second, NoSupplySuspectTicks: 5}, promoterTuning(cfg))
 }
 
 func TestSweepBatchFromConfig(t *testing.T) {
@@ -41,7 +39,6 @@ func TestJoinSettingsFromConfig(t *testing.T) {
 	cfg.WorkerTuning.PromoterLeaseTTL = 7 * time.Second
 	js := joinSettings(cfg)
 	assert.Equal(t, 7*time.Second, js.AdmissionLeaseTTL)
-	assert.Equal(t, cfg.RateLimit.JoinPerEmail, js.JoinPerEmail)
 	assert.Equal(t, cfg.RateLimit.JoinPerIPWindow, js.JoinPerIPWindow)
 	assert.Equal(t, cfg.Token.AdmissionTTL, js.ClaimWindow)
 }
@@ -55,7 +52,7 @@ func TestPromoterUsesConfiguredLeaseTTL(t *testing.T) {
 	settings.EXPECT().ListEventIDs(gomock.Any()).Return([]string{"ev1"}, nil)
 	store.EXPECT().AcquirePromoterLease(gomock.Any(), "ev1", 7*time.Second).Return("", false, nil)
 
-	p := worker.NewPromoter(store, settings, nil, nil, nil, nil, clock.System{}, nil, promoterTuning(cfg))
+	p := worker.NewPromoter(store, settings, nil, nil, nil, clock.System{}, nil, promoterTuning(cfg))
 	require.NoError(t, p.Run(context.Background()))
 }
 
@@ -70,42 +67,6 @@ func TestSweeperUsesConfiguredBatch(t *testing.T) {
 
 	s := worker.NewSweeper(store, settings, clock.System{}, sweepBatch(cfg))
 	require.NoError(t, s.Run(context.Background()))
-}
-
-// (5) UnsealFailMax from config reaches the promoter: with 2 the entry is ended on the second failed tick count.
-func TestPromoterUsesConfiguredUnsealFailMax(t *testing.T) {
-	for _, tc := range []struct {
-		failMax   int
-		wantEnded int
-	}{{2, 1}, {3, 0}} {
-		cfg := testConfig(t)
-		cfg.WorkerTuning.UnsealFailMax = tc.failMax
-		ctrl := gomock.NewController(t)
-		store := mock_outbound.NewMockIQueueStore(ctrl)
-		settings := mock_outbound.NewMockIEventSettingsRepo(ctrl)
-		booking := mock_outbound.NewMockIBookingClient(ctrl)
-		pii := mock_outbound.NewMockIPIIProtector(ctrl)
-		settings.EXPECT().ListEventIDs(gomock.Any()).Return([]string{"ev1"}, nil)
-		store.EXPECT().AcquirePromoterLease(gomock.Any(), "ev1", gomock.Any()).Return("tok", true, nil)
-		store.EXPECT().ReleasePromoterLease(gomock.Any(), "ev1", "tok").Return(nil)
-		settings.EXPECT().Get(gomock.Any(), "ev1").Return(entity.EventSettings{ActiveSlotCapacity: 2}, true, nil)
-		store.EXPECT().ActiveCount(gomock.Any(), "ev1").Return(0, nil)
-		store.EXPECT().TopWaiting(gomock.Any(), "ev1", 2).Return([]string{"H", "E2"}, nil)
-		store.EXPECT().GetEntry(gomock.Any(), "ev1", "H").Return(entity.Entry{ID: "H", EmailEnc: []byte("bad")}, true, nil)
-		store.EXPECT().GetEntry(gomock.Any(), "ev1", "E2").Return(entity.Entry{ID: "E2", EmailEnc: []byte("ok"), VisitorID: "v2"}, true, nil)
-		pii.EXPECT().UnsealEmail([]byte("bad")).Return("", assert.AnError)
-		pii.EXPECT().UnsealEmail([]byte("ok")).Return("x@y.id", nil)
-		pii.EXPECT().SealBuyerEmail("x@y.id").Return("c2VhbGVk", nil)
-		store.EXPECT().NoteUnreadable(gomock.Any(), "ev1", "H").Return(2, nil)
-		booking.EXPECT().ReserveBatch(gomock.Any(), gomock.Any()).Return(outbound.AllocationBatchResponse{
-			Allocations: []outbound.AllocationResult{{QueueEntryID: "E2", Status: "NO_SUPPLY_NOW"}},
-		}, nil)
-		if tc.wantEnded == 1 {
-			store.EXPECT().EndEntry(gomock.Any(), "ev1", "H", outbound.EndUnreadablePII, gomock.Any()).Return(outbound.EndResult{Tag: "OK"}, nil)
-		}
-		p := worker.NewPromoter(store, settings, booking, nil, nil, pii, clock.System{}, nil, promoterTuning(cfg))
-		require.NoError(t, p.Run(context.Background()), "failMax=%d", tc.failMax)
-	}
 }
 
 func scrape(t *testing.T, reg *pkgtelemetry.Registry) string {
@@ -127,22 +88,19 @@ func TestPromoterWiredMetricsShowLapsedReplayAndDeadHead(t *testing.T) {
 		store := mock_outbound.NewMockIQueueStore(ctrl)
 		settings := mock_outbound.NewMockIEventSettingsRepo(ctrl)
 		booking := mock_outbound.NewMockIBookingClient(ctrl)
-		pii := mock_outbound.NewMockIPIIProtector(ctrl)
 		settings.EXPECT().ListEventIDs(gomock.Any()).Return([]string{"ev1"}, nil)
 		store.EXPECT().AcquirePromoterLease(gomock.Any(), "ev1", gomock.Any()).Return("tok", true, nil)
 		store.EXPECT().ReleasePromoterLease(gomock.Any(), "ev1", "tok").Return(nil)
 		settings.EXPECT().Get(gomock.Any(), "ev1").Return(entity.EventSettings{ActiveSlotCapacity: 1}, true, nil)
 		store.EXPECT().ActiveCount(gomock.Any(), "ev1").Return(0, nil)
 		store.EXPECT().TopWaiting(gomock.Any(), "ev1", 1).Return([]string{"E1"}, nil)
-		store.EXPECT().GetEntry(gomock.Any(), "ev1", "E1").Return(entity.Entry{ID: "E1", EmailEnc: []byte("ok")}, true, nil)
-		pii.EXPECT().UnsealEmail(gomock.Any()).Return("x@y.id", nil)
-		pii.EXPECT().SealBuyerEmail("x@y.id").Return("c2VhbGVk", nil)
+		store.EXPECT().GetEntry(gomock.Any(), "ev1", "E1").Return(entity.Entry{ID: "E1"}, true, nil)
 		booking.EXPECT().ReserveBatch(gomock.Any(), gomock.Any()).Return(outbound.AllocationBatchResponse{Allocations: []outbound.AllocationResult{reply}}, nil)
 		if expectEnd {
 			store.EXPECT().EndEntry(gomock.Any(), "ev1", "E1", outbound.EndAlreadyActive, gomock.Any()).Return(outbound.EndResult{Tag: "OK"}, nil)
 		}
 		// no Promote, no ReleaseAllocation: gomock fails on either
-		p := worker.NewPromoter(store, settings, booking, nil, nil, pii, clock.Fixed{T: now}, nil, promoterTuning(cfg)).
+		p := worker.NewPromoter(store, settings, booking, nil, nil, clock.Fixed{T: now}, nil, promoterTuning(cfg)).
 			WithMetrics(metrics)
 		require.NoError(t, p.Run(context.Background()))
 	}
@@ -167,7 +125,6 @@ func TestPromoterUsesConfiguredNoSupplySuspectTicks(t *testing.T) {
 		store := mock_outbound.NewMockIQueueStore(ctrl)
 		settings := mock_outbound.NewMockIEventSettingsRepo(ctrl)
 		booking := mock_outbound.NewMockIBookingClient(ctrl)
-		pii := mock_outbound.NewMockIPIIProtector(ctrl)
 		pub := mock_outbound.NewMockIEventPublisher(ctrl)
 		settings.EXPECT().ListEventIDs(gomock.Any()).Return([]string{"ev1"}, nil).Times(5)
 		settings.EXPECT().Get(gomock.Any(), "ev1").Return(entity.EventSettings{ActiveSlotCapacity: 2}, true, nil).Times(5)
@@ -175,9 +132,7 @@ func TestPromoterUsesConfiguredNoSupplySuspectTicks(t *testing.T) {
 		store.EXPECT().ReleasePromoterLease(gomock.Any(), "ev1", "tok").Return(nil).Times(5)
 		store.EXPECT().ActiveCount(gomock.Any(), "ev1").Return(0, nil).Times(5)
 		store.EXPECT().TopWaiting(gomock.Any(), "ev1", 2).Return([]string{"P", "E2"}, nil).Times(5)
-		store.EXPECT().GetEntry(gomock.Any(), "ev1", gomock.Any()).Return(entity.Entry{EmailEnc: []byte("ok"), VisitorID: "v"}, true, nil).Times(10)
-		pii.EXPECT().UnsealEmail(gomock.Any()).Return("x@y.id", nil).Times(10)
-		pii.EXPECT().SealBuyerEmail("x@y.id").Return("c2VhbGVk", nil).Times(10)
+		store.EXPECT().GetEntry(gomock.Any(), "ev1", gomock.Any()).Return(entity.Entry{VisitorID: "v"}, true, nil).Times(10)
 		booking.EXPECT().ReserveBatch(gomock.Any(), gomock.Any()).Return(outbound.AllocationBatchResponse{Allocations: []outbound.AllocationResult{
 			{QueueEntryID: "P", Status: "NO_SUPPLY_NOW"},
 			{QueueEntryID: "E2", AllocationID: "a2", Status: "GRANTED", ClaimDeadline: "2099-01-01T00:00:00Z"},
@@ -185,7 +140,7 @@ func TestPromoterUsesConfiguredNoSupplySuspectTicks(t *testing.T) {
 		store.EXPECT().Promote(gomock.Any(), "ev1", gomock.Any(), 2, gomock.Any(), gomock.Any()).Return(outbound.PromoteResult{Promoted: []string{"E2"}}, nil).Times(5)
 		pub.EXPECT().PublishTurnArrived(gomock.Any(), "ev1", "E2", gomock.Any(), gomock.Any()).Return(nil).Times(5)
 
-		p := worker.NewPromoter(store, settings, booking, pub, nil, pii, clock.Fixed{T: time.Date(2026, 10, 20, 10, 0, 0, 0, time.UTC)}, nil, promoterTuning(cfg)).
+		p := worker.NewPromoter(store, settings, booking, pub, nil, clock.Fixed{T: time.Date(2026, 10, 20, 10, 0, 0, 0, time.UTC)}, nil, promoterTuning(cfg)).
 			WithMetrics(telemetry.NewPromoterMetrics(reg))
 		for i := 1; i <= 5; i++ {
 			require.NoError(t, p.Run(context.Background()))
@@ -201,4 +156,19 @@ func TestPromoterUsesConfiguredNoSupplySuspectTicks(t *testing.T) {
 			assert.NotContains(t, out, "queue_promote_head_no_supply_repeat_total", "N=%d", tc.n)
 		}
 	}
+}
+
+// ADR-030 wiring: heartbeat interval, liveness thresholds (sharing the promoter lease TTL) and the visitor token TTL
+// reach their consumers from config.
+func TestAnonymousQueueWiringFromConfig(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.Liveness.HeartbeatInterval, cfg.Liveness.NearInterval = 30*time.Second, 10*time.Second
+	cfg.Liveness.StaleAfter, cfg.Liveness.EndAfter, cfg.Liveness.BatchMax = 90*time.Second, 300*time.Second, 77
+	cfg.WorkerTuning.PromoterLeaseTTL = 7 * time.Second
+	cfg.Token.VisitorTTL = 6 * time.Hour
+	hp := heartbeatPolicy(cfg)
+	assert.EqualValues(t, 30_000, hp.BaseMs)
+	assert.EqualValues(t, 10_000, hp.NearMs)
+	assert.Equal(t, worker.LivenessTuning{StaleAfter: 90 * time.Second, EndAfter: 300 * time.Second, BatchMax: 77, LeaseTTL: 7 * time.Second}, livenessTuning(cfg))
+	assert.Equal(t, 6*time.Hour, joinSettings(cfg).VisitorTokenTTL)
 }

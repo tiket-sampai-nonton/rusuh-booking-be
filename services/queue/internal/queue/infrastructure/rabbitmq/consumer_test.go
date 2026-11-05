@@ -53,9 +53,10 @@ func TestConsumer_JourneyEnded_DoubleDeliveryIdempotent(t *testing.T) {
 	require.NoError(t, c.Subscription().Handler(context.Background(), d))
 }
 
-func TestConsumer_QuotaExhausted(t *testing.T) {
-	c, store := newConsumer(t)
-	store.EXPECT().AddQuotaExhausted(gomock.Any(), "ev1", "deadbeef").Return(nil)
+// ADR-030: booking.quota.exhausted is a one-release no-op acknowledge (no store call: a strict mock would fail),
+// so a stale message from an old Booking pod can neither DLQ-storm nor end a live buyer.
+func TestConsumer_QuotaExhaustedIsNoOpAck(t *testing.T) {
+	c, _ := newConsumer(t)
 	err := c.Subscription().Handler(context.Background(), delivery(t, "booking.quota.exhausted",
 		map[string]string{"eventId": "ev1", "buyerNikHash": "deadbeef"}))
 	assert.NoError(t, err)

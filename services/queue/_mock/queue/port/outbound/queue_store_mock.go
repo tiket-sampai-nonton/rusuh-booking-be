@@ -74,20 +74,6 @@ func (mr *MockIQueueStoreMockRecorder) ActiveCount(ctx, eventID any) *gomock.Cal
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ActiveCount", reflect.TypeOf((*MockIQueueStore)(nil).ActiveCount), ctx, eventID)
 }
 
-// AddQuotaExhausted mocks base method.
-func (m *MockIQueueStore) AddQuotaExhausted(ctx context.Context, eventID, nikHash string) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "AddQuotaExhausted", ctx, eventID, nikHash)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// AddQuotaExhausted indicates an expected call of AddQuotaExhausted.
-func (mr *MockIQueueStoreMockRecorder) AddQuotaExhausted(ctx, eventID, nikHash any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AddQuotaExhausted", reflect.TypeOf((*MockIQueueStore)(nil).AddQuotaExhausted), ctx, eventID, nikHash)
-}
-
 // Claim mocks base method.
 func (m *MockIQueueStore) Claim(ctx context.Context, eventID, entryID, visitorID string, nowMs int64) (outbound.ClaimResult, error) {
 	m.ctrl.T.Helper()
@@ -149,6 +135,22 @@ func (mr *MockIQueueStoreMockRecorder) FindByVisitor(ctx, eventID, visitorID any
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FindByVisitor", reflect.TypeOf((*MockIQueueStore)(nil).FindByVisitor), ctx, eventID, visitorID)
 }
 
+// FindLastByVisitor mocks base method.
+func (m *MockIQueueStore) FindLastByVisitor(ctx context.Context, eventID, visitorID string) (entity.Entry, bool, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "FindLastByVisitor", ctx, eventID, visitorID)
+	ret0, _ := ret[0].(entity.Entry)
+	ret1, _ := ret[1].(bool)
+	ret2, _ := ret[2].(error)
+	return ret0, ret1, ret2
+}
+
+// FindLastByVisitor indicates an expected call of FindLastByVisitor.
+func (mr *MockIQueueStoreMockRecorder) FindLastByVisitor(ctx, eventID, visitorID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FindLastByVisitor", reflect.TypeOf((*MockIQueueStore)(nil).FindLastByVisitor), ctx, eventID, visitorID)
+}
+
 // GetEntry mocks base method.
 func (m *MockIQueueStore) GetEntry(ctx context.Context, eventID, entryID string) (entity.Entry, bool, error) {
 	m.ctrl.T.Helper()
@@ -196,6 +198,21 @@ func (mr *MockIQueueStoreMockRecorder) GetStatusDoc(ctx, eventID any) *gomock.Ca
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetStatusDoc", reflect.TypeOf((*MockIQueueStore)(nil).GetStatusDoc), ctx, eventID)
 }
 
+// Heartbeat mocks base method.
+func (m *MockIQueueStore) Heartbeat(ctx context.Context, eventID, visitorID string, gen, nowMs int64) (outbound.HeartbeatResult, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Heartbeat", ctx, eventID, visitorID, gen, nowMs)
+	ret0, _ := ret[0].(outbound.HeartbeatResult)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// Heartbeat indicates an expected call of Heartbeat.
+func (mr *MockIQueueStoreMockRecorder) Heartbeat(ctx, eventID, visitorID, gen, nowMs any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Heartbeat", reflect.TypeOf((*MockIQueueStore)(nil).Heartbeat), ctx, eventID, visitorID, gen, nowMs)
+}
+
 // Join mocks base method.
 func (m *MockIQueueStore) Join(ctx context.Context, p outbound.JoinParams) (outbound.JoinResult, error) {
 	m.ctrl.T.Helper()
@@ -226,6 +243,21 @@ func (mr *MockIQueueStoreMockRecorder) Leave(ctx, eventID, entryID, visitorID, n
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Leave", reflect.TypeOf((*MockIQueueStore)(nil).Leave), ctx, eventID, entryID, visitorID, nowMs)
 }
 
+// LivePosition mocks base method.
+func (m *MockIQueueStore) LivePosition(ctx context.Context, eventID string, seq int64) (int64, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "LivePosition", ctx, eventID, seq)
+	ret0, _ := ret[0].(int64)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// LivePosition indicates an expected call of LivePosition.
+func (mr *MockIQueueStoreMockRecorder) LivePosition(ctx, eventID, seq any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "LivePosition", reflect.TypeOf((*MockIQueueStore)(nil).LivePosition), ctx, eventID, seq)
+}
+
 // MarkNotifiedSoon mocks base method.
 func (m *MockIQueueStore) MarkNotifiedSoon(ctx context.Context, eventID, entryID string) error {
 	m.ctrl.T.Helper()
@@ -238,21 +270,6 @@ func (m *MockIQueueStore) MarkNotifiedSoon(ctx context.Context, eventID, entryID
 func (mr *MockIQueueStoreMockRecorder) MarkNotifiedSoon(ctx, eventID, entryID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MarkNotifiedSoon", reflect.TypeOf((*MockIQueueStore)(nil).MarkNotifiedSoon), ctx, eventID, entryID)
-}
-
-// NoteUnreadable mocks base method.
-func (m *MockIQueueStore) NoteUnreadable(ctx context.Context, eventID, entryID string) (int, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "NoteUnreadable", ctx, eventID, entryID)
-	ret0, _ := ret[0].(int)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// NoteUnreadable indicates an expected call of NoteUnreadable.
-func (mr *MockIQueueStoreMockRecorder) NoteUnreadable(ctx, eventID, entryID any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "NoteUnreadable", reflect.TypeOf((*MockIQueueStore)(nil).NoteUnreadable), ctx, eventID, entryID)
 }
 
 // Promote mocks base method.
@@ -312,6 +329,53 @@ func (mr *MockIQueueStoreMockRecorder) SetStatusDoc(ctx, eventID, doc, ttl any) 
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetStatusDoc", reflect.TypeOf((*MockIQueueStore)(nil).SetStatusDoc), ctx, eventID, doc, ttl)
 }
 
+// SweepLiveness mocks base method.
+func (m *MockIQueueStore) SweepLiveness(ctx context.Context, eventID, leaseToken string, staleBeforeMs, endBeforeMs int64, batch int, nowMs int64) (outbound.LivenessResult, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "SweepLiveness", ctx, eventID, leaseToken, staleBeforeMs, endBeforeMs, batch, nowMs)
+	ret0, _ := ret[0].(outbound.LivenessResult)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// SweepLiveness indicates an expected call of SweepLiveness.
+func (mr *MockIQueueStoreMockRecorder) SweepLiveness(ctx, eventID, leaseToken, staleBeforeMs, endBeforeMs, batch, nowMs any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SweepLiveness", reflect.TypeOf((*MockIQueueStore)(nil).SweepLiveness), ctx, eventID, leaseToken, staleBeforeMs, endBeforeMs, batch, nowMs)
+}
+
+// SweepLivenessTick mocks base method.
+func (m *MockIQueueStore) SweepLivenessTick(ctx context.Context, eventID string, staleBeforeMs, endBeforeMs int64, batch int, nowMs int64, ttl time.Duration, topN int) (outbound.LivenessResult, []string, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "SweepLivenessTick", ctx, eventID, staleBeforeMs, endBeforeMs, batch, nowMs, ttl, topN)
+	ret0, _ := ret[0].(outbound.LivenessResult)
+	ret1, _ := ret[1].([]string)
+	ret2, _ := ret[2].(error)
+	return ret0, ret1, ret2
+}
+
+// SweepLivenessTick indicates an expected call of SweepLivenessTick.
+func (mr *MockIQueueStoreMockRecorder) SweepLivenessTick(ctx, eventID, staleBeforeMs, endBeforeMs, batch, nowMs, ttl, topN any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SweepLivenessTick", reflect.TypeOf((*MockIQueueStore)(nil).SweepLivenessTick), ctx, eventID, staleBeforeMs, endBeforeMs, batch, nowMs, ttl, topN)
+}
+
+// TokenGen mocks base method.
+func (m *MockIQueueStore) TokenGen(ctx context.Context, eventID, visitorID string) (int64, bool, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "TokenGen", ctx, eventID, visitorID)
+	ret0, _ := ret[0].(int64)
+	ret1, _ := ret[1].(bool)
+	ret2, _ := ret[2].(error)
+	return ret0, ret1, ret2
+}
+
+// TokenGen indicates an expected call of TokenGen.
+func (mr *MockIQueueStoreMockRecorder) TokenGen(ctx, eventID, visitorID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "TokenGen", reflect.TypeOf((*MockIQueueStore)(nil).TokenGen), ctx, eventID, visitorID)
+}
+
 // TopWaiting mocks base method.
 func (m *MockIQueueStore) TopWaiting(ctx context.Context, eventID string, n int) ([]string, error) {
 	m.ctrl.T.Helper()
@@ -325,6 +389,37 @@ func (m *MockIQueueStore) TopWaiting(ctx context.Context, eventID string, n int)
 func (mr *MockIQueueStoreMockRecorder) TopWaiting(ctx, eventID, n any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "TopWaiting", reflect.TypeOf((*MockIQueueStore)(nil).TopWaiting), ctx, eventID, n)
+}
+
+// WaitingCount mocks base method.
+func (m *MockIQueueStore) WaitingCount(ctx context.Context, eventID string) (int64, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "WaitingCount", ctx, eventID)
+	ret0, _ := ret[0].(int64)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// WaitingCount indicates an expected call of WaitingCount.
+func (mr *MockIQueueStoreMockRecorder) WaitingCount(ctx, eventID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "WaitingCount", reflect.TypeOf((*MockIQueueStore)(nil).WaitingCount), ctx, eventID)
+}
+
+// WaitingSeqAt mocks base method.
+func (m *MockIQueueStore) WaitingSeqAt(ctx context.Context, eventID string, idx int64) (int64, bool, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "WaitingSeqAt", ctx, eventID, idx)
+	ret0, _ := ret[0].(int64)
+	ret1, _ := ret[1].(bool)
+	ret2, _ := ret[2].(error)
+	return ret0, ret1, ret2
+}
+
+// WaitingSeqAt indicates an expected call of WaitingSeqAt.
+func (mr *MockIQueueStoreMockRecorder) WaitingSeqAt(ctx, eventID, idx any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "WaitingSeqAt", reflect.TypeOf((*MockIQueueStore)(nil).WaitingSeqAt), ctx, eventID, idx)
 }
 
 // WasNotifiedSoon mocks base method.

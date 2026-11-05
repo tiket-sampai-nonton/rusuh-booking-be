@@ -84,6 +84,7 @@ type IStreamSessionUsecase interface {
 type HoldCommand struct {
 	Request        dto.HoldRequest
 	VisitorID      string
+	AccountID      string // from an optional User bearer; identifies the principal only, never binds a NIK
 	IdempotencyKey string
 	CorrelationID  string
 }

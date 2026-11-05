@@ -71,22 +71,11 @@ func (c *Consumer) handleJourneyEnded(ctx context.Context, raw json.RawMessage) 
 	return err
 }
 
-type quotaExhaustedIn struct {
-	EventID      string `json:"eventId"`
-	BuyerNikHash string `json:"buyerNikHash"`
-}
-
-// handleBookingQuotaExhausted blocks a NIK by adding it to the quota_exhausted set (idempotent SADD).
-func (c *Consumer) handleQuotaExhausted(ctx context.Context, raw json.RawMessage) error {
-	var in quotaExhaustedIn
-	if err := json.Unmarshal(raw, &in); err != nil {
-		return pkgrabbitmq.Permanent(fmt.Errorf("consumer: quota.exhausted payload rusak: %w", err))
-	}
-	if in.EventID == "" || in.BuyerNikHash == "" {
-		return pkgrabbitmq.Permanent(fmt.Errorf("consumer: quota.exhausted field wajib kosong"))
-	}
-	return c.store.AddQuotaExhausted(ctx, in.EventID, in.BuyerNikHash)
-}
+// handleQuotaExhausted is a no-op acknowledge kept for ONE release (ADR-030). Booking no longer emits
+// booking.quota.exhausted at reserve (the buyer quota is checked at hold), but pods of the previous version may
+// still publish it during the rollout. Acknowledging without effect avoids a DLQ storm, and, unlike before, never
+// ends a live buyer. Remove the binding and this handler in the next release.
+func (c *Consumer) handleQuotaExhausted(_ context.Context, _ json.RawMessage) error { return nil }
 
 type soldOutIn struct {
 	EventID string `json:"eventId"`

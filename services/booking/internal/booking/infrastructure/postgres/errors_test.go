@@ -17,7 +17,7 @@ func pgErr(code, constraint string) error {
 // Database failures that are the caller's doing must reach the client as their own error, not as a 500.
 func TestMapHoldErr(t *testing.T) {
 	assert.NoError(t, mapHoldErr(nil))
-	assert.ErrorIs(t, mapHoldErr(pgErr("23514", "buyer_quotas_check")), inbound.ErrBuyerQuota)
+	assert.ErrorIs(t, mapHoldErr(pgErr("23514", "buyer_quotas_check")), inbound.ErrBuyerNikLimitReached)
 	assert.ErrorIs(t, mapHoldErr(pgErr("23514", "category_inventories_check")), inbound.ErrCategoryUnavailable)
 	assert.ErrorIs(t, mapHoldErr(pgErr("23505", "uq_attendee_nik_per_event")), inbound.ErrNikRegistered)
 	assert.ErrorIs(t, mapHoldErr(pgErr("23505", "uq_booking_item_nik_active")), inbound.ErrNikDuplicate)

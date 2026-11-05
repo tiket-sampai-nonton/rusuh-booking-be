@@ -32,8 +32,8 @@ func (r *EntryAudit) Append(ctx context.Context, e outbound.AuditRecord) error {
 	}
 	_, err = r.pool.Exec(ctx, `
 		INSERT INTO entry_audit (event_id, entry_id, seq, buyer_nik_hash, action, occurred_at, metadata, account_id)
-		VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7, $8)`,
-		e.EventID, e.EntryID, e.Seq, e.BuyerNikHash, e.Action, e.OccurredAt, metaJSON, accountID)
+		VALUES ($1::uuid, $2::uuid, $3, NULL, $4, $5, $6, $7)`, // ADR-030: anonymous entries carry no NIK
+		e.EventID, e.EntryID, e.Seq, e.Action, e.OccurredAt, metaJSON, accountID)
 	if err != nil {
 		return fmt.Errorf("entry_audit: append: %w", err)
 	}

@@ -125,10 +125,10 @@ func seed(t *testing.T) fixture {
 	_, err = tx.Exec(ctx, `INSERT INTO booking.event_supply (event_id, total_capacity, allocated_units) VALUES ($1::uuid, 10, 1)`, f.eventID)
 	require.NoError(t, err)
 	require.NoError(t, tx.QueryRow(ctx, `
-		INSERT INTO booking.admissions (event_id, queue_entry_id, queue_seq, visitor_id, buyer_nik_hash, buyer_email_enc, units, status,
+		INSERT INTO booking.admissions (event_id, queue_entry_id, queue_seq, visitor_id, buyer_nik_hash, buyer_email_enc, units, outstanding_units, status,
 			cfg_selection_ttl_seconds, cfg_payment_ttl_seconds, cfg_submit_grace_seconds, cfg_edit_enabled, cfg_max_edits, cfg_allow_mixed_categories,
 			claimed_at, expires_at)
-		VALUES ($1::uuid, gen_random_uuid(), 1, $2::uuid, $3, 'c2VhbGVkLWVtYWls', 1, 'ACTIVE', 300, 600, 5, true, 3, true, now(), now() + interval '5 minutes')
+		VALUES ($1::uuid, gen_random_uuid(), 1, $2::uuid, $3, 'c2VhbGVkLWVtYWls', 1, 1, 'ACTIVE', 300, 600, 5, true, 3, true, now(), now() + interval '5 minutes')
 		RETURNING id::text`, f.eventID, visitor, []byte(f.nikH)).Scan(&f.admissionID))
 	require.NoError(t, tx.Commit(ctx))
 	return f

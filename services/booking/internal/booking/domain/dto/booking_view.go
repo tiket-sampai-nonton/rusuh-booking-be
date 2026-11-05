@@ -18,7 +18,17 @@ type HoldItem struct {
 // HoldRequest is the POST /api/v1/bookings body.
 type HoldRequest struct {
 	SessionID string     `json:"sessionId"`
+	Buyer     BuyerInput `json:"buyer"`
 	Items     []HoldItem `json:"items"`
+}
+
+// BuyerInput is the buyer block of the hold request (ADR-030): validated and bound to the admission at hold.
+// The plaintext never leaves the usecase; it is hashed/sealed before anything is persisted.
+type BuyerInput struct {
+	NIK               string `json:"nik"`
+	Email             string `json:"email"`
+	EmailConfirmation string `json:"emailConfirmation"`
+	Consent           bool   `json:"consent"`
 }
 
 // ReplaceItemsRequest is the PUT /api/v1/bookings/{id}/items body.

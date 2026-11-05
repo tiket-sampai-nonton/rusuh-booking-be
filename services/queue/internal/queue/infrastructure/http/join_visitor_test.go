@@ -18,7 +18,7 @@ import (
 
 const joinBody = `{"buyerNik":"3201234567890123","email":"a@b.id","emailConfirmation":"a@b.id","consentNik":true}`
 
-func joinVisitorIDSeen(t *testing.T, auth queuehttp.VisitorAuthenticator, mutate func(*stdhttp.Request)) string {
+func joinVisitorIDSeen(t *testing.T, auth queuehttp.VisitorTokenAuthenticator, mutate func(*stdhttp.Request)) string {
 	t.Helper()
 	ctrl := gomock.NewController(t)
 	uc := mock_inbound.NewMockIJoinUsecase(ctrl)
@@ -107,4 +107,29 @@ func TestJoinHandler_ClientIPTrustSemantics(t *testing.T) {
 			assert.Equal(t, tc.want, seen)
 		})
 	}
+}
+
+// ADR-030: the join passes the token generation and only the HMAC of X-Device-Id (never the raw id) to the usecase,
+// and an already-active entry is answered 200 (201 only for a new entry).
+func TestJoinHandler_PassesGenerationAndDeviceHashAndAnswers200ForExisting(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	uc := mock_inbound.NewMockIJoinUsecase(ctrl)
+	var in inbound.JoinInput
+	uc.EXPECT().Join(gomock.Any(), gomock.Any()).DoAndReturn(func(_ interface{ Done() <-chan struct{} }, got inbound.JoinInput) (dto.QueueEntry, error) {
+		in = got
+		return dto.QueueEntry{EntryID: "e1", Existing: true}, nil
+	})
+	h := queuehttp.NewJoinHandler(uc, false).WithAuth(fakeAuth{id: "v", ok: true})
+	mux := stdhttp.NewServeMux()
+	h.Register(mux)
+	req := httptest.NewRequest(stdhttp.MethodPost, "/api/v1/events/ev1/queue-entries", nil)
+	req.Header.Set("X-Device-Id", "raw-device-id")
+	req.Header.Set("Idempotency-Key", "idem-0123456789abcdef")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	assert.Equal(t, stdhttp.StatusOK, rec.Code)
+	assert.EqualValues(t, 1, in.TokenGen)
+	assert.Equal(t, "dh-of-device", in.DeviceHash)
+	assert.NotContains(t, in.DeviceHash, "raw-device-id")
+	assert.Equal(t, "idem-0123456789abcdef", in.IdempotencyKey)
 }

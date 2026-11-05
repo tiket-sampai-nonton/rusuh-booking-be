@@ -30,26 +30,24 @@ type IRateLimiter interface {
 	Allow(ctx context.Context, key string, limit int, window time.Duration) (bool, error)
 }
 
+// VisitorClaim is what a visitor token carries (ADR-030): the visitor id, the server-side token generation (a
+// rotation revokes earlier generations) and an optional device hash (HMAC of X-Device-Id, never the raw value).
+type VisitorClaim struct {
+	VisitorID  string
+	Gen        int64
+	DeviceHash string
+}
+
 // ITokenIssuer signs admission/visitor/queue tokens (EdDSA).
 type ITokenIssuer interface {
 	IssueAdmission(entryID, eventID, allocationID string, now time.Time) (string, time.Time, error)
-	IssueVisitor(visitorID string, now time.Time) (string, error)
+	IssueVisitor(c VisitorClaim, now time.Time) (string, error)
 	IssueQueue(entryID, visitorID string, now time.Time) (string, error)
 }
 
 // IUserTokenVerifier verifies a User Service bearer token and extracts the buyer identity.
 type IUserTokenVerifier interface {
 	Verify(bearer string) (UserIdentity, error)
-}
-
-// IPIIProtector hashes NIK/email and seals/unseals email.
-type IPIIProtector interface {
-	HashNIK(nik string) []byte
-	HashEmail(email string) []byte
-	SealEmail(email string) ([]byte, error)
-	// SealBuyerEmail returns the base64 ciphertext sent to Booking (never the plaintext).
-	SealBuyerEmail(email string) (string, error)
-	UnsealEmail(enc []byte) (string, error)
 }
 
 // IPromoterMetrics counts promoter and join events (labels as alternating key, value strings).
@@ -69,5 +67,4 @@ const (
 	MetricHeadNoSupply   = "queue_promote_head_no_supply_repeat_total" // label adopted
 	MetricUnknownOutcome = "queue_promote_unknown_outcome_total"
 	MetricJoinLeaseRetry = "queue_join_lease_retry_total"
-	MetricUnsealFailed   = "queue_promoter_unseal_failed_total" // label scope
 )

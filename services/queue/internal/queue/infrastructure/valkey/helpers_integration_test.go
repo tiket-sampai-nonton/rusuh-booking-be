@@ -44,7 +44,7 @@ func mustStore(t *testing.T) *QueueStore {
 	c, err := pkgvalkey.New(context.Background(), pkgvalkey.Config{Server: server, PrefixEnv: prefix})
 	require.NoError(t, err)
 	t.Cleanup(c.Close)
-	return NewQueueStore(c.VK(), c, clock.System{})
+	return NewQueueStore(c.VK(), c, clock.System{}, defaultTestShards)
 }
 
 // evID returns an event id unique to the test run.

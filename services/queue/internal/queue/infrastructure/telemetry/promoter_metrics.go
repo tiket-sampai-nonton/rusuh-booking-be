@@ -42,13 +42,12 @@ func NewPromoterMetrics(reg *pkgtelemetry.Registry) *PromoterMetrics {
 	add(outbound.MetricFullAfterGrant, "Promote menjawab FULL setelah alokasi diberikan (seharusnya tak tercapai di bawah lease yang sah).", nil)
 	add(outbound.MetricLeaseLost, "promote.lua menolak karena token lease tidak cocok lagi (fence).", nil)
 	add(outbound.MetricEntryEnded, "Entry diakhiri promoter/sweeper per outcome.",
-		[]map[string]bool{set("ALREADY_ACTIVE", "PROMOTER_ORPHAN", "UNREADABLE_PII", "BUYER_QUOTA_EXHAUSTED", "SWEEP_MISSED")}, "outcome")
+		[]map[string]bool{set("ALREADY_ACTIVE", "PROMOTER_ORPHAN", "SWEEP_MISSED", "STALE_TIMEOUT")}, "outcome")
 	add(outbound.MetricLapsedReplay, "Replay GRANTED dengan deadline lampau dilewati tanpa mutasi.", nil)
 	add(outbound.MetricFifoAdopted, "Grant di belakang NO_SUPPLY_NOW diadopsi (inversi FIFO terbatas).", boolean, "suspect")
 	add(outbound.MetricHeadNoSupply, "Head menjawab NO_SUPPLY_NOW berturut-turut >= N tick (C8).", boolean, "adopted")
 	add(outbound.MetricUnknownOutcome, "Outcome Booking yang tidak dikenal oleh promoter.", nil)
 	add(outbound.MetricJoinLeaseRetry, "Join mencoba ulang akuisisi lease admisi (kontensi).", nil)
-	add(outbound.MetricUnsealFailed, "Email antrean tidak bisa dibuka.", []map[string]bool{set("entry", "systemic")}, "scope")
 	return m
 }
 

@@ -37,12 +37,22 @@ type Worker struct {
 	VerifyGraceSeconds int // VERIFY_GRACE_SECONDS: how long VERIFYING bookings wait before forced expiry (design §7.2)
 }
 
+// Hold tunes the buyer-NIK attempt budget of the hold step (ADR-030): after Budget refusals on one session the
+// next attempts wait Base, 2·Base, … capped at Max (mirrors max_attendee_checks_per_session).
+// PROVISIONAL (human gate OQ-15): defaults 10 / 2 s / 30 s per requirements rev 6, 429 BUYER_NIK_THROTTLED.
+type Hold struct {
+	BuyerNikAttemptBudget int           // BUYER_NIK_ATTEMPT_BUDGET
+	ThrottleBase          time.Duration // BUYER_NIK_THROTTLE_BASE_SECONDS
+	ThrottleMax           time.Duration // BUYER_NIK_THROTTLE_MAX_SECONDS
+}
+
 // Config is the full service configuration.
 type Config struct {
 	App      App
 	Log      logger.Config
 	HTTP     HTTP
 	Worker   Worker
+	Hold     Hold
 	Postgres postgres.Config
 	Valkey   valkey.Config
 	RabbitMQ rabbitmq.Config
@@ -75,6 +85,15 @@ func (c Config) Validate() error {
 	}
 	if c.Worker.VerifyGraceSeconds < 60 || c.Worker.VerifyGraceSeconds > 600 {
 		errs = append(errs, fmt.Errorf("VERIFY_GRACE_SECONDS %d di luar rentang [60, 600]", c.Worker.VerifyGraceSeconds))
+	}
+	if c.Hold.BuyerNikAttemptBudget < 1 || c.Hold.BuyerNikAttemptBudget > 100 {
+		errs = append(errs, fmt.Errorf("BUYER_NIK_ATTEMPT_BUDGET %d di luar rentang [1, 100]", c.Hold.BuyerNikAttemptBudget))
+	}
+	if c.Hold.ThrottleBase < time.Second || c.Hold.ThrottleBase > time.Minute {
+		errs = append(errs, fmt.Errorf("BUYER_NIK_THROTTLE_BASE_SECONDS %s di luar rentang [1s, 60s]", c.Hold.ThrottleBase))
+	}
+	if c.Hold.ThrottleMax < c.Hold.ThrottleBase || c.Hold.ThrottleMax > 10*time.Minute {
+		errs = append(errs, fmt.Errorf("BUYER_NIK_THROTTLE_MAX_SECONDS %s harus >= base dan <= 10m", c.Hold.ThrottleMax))
 	}
 	switch c.Image.Storage {
 	case "local":

@@ -25,6 +25,7 @@ func ToBookingSession(a entity.Admission, detail entity.EventDetail, booking *dt
 		EventID:              a.EventID,
 		Phase:                phaseOf(a.Status),
 		ReservedUnits:        a.Units,
+		OutstandingUnits:     a.OutstandingUnits,
 		MaxSelectable:        a.Units,
 		BuyerNIKMasked:       a.BuyerNIKMasked,
 		AllowMixedCategories: a.CfgAllowMixedCategories,

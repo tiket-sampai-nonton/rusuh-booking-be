@@ -32,7 +32,7 @@ func TestLeave_WrongOwnerOrUnknownIsNotFoundAndChangesNothing(t *testing.T) {
 	assert.Equal(t, "WAITING", hget(t, s, s.kEntry(ev, id), "status"), "pemilik lain tidak boleh mengubah status")
 	_, inW := zscore(t, s, s.kWaiting(ev), id)
 	assert.True(t, inW)
-	assert.True(t, keyExists(t, s, s.kNik(ev, nik)), "kunci constraint milik pemilik tetap ada")
+	assert.True(t, keyExists(t, s, s.kAccount(ev, nik)), "kunci constraint milik pemilik tetap ada")
 	assert.True(t, keyExists(t, s, s.kVisitor(ev, vis)))
 }
 
@@ -98,10 +98,10 @@ func TestLeave_DoesNotDeleteNewerEntrysConstraintKeys(t *testing.T) {
 	ev := evID(t)
 	now := time.Now().UnixMilli()
 	id, vis, nik := joinOne(t, s, ev, 1, now)
-	require.NoError(t, s.c.Do(ctx, s.c.B().Set().Key(s.kNik(ev, nik)).Value("entry-newer").Build()).Error())
+	require.NoError(t, s.c.Do(ctx, s.c.B().Set().Key(s.kAccount(ev, nik)).Value("entry-newer").Build()).Error())
 	_, err := s.Leave(ctx, ev, id, vis, now)
 	require.NoError(t, err)
-	got, err := s.c.Do(ctx, s.c.B().Get().Key(s.kNik(ev, nik)).Build()).ToString()
+	got, err := s.c.Do(ctx, s.c.B().Get().Key(s.kAccount(ev, nik)).Build()).ToString()
 	require.NoError(t, err)
 	assert.Equal(t, "entry-newer", got)
 }
@@ -224,6 +224,6 @@ func TestLeaveWaitingReserved_ClearsEveryTraceAndReportsNothingToRelease(t *test
 	require.NoError(t, err)
 	assert.Equal(t, []string{head}, top, "entry yang keluar tidak lagi kandidat promoter")
 	assert.Equal(t, int64(0), zcard(t, s, s.kActive(ev)))
-	assert.False(t, keyExists(t, s, s.kNik(ev, nikLater)), "kunci constraint bersih")
+	assert.False(t, keyExists(t, s, s.kAccount(ev, nikLater)), "kunci constraint bersih")
 	assert.False(t, keyExists(t, s, s.kVisitor(ev, visLater)))
 }

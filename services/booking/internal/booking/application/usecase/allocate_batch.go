@@ -35,12 +35,18 @@ func (uc *AllocateBatch) AllocateBatch(ctx context.Context, req dto.AllocationBa
 
 	entries := make([]outbound.ReserveEntry, 0, len(req.Entries))
 	for _, e := range req.Entries {
-		nikHash, err := hex.DecodeString(e.BuyerNIKHash)
-		if err != nil || len(nikHash) == 0 {
-			return dto.AllocationBatchResponse{}, inbound.Validation("buyerNikHash", "buyerNikHash harus hex HMAC")
+		// The buyer NIK is optional: in the anonymous flow (ADR-030) it is bound at hold, not at reservation.
+		var nikHash []byte
+		if e.BuyerNIKHash != "" {
+			var err error
+			nikHash, err = hex.DecodeString(e.BuyerNIKHash)
+			if err != nil || len(nikHash) == 0 {
+				return dto.AllocationBatchResponse{}, inbound.Validation("buyerNikHash", "buyerNikHash harus hex HMAC")
+			}
 		}
+		// Upper clamp to the event's max_tickets_per_order happens in the repository (reads the event row).
 		units := e.Units
-		if units < 1 || units > 3 {
+		if units < 1 {
 			units = 1
 		}
 		entries = append(entries, outbound.ReserveEntry{

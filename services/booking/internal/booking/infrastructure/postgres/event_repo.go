@@ -190,6 +190,21 @@ func (r *EventRepo) GetByID(ctx context.Context, eventID string) (entity.Event, 
 	return e, nil
 }
 
+// GetSupply returns the event-level ledger row.
+func (r *EventRepo) GetSupply(ctx context.Context, eventID string) (entity.Supply, error) {
+	var s entity.Supply
+	err := r.pool.QueryRow(ctx, `SELECT event_id::text, total_capacity, allocated_units, held_units, sold_units
+		FROM booking.event_supply WHERE event_id = $1::uuid`, eventID).
+		Scan(&s.EventID, &s.TotalCapacity, &s.AllocatedUnits, &s.HeldUnits, &s.SoldUnits)
+	switch {
+	case errors.Is(err, pgx.ErrNoRows), pkgpg.IsCode(err, "22P02"):
+		return entity.Supply{}, inbound.ErrNotFound
+	case err != nil:
+		return entity.Supply{}, fmt.Errorf("events: supply: %w", err)
+	}
+	return s, nil
+}
+
 // GetDetail returns an event with its categories and live availability.
 func (r *EventRepo) GetDetail(ctx context.Context, eventID string) (entity.EventDetail, error) {
 	event, err := r.GetByID(ctx, eventID)

@@ -247,18 +247,18 @@ func (mr *MockITokenIssuerMockRecorder) IssueQueue(entryID, visitorID, now any) 
 }
 
 // IssueVisitor mocks base method.
-func (m *MockITokenIssuer) IssueVisitor(visitorID string, now time.Time) (string, error) {
+func (m *MockITokenIssuer) IssueVisitor(c outbound.VisitorClaim, now time.Time) (string, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "IssueVisitor", visitorID, now)
+	ret := m.ctrl.Call(m, "IssueVisitor", c, now)
 	ret0, _ := ret[0].(string)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // IssueVisitor indicates an expected call of IssueVisitor.
-func (mr *MockITokenIssuerMockRecorder) IssueVisitor(visitorID, now any) *gomock.Call {
+func (mr *MockITokenIssuerMockRecorder) IssueVisitor(c, now any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IssueVisitor", reflect.TypeOf((*MockITokenIssuer)(nil).IssueVisitor), visitorID, now)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IssueVisitor", reflect.TypeOf((*MockITokenIssuer)(nil).IssueVisitor), c, now)
 }
 
 // MockIUserTokenVerifier is a mock of IUserTokenVerifier interface.
@@ -298,103 +298,6 @@ func (m *MockIUserTokenVerifier) Verify(bearer string) (outbound.UserIdentity, e
 func (mr *MockIUserTokenVerifierMockRecorder) Verify(bearer any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Verify", reflect.TypeOf((*MockIUserTokenVerifier)(nil).Verify), bearer)
-}
-
-// MockIPIIProtector is a mock of IPIIProtector interface.
-type MockIPIIProtector struct {
-	ctrl     *gomock.Controller
-	recorder *MockIPIIProtectorMockRecorder
-	isgomock struct{}
-}
-
-// MockIPIIProtectorMockRecorder is the mock recorder for MockIPIIProtector.
-type MockIPIIProtectorMockRecorder struct {
-	mock *MockIPIIProtector
-}
-
-// NewMockIPIIProtector creates a new mock instance.
-func NewMockIPIIProtector(ctrl *gomock.Controller) *MockIPIIProtector {
-	mock := &MockIPIIProtector{ctrl: ctrl}
-	mock.recorder = &MockIPIIProtectorMockRecorder{mock}
-	return mock
-}
-
-// EXPECT returns an object that allows the caller to indicate expected use.
-func (m *MockIPIIProtector) EXPECT() *MockIPIIProtectorMockRecorder {
-	return m.recorder
-}
-
-// HashEmail mocks base method.
-func (m *MockIPIIProtector) HashEmail(email string) []byte {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "HashEmail", email)
-	ret0, _ := ret[0].([]byte)
-	return ret0
-}
-
-// HashEmail indicates an expected call of HashEmail.
-func (mr *MockIPIIProtectorMockRecorder) HashEmail(email any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "HashEmail", reflect.TypeOf((*MockIPIIProtector)(nil).HashEmail), email)
-}
-
-// HashNIK mocks base method.
-func (m *MockIPIIProtector) HashNIK(nik string) []byte {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "HashNIK", nik)
-	ret0, _ := ret[0].([]byte)
-	return ret0
-}
-
-// HashNIK indicates an expected call of HashNIK.
-func (mr *MockIPIIProtectorMockRecorder) HashNIK(nik any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "HashNIK", reflect.TypeOf((*MockIPIIProtector)(nil).HashNIK), nik)
-}
-
-// SealBuyerEmail mocks base method.
-func (m *MockIPIIProtector) SealBuyerEmail(email string) (string, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "SealBuyerEmail", email)
-	ret0, _ := ret[0].(string)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// SealBuyerEmail indicates an expected call of SealBuyerEmail.
-func (mr *MockIPIIProtectorMockRecorder) SealBuyerEmail(email any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SealBuyerEmail", reflect.TypeOf((*MockIPIIProtector)(nil).SealBuyerEmail), email)
-}
-
-// SealEmail mocks base method.
-func (m *MockIPIIProtector) SealEmail(email string) ([]byte, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "SealEmail", email)
-	ret0, _ := ret[0].([]byte)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// SealEmail indicates an expected call of SealEmail.
-func (mr *MockIPIIProtectorMockRecorder) SealEmail(email any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SealEmail", reflect.TypeOf((*MockIPIIProtector)(nil).SealEmail), email)
-}
-
-// UnsealEmail mocks base method.
-func (m *MockIPIIProtector) UnsealEmail(enc []byte) (string, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "UnsealEmail", enc)
-	ret0, _ := ret[0].(string)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// UnsealEmail indicates an expected call of UnsealEmail.
-func (mr *MockIPIIProtectorMockRecorder) UnsealEmail(enc any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UnsealEmail", reflect.TypeOf((*MockIPIIProtector)(nil).UnsealEmail), enc)
 }
 
 // MockIPromoterMetrics is a mock of IPromoterMetrics interface.

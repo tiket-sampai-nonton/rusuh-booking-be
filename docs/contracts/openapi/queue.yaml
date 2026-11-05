@@ -20,16 +20,24 @@ paths:
     post:
       tags:
       - queue
-      summary: Masuk antrean (guest, atau login opsional)
+      summary: Masuk antrean (anonim untuk semua pembeli, ADR-030)
       operationId: joinQueue
       description: |
-        Guest: buyerNik + email required di body.
-        Logged-in dengan NIK tersimpan (SRS-F-27-10, PRD v5.4): 
-        - buyerNik di body optional/diabaikan
-        - Server gunakan nikHash dari access token
-        - Form menampilkan NIK tersamar (read-only)
-        Logged-in tanpa NIK: buyerNik required di body seperti guest.
-        Bila tidak ada pengantre lebih awal dan slot tersedia, respons langsung ADMITTED (FR-05).
+        Join antrean anonim untuk semua pembeli (guest dan login, web dan app): tanpa NIK, email, atau consent.
+        Body tidak dibaca; klien lama yang masih mengirim buyerNik/email/consent ditoleransi, nilainya dibuang
+        (tidak disimpan, tidak masuk log). NIK dan email diisi di halaman Booking saat hold.
+
+        Identitas: visitor token (cookie HttpOnly `rb_visitor` di web, header `X-Visitor-Token` di app) dan,
+        opsional, `Authorization: Bearer` (access token User Service). Bearer hanya mengidentifikasi akun untuk dedup;
+        claim NIK pada token diabaikan. Satu entri aktif per visitor dan per akun.
+        - Token valid milik entri aktif: 200 dengan entri itu (tidak membuat entri kedua).
+        - Bearer dengan akun yang sudah punya entri aktif dan tanpa token valid: 200 (re-attach) dengan entri akun itu
+          dan visitor token baru untuk perangkat ini. Token yang menunjuk entri AKUN LAIN diabaikan.
+        - Bearer + token entri anonim lain sementara akun sudah punya entri aktif: 409 `ACCOUNT_ALREADY_IN_QUEUE`.
+        - `Idempotency-Key` (16..64 karakter) opsional: replay mengembalikan entri yang sama (200).
+        Bila tidak ada pengantre lebih awal dan slot tersedia, respons langsung ADMITTED (FR-05); Booking mereservasi
+        hingga 3 unit untuk event (jaminan kuantitas, bukan kategori) tanpa NIK pembeli.
+        Semua join FIFO ketat atas seq (jendela acak pembukaan/undian DIBUANG — ADR-030 Amandemen 2026-11-05).
       security:
       - {}
       - userBearer: []
@@ -46,13 +54,47 @@ paths:
         schema:
           type: string
         description: Diteruskan antar service; dibuat bila kosong
+      - name: Idempotency-Key
+        in: header
+        required: false
+        schema:
+          type: string
+          minLength: 16
+          maxLength: 64
+        description: Replay dengan key yang sama (scope akun, visitor, atau anonim) mengembalikan entri yang sama
+      - name: X-Visitor-Token
+        in: header
+        required: false
+        schema:
+          type: string
+        description: Visitor token (app). Web memakai cookie HttpOnly `rb_visitor`.
+      - name: X-Device-Id
+        in: header
+        required: false
+        schema:
+          type: string
+        description: Id acak per instalasi/profil browser. Hanya HMAC-nya yang masuk ke token; bukan kontrol bot.
       requestBody:
-        required: true
+        required: false
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/JoinRequest'
       responses:
+        '200':
+          description: Entri aktif yang sudah ada dikembalikan (token valid, re-attach akun, atau replay Idempotency-Key)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  meta:
+                    $ref: '#/components/schemas/Meta'
+                  data:
+                    $ref: '#/components/schemas/QueueEntry'
+                required:
+                - meta
+                - data
         '201':
           description: Masuk antrean (WAITING) atau langsung ADMITTED
           content:
@@ -67,15 +109,8 @@ paths:
                 required:
                 - meta
                 - data
-        '400':
-          description: 'Field tidak valid (consentNik bukan true, atau format email bukan alamat polos seperti a@b.id) — errorCode: `VALIDATION_ERROR`'
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
         '409':
-          description: 'Konflik antrean — errorCode: `NIK_ALREADY_IN_QUEUE`, `VISITOR_ALREADY_IN_QUEUE`, `EMAIL_ALREADY_IN_QUEUE`, `BUYER_QUOTA_EXHAUSTED`,
-            `EVENT_NOT_ON_SALE`'
+          description: 'Konflik antrean — errorCode: `ACCOUNT_ALREADY_IN_QUEUE`, `EVENT_NOT_ON_SALE`'
           content:
             application/json:
               schema:
@@ -86,14 +121,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
-        '422':
-          description: 'Input tidak valid — errorCode: `NIK_INVALID`, `EMAIL_MISMATCH`, `NIK_REQUIRED` (guest/logged-in tanpa NIK, tapi buyerNik kosong)'
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorEnvelope'
         '429':
-          description: 'Terlalu banyak request (lihat header Retry-After) — errorCode: `RATE_LIMITED`'
+          description: 'Batas lunak per IP terlampaui (lihat header Retry-After; bukan blokir permanen karena NAT seluler) — errorCode: `RATE_LIMITED`'
           content:
             application/json:
               schema:
@@ -162,14 +191,80 @@ paths:
                 required:
                 - meta
                 - data
+        '401':
+          description: 'Token tidak valid, kedaluwarsa, sudah dirotasi, atau perangkat tidak cocok — errorCode: `VISITOR_TOKEN_INVALID`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
         '404':
-          description: 'Tidak ada entry — errorCode: `NOT_FOUND`'
+          description: 'Visitor tidak pernah punya entri untuk event ini — errorCode: `NOT_FOUND`. Entri yang sudah berakhir dijawab 200 dengan state ENDED dan reason.'
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
         '429':
           description: 'Terlalu banyak request (lihat header Retry-After) — errorCode: `RATE_LIMITED`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /api/v1/queue-entries/me/heartbeat:
+    post:
+      tags:
+      - queue
+      summary: Sinyal hidup entri (ADR-030)
+      operationId: heartbeat
+      description: |
+        Dikirim klien pada interval `nextHeartbeatMs` selama WAITING/STALE. Entri yang senyap lebih dari
+        stale_after (90 dtk) menjadi STALE (dilewati promotor, seq tetap) dan hidup kembali pada heartbeat berikutnya
+        di seq aslinya; senyap lebih dari end_after (300 dtk) tanpa admisi -> ENDED (STALE_TIMEOUT). Tanpa body;
+        tanpa data pribadi.
+      security:
+      - visitorCookie: []
+      - visitorHeader: []
+      parameters:
+      - name: eventId
+        in: query
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: X-Device-Id
+        in: header
+        required: false
+        schema:
+          type: string
+        description: Wajib bila token diterbitkan dengan X-Device-Id
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  meta:
+                    $ref: '#/components/schemas/Meta'
+                  data:
+                    $ref: '#/components/schemas/HeartbeatStatus'
+                required:
+                - meta
+                - data
+        '401':
+          description: 'Token tidak valid/dirotasi/perangkat tidak cocok — errorCode: `VISITOR_TOKEN_INVALID`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '404':
+          description: 'Token valid, entri sudah berakhir — errorCode: `ENTRY_NOT_FOUND`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '429':
+          description: 'Heartbeat melebihi batas per visitor (RATE_LIMIT_HEARTBEAT_PER_VISITOR per menit; lihat Retry-After) — errorCode: `RATE_LIMITED`'
           content:
             application/json:
               schema:
@@ -212,6 +307,12 @@ paths:
                 required:
                 - meta
                 - data
+        '401':
+          description: 'Token visitor dirotasi (generasi lama) — errorCode: `VISITOR_TOKEN_INVALID`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
         '404':
           description: 'Entry tidak ditemukan, bukan milik visitor ini, atau sudah selesai (LEFT/ENDED/COMPLETED) — errorCode: `NOT_FOUND`'
           content:
@@ -255,6 +356,12 @@ paths:
       responses:
         '204':
           description: Keluar; slot tidak dipakai lagi
+        '401':
+          description: 'Token visitor dirotasi (generasi lama) — errorCode: `VISITOR_TOKEN_INVALID`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
         '404':
           description: 'Tidak ada entry — errorCode: `NOT_FOUND`'
           content:
@@ -356,34 +463,11 @@ components:
       - dependencies
     JoinRequest:
       type: object
-      properties:
-        buyerNik:
-          type: string
-          pattern: ^[0-9]{16}$
-          description: |
-            NIK 16 digit (dicek strukturnya; tidak pernah disimpan plaintext).
-            Conditional (SRS-F-27-10, PRD v5.4):
-            - Guest: required
-            - Logged-in dengan NIK tersimpan: optional (diabaikan — server gunakan token.nikHash)
-            - Logged-in tanpa NIK: required
-        email:
-          type: string
-          format: email
-        emailConfirmation:
-          type: string
-          format: email
-        consentNik:
-          type: boolean
-          const: true
-      required:
-      - email
-      - emailConfirmation
-      - consentNik
+      additionalProperties: true
       description: |
-        Request body untuk join queue.
-        - Guest: semua field required termasuk buyerNik
-        - Logged-in (hasNik=true): buyerNik optional/diabaikan; server gunakan nikHash dari token
-        - Logged-in (hasNik=false): buyerNik required seperti guest
+        Join anonim (ADR-030): tidak ada field yang dibaca. buyerNik, email, emailConfirmation, dan consentNik
+        sudah dihapus dari kontrak; klien lama yang masih mengirimnya ditoleransi dan nilainya dibuang.
+        Tidak ada field challenge/bot token: pemeriksaan bot di sisi klien tidak dibangun (keputusan pemilik).
     QueueEntry:
       type: object
       properties:
@@ -404,11 +488,29 @@ components:
           - CLOSED
           - COMPLETED
           - ENDED
+          - STALE
+        state:
+          type: string
+          enum:
+          - WAITING
+          - STALE
+          - ADMITTED
+          - CLAIMED
+          - ENDED
+          description: Status klien (ADR-030; draw dibuang pada Amandemen 2026-11-05). STALE = heartbeat senyap.
+        rank:
+          type:
+          - integer
+          - 'null'
+          description: Urutan admisi (FIFO ketat atas seq; ADR-030 Amandemen 2026-11-05). null saat ENDED.
         queueToken:
           type: string
         visitorToken:
           type: string
-          description: Hanya untuk mobile
+          description: |
+            Hanya untuk mobile (web: cookie HttpOnly). Selalu untuk generasi token TERKINI; rotasi (re-attach akun,
+            join ulang setelah entri berakhir) mencabut token lama (heartbeat/me lama -> 401 VISITOR_TOKEN_INVALID).
+            Bila request membawa X-Device-Id, token terikat ke HMAC-nya.
         statusUrl:
           type: string
         claimDeadline:
@@ -436,25 +538,80 @@ components:
           type: integer
         status:
           type: string
+          description: Status tersimpan (mentah)
+        state:
+          type: string
+          enum:
+          - WAITING
+          - STALE
+          - ADMITTED
+          - CLAIMED
+          - ENDED
+          description: Status klien (ADR-030; draw dibuang pada Amandemen 2026-11-05). STALE = heartbeat senyap.
+        rank:
+          type:
+          - integer
+          - 'null'
+          description: Urutan admisi (FIFO ketat atas seq; ADR-030 Amandemen 2026-11-05). null saat ENDED.
         exactPosition:
           type: integer
+          description: 1 + jumlah entri hidup (WAITING, bukan STALE) dengan seq lebih kecil
         zone:
-          type: string
+          type:
+          - string
+          - 'null'
           enum:
           - GUARANTEED
           - POSSIBLE
           - NOT_ENOUGH
+          - null
+          description: Dihitung server dari seq (otoritatif). null saat ADMITTED/CLAIMED atau ENDED.
+        nextHeartbeatMs:
+          type: integer
+          description: Interval heartbeat berikutnya (±20% jitter; lebih pendek dekat head)
         claimDeadline:
           type: string
           format: date-time
         reason:
           type: string
+          enum:
+          - LEFT
+          - STALE_TIMEOUT
+          - CLAIM_WINDOW_EXPIRED
+          - PAGE_TIMER_EXPIRED
+          - JOURNEY_ENDED
+          description: Hanya untuk state ENDED (adendum 2)
         redirect:
           type: string
       required:
       - entryId
       - seq
       - status
+      - state
+      - rank
+      - zone
+    HeartbeatStatus:
+      type: object
+      properties:
+        entryId:
+          type: string
+          format: uuid
+        state:
+          type: string
+          enum:
+          - WAITING
+          - ADMITTED
+          - CLAIMED
+        rank:
+          type:
+          - integer
+          - 'null'
+        nextHeartbeatMs:
+          type: integer
+      required:
+      - state
+      - rank
+      - nextHeartbeatMs
     ClaimResponse:
       type: object
       properties:
@@ -480,10 +637,23 @@ components:
           - CLOSED
         servingSeq:
           type: integer
+          deprecated: true
+          description: Dipertahankan satu rilis; posisi berbasis seq (ADR-030 Amandemen 2026-11-05, draw dibuang)
+        headSeq:
+          type:
+          - integer
+          - 'null'
+          description: Seq entri hidup terdepan (0 bila antrean kosong)
         guaranteedUntilSeq:
-          type: integer
+          type:
+          - integer
+          - 'null'
+          description: Seq entri hidup ke-G, G = ceil(stok bebas / 3); 0 = zona kosong.
         possibleUntilSeq:
-          type: integer
+          type:
+          - integer
+          - 'null'
+          description: Seq entri hidup ke-P, P = ceil((bebas + teralokasi + ditahan) / 3); 0 = zona kosong.
         soldOut:
           type: boolean
         remainingTickets:
@@ -560,6 +730,5 @@ components:
       bearerFormat: JWT (EdDSA)
       description: |
         Access token User Service (login OTP, opsional).
-        Saat join queue dengan token (SRS-F-27-10, PRD v5.4):
-        - has_nik=true: gunakan nik_hash dari token, buyerNik di body diabaikan
-        - has_nik=false: buyerNik required di body seperti guest
+        Saat join queue (ADR-030) token hanya mengidentifikasi akun untuk dedup (satu entri aktif per akun);
+        claim NIK pada token tidak dipakai. NIK dan email pembeli diisi di halaman Booking.

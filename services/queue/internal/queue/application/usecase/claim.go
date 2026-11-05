@@ -31,6 +31,9 @@ func NewClaimTurn(store outbound.IQueueStore, tokens outbound.ITokenIssuer, clk 
 // from claim.lua's own reply (design §5.3), never from a second GetEntry: a second read would race a concurrent
 // change and could sign a token for a stale allocation.
 func (u *ClaimTurn) Claim(ctx context.Context, in inbound.ClaimInput) (dto.ClaimResponse, error) {
+	if err := checkTokenGen(ctx, u.store, in.EventID, in.VisitorID, in.Gen); err != nil {
+		return dto.ClaimResponse{}, err
+	}
 	now := u.clock.Now()
 	res, err := u.store.Claim(ctx, in.EventID, in.EntryID, in.VisitorID, now.UnixMilli())
 	if err != nil {

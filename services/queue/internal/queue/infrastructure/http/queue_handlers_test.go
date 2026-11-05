@@ -15,6 +15,7 @@ import (
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/domain/entity"
 	queuehttp "github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/infrastructure/http"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/port/inbound"
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/port/outbound"
 )
 
 // fakeAuth is a stub VisitorAuthenticator.
@@ -24,6 +25,15 @@ type fakeAuth struct {
 }
 
 func (f fakeAuth) Resolve(*http.Request) (string, bool) { return f.id, f.ok }
+func (f fakeAuth) ResolveToken(*http.Request) (outbound.VisitorClaim, bool) {
+	return outbound.VisitorClaim{VisitorID: f.id, Gen: 1}, f.ok
+}
+func (f fakeAuth) DeviceHash(r *http.Request) string {
+	if r.Header.Get("X-Device-Id") == "" {
+		return ""
+	}
+	return "dh-of-device"
+}
 
 func TestJoinHandler_Created(t *testing.T) {
 	ctrl := gomock.NewController(t)
@@ -71,7 +81,7 @@ func TestJoinHandler_MobileReturnsTokenInBody(t *testing.T) {
 func TestJoinHandler_DomainError(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	uc := mock_inbound.NewMockIJoinUsecase(ctrl)
-	uc.EXPECT().Join(gomock.Any(), gomock.Any()).Return(dto.QueueEntry{}, entity.ErrNikInQueue)
+	uc.EXPECT().Join(gomock.Any(), gomock.Any()).Return(dto.QueueEntry{}, entity.ErrAccountInQueue)
 
 	h := queuehttp.NewJoinHandler(uc, false)
 	mux := http.NewServeMux()
@@ -84,7 +94,7 @@ func TestJoinHandler_DomainError(t *testing.T) {
 	mux.ServeHTTP(rec, req)
 
 	assert.Equal(t, http.StatusConflict, rec.Code)
-	assert.Contains(t, rec.Body.String(), "NIK_ALREADY_IN_QUEUE")
+	assert.Contains(t, rec.Body.String(), "ACCOUNT_ALREADY_IN_QUEUE")
 }
 
 func TestStatusHandler_OK(t *testing.T) {
@@ -121,7 +131,7 @@ func TestStatusHandler_NotFound(t *testing.T) {
 func TestMyEntryHandler_OK(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	uc := mock_inbound.NewMockIMyEntryUsecase(ctrl)
-	uc.EXPECT().GetMyEntry(gomock.Any(), inbound.MyEntryInput{EventID: "ev1", VisitorID: "v1"}).
+	uc.EXPECT().GetMyEntry(gomock.Any(), inbound.MyEntryInput{EventID: "ev1", VisitorID: "v1", Gen: 1}).
 		Return(dto.EntryStatus{EntryID: "e1", Seq: 5, Status: "WAITING"}, nil)
 
 	h := queuehttp.NewMyEntryHandler(uc, fakeAuth{id: "v1", ok: true})
@@ -142,13 +152,14 @@ func TestMyEntryHandler_Unauthorized(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/queue-entries/me?eventId=ev1", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
-	assert.Equal(t, http.StatusNotFound, rec.Code)
+	assert.Equal(t, http.StatusUnauthorized, rec.Code, "R01.6: invalid token -> 401 VISITOR_TOKEN_INVALID")
+	assert.Contains(t, rec.Body.String(), "VISITOR_TOKEN_INVALID")
 }
 
 func TestClaimHandler_OK(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	uc := mock_inbound.NewMockIClaimUsecase(ctrl)
-	uc.EXPECT().Claim(gomock.Any(), inbound.ClaimInput{EntryID: "e1", VisitorID: "v1", EventID: "ev1"}).
+	uc.EXPECT().Claim(gomock.Any(), inbound.ClaimInput{EntryID: "e1", VisitorID: "v1", EventID: "ev1", Gen: 1}).
 		Return(dto.ClaimResponse{AdmissionToken: "adm", BookingURL: "u"}, nil)
 
 	h := queuehttp.NewClaimHandler(uc, fakeAuth{id: "v1", ok: true})
@@ -179,7 +190,7 @@ func TestClaimHandler_TurnMissedGone(t *testing.T) {
 func TestLeaveHandler_NoContent(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	uc := mock_inbound.NewMockILeaveUsecase(ctrl)
-	uc.EXPECT().Leave(gomock.Any(), inbound.LeaveInput{EntryID: "e1", VisitorID: "v1", EventID: "ev1"}).Return(nil)
+	uc.EXPECT().Leave(gomock.Any(), inbound.LeaveInput{EntryID: "e1", VisitorID: "v1", EventID: "ev1", Gen: 1}).Return(nil)
 
 	h := queuehttp.NewLeaveHandler(uc, fakeAuth{id: "v1", ok: true})
 	mux := http.NewServeMux()
@@ -244,4 +255,39 @@ func TestClaimHandler_ErrorMapping(t *testing.T) {
 	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/queue-entries/e1/claim?eventId=ev1", nil))
 	assert.Equal(t, http.StatusNotFound, rec.Code)
 	assert.Contains(t, notFoundBody, "NOT_FOUND")
+}
+
+func heartbeatServe(t *testing.T, uc *mock_inbound.MockIHeartbeatUsecase, auth fakeAuth) *httptest.ResponseRecorder {
+	t.Helper()
+	h := queuehttp.NewHeartbeatHandler(uc, auth)
+	mux := http.NewServeMux()
+	h.Register(mux)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/queue-entries/me/heartbeat?eventId=ev1", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	return rec
+}
+
+func TestHeartbeatHandler_States(t *testing.T) {
+	t.Run("ok", func(t *testing.T) {
+		uc := mock_inbound.NewMockIHeartbeatUsecase(gomock.NewController(t))
+		uc.EXPECT().Heartbeat(gomock.Any(), inbound.HeartbeatInput{EventID: "ev1", VisitorID: "v1", Gen: 1}).
+			Return(dto.HeartbeatStatus{EntryID: "e1", State: "WAITING", NextHeartbeatMs: 30000}, nil)
+		rec := heartbeatServe(t, uc, fakeAuth{id: "v1", ok: true})
+		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.Equal(t, "no-store", rec.Header().Get("Cache-Control"))
+		assert.Contains(t, rec.Body.String(), `"nextHeartbeatMs":30000`)
+	})
+	t.Run("bad token", func(t *testing.T) {
+		uc := mock_inbound.NewMockIHeartbeatUsecase(gomock.NewController(t))
+		rec := heartbeatServe(t, uc, fakeAuth{ok: false})
+		assert.Equal(t, http.StatusUnauthorized, rec.Code)
+	})
+	t.Run("ended", func(t *testing.T) {
+		uc := mock_inbound.NewMockIHeartbeatUsecase(gomock.NewController(t))
+		uc.EXPECT().Heartbeat(gomock.Any(), gomock.Any()).Return(dto.HeartbeatStatus{}, entity.ErrEntryNotFound)
+		rec := heartbeatServe(t, uc, fakeAuth{id: "v1", ok: true})
+		assert.Equal(t, http.StatusNotFound, rec.Code)
+		assert.Contains(t, rec.Body.String(), "ENTRY_NOT_FOUND")
+	})
 }

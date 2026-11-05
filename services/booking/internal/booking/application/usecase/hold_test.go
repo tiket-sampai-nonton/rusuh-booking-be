@@ -2,7 +2,6 @@ package usecase_test
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"testing"
 	"time"
@@ -47,24 +46,43 @@ func detailWith(mixed bool, maxOrder int) entity.EventDetail {
 	}
 }
 
+const (
+	buyerNIK = "3174010101010009"
+	email    = "buyer@example.com"
+)
+
+var testPolicy = usecase.HoldPolicy{RefusalBudget: 3, ThrottleBase: 2 * time.Second, ThrottleMax: 30 * time.Second}
+
 func newHoldUC(adm *fakeAdmissionRepo, ev *fakeEventRepo, idem *fakeIdem, uow *fakeUoW) *usecase.Hold {
-	return usecase.NewHold(adm, ev, idem, uow, fakeNIK{}, &fakeIDs{id: "bk-1", ref: "RB-1"}, fixedClock{t: time.Now()})
+	return usecase.NewHold(adm, ev, idem, uow, fakeNIK{}, &fakeIDs{id: "bk-1", ref: "RB-1"}, fixedClock{t: time.Now()}, testPolicy)
+}
+
+func buyer() dto.BuyerInput {
+	return dto.BuyerInput{NIK: buyerNIK, Email: email, EmailConfirmation: email, Consent: true}
 }
 
 func holdCmd(items []dto.HoldItem) inbound.HoldCommand {
 	return inbound.HoldCommand{
-		Request:        dto.HoldRequest{SessionID: sessionID, Items: items},
+		Request:        dto.HoldRequest{SessionID: sessionID, Buyer: buyer(), Items: items},
 		VisitorID:      visitor,
 		IdempotencyKey: idemKey,
 	}
 }
 
+func oneItem() []dto.HoldItem {
+	return []dto.HoldItem{{CategoryID: catA, Attendee: dto.AttendeeInput{NIK: nik1, FullName: "Alice"}}}
+}
+
+func admission3() entity.Admission {
+	a := activeAdmission(true)
+	a.OutstandingUnits = 3
+	return a
+}
+
 func TestHold_Success(t *testing.T) {
 	uow := &fakeUoW{holdRes: outbound.HoldResult{BookingID: "bk-1", PublicRef: "RB-1", Version: 1, Status: "PENDING_PAYMENT", AmountMinor: 3000, PaymentExpiresAt: time.Now().Add(time.Hour)}}
 	idem := &fakeIdem{}
-	adm := activeAdmission(true)
-	adm.BuyerNIKMasked = "3174********0001"
-	uc := newHoldUC(&fakeAdmissionRepo{admission: adm}, &fakeEventRepo{detail: detailWith(true, 3)}, idem, uow)
+	uc := newHoldUC(&fakeAdmissionRepo{admission: admission3()}, &fakeEventRepo{detail: detailWith(true, 3)}, idem, uow)
 
 	resp, err := uc.Hold(context.Background(), holdCmd([]dto.HoldItem{
 		{CategoryID: catA, Attendee: dto.AttendeeInput{NIK: nik1, FullName: "Alice"}},
@@ -75,14 +93,58 @@ func TestHold_Success(t *testing.T) {
 	assert.EqualValues(t, 3000, resp.AmountMinor)
 	assert.Equal(t, 2, len(uow.heldSpec.Lines))
 	assert.True(t, idem.completed, "idempotency record completed")
-	// Contract fields the FE reads from the hold response (same as GET /bookings/{id}).
 	assert.Equal(t, "RB-1", resp.OrderID)
 	assert.Equal(t, 2, resp.TicketQuantity)
-	assert.Equal(t, "3174********0001", resp.BuyerNIKMasked)
+	// The buyer data comes from the request, not from the admission (ADR-030).
+	assert.Equal(t, "3174********0009", resp.BuyerNIKMasked)
+	assert.Equal(t, []byte("h:"+buyerNIK), uow.heldSpec.BuyerNIKHash)
+	assert.Equal(t, "sealed:"+email, uow.heldSpec.BuyerEmailEnc)
+	assert.Equal(t, 3, uow.heldSpec.RefusalBudget)
+}
+
+func TestHold_ValidationOrderAndNoIO(t *testing.T) {
+	tests := []struct {
+		name  string
+		edit  func(*dto.HoldRequest)
+		wants error
+	}{
+		{"empty items", func(r *dto.HoldRequest) { r.Items = nil }, inbound.ErrQuantityInvalid},
+		{"bad buyer nik", func(r *dto.HoldRequest) { r.Buyer.NIK = "123" }, inbound.ErrNIKInvalid},
+		{"email mismatch", func(r *dto.HoldRequest) { r.Buyer.EmailConfirmation = "other@example.com" }, inbound.ErrEmailMismatch},
+		{"consent missing", func(r *dto.HoldRequest) { r.Buyer.Consent = false }, inbound.ErrConsentRequired},
+		{"mismatch wins over consent", func(r *dto.HoldRequest) {
+			r.Buyer.Consent = false
+			r.Buyer.EmailConfirmation = "other@example.com"
+		}, inbound.ErrEmailMismatch},
+		{"invalid buyer nik wins over mismatch", func(r *dto.HoldRequest) {
+			r.Buyer.NIK = "x"
+			r.Buyer.EmailConfirmation = "other@example.com"
+		}, inbound.ErrNIKInvalid},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			adm := &fakeAdmissionRepo{admission: admission3()}
+			idem := &fakeIdem{}
+			uc := newHoldUC(adm, &fakeEventRepo{detail: detailWith(true, 3)}, idem, &fakeUoW{})
+			cmd := holdCmd(oneItem())
+			tt.edit(&cmd.Request)
+			_, err := uc.Hold(context.Background(), cmd)
+			assert.ErrorIs(t, err, tt.wants)
+			assert.Zero(t, adm.getCalls, "pure validation: no admission read")
+			assert.Nil(t, idem.gotHash, "malformed request never creates an idempotency record")
+		})
+	}
+	t.Run("invalid email format", func(t *testing.T) {
+		uc := newHoldUC(&fakeAdmissionRepo{admission: admission3()}, &fakeEventRepo{detail: detailWith(true, 3)}, &fakeIdem{}, &fakeUoW{})
+		cmd := holdCmd(oneItem())
+		cmd.Request.Buyer.Email, cmd.Request.Buyer.EmailConfirmation = "not-an-email", "not-an-email"
+		_, err := uc.Hold(context.Background(), cmd)
+		require.Error(t, err)
+	})
 }
 
 func TestHold_QuantityExceeds(t *testing.T) {
-	uc := newHoldUC(&fakeAdmissionRepo{admission: activeAdmission(true)}, &fakeEventRepo{detail: detailWith(true, 1)}, &fakeIdem{}, &fakeUoW{})
+	uc := newHoldUC(&fakeAdmissionRepo{admission: admission3()}, &fakeEventRepo{detail: detailWith(true, 1)}, &fakeIdem{}, &fakeUoW{})
 	_, err := uc.Hold(context.Background(), holdCmd([]dto.HoldItem{
 		{CategoryID: catA, Attendee: dto.AttendeeInput{NIK: nik1, FullName: "Alice"}},
 		{CategoryID: catB, Attendee: dto.AttendeeInput{NIK: nik2, FullName: "Bob"}},
@@ -90,8 +152,25 @@ func TestHold_QuantityExceeds(t *testing.T) {
 	assert.ErrorIs(t, err, inbound.ErrQuantityExceeds)
 }
 
+func TestHold_MoreThanOutstandingUnitsIsQuantityInvalid(t *testing.T) {
+	adm := admission3()
+	adm.OutstandingUnits = 1 // partial grant (stock tail 3,3,1)
+	idem := &fakeIdem{}
+	uow := &fakeUoW{}
+	uc := newHoldUC(&fakeAdmissionRepo{admission: adm}, &fakeEventRepo{detail: detailWith(true, 3)}, idem, uow)
+	_, err := uc.Hold(context.Background(), holdCmd([]dto.HoldItem{
+		{CategoryID: catA, Attendee: dto.AttendeeInput{NIK: nik1, FullName: "Alice"}},
+		{CategoryID: catB, Attendee: dto.AttendeeInput{NIK: nik2, FullName: "Bob"}},
+	}))
+	assert.ErrorIs(t, err, inbound.ErrQuantityInvalid)
+	assert.Empty(t, uow.heldSpec.Lines)
+	assert.Equal(t, 1, idem.aborted, "refusal releases the idempotency record so the buyer can retry")
+}
+
 func TestHold_MixedNotAllowed(t *testing.T) {
-	uc := newHoldUC(&fakeAdmissionRepo{admission: activeAdmission(false)}, &fakeEventRepo{detail: detailWith(false, 3)}, &fakeIdem{}, &fakeUoW{})
+	adm := admission3()
+	adm.CfgAllowMixedCategories = false
+	uc := newHoldUC(&fakeAdmissionRepo{admission: adm}, &fakeEventRepo{detail: detailWith(false, 3)}, &fakeIdem{}, &fakeUoW{})
 	_, err := uc.Hold(context.Background(), holdCmd([]dto.HoldItem{
 		{CategoryID: catA, Attendee: dto.AttendeeInput{NIK: nik1, FullName: "Alice"}},
 		{CategoryID: catB, Attendee: dto.AttendeeInput{NIK: nik2, FullName: "Bob"}},
@@ -100,7 +179,7 @@ func TestHold_MixedNotAllowed(t *testing.T) {
 }
 
 func TestHold_DuplicateNIKInOrder(t *testing.T) {
-	uc := newHoldUC(&fakeAdmissionRepo{admission: activeAdmission(true)}, &fakeEventRepo{detail: detailWith(true, 3)}, &fakeIdem{}, &fakeUoW{})
+	uc := newHoldUC(&fakeAdmissionRepo{admission: admission3()}, &fakeEventRepo{detail: detailWith(true, 3)}, &fakeIdem{}, &fakeUoW{})
 	_, err := uc.Hold(context.Background(), holdCmd([]dto.HoldItem{
 		{CategoryID: catA, Attendee: dto.AttendeeInput{NIK: nik1, FullName: "Alice"}},
 		{CategoryID: catB, Attendee: dto.AttendeeInput{NIK: nik1, FullName: "Bob"}},
@@ -108,8 +187,8 @@ func TestHold_DuplicateNIKInOrder(t *testing.T) {
 	assert.ErrorIs(t, err, inbound.ErrNikDuplicate)
 }
 
-func TestHold_InvalidNIK(t *testing.T) {
-	uc := newHoldUC(&fakeAdmissionRepo{admission: activeAdmission(true)}, &fakeEventRepo{detail: detailWith(true, 3)}, &fakeIdem{}, &fakeUoW{})
+func TestHold_InvalidHolderNIK(t *testing.T) {
+	uc := newHoldUC(&fakeAdmissionRepo{admission: admission3()}, &fakeEventRepo{detail: detailWith(true, 3)}, &fakeIdem{}, &fakeUoW{})
 	_, err := uc.Hold(context.Background(), holdCmd([]dto.HoldItem{
 		{CategoryID: catA, Attendee: dto.AttendeeInput{NIK: "bad", FullName: "Alice"}},
 	}))
@@ -117,82 +196,108 @@ func TestHold_InvalidNIK(t *testing.T) {
 }
 
 func TestHold_SessionExpired(t *testing.T) {
-	adm := activeAdmission(true)
+	adm := admission3()
 	adm.ExpiresAt = time.Now().Add(-time.Minute)
-	uc := newHoldUC(&fakeAdmissionRepo{admission: adm}, &fakeEventRepo{detail: detailWith(true, 3)}, &fakeIdem{}, &fakeUoW{})
-	_, err := uc.Hold(context.Background(), holdCmd([]dto.HoldItem{{CategoryID: catA, Attendee: dto.AttendeeInput{NIK: nik1, FullName: "Alice"}}}))
+	idem := &fakeIdem{}
+	uc := newHoldUC(&fakeAdmissionRepo{admission: adm}, &fakeEventRepo{detail: detailWith(true, 3)}, idem, &fakeUoW{})
+	_, err := uc.Hold(context.Background(), holdCmd(oneItem()))
 	assert.ErrorIs(t, err, inbound.ErrSessionExpired)
+	assert.Equal(t, 1, idem.aborted)
+}
+
+func TestHold_BuyerNikAtCapKeepsAdmissionAndAbortsRecord(t *testing.T) {
+	idem := &fakeIdem{}
+	uow := &fakeUoW{holdRes: outbound.HoldResult{Refused: outbound.RefusedBuyerNikLimit}}
+	uc := newHoldUC(&fakeAdmissionRepo{admission: admission3()}, &fakeEventRepo{detail: detailWith(true, 3)}, idem, uow)
+	_, err := uc.Hold(context.Background(), holdCmd(oneItem()))
+	assert.ErrorIs(t, err, inbound.ErrBuyerNikLimitReached)
+	assert.Equal(t, 422, inbound.ErrBuyerNikLimitReached.HTTPStatus)
+	assert.Equal(t, 1, idem.aborted, "same key may be retried with another buyer NIK")
+	assert.False(t, idem.completed)
+}
+
+func TestHold_IsRetryableRefusalTable(t *testing.T) {
+	tests := []struct {
+		name  string
+		err   error
+		abort int
+	}{
+		{"4xx typed", inbound.ErrCategoryUnavailable, 1},
+		{"throttled 429", inbound.BuyerNikThrottled(5), 1},
+		{"5xx dependency", inbound.ErrDependency, 0},
+		{"plain error", assert.AnError, 0},
+		{"context canceled", context.Canceled, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			idem := &fakeIdem{}
+			uc := newHoldUC(&fakeAdmissionRepo{admission: admission3()}, &fakeEventRepo{detail: detailWith(true, 3)}, idem, &fakeUoW{holdErr: tt.err})
+			_, err := uc.Hold(context.Background(), holdCmd(oneItem()))
+			require.Error(t, err)
+			assert.Equal(t, tt.abort, idem.aborted)
+		})
+	}
 }
 
 func TestHold_IdempotencyKeyReused(t *testing.T) {
 	idem := &fakeIdem{found: true, rec: outbound.IdempotencyRecord{State: "COMPLETED", RequestHash: []byte("different")}}
-	uc := newHoldUC(&fakeAdmissionRepo{admission: activeAdmission(true)}, &fakeEventRepo{detail: detailWith(true, 3)}, idem, &fakeUoW{})
-	_, err := uc.Hold(context.Background(), holdCmd([]dto.HoldItem{{CategoryID: catA, Attendee: dto.AttendeeInput{NIK: nik1, FullName: "Alice"}}}))
+	uc := newHoldUC(&fakeAdmissionRepo{admission: admission3()}, &fakeEventRepo{detail: detailWith(true, 3)}, idem, &fakeUoW{})
+	_, err := uc.Hold(context.Background(), holdCmd(oneItem()))
 	assert.ErrorIs(t, err, inbound.ErrIdemReused)
+	assert.Zero(t, idem.aborted, "a reused key is not a refusal that frees the record")
 }
 
-func TestHold_IdempotentReplay(t *testing.T) {
-	// Pre-compute the hash the usecase will produce, then return a COMPLETED record with that hash.
-	items := []dto.HoldItem{{CategoryID: catA, Attendee: dto.AttendeeInput{NIK: nik1, FullName: "Alice"}}}
-	cmd := holdCmd(items)
-	// First run with a fresh store to capture the stored body.
-	captured := &fakeIdem{}
-	uow := &fakeUoW{holdRes: outbound.HoldResult{BookingID: "bk-1", PublicRef: "RB-1", Version: 1, Status: "PENDING_PAYMENT", AmountMinor: 1000}}
-	uc := newHoldUC(&fakeAdmissionRepo{admission: activeAdmission(true)}, &fakeEventRepo{detail: detailWith(true, 3)}, captured, uow)
-	first, err := uc.Hold(context.Background(), cmd)
-	require.NoError(t, err)
-	assert.Equal(t, "bk-1", first.BookingID)
-}
-
-// hashOf mirrors the usecase's requestHash (json.Marshal + sha256) so the test can build an idempotency
-// record whose RequestHash matches what Hold computes, exercising the replay (matching-hash) branch.
-func hashOf(t *testing.T, req dto.HoldRequest) []byte {
+// captureHash runs the usecase once to learn the request hash it computes for cmd.
+func captureHash(t *testing.T, cmd inbound.HoldCommand) []byte {
 	t.Helper()
-	raw, err := json.Marshal(req)
+	idem := &fakeIdem{}
+	uc := newHoldUC(&fakeAdmissionRepo{admission: admission3()}, &fakeEventRepo{detail: detailWith(true, 3)}, idem,
+		&fakeUoW{holdRes: outbound.HoldResult{BookingID: "bk-1", PublicRef: "RB-1", Version: 1, Status: "PENDING_PAYMENT", AmountMinor: 1000}})
+	_, err := uc.Hold(context.Background(), cmd)
 	require.NoError(t, err)
-	sum := sha256.Sum256(raw)
-	return sum[:]
+	require.NotEmpty(t, idem.gotHash)
+	return idem.gotHash
 }
 
-func TestHold_ReplayReturnsStoredBodyOnHashMatch(t *testing.T) {
-	// A COMPLETED record with a matching request hash must be replayed verbatim (no new UoW.Hold call).
-	items := []dto.HoldItem{{CategoryID: catA, Attendee: dto.AttendeeInput{NIK: nik1, FullName: "Alice"}}}
-	cmd := holdCmd(items)
+func TestHold_RequestHashHoldsNoPlaintext(t *testing.T) {
+	h := string(captureHash(t, holdCmd(oneItem())))
+	for _, secret := range []string{buyerNIK, nik1, email} {
+		assert.NotContains(t, h, secret, "idempotency request hash must not carry plaintext")
+	}
+}
+
+func TestHold_ReplayReturnsStoredBodyWithoutReadingState(t *testing.T) {
+	cmd := holdCmd(oneItem())
 	stored, err := json.Marshal(dto.Booking{BookingID: "bk-replay", PublicRef: "RB-9", Status: "PENDING_PAYMENT", AmountMinor: 1000})
 	require.NoError(t, err)
 
-	idem := &fakeIdem{found: true, rec: outbound.IdempotencyRecord{
-		State:        "COMPLETED",
-		RequestHash:  hashOf(t, cmd.Request),
-		ResponseBody: stored,
-	}}
+	idem := &fakeIdem{found: true, rec: outbound.IdempotencyRecord{State: "COMPLETED", RequestHash: captureHash(t, cmd), ResponseBody: stored}}
+	adm := admission3()
+	adm.Status = vo.AdmissionConverted // state moved on after the first success
+	adm.OutstandingUnits = 0
+	adms := &fakeAdmissionRepo{admission: adm}
 	uow := &fakeUoW{}
-	uc := newHoldUC(&fakeAdmissionRepo{admission: activeAdmission(true)}, &fakeEventRepo{detail: detailWith(true, 3)}, idem, uow)
+	uc := newHoldUC(adms, &fakeEventRepo{detail: detailWith(true, 3)}, idem, uow)
 
 	resp, err := uc.Hold(context.Background(), cmd)
 	require.NoError(t, err)
 	assert.Equal(t, "bk-replay", resp.BookingID, "returns the stored response, not a fresh hold")
+	assert.Zero(t, adms.getCalls, "replay precedes every admission-state check")
 	assert.Empty(t, uow.heldSpec.Lines, "replay must not call UoW.Hold again")
-	assert.False(t, idem.completed, "replay must not re-Complete the record")
+	assert.False(t, idem.completed)
 }
 
 func TestHold_ReplayInFlightIsTransient(t *testing.T) {
-	// Matching hash but the record is not yet COMPLETED => another request with the same key is still
-	// running; the usecase returns a transient error so the client retries.
-	items := []dto.HoldItem{{CategoryID: catA, Attendee: dto.AttendeeInput{NIK: nik1, FullName: "Alice"}}}
-	cmd := holdCmd(items)
-	idem := &fakeIdem{found: true, rec: outbound.IdempotencyRecord{
-		State:       "IN_FLIGHT",
-		RequestHash: hashOf(t, cmd.Request),
-	}}
-	uc := newHoldUC(&fakeAdmissionRepo{admission: activeAdmission(true)}, &fakeEventRepo{detail: detailWith(true, 3)}, idem, &fakeUoW{})
+	cmd := holdCmd(oneItem())
+	idem := &fakeIdem{found: true, rec: outbound.IdempotencyRecord{State: "IN_FLIGHT", RequestHash: captureHash(t, cmd)}}
+	uc := newHoldUC(&fakeAdmissionRepo{admission: admission3()}, &fakeEventRepo{detail: detailWith(true, 3)}, idem, &fakeUoW{})
 	_, err := uc.Hold(context.Background(), cmd)
 	assert.ErrorIs(t, err, inbound.ErrDependency)
 }
 
 func TestHold_BadIdempotencyKey(t *testing.T) {
-	uc := newHoldUC(&fakeAdmissionRepo{admission: activeAdmission(true)}, &fakeEventRepo{detail: detailWith(true, 3)}, &fakeIdem{}, &fakeUoW{})
-	cmd := holdCmd([]dto.HoldItem{{CategoryID: catA, Attendee: dto.AttendeeInput{NIK: nik1, FullName: "Alice"}}})
+	uc := newHoldUC(&fakeAdmissionRepo{admission: admission3()}, &fakeEventRepo{detail: detailWith(true, 3)}, &fakeIdem{}, &fakeUoW{})
+	cmd := holdCmd(oneItem())
 	cmd.IdempotencyKey = "short"
 	_, err := uc.Hold(context.Background(), cmd)
 	assert.Error(t, err)
@@ -202,8 +307,17 @@ func TestHold_CancelledEventRefusesNewHolds(t *testing.T) {
 	d := detailWith(true, 3)
 	d.Event.Status = entity.EventCancelled
 	uow := &fakeUoW{}
-	uc := newHoldUC(&fakeAdmissionRepo{admission: activeAdmission(true)}, &fakeEventRepo{detail: d}, &fakeIdem{}, uow)
-	_, err := uc.Hold(context.Background(), holdCmd([]dto.HoldItem{{CategoryID: catA, Attendee: dto.AttendeeInput{NIK: nik1, FullName: "Alice"}}}))
+	uc := newHoldUC(&fakeAdmissionRepo{admission: admission3()}, &fakeEventRepo{detail: d}, &fakeIdem{}, uow)
+	_, err := uc.Hold(context.Background(), holdCmd(oneItem()))
 	assert.ErrorIs(t, err, inbound.ErrEventCancelled)
 	assert.Empty(t, uow.heldSpec.Lines, "tidak ada stok yang ditahan")
+}
+
+func TestHold_UnknownCategoryListsIDInMessage(t *testing.T) {
+	uc := newHoldUC(&fakeAdmissionRepo{admission: admission3()}, &fakeEventRepo{detail: detailWith(true, 3)}, &fakeIdem{}, &fakeUoW{})
+	unknown := "99999999-9999-9999-9999-999999999999"
+	_, err := uc.Hold(context.Background(), holdCmd([]dto.HoldItem{{CategoryID: unknown, Attendee: dto.AttendeeInput{NIK: nik1, FullName: "Alice"}}}))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "CATEGORY_UNAVAILABLE")
+	assert.Contains(t, err.Error(), unknown)
 }

@@ -78,7 +78,6 @@ func Load() (Config, error) {
 		QueueTTL:       r.Duration("TOKEN_QUEUE_TTL", time.Hour),
 	}
 	cfg.PII = PII{
-		EncKeyHex:  r.String("PII_ENC_KEY", ""),
 		HashKeyHex: r.String("PII_HMAC_KEY", ""),
 	}
 	cfg.Booking = Booking{
@@ -86,12 +85,11 @@ func Load() (Config, error) {
 		Timeout: r.Duration("BOOKING_TIMEOUT", 3*time.Second),
 	}
 	cfg.RateLimit = RateLimit{
-		JoinPerEmailWindow: r.Duration("RATE_LIMIT_JOIN_PER_EMAIL_WINDOW", time.Minute),
-		JoinPerIPWindow:    r.Duration("RATE_LIMIT_JOIN_PER_IP_WINDOW", time.Minute),
-		MePerVisitorWindow: r.Duration("RATE_LIMIT_ME_PER_VISITOR_WINDOW", time.Minute),
-		JoinPerEmail:       r.Int("RATE_LIMIT_JOIN_PER_EMAIL", 5),
-		JoinPerIP:          r.Int("RATE_LIMIT_JOIN_PER_IP", 60),
-		MePerVisitor:       r.Int("RATE_LIMIT_ME_PER_VISITOR", 120),
+		JoinPerIPWindow:     r.Duration("RATE_LIMIT_JOIN_PER_IP_WINDOW", time.Minute),
+		MePerVisitorWindow:  r.Duration("RATE_LIMIT_ME_PER_VISITOR_WINDOW", time.Minute),
+		JoinPerIP:           r.Int("RATE_LIMIT_JOIN_PER_IP", 200),
+		MePerVisitor:        r.Int("RATE_LIMIT_ME_PER_VISITOR", 120),
+		HeartbeatPerVisitor: r.Int("RATE_LIMIT_HEARTBEAT_PER_VISITOR", 20),
 	}
 	cfg.WorkerTuning = WorkerTuning{
 		PromotorInterval: r.Duration("QUEUE_PROMOTOR_INTERVAL_MS", 100*time.Millisecond),
@@ -101,9 +99,17 @@ func Load() (Config, error) {
 
 		PromoterLeaseTTL:     r.Duration("QUEUE_PROMOTER_LEASE_TTL_MS", 10*time.Second),
 		SweepBatchMax:        r.Int("QUEUE_SWEEP_BATCH_MAX", 500),
-		UnsealFailMax:        r.Int("QUEUE_UNSEAL_FAIL_MAX", 3),
-		UnsealProbe:          r.Int("QUEUE_UNSEAL_PROBE", 3),
 		NoSupplySuspectTicks: r.Int("QUEUE_NO_SUPPLY_SUSPECT_TICKS", 50),
+	}
+
+	sec := func(name string, def int) time.Duration { return time.Duration(r.Int(name, def)) * time.Second }
+	cfg.Liveness = Liveness{
+		HeartbeatInterval: sec("QUEUE_HEARTBEAT_INTERVAL_SECONDS", 30),
+		NearInterval:      sec("QUEUE_HEARTBEAT_NEAR_INTERVAL_SECONDS", 10),
+		StaleAfter:        sec("QUEUE_STALE_AFTER_SECONDS", 90),
+		EndAfter:          sec("QUEUE_END_AFTER_SECONDS", 300),
+		BatchMax:          r.Int("QUEUE_LIVENESS_BATCH_MAX", 1000),
+		Shards:            r.Int("QUEUE_LIVENESS_SHARDS", 16),
 	}
 
 	// Kesalahan parsing dan validasi dilaporkan bersama agar semua variable yang salah terlihat sekaligus.

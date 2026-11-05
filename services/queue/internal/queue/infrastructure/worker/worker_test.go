@@ -28,17 +28,12 @@ type workerMocks struct {
 	booking  *mock_outbound.MockIBookingClient
 	pub      *mock_outbound.MockIEventPublisher
 	audit    *mock_outbound.MockIEntryAuditRepo
-	pii      *mock_outbound.MockIPIIProtector
 }
 
 func newWorkerMocks(t *testing.T) workerMocks {
 	t.Helper()
 	ctrl := gomock.NewController(t)
-	pii := mock_outbound.NewMockIPIIProtector(ctrl)
-	pii.EXPECT().UnsealEmail(gomock.Any()).Return("pembeli@contoh.id", nil).AnyTimes()
-	pii.EXPECT().SealBuyerEmail("pembeli@contoh.id").Return("c2VhbGVk", nil).AnyTimes()
 	return workerMocks{
-		pii:      pii,
 		store:    mock_outbound.NewMockIQueueStore(ctrl),
 		settings: mock_outbound.NewMockIEventSettingsRepo(ctrl),
 		booking:  mock_outbound.NewMockIBookingClient(ctrl),
@@ -63,14 +58,13 @@ func TestPromoter_PromotesReservedAndPublishes(t *testing.T) {
 	m.store.EXPECT().ActiveCount(gomock.Any(), "ev1").Return(0, nil)
 	m.store.EXPECT().TopWaiting(gomock.Any(), "ev1", 10).Return([]string{"e1"}, nil)
 	m.store.EXPECT().GetEntry(gomock.Any(), "ev1", "e1").Return(entity.Entry{
-		ID: "e1", VisitorID: "v1", BuyerNikHash: []byte{0xaa}, BuyerNikMasked: "3174********0001", AccountID: "acc-1",
+		ID: "e1", VisitorID: "v1", AccountID: "acc-1",
 	}, true, nil)
-	// Booking needs the buyer's email (e-ticket), masked NIK and account (internal-booking AllocationBatchRequest).
+	// ADR-030: the admission is anonymous. Booking receives the account (identity only) and no buyer fields; the
+	// buyer NIK, masked NIK and e-ticket email are bound at hold.
 	m.booking.EXPECT().ReserveBatch(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(_ context.Context, req outbound.AllocationBatchRequest) (outbound.AllocationBatchResponse, error) {
 			require.Len(t, req.Entries, 1)
-			assert.Equal(t, "c2VhbGVk", req.Entries[0].BuyerEmailEnc, "Booking hanya menerima ciphertext")
-			assert.Equal(t, "3174********0001", req.Entries[0].BuyerNikMasked)
 			assert.Equal(t, "acc-1", req.Entries[0].AccountID)
 			return outbound.AllocationBatchResponse{
 				Allocations: []outbound.AllocationResult{{QueueEntryID: "e1", AllocationID: "a1", Status: "GRANTED", ClaimDeadline: "2026-10-20T10:01:00Z"}},
@@ -79,7 +73,7 @@ func TestPromoter_PromotesReservedAndPublishes(t *testing.T) {
 	m.store.EXPECT().Promote(gomock.Any(), "ev1", gomock.Any(), 10, gomock.Any(), gomock.Any()).Return(outbound.PromoteResult{Promoted: []string{"e1"}}, nil)
 	m.pub.EXPECT().PublishTurnArrived(gomock.Any(), "ev1", "e1", "v1", gomock.Any()).Return(nil)
 
-	p := worker.NewPromoter(m.store, m.settings, m.booking, m.pub, m.audit, m.pii, wnow, nil, worker.PromoterTuning{BatchMax: 200})
+	p := worker.NewPromoter(m.store, m.settings, m.booking, m.pub, m.audit, wnow, nil, worker.PromoterTuning{BatchMax: 200})
 	require.NoError(t, p.Run(ctx))
 }
 
@@ -91,7 +85,7 @@ func TestPromoter_SkipsEventWhenLeaseHeld(t *testing.T) {
 	m.store.EXPECT().AcquirePromoterLease(gomock.Any(), "ev1", 10*time.Second).Return("", false, nil)
 	// ActiveCount, TopWaiting, ReserveBatch, Promote must NOT be called.
 
-	p := worker.NewPromoter(m.store, m.settings, m.booking, m.pub, m.audit, m.pii, wnow, nil, worker.PromoterTuning{BatchMax: 200})
+	p := worker.NewPromoter(m.store, m.settings, m.booking, m.pub, m.audit, wnow, nil, worker.PromoterTuning{BatchMax: 200})
 	require.NoError(t, p.Run(ctx))
 }
 
@@ -103,11 +97,13 @@ func TestPromoter_NoFreeSlotsSkips(t *testing.T) {
 	m.settings.EXPECT().Get(gomock.Any(), "ev1").Return(entity.EventSettings{ActiveSlotCapacity: 5}, true, nil)
 	m.store.EXPECT().ActiveCount(gomock.Any(), "ev1").Return(5, nil)
 
-	p := worker.NewPromoter(m.store, m.settings, m.booking, m.pub, m.audit, m.pii, wnow, nil, worker.PromoterTuning{BatchMax: 200})
+	p := worker.NewPromoter(m.store, m.settings, m.booking, m.pub, m.audit, wnow, nil, worker.PromoterTuning{BatchMax: 200})
 	require.NoError(t, p.Run(ctx))
 }
 
-func TestPromoter_QuotaExhaustedAddsSet(t *testing.T) {
+// ADR-030: the promoter reserves 3 units per entry and sends NO buyer fields. A stale BUYER_QUOTA_EXHAUSTED outcome
+// from an old Booking pod is an unknown outcome: it never ends a live buyer and never promotes.
+func TestPromoter_AnonymousThreeUnitRequestAndStaleQuotaOutcomeIsInert(t *testing.T) {
 	m := newWorkerMocks(t)
 	ctx := context.Background()
 	m.settings.EXPECT().ListEventIDs(gomock.Any()).Return([]string{"ev1"}, nil)
@@ -115,17 +111,17 @@ func TestPromoter_QuotaExhaustedAddsSet(t *testing.T) {
 	m.settings.EXPECT().Get(gomock.Any(), "ev1").Return(entity.EventSettings{ActiveSlotCapacity: 10}, true, nil)
 	m.store.EXPECT().ActiveCount(gomock.Any(), "ev1").Return(0, nil)
 	m.store.EXPECT().TopWaiting(gomock.Any(), "ev1", 10).Return([]string{"e1"}, nil)
-	m.store.EXPECT().GetEntry(gomock.Any(), "ev1", "e1").Return(entity.Entry{ID: "e1", VisitorID: "v1", BuyerNikHash: []byte{0xaa}}, true, nil)
-	m.booking.EXPECT().ReserveBatch(gomock.Any(), gomock.Any()).Return(outbound.AllocationBatchResponse{
-		Allocations: []outbound.AllocationResult{{QueueEntryID: "e1", Status: "QUOTA_EXHAUSTED"}},
-	}, nil)
-	m.store.EXPECT().GetEntry(gomock.Any(), "ev1", "e1").Return(entity.Entry{ID: "e1", BuyerNikHash: []byte{0xaa}}, true, nil)
-	m.store.EXPECT().AddQuotaExhausted(gomock.Any(), "ev1", "aa").Return(nil)
-	// Entry is ended so it doesn't permanently block the queue head (spec 11.R1).
-	m.store.EXPECT().EndEntry(gomock.Any(), "ev1", "e1", "BUYER_QUOTA_EXHAUSTED", gomock.Any()).Return(outbound.EndResult{Tag: "OK", Status: "ENDED"}, nil)
-	// no GRANTED → no Promote
-
-	p := worker.NewPromoter(m.store, m.settings, m.booking, m.pub, m.audit, m.pii, wnow, nil, worker.PromoterTuning{BatchMax: 200})
+	m.store.EXPECT().GetEntry(gomock.Any(), "ev1", "e1").Return(entity.Entry{ID: "e1", VisitorID: "v1", AccountID: "acc-1", Seq: 7}, true, nil)
+	m.booking.EXPECT().ReserveBatch(gomock.Any(), gomock.Any()).DoAndReturn(
+		func(_ context.Context, req outbound.AllocationBatchRequest) (outbound.AllocationBatchResponse, error) {
+			require.Len(t, req.Entries, 1)
+			e := req.Entries[0]
+			assert.Equal(t, 3, e.Units, "quantity guarantee per admission")
+			assert.Equal(t, "acc-1", e.AccountID)
+			return outbound.AllocationBatchResponse{Allocations: []outbound.AllocationResult{{QueueEntryID: "e1", Status: "BUYER_QUOTA_EXHAUSTED"}}}, nil
+		})
+	// no EndEntry (strict mock would fail), no Promote
+	p := worker.NewPromoter(m.store, m.settings, m.booking, m.pub, m.audit, wnow, nil, worker.PromoterTuning{BatchMax: 200})
 	require.NoError(t, p.Run(ctx))
 }
 
@@ -141,12 +137,14 @@ func TestPromoter_AdoptsAGrantThatFollowsNoSupplyAndNeverReleasesIt(t *testing.T
 	m.store.EXPECT().ActiveCount(gomock.Any(), "ev1").Return(0, nil)
 	m.store.EXPECT().TopWaiting(gomock.Any(), "ev1", 10).Return([]string{"e1", "e2", "e3"}, nil)
 	for _, id := range []string{"e1", "e2", "e3"} {
-		m.store.EXPECT().GetEntry(gomock.Any(), "ev1", id).Return(entity.Entry{ID: id, VisitorID: "v-" + id, BuyerNikHash: []byte{0xaa}}, true, nil)
+		m.store.EXPECT().GetEntry(gomock.Any(), "ev1", id).Return(entity.Entry{ID: id, VisitorID: "v-" + id}, true, nil)
 	}
 	m.booking.EXPECT().ReserveBatch(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(_ context.Context, req outbound.AllocationBatchRequest) (outbound.AllocationBatchResponse, error) {
 			for _, e := range req.Entries {
-				assert.Equal(t, 1, e.Units, "adopsi hanya benar untuk Units == 1")
+				// Adoption stays correct with 3 units per entry (ADR-030): a partial grant is honoured, an adopted row
+				// is never released (asserted below), and the head still holds what it was reserved.
+				assert.Equal(t, 3, e.Units, "quantity guarantee per admission")
 			}
 			return outbound.AllocationBatchResponse{Allocations: []outbound.AllocationResult{
 				{QueueEntryID: "e1", Status: "GRANTED", AllocationID: "a1", ClaimDeadline: "2026-10-20T10:01:00Z"},
@@ -166,7 +164,7 @@ func TestPromoter_AdoptsAGrantThatFollowsNoSupplyAndNeverReleasesIt(t *testing.T
 	m.pub.EXPECT().PublishTurnArrived(gomock.Any(), "ev1", "e1", "v-e1", gomock.Any()).Return(nil)
 	m.pub.EXPECT().PublishTurnArrived(gomock.Any(), "ev1", "e3", "v-e3", gomock.Any()).Return(nil)
 
-	p := worker.NewPromoter(m.store, m.settings, m.booking, m.pub, m.audit, m.pii, wnow, nil, worker.PromoterTuning{BatchMax: 200})
+	p := worker.NewPromoter(m.store, m.settings, m.booking, m.pub, m.audit, wnow, nil, worker.PromoterTuning{BatchMax: 200})
 	require.NoError(t, p.Run(ctx))
 }
 
@@ -178,13 +176,13 @@ func TestPromoter_NothingGrantedPromotesNothing(t *testing.T) {
 	m.settings.EXPECT().Get(gomock.Any(), "ev1").Return(entity.EventSettings{ActiveSlotCapacity: 10}, true, nil)
 	m.store.EXPECT().ActiveCount(gomock.Any(), "ev1").Return(0, nil)
 	m.store.EXPECT().TopWaiting(gomock.Any(), "ev1", 10).Return([]string{"e1"}, nil)
-	m.store.EXPECT().GetEntry(gomock.Any(), "ev1", "e1").Return(entity.Entry{ID: "e1", VisitorID: "v1", BuyerNikHash: []byte{0xaa}}, true, nil)
+	m.store.EXPECT().GetEntry(gomock.Any(), "ev1", "e1").Return(entity.Entry{ID: "e1", VisitorID: "v1"}, true, nil)
 	m.booking.EXPECT().ReserveBatch(gomock.Any(), gomock.Any()).Return(outbound.AllocationBatchResponse{
 		Allocations: []outbound.AllocationResult{{QueueEntryID: "e1", Status: "NO_SUPPLY_NOW"}},
 	}, nil)
 	// Promote must NOT be called.
 
-	p := worker.NewPromoter(m.store, m.settings, m.booking, m.pub, m.audit, m.pii, wnow, nil, worker.PromoterTuning{BatchMax: 200})
+	p := worker.NewPromoter(m.store, m.settings, m.booking, m.pub, m.audit, wnow, nil, worker.PromoterTuning{BatchMax: 200})
 	require.NoError(t, p.Run(ctx))
 }
 
@@ -196,7 +194,7 @@ func TestPromoter_AlreadyActiveEndsEntry(t *testing.T) {
 	m.settings.EXPECT().Get(gomock.Any(), "ev1").Return(entity.EventSettings{ActiveSlotCapacity: 10}, true, nil)
 	m.store.EXPECT().ActiveCount(gomock.Any(), "ev1").Return(0, nil)
 	m.store.EXPECT().TopWaiting(gomock.Any(), "ev1", 10).Return([]string{"e1"}, nil)
-	m.store.EXPECT().GetEntry(gomock.Any(), "ev1", "e1").Return(entity.Entry{ID: "e1", VisitorID: "v1", BuyerNikHash: []byte{0xaa}}, true, nil)
+	m.store.EXPECT().GetEntry(gomock.Any(), "ev1", "e1").Return(entity.Entry{ID: "e1", VisitorID: "v1"}, true, nil)
 	m.booking.EXPECT().ReserveBatch(gomock.Any(), gomock.Any()).Return(outbound.AllocationBatchResponse{
 		Allocations: []outbound.AllocationResult{{QueueEntryID: "e1", Status: "ALREADY_ACTIVE"}},
 	}, nil)
@@ -204,7 +202,7 @@ func TestPromoter_AlreadyActiveEndsEntry(t *testing.T) {
 	m.store.EXPECT().EndEntry(gomock.Any(), "ev1", "e1", "ALREADY_ACTIVE", gomock.Any()).Return(outbound.EndResult{Tag: "OK", Status: "ENDED"}, nil)
 	// Promote must NOT be called — no GRANTED entries.
 
-	p := worker.NewPromoter(m.store, m.settings, m.booking, m.pub, m.audit, m.pii, wnow, nil, worker.PromoterTuning{BatchMax: 200})
+	p := worker.NewPromoter(m.store, m.settings, m.booking, m.pub, m.audit, wnow, nil, worker.PromoterTuning{BatchMax: 200})
 	require.NoError(t, p.Run(ctx))
 }
 
@@ -240,9 +238,10 @@ func TestStatusPublisher_WritesDocument(t *testing.T) {
 		CategoryLimitedThresholdPct: 5,
 	}, true, nil)
 	m.store.EXPECT().GetSale(gomock.Any(), "ev1").Return(outbound.SaleState{SaleState: "OPEN", ServingSeq: 100}, nil)
-	m.booking.EXPECT().Supply(gomock.Any(), "ev1").Return(outbound.SupplySnapshot{RemainingTickets: 50, Categories: []outbound.SupplyCategory{
+	m.booking.EXPECT().Supply(gomock.Any(), "ev1").Return(outbound.SupplySnapshot{RemainingTickets: 50, FreeUnits: 50, MaxTicketsPerOrder: 3, Categories: []outbound.SupplyCategory{
 		{Code: "VIP", Name: "VIP", Sold: 98, Total: 100},
 	}}, nil)
+	m.store.EXPECT().WaitingCount(gomock.Any(), "ev1").Return(int64(0), nil).AnyTimes()
 
 	var written []byte
 	m.store.EXPECT().SetStatusDoc(gomock.Any(), "ev1", gomock.Any(), gomock.Any()).DoAndReturn(
@@ -254,9 +253,9 @@ func TestStatusPublisher_WritesDocument(t *testing.T) {
 	var doc dto.StatusDocument
 	require.NoError(t, json.Unmarshal(written, &doc))
 	assert.Equal(t, "OPEN", doc.SaleState)
-	assert.Equal(t, int64(100), doc.ServingSeq)
-	assert.Equal(t, int64(150), doc.GuaranteedUntilSeq) // 100 + 50
-	assert.Equal(t, int64(200), doc.PossibleUntilSeq)   // 100 + 50*2
+	assert.Equal(t, int64(100), doc.ServingSeq) //nolint:staticcheck // deprecated field still published for one release
+	require.NotNil(t, doc.GuaranteedUntilSeq, "zones are seq-based (ADR-030 Amendment: strict FIFO); empty queue -> 0")
+	assert.EqualValues(t, 0, *doc.GuaranteedUntilSeq)
 	assert.Equal(t, 50, doc.RemainingTickets)
 	require.Len(t, doc.Categories, 1)
 	assert.Equal(t, "LIMITED", doc.Categories[0].State) // (100-98)*100=200 <= 100*5=500
@@ -269,6 +268,8 @@ func TestStatusPublisher_SupplyErrorStillPublishes(t *testing.T) {
 	m.settings.EXPECT().Get(gomock.Any(), "ev1").Return(entity.EventSettings{ActiveSlotCapacity: 100, NearFrontMultiplier: 2, PollNearMs: 3000}, true, nil)
 	m.store.EXPECT().GetSale(gomock.Any(), "ev1").Return(outbound.SaleState{SaleState: "OPEN", ServingSeq: 10, SoldOut: true}, nil)
 	m.booking.EXPECT().Supply(gomock.Any(), "ev1").Return(outbound.SupplySnapshot{}, assert.AnError)
+	m.store.EXPECT().WaitingCount(gomock.Any(), "ev1").Return(int64(0), nil).AnyTimes()
+	m.store.EXPECT().GetStatusDoc(gomock.Any(), "ev1").Return(nil, false, nil).AnyTimes()
 	m.store.EXPECT().SetStatusDoc(gomock.Any(), "ev1", gomock.Any(), gomock.Any()).Return(nil)
 
 	sp := worker.NewStatusPublisher(m.store, m.settings, m.booking, wnow, time.Second)
@@ -302,7 +303,7 @@ func TestPromoter_PublishesTurnSoon_WhenNearFront(t *testing.T) {
 	m.pub.EXPECT().PublishTurnSoon(gomock.Any(), evID, entryID, visitorID).Return(nil)
 	m.store.EXPECT().MarkNotifiedSoon(gomock.Any(), evID, entryID).Return(nil)
 
-	p := worker.NewPromoter(m.store, m.settings, m.booking, m.pub, m.audit, m.pii, wnow, nil, worker.PromoterTuning{BatchMax: 200})
+	p := worker.NewPromoter(m.store, m.settings, m.booking, m.pub, m.audit, wnow, nil, worker.PromoterTuning{BatchMax: 200})
 	require.NoError(t, p.Run(ctx))
 }
 
@@ -325,7 +326,7 @@ func TestPromoter_SkipsTurnSoon_WhenAlreadyNotified(t *testing.T) {
 	m.store.EXPECT().WasNotifiedSoon(gomock.Any(), evID, entryID).Return(true, nil)
 	// GetEntry and PublishTurnSoon must NOT be called — already notified
 
-	p := worker.NewPromoter(m.store, m.settings, m.booking, m.pub, m.audit, m.pii, wnow, nil, worker.PromoterTuning{BatchMax: 200})
+	p := worker.NewPromoter(m.store, m.settings, m.booking, m.pub, m.audit, wnow, nil, worker.PromoterTuning{BatchMax: 200})
 	require.NoError(t, p.Run(ctx))
 }
 
@@ -344,7 +345,7 @@ func TestPromoter_SkipsTurnSoon_WhenDisabled(t *testing.T) {
 	m.store.EXPECT().ActiveCount(gomock.Any(), evID).Return(5, nil)
 	// TopWaiting must NOT be called when PreTurnNotifyEnabled=false
 
-	p := worker.NewPromoter(m.store, m.settings, m.booking, m.pub, m.audit, m.pii, wnow, nil, worker.PromoterTuning{BatchMax: 200})
+	p := worker.NewPromoter(m.store, m.settings, m.booking, m.pub, m.audit, wnow, nil, worker.PromoterTuning{BatchMax: 200})
 	require.NoError(t, p.Run(ctx))
 }
 
@@ -382,6 +383,7 @@ func TestStatusPublisher_OneEventsFailureDoesNotStopTheOthers(t *testing.T) {
 	m.settings.EXPECT().Get(gomock.Any(), "ev2").Return(entity.EventSettings{ActiveSlotCapacity: 10}, true, nil)
 	m.store.EXPECT().GetSale(gomock.Any(), "ev2").Return(outbound.SaleState{}, nil)
 	m.booking.EXPECT().Supply(gomock.Any(), "ev2").Return(outbound.SupplySnapshot{}, nil)
+	m.store.EXPECT().WaitingCount(gomock.Any(), "ev2").Return(int64(0), nil).AnyTimes()
 	m.store.EXPECT().SetStatusDoc(gomock.Any(), "ev2", gomock.Any(), gomock.Any()).Return(nil)
 
 	sp := worker.NewStatusPublisher(m.store, m.settings, m.booking, wnow, time.Second)
