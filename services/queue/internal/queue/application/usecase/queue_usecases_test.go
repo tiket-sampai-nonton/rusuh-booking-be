@@ -165,7 +165,7 @@ func TestGetStatus_Found(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	store := mock_outbound.NewMockIQueueStore(ctrl)
 	ctx := context.Background()
-	doc := dto.StatusDocument{EventID: "ev1", SaleState: "OPEN", ServingSeq: 100, SoldOut: false}
+	doc := dto.StatusDocument{EventID: "ev1", SaleState: "OPEN", SoldOut: false}
 	raw, _ := json.Marshal(doc)
 	store.EXPECT().GetStatusDoc(ctx, "ev1").Return(raw, true, nil)
 

@@ -121,22 +121,23 @@ ACCOUNT_ALREADY_IN_QUEUE`, `429` batas lunak per IP (hormati `Retry-After`).
 ```json
 {
   "eventId": "event-uuid",
-  "servingSeq": 12300,
-  "waitingCount": 500,
-  "activeSlots": 45,
-  "maxActiveSlots": 50,
-  "saleStatus": "OPEN",
-  "updatedAt": "2026-10-19T10:00:00Z",
-  "config": {
-    "pollingIntervalMs": 3000
-  }
+  "headSeq": 12300,
+  "saleState": "OPEN",
+  "guaranteedUntilSeq": 12450,
+  "possibleUntilSeq": 12600,
+  "soldOut": false,
+  "nextPollAfterMs": 3000,
+  "updatedAt": "2026-10-19T10:00:00Z"
 }
 ```
 
-**Hitung posisi di client:**
+**Posisi eksak dari server (jangan hitung di client):**
 ```javascript
-const myPosition = mySeq - servingSeq;
-const isMyTurn = myPosition <= 0;
+// Posisi eksak datang dari GET /api/v1/queue-entries/me (EntryStatus.exactPosition),
+// dihitung server lewat LivePosition (ZCOUNT hidup atas q:{e}:waiting). Client tidak
+// menghitung posisi dari seq; "giliran tiba" ditentukan status ADMITTED dari server.
+const myPosition = entryStatus.exactPosition;
+const isMyTurn = entryStatus.status === 'ADMITTED';
 ```
 
 **Zona peluang (indikator UI):**
@@ -153,7 +154,7 @@ const isMyTurn = myPosition <= 0;
 
 ### 2.4 Step 3: Claim (Saat Giliran Tiba)
 
-Ketika `mySeq <= servingSeq`:
+Ketika entry berstatus `ADMITTED` (ditentukan server):
 
 **Endpoint:** `POST /api/v1/queue-entries/{entryId}/claim`
 
@@ -428,8 +429,8 @@ Subscribe untuk notifikasi giliran:
 - [ ] Generate dan persist `visitorId`
 - [ ] Implementasi join dengan retry dan idempotency key
 - [ ] Polling status document dengan interval dari server
-- [ ] Hitung posisi dari `seq - servingSeq`
-- [ ] Auto-claim saat `servingSeq >= mySeq`
+- [ ] Tampilkan posisi eksak dari `EntryStatus.exactPosition` (server `LivePosition`)
+- [ ] Auto-claim saat `EntryStatus.status === 'ADMITTED'`
 - [ ] SSE connection dengan auto-reconnect
 - [ ] Fallback polling jika SSE gagal
 - [ ] Handle semua error codes dengan UI yang sesuai

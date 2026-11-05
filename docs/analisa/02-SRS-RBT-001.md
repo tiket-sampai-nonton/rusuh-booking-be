@@ -105,7 +105,7 @@ Guest session dan data pembeli (§3.2.1); daftar dan detail event (§3.2.2–3.2
 | Waiting Room | Antrean virtual sebelum akses ke halaman beli |
 | Queue Sequence | Nomor urut antrean yang monoton per event, diberikan server saat join (FIFO) |
 | Queue Token | Token bertanda tangan milik pengantre, berisi `eventId`, `entryId`, `seq`, `visitorId` |
-| Status Document | Dokumen JSON kecil per event yang di-cache CDN: `servingSeq`, ambang peluang, `soldOut` |
+| Status Document | Dokumen JSON kecil per event yang di-cache CDN: `headSeq`, ambang peluang, `soldOut` |
 | Active Slot | Customer yang sedang berada di halaman beli atau pembayaran |
 | Admission | Momen giliran tiba: alokasi stok berhasil direservasi untuk customer |
 | Allocation (Reservasi) | Unit stok tingkat event (N = min(3, sisa kuota pembeli, stok bebas)) yang disiapkan untuk satu customer yang di-admit; belum terikat kategori |
@@ -287,7 +287,7 @@ Contoh request/response dan error code lengkap di Lampiran A [v4.6 → SDD §4.6
 {
   "eventId": "8f0c…",
   "saleState": "OPEN",
-  "servingSeq": 182340,
+  "headSeq": 182340,
   "guaranteedUntilSeq": 183100,
   "possibleUntilSeq": 196500,
   "soldOut": false,
@@ -444,7 +444,7 @@ Kontrak per endpoint (contoh request/response) ada di SDD-RBT-001 Interface view
 | ID | Requirement | Source | Pri | Ver | Test |
 |----|-------------|--------|-----|-----|------|
 | SRS-F-05-01 | The Queue Service shall publish one Status Document per event (fields in §3.1.4) that contains no personal data and is cacheable for 1 second. | FR-06, NFR-01 | M | T | TC-QUE-03 |
-| SRS-F-05-02 | The client shall display "Anda antrian ke-n" where n = `seq − servingSeq − removedAhead`; n shall be an upper bound of the true position. | FR-06 | M | T | TC-QUE-03 |
+| SRS-F-05-02 | The client shall display "Anda antrian ke-n" where n = `exactPosition` from the server (computed via `LivePosition` = ZCOUNT of live entries over `q:{e}:waiting`); n shall be an upper bound of the true position. | FR-06 | M | T | TC-QUE-03 |
 | SRS-F-05-03 | When n ≤ the near threshold (PROPOSED 2 × active slot capacity), the client shall use the exact-position endpoint. | FR-06 | M | T | TC-QUE-03 |
 | SRS-F-05-04 | The polling interval shall be adaptive and controlled by the server through the `poll` field (defaults: n > 50.000 → 30 s; 5.000–50.000 → 10 s; < 5.000 → 3 s), with ±20% jitter; client values shall be fallbacks only. | FR-07 | M | T | TC-QUE-15 |
 | SRS-F-05-05 | The waiting room shall show "Diperbarui N detik lalu" derived from `updatedAt`. | FR-07 | M | T | TC-QUE-04 |
@@ -1053,7 +1053,7 @@ Source requirement → SRS requirement. Alokasi ke komponen ada di HLD §6; test
 | FR-05 | MUST | Jika tidak ada antrian, customer langsung masuk ke Detail Ticket Page. | Admission instan di jalur join; customer tidak melihat waiting room | QUE-01 |
 | FR-06 | MUST | Sistem menampilkan posisi antrian ("Anda antrian ke-n"). | Posisi dari CDN (batas atas) dan posisi eksak saat mendekati giliran | QUE-02 |
 | FR-07 | MUST | Posisi diperbarui otomatis setiap antrian di depannya berkurang. | Antrean maju saat transaksi di depan selesai/expired/batal (grooming D-9); near-real-time ≤ 5 detik untuk pengantre dekat (§5.25 [v4.6 → SRS §3.2.25]) | QUE-02, QUE-05 |
-| FR-08 | MUST | Customer otomatis dipindahkan ke Detail Ticket Page saat gilirannya tiba. | Klaim otomatis oleh klien saat `servingSeq ≥ seq` | QUE-03 |
+| FR-08 | MUST | Customer otomatis dipindahkan ke Detail Ticket Page saat gilirannya tiba. | Klaim otomatis oleh klien saat entry berstatus `ADMITTED` (ditentukan server) | QUE-03 |
 | FR-09 | COULD | Estimasi waktu tunggu berdasarkan laju antrian. | Disediakan dari laju admission; disembunyikan bila tidak stabil | QUE-02 |
 | FR-10 | MUST | Posisi konsisten saat refresh. | Queue token di cookie/secure storage; entry server-side per NIK pembeli | QUE-01 |
 | FR-11 | MUST | Detail event beserta kategori tempat. | Info event publik; aksi beli hanya setelah admission | EVT-02 |
@@ -1224,8 +1224,8 @@ Requirement normatif ada di §3.2. Appendix ini menyalin utuh deskripsi capabili
 
 ### QUE-02 Queue Status and Honest Indicator
 
-- Klien membaca **Status Document** dari CDN: `servingSeq`, `guaranteedUntilSeq`, `possibleUntilSeq`, `soldOut`, `saleState`, `admissionRatePerMin`, `removedBuckets`, `updatedAt`.
-- Posisi ditampilkan sebagai "Anda antrian ke-n" dengan n = `seq − servingSeq − removedAhead` (koreksi dari `removedBuckets`). Nilai ini adalah batas atas: posisi sebenarnya tidak pernah lebih buruk.
+- Klien membaca **Status Document** dari CDN: `headSeq`, `guaranteedUntilSeq`, `possibleUntilSeq`, `soldOut`, `saleState`, `admissionRatePerMin`, `removedBuckets`, `updatedAt`.
+- Posisi ditampilkan sebagai "Anda antrian ke-n" dengan n = `exactPosition` dari server (dihitung lewat `LivePosition` = ZCOUNT entri hidup atas `q:{e}:waiting`; entry STALE/LEFT sudah tidak ada di set waiting). Nilai ini adalah batas atas: posisi sebenarnya tidak pernah lebih buruk.
 - Saat n ≤ ambang dekat (PROPOSED 2 × kapasitas slot aktif), klien beralih ke endpoint posisi eksak di origin.
 - Interval polling adaptif **dikendalikan server** lewat field `poll` di Status Document (default: n > 50.000 → 30 detik; 5.000–50.000 → 10 detik; < 5.000 → 3 detik), ditambah jitter ±20%. Klien hanya menyimpan nilai cadangan. Batas keterlambatan dan alasan pemilihan polling ada di §5.25 [v4.6 → SRS §3.2.25].
 - Waiting room menampilkan "Diperbarui N detik lalu" dari `updatedAt`, sehingga customer tahu kesegaran data.

@@ -853,3 +853,24 @@ Pola yang diadopsi dari usulan BE-2: **satu image banyak verb** (`api`, `worker`
 > Selain dua butir di atas, seluruh ADR-030 (join anonim, jaminan kuantitas, NIK-saat-hold, perbaikan akuntansi
 > hold, klaim perangkat token, alasan ENDED pada `me`, throttle NIK, perilaku liveness STALE/revive/end) tidak
 > berubah.
+### Adendum Amandemen ADR-030 — 2026-11-05 (hapus `servingSeq` mati; selesaikan migrasi headSeq)
+
+- **Status:** Proposed (gerbang pemilik: greenfield + FE menunggu backend, maka penghapusan field JSON aman sekarang;
+  shim nilai-nol ditolak pemilik).
+- **Konteks:** Amandemen ADR-030 membuat urutan antrean FIFO ketat atas `seq` dan memperkenalkan `headSeq` +
+  batas zona berbasis live-seq + `LivePosition`; `servingSeq` sempat dipertahankan sebagai shim "satu rilis" yang
+  *deprecated*. Pada `feature/rework` greenfield field itu tidak punya produser hidup (tidak ada `.lua`/Go yang
+  menulisnya), selalu nol, dan tidak dibaca oleh apa pun; posisi/zona/giliran-tiba/auto-claim semuanya berjalan di
+  atas `LivePosition`/`ZoneForSeq`/`headSeq`. FE masih pra-integrasi.
+- **Keputusan:** Hapus `dto.StatusDocument.ServingSeq`, `outbound.SaleState.ServingSeq`, pembacaan `GetSale`,
+  penulisan `status_publisher.build()`, properti OpenAPI + entri `required`; regenerasi `_mock/`; selaraskan
+  SRS/HLD/SDD/specs/08a ke model `headSeq`/`LivePosition`/zona. `headSeq` (null ⇒ kosong/terdepan) adalah sinyal
+  depan-antrean yang dipublikasikan; posisi eksak adalah `LivePosition` (dihitung server, dikirim lewat
+  `EntryStatus.exactPosition`), bukan aritmetika `seq − servingSeq` di klien.
+- **Konsekuensi:** Model posisi tunggal yang jujur; SA1019 dibersihkan dengan penghapusan simbol dan `//nolint:
+  staticcheck` ikut dihapus (bukan di-suppress). JSON publik kehilangan `servingSeq` — aman hanya karena tidak ada
+  consumer (greenfield, FE menunggu); karena itu aturan jendela-deprecation `[[versioning-and-compatibility]]`
+  tidak terpicu. Tidak ada regresi perilaku (entry STALE/LEFT sudah di luar set waiting; tidak perlu high-water
+  mark). **Caveat:** tahap CI `contracts` TIDAK mendeteksi drift kode↔OpenAPI (kin-openapi menerima nama
+  `required` yang tak ada di `properties`), sehingga suntingan OpenAPI diverifikasi lewat inspeksi
+  (`grep servingSeq queue.yaml ⇒ 0`), bukan lewat exit code gerbang.

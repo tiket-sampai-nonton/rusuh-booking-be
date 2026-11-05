@@ -441,9 +441,6 @@ func (s *QueueStore) GetSale(ctx context.Context, eventID string) (outbound.Sale
 		return outbound.SaleState{}, fmt.Errorf("valkey: hgetall sale: %w", err)
 	}
 	st := outbound.SaleState{SaleState: m["saleState"], SoldOut: m["soldOut"] == "1"}
-	if v, ok := m["servingSeq"]; ok {
-		st.ServingSeq, _ = strconv.ParseInt(v, 10, 64)
-	}
 	return st, nil
 }
 

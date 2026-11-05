@@ -115,7 +115,7 @@ Semua respons sukses dibungkus `{ meta, data }`; semua error `{ meta, data: null
 {
   "eventId": "uuid",
   "saleState": "OPEN",
-  "servingSeq": 12300,
+  "headSeq": 12300,
   "guaranteedUntilSeq": 12450,
   "possibleUntilSeq": 12600,
   "soldOut": false,
@@ -132,7 +132,7 @@ Semua respons sukses dibungkus `{ meta, data }`; semua error `{ meta, data: null
 | Field | Type | Notes |
 |-------|------|-------|
 | `saleState` | enum `NOT_STARTED\|OPEN\|CLOSED` | required |
-| `servingSeq` | int | seq yang sedang dilayani; required |
+| `headSeq` | int \| null | seq entri hidup terdepan (0/null bila antrean kosong) |
 | `guaranteedUntilSeq` | int | batas atas zona **Dijamin** |
 | `possibleUntilSeq` | int | batas atas zona **Peluang** |
 | `soldOut` | bool | required |
@@ -141,7 +141,7 @@ Semua respons sukses dibungkus `{ meta, data }`; semua error `{ meta, data: null
 | `preTurnNotifyPosition` | int | posisi memicu banner/push `turn.soon` |
 | `categories[].state` | enum `AVAILABLE\|LIMITED\|SOLD_OUT` | ambang `category_limited_threshold_pct` |
 
-Required: `eventId, saleState, servingSeq, soldOut, updatedAt`.
+Required: `eventId, saleState, soldOut, updatedAt`.
 
 **404** `NOT_FOUND` — event tidak ada.
 
@@ -166,7 +166,7 @@ Required: `eventId, saleState, servingSeq, soldOut, updatedAt`.
   "redirect": "/pay/... atau booking url (ADMITTED)"
 }
 ```
-`zone ∈ {GUARANTEED,POSSIBLE,NOT_ENOUGH}`. `exactPosition = seq - servingSeq - removedAhead`. Required: `entryId, seq, status`.
+`zone ∈ {GUARANTEED,POSSIBLE,NOT_ENOUGH}`. `exactPosition` dihitung server lewat `LivePosition` (ZCOUNT hidup atas `q:{e}:waiting`); zona dari `ZoneForSeq(seq, guaranteedUntilSeq, possibleUntilSeq)`. Required: `entryId, seq, status`.
 
 **404** `NOT_FOUND` — tak ada entry untuk visitor. **429** `RATE_LIMITED`.
 
@@ -255,7 +255,7 @@ Semua key per-event memakai **hash tag** `{e:<eventId>}` agar operasi Lua atomik
 | `q:{e:<eventId>}:email:<emailHash>` | String | entryId aktif (constraint email) | Persistent | idem |
 | `q:{e:<eventId>}:quota_exhausted` | Set | buyerNikHash kuota habis | Persistent | `SADD`, `SISMEMBER` |
 | `q:{e:<eventId>}:status` | String | Status Document JSON | **1s** | `SET ... EX 1` (Status Publisher) |
-| `q:{e:<eventId>}:sale` | Hash | `saleState`, `soldOut`, `servingSeq` | Persistent | `HSET`/`HGETALL` |
+| `q:{e:<eventId>}:sale` | Hash | `saleState`, `soldOut` | Persistent | `HSET`/`HGETALL` |
 | `rl:join:email:<emailHash>` | String (int) | rate-limit counter | window (mis. 60s) | `INCR`+`EXPIRE` |
 | `rl:join:ip:<ip>` | String (int) | rate-limit counter | window | `INCR`+`EXPIRE` |
 
@@ -597,7 +597,7 @@ berdasarkan supply snapshot saja (invarian #2).
 | TTL key | `SET q:{e}:status ... EX 1` (1 detik) |
 
 **Algoritma per event (tiap tick):**
-1. Hitung `servingSeq` (min seq active atau seq terakhir ditutup), `remainingTickets`/`admissionRatePerMin` dari supply (cache 1s), `guaranteedUntilSeq`/`possibleUntilSeq` dari stok + `near_front_multiplier`, `categories[].state` dari `category_limited_threshold_pct`, `poll{...}` dari `event_settings.poll_*`, `preTurnNotifyPosition`.
+1. Hitung `headSeq` (seq entri hidup terdepan, null/0 bila kosong), `remainingTickets`/`admissionRatePerMin` dari supply (cache 1s), `guaranteedUntilSeq`/`possibleUntilSeq` dari stok + `near_front_multiplier`, `categories[].state` dari `category_limited_threshold_pct`, `poll{...}` dari `event_settings.poll_*`, `preTurnNotifyPosition`.
 2. Serialize `StatusDocument` JSON; `SET q:{e}:status EX 1`.
 3. Endpoint `GET /api/v1/queue-status/{eventId}` membaca key ini; CloudFront cache 1s → origin ≤ 1 hit/detik/event (TC-PERF-01).
 

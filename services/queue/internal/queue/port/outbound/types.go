@@ -131,9 +131,8 @@ type PromoteResult struct {
 
 // SaleState is the q:{e}:sale hash.
 type SaleState struct {
-	SaleState  string // NOT_STARTED | OPEN | CLOSED
-	SoldOut    bool
-	ServingSeq int64
+	SaleState string // NOT_STARTED | OPEN | CLOSED
+	SoldOut   bool
 }
 
 // AuditRecord is one entry_audit row.

@@ -72,7 +72,7 @@ Status kode per 2026-10-20: **boilerplate standar organisasi berfungsi**; logika
 | Claim gagal | `403 CLAIM_DEADLINE_PASSED`, `403 ENTRY_NOT_ADMITTED` | `410 TURN_MISSED`, `410 EVENT_SOLD_OUT` |
 | ClaimResponse | `{ admissionToken, expiresAt }` | `{ admissionToken, bookingUrl }` (TTL 60s didokumentasikan pada field) |
 | Leave sukses | `200` | `204 No Content` |
-| StatusDocument | `{ servingSeq, waitingCount, activeSlots, maxActiveSlots, saleStatus, config.pollingIntervalMs }` | `saleState` (`NOT_STARTED\|OPEN\|CLOSED`), `servingSeq`, `guaranteedUntilSeq`, `possibleUntilSeq`, `soldOut`, `remainingTickets`, `admissionRatePerMin`, `removedBuckets`, `nextPollAfterMs`, `poll{farMs,midMs,nearMs,farAbove,midAbove}`, `preTurnNotifyPosition`, `categories[]`, `updatedAt` |
+| StatusDocument | `{ servingSeq, waitingCount, activeSlots, maxActiveSlots, saleStatus, config.pollingIntervalMs }` | `saleState` (`NOT_STARTED\|OPEN\|CLOSED`), `headSeq`, `guaranteedUntilSeq`, `possibleUntilSeq`, `soldOut`, `remainingTickets`, `admissionRatePerMin`, `removedBuckets`, `nextPollAfterMs`, `poll{farMs,midMs,nearMs,farAbove,midAbove}`, `preTurnNotifyPosition`, `categories[]`, `updatedAt` |
 | Status enum | `WAITING\|ADMITTED\|CLAIMED\|REJECTED\|UNCLAIMED\|ENDED` | `WAITING\|ADMITTED\|CLAIMED\|MISSED\|LEFT\|SOLD_OUT\|CLOSED\|COMPLETED\|ENDED` (QueueEntry) |
 | Turn events payload | `{ entryId, eventId, pushToken, position/claimDeadline }` | `{ eventId, queueEntryId, visitorId[, claimDeadline] }` — **tanpa** pushToken/position (Notification me-resolve kontak) |
 | Event key naming | `entryId` | `queueEntryId` (semua event schema) |
@@ -87,7 +87,7 @@ Status kode per 2026-10-20: **boilerplate standar organisasi berfungsi**; logika
 
 - **Entry** — satu antrean pembeli per event (`q:{e}:entry:<entryId>`), status `WAITING → ADMITTED → CLAIMED → COMPLETED/ENDED` atau terminal `MISSED/LEFT/SOLD_OUT/CLOSED`.
 - **seq** — nomor urut FIFO monotonik per event (`INCR` atomik di `join.lua`).
-- **servingSeq** — seq terdepan yang sedang dilayani; posisi = `seq − servingSeq − removedAhead`.
+- **headSeq** — seq entri hidup terdepan (null/0 bila antrean kosong); posisi eksak dihitung server lewat `LivePosition` (ZCOUNT hidup atas `q:{e}:waiting`), bukan aritmetika klien.
 - **Active slot** — kapasitas entry `ADMITTED`/`CLAIMED` bersamaan (`event_settings.active_slot_capacity`).
 - **Admission / allocation** — reservasi unit di Booking untuk entry (`allocationId = admissions.id`); entry hanya `ADMITTED` bila Booking membalas `GRANTED`.
 - **Claim window / claimDeadline** — batas klaim giliran (dari Booking `claimDeadline`, default 180 s).
@@ -170,7 +170,7 @@ Status kode per 2026-10-20: **boilerplate standar organisasi berfungsi**; logika
 
 ### Acceptance Criteria (EARS)
 
-1. WHEN `GET /api/v1/queue-status/{eventId}` dipanggil, THE Queue Service SHALL mengembalikan Status Document dengan field wajib `eventId`, `saleState`, `servingSeq`, `soldOut`, `updatedAt`, serta field zona/polling bila tersedia.
+1. WHEN `GET /api/v1/queue-status/{eventId}` dipanggil, THE Queue Service SHALL mengembalikan Status Document dengan field wajib `eventId`, `saleState`, `soldOut`, `updatedAt`, serta field zona/polling (`headSeq`, `guaranteedUntilSeq`, `possibleUntilSeq`) bila tersedia.
 2. THE Queue Service SHALL menyetel header `Cache-Control: public, max-age=1, stale-while-revalidate=2` sehingga CloudFront menyimpan dokumen 1 detik.
 3. THE worker Status Publisher SHALL memperbarui `q:{e}:status` dengan TTL 1 detik pada interval `event_settings.status_publish_interval_ms`.
 4. THE Queue Service SHALL mengendalikan interval polling klien lewat objek `poll` (`farMs`, `midMs`, `nearMs`, `farAbove`, `midAbove`) dan `nextPollAfterMs` (server-authoritative); klien hanya menyimpan cadangan bila field tidak ada (TC-QUE-15).
@@ -192,7 +192,7 @@ Status kode per 2026-10-20: **boilerplate standar organisasi berfungsi**; logika
 ### Acceptance Criteria (EARS)
 
 1. WHEN dipanggil dengan visitor valid, THE Queue Service SHALL mengembalikan `EntryStatus` dengan `entryId`, `seq`, `status`, `exactPosition`, dan `zone ∈ {GUARANTEED,POSSIBLE,NOT_ENOUGH}`.
-2. THE `exactPosition` SHALL dihitung = `mySeq - servingSeq - removedAhead` (memperhitungkan entry yang keluar di depan).
+2. THE `exactPosition` SHALL dihitung server-side lewat `LivePosition` = `1 + ZCOUNT(q:{e}:waiting, [-inf, (mySeq))` (entry STALE/LEFT sudah tidak ada di set waiting, jadi sudah live-akurat tanpa koreksi `removedAhead`).
 3. WHEN status entry `ADMITTED`, THE Queue Service SHALL menyertakan `claimDeadline` dan `redirect` (ke booking) di `EntryStatus`.
 4. IF entry tidak ditemukan untuk visitor itu, THEN THE Queue Service SHALL menjawab `404 NOT_FOUND`.
 5. IF entry sudah `MISSED`/`LEFT`/`SOLD_OUT`/`CLOSED`, THEN THE Queue Service SHALL mengembalikan `status` tersebut beserta `reason` agar klien menampilkan pesan yang tepat.

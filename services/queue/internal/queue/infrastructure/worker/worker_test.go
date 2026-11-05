@@ -237,7 +237,7 @@ func TestStatusPublisher_WritesDocument(t *testing.T) {
 		ActiveSlotCapacity: 100, NearFrontMultiplier: 2, PollFarMs: 30000, PollMidMs: 10000, PollNearMs: 3000,
 		CategoryLimitedThresholdPct: 5,
 	}, true, nil)
-	m.store.EXPECT().GetSale(gomock.Any(), "ev1").Return(outbound.SaleState{SaleState: "OPEN", ServingSeq: 100}, nil)
+	m.store.EXPECT().GetSale(gomock.Any(), "ev1").Return(outbound.SaleState{SaleState: "OPEN"}, nil)
 	m.booking.EXPECT().Supply(gomock.Any(), "ev1").Return(outbound.SupplySnapshot{RemainingTickets: 50, FreeUnits: 50, MaxTicketsPerOrder: 3, Categories: []outbound.SupplyCategory{
 		{Code: "VIP", Name: "VIP", Sold: 98, Total: 100},
 	}}, nil)
@@ -253,7 +253,6 @@ func TestStatusPublisher_WritesDocument(t *testing.T) {
 	var doc dto.StatusDocument
 	require.NoError(t, json.Unmarshal(written, &doc))
 	assert.Equal(t, "OPEN", doc.SaleState)
-	assert.Equal(t, int64(100), doc.ServingSeq) //nolint:staticcheck // deprecated field still published for one release
 	require.NotNil(t, doc.GuaranteedUntilSeq, "zones are seq-based (ADR-030 Amendment: strict FIFO); empty queue -> 0")
 	assert.EqualValues(t, 0, *doc.GuaranteedUntilSeq)
 	assert.Equal(t, 50, doc.RemainingTickets)
@@ -266,7 +265,7 @@ func TestStatusPublisher_SupplyErrorStillPublishes(t *testing.T) {
 	ctx := context.Background()
 	m.settings.EXPECT().ListEventIDs(gomock.Any()).Return([]string{"ev1"}, nil)
 	m.settings.EXPECT().Get(gomock.Any(), "ev1").Return(entity.EventSettings{ActiveSlotCapacity: 100, NearFrontMultiplier: 2, PollNearMs: 3000}, true, nil)
-	m.store.EXPECT().GetSale(gomock.Any(), "ev1").Return(outbound.SaleState{SaleState: "OPEN", ServingSeq: 10, SoldOut: true}, nil)
+	m.store.EXPECT().GetSale(gomock.Any(), "ev1").Return(outbound.SaleState{SaleState: "OPEN", SoldOut: true}, nil)
 	m.booking.EXPECT().Supply(gomock.Any(), "ev1").Return(outbound.SupplySnapshot{}, assert.AnError)
 	m.store.EXPECT().WaitingCount(gomock.Any(), "ev1").Return(int64(0), nil).AnyTimes()
 	m.store.EXPECT().GetStatusDoc(gomock.Any(), "ev1").Return(nil, false, nil).AnyTimes()

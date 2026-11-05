@@ -389,7 +389,7 @@ erDiagram
 | `q:{e}:quota_exhausted` | Set | buyerNikHash yang kuotanya habis |
 | `q:{e}:active` | Sorted set | entry ADMITTED/CLAIMED, score claimDeadline |
 | `q:{e}:removed` | Hash | jumlah entry keluar per bucket seq |
-| `q:{e}:meta` | Hash | servingSeq, capacity, saleState, soldOut |
+| `q:{e}:meta` | Hash | capacity, saleState, soldOut |
 | `q:{e}:status` | String | Status Document terakhir (JSON) |
 | `q:{e}:promoter` | String | Lease leader promotor |
 
@@ -476,7 +476,7 @@ sequenceDiagram
     alt Tidak ada pengantre dan slot tersedia
       QS->>BS: POST /internal/v1/allocations:batch
       BS-->>QS: Alokasi N unit, claim deadline
-      QS->>R: Status ADMITTED, servingSeq naik
+      QS->>R: Status ADMITTED, headSeq maju
       QS-->>FE: 201 ADMITTED dengan queue token dan visitor token
       FE->>QS: POST /queue-entries/id/claim
       QS-->>FE: Admission token sekali pakai
@@ -554,16 +554,16 @@ sequenceDiagram
   loop Polling adaptif
     FE->>CF: GET /queue-status/eventId
     CF-->>FE: Status document dari cache 1 detik
-    FE->>FE: Hitung posisi dari seq dan servingSeq, tentukan zona peluang
+    FE->>FE: Tampilkan posisi eksak dari EntryStatus (server LivePosition), tentukan zona peluang
   end
   Note over QS,R: Publisher memperbarui status document tiap 1 detik
   QS->>R: Slot aktif kosong karena journey di depan selesai
   QS->>R: Ambil N entry terdepan yang masih WAITING
   QS->>BS: Reservasi alokasi batch
   BS-->>QS: Alokasi per entry atau NO_SUPPLY_NOW atau SOLD_OUT
-  QS->>R: Entry ADMITTED dengan claim deadline 3 menit, servingSeq naik
+  QS->>R: Entry ADMITTED dengan claim deadline 3 menit, headSeq maju
   FE->>CF: GET status document
-  CF-->>FE: servingSeq sudah melewati seq saya
+  CF-->>FE: headSeq sudah melewati seq saya
   FE->>QS: POST /queue-entries/id/claim dengan queue token
   QS->>R: Validasi ADMITTED dan belum lewat deadline
   QS-->>FE: Admission token sekali pakai, TTL 60 detik

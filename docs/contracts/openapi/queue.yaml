@@ -635,10 +635,6 @@ components:
           - NOT_STARTED
           - OPEN
           - CLOSED
-        servingSeq:
-          type: integer
-          deprecated: true
-          description: Dipertahankan satu rilis; posisi berbasis seq (ADR-030 Amandemen 2026-11-05, draw dibuang)
         headSeq:
           type:
           - integer
@@ -709,7 +705,6 @@ components:
       required:
       - eventId
       - saleState
-      - servingSeq
       - soldOut
       - updatedAt
       description: 'Dokumen publik tanpa data pribadi; Cache-Control: public, max-age=1, stale-while-revalidate=2'

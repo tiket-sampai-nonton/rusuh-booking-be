@@ -85,7 +85,6 @@ func (p *StatusPublisher) build(eventID string, s entity.EventSettings, sale out
 	return dto.StatusDocument{
 		EventID:               eventID,
 		SaleState:             saleState,
-		ServingSeq:            sale.ServingSeq,
 		SoldOut:               soldOut,
 		RemainingTickets:      remaining,
 		NextPollAfterMs:       s.PollNearMs,
