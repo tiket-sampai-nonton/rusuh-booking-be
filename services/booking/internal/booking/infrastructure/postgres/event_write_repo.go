@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -30,10 +31,11 @@ func (r *EventWriteRepo) CreateEvent(ctx context.Context, id string, req dto.Cre
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO booking.events (
 				id, slug, name, venue, starts_at, sales_starts_at, sales_ends_at, status,
-				max_tickets_per_order, max_tickets_per_buyer_nik, allow_mixed_categories)
-			VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, 'DRAFT', $8, $9, $10)`,
+				max_tickets_per_order, max_tickets_per_buyer_nik, allow_mixed_categories, description)
+			VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, 'DRAFT', $8, $9, $10, $11::jsonb)`,
 			id, req.Slug, req.Name, req.Venue, req.StartsAt, req.SalesStartsAt, req.SalesEndsAt,
-			req.MaxTicketsPerOrder, req.MaxTicketsPerBuyerNIK, req.AllowMixedCategories); err != nil {
+			req.MaxTicketsPerOrder, req.MaxTicketsPerBuyerNIK, req.AllowMixedCategories,
+			descriptionArg(req.Description)); err != nil {
 			return err
 		}
 
@@ -75,7 +77,34 @@ func (r *EventWriteRepo) CreateEvent(ctx context.Context, id string, req dto.Cre
 // UpdateConfig applies mutable configuration changes to an event. Attempting to change a locked
 // rule (after sales open) trips the guard_event_rules trigger, mapped to inbound.ErrRulesLocked.
 func (r *EventWriteRepo) UpdateConfig(ctx context.Context, eventID string, req dto.UpdateEventConfigRequest) error {
-	sets := make([]string, 0, 4)
+	sql, args := buildUpdateConfig(eventID, req)
+	if sql == "" {
+		// No-op: nothing to change. Still confirm the event exists.
+		var exists bool
+		err := r.pool.QueryRow(ctx, `SELECT true FROM booking.events WHERE id = $1::uuid`, eventID).Scan(&exists)
+		switch {
+		case errors.Is(err, pgx.ErrNoRows), pkgpg.IsCode(err, "22P02"):
+			return inbound.ErrNotFound
+		case err != nil:
+			return mapEventWriteErr(err, "events: update config")
+		}
+		return nil
+	}
+
+	tag, err := r.pool.Exec(ctx, sql, args...)
+	if err != nil {
+		return mapEventWriteErr(err, "events: update config")
+	}
+	if tag.RowsAffected() == 0 {
+		return inbound.ErrNotFound
+	}
+	return nil
+}
+
+// buildUpdateConfig returns the UPDATE statement and its args ($1 is the event id) for the fields set in req.
+// An empty statement means nothing to change.
+func buildUpdateConfig(eventID string, req dto.UpdateEventConfigRequest) (string, []any) {
+	sets := make([]string, 0, 5)
 	args := []any{eventID}
 	add := func(col string, v any) {
 		args = append(args, v)
@@ -93,28 +122,22 @@ func (r *EventWriteRepo) UpdateConfig(ctx context.Context, eventID string, req d
 	if req.MaxEdits != nil {
 		add("max_selection_edits", *req.MaxEdits)
 	}
+	if len(req.Description) > 0 { // JSON null is present: it clears the column
+		args = append(args, descriptionArg(req.Description))
+		sets = append(sets, fmt.Sprintf("description = $%d::jsonb", len(args)))
+	}
 	if len(sets) == 0 {
-		// No-op: nothing to change. Still confirm the event exists.
-		var exists bool
-		err := r.pool.QueryRow(ctx, `SELECT true FROM booking.events WHERE id = $1::uuid`, eventID).Scan(&exists)
-		switch {
-		case errors.Is(err, pgx.ErrNoRows), pkgpg.IsCode(err, "22P02"):
-			return inbound.ErrNotFound
-		case err != nil:
-			return mapEventWriteErr(err, "events: update config")
-		}
+		return "", nil
+	}
+	return fmt.Sprintf(`UPDATE booking.events SET %s WHERE id = $1::uuid`, strings.Join(sets, ", ")), args
+}
+
+// descriptionArg binds a Slate document as jsonb text; empty or JSON null becomes SQL NULL (no description).
+func descriptionArg(raw json.RawMessage) any {
+	if len(raw) == 0 || string(raw) == "null" {
 		return nil
 	}
-
-	sql := fmt.Sprintf(`UPDATE booking.events SET %s WHERE id = $1::uuid`, strings.Join(sets, ", "))
-	tag, err := r.pool.Exec(ctx, sql, args...)
-	if err != nil {
-		return mapEventWriteErr(err, "events: update config")
-	}
-	if tag.RowsAffected() == 0 {
-		return inbound.ErrNotFound
-	}
-	return nil
+	return string(raw)
 }
 
 // mapEventWriteErr translates PostgreSQL errors raised by the event triggers/constraints into domain

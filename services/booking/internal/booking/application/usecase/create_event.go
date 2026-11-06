@@ -24,6 +24,9 @@ func (uc *CreateEvent) Create(ctx context.Context, req dto.CreateEventRequest) (
 	if len(req.Categories) == 0 {
 		return "", inbound.Validation("categories", "minimal satu kategori harus ada")
 	}
+	if err := validateDescription(req.Description); err != nil {
+		return "", err
+	}
 	id := uc.ids.NewID()
 	if err := uc.repo.CreateEvent(ctx, id, req); err != nil {
 		return "", err

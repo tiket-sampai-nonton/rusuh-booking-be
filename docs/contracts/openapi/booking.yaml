@@ -1222,6 +1222,11 @@ components:
         published:
           type: boolean
           description: Selalu true di katalog publik (event draf menjawab 404). Draf hanya terlihat oleh admin.
+        description:
+          type: array
+          description: Dokumen Slate (array node objek). Tidak dikirim bila event tidak punya deskripsi.
+          items:
+            type: object
         categories:
           type: array
           items:

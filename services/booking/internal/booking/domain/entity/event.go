@@ -3,6 +3,7 @@
 package entity
 
 import (
+	"encoding/json"
 	"time"
 
 	vo "github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/domain/valueobject"
@@ -39,6 +40,10 @@ type Event struct {
 	ImageURL     string
 	BannerURL    string
 	ThumbnailURL string
+
+	// Description is the Slate document (JSON array of nodes) as stored; nil when none. Only loaded by GetByID
+	// (detail), never by the catalog list.
+	Description json.RawMessage
 
 	MaxTicketsPerOrder    int
 	MaxTicketsPerBuyerNik int

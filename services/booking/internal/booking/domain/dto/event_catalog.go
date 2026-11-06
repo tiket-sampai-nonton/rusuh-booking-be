@@ -2,7 +2,10 @@
 // and are produced from entities by the mapper package (handlers never return entities).
 package dto
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 // EventListQuery is the parsed filter for GET /api/v1/events.
 type EventListQuery struct {
@@ -65,12 +68,14 @@ type CategoryView struct {
 
 // EventDetail is the GET /api/v1/events/{eventId} response body.
 type EventDetail struct {
-	Event                 EventSummary   `json:"event"`
-	MaxTicketsPerOrder    int            `json:"maxTicketsPerOrder"`
-	MaxTicketsPerBuyerNik int            `json:"maxTicketsPerBuyerNik"`
-	AllowMixedCategories  bool           `json:"allowMixedCategories"`
-	Published             bool           `json:"published"` // selalu true di katalog publik; draf hanya terlihat oleh admin
-	Categories            []CategoryView `json:"categories"`
+	Event                 EventSummary `json:"event"`
+	MaxTicketsPerOrder    int          `json:"maxTicketsPerOrder"`
+	MaxTicketsPerBuyerNik int          `json:"maxTicketsPerBuyerNik"`
+	AllowMixedCategories  bool         `json:"allowMixedCategories"`
+	Published             bool         `json:"published"` // selalu true di katalog publik; draf hanya terlihat oleh admin
+	// Description is the Slate document (array of nodes); omitted when the event has none.
+	Description json.RawMessage `json:"description,omitempty"`
+	Categories  []CategoryView  `json:"categories"`
 }
 
 // CreateCategoryRequest is one ticket category in a CreateEventRequest.
@@ -92,6 +97,7 @@ type CreateEventRequest struct {
 	MaxTicketsPerOrder    int                     `json:"maxTicketsPerOrder"`
 	MaxTicketsPerBuyerNIK int                     `json:"maxTicketsPerBuyerNik"`
 	AllowMixedCategories  bool                    `json:"allowMixedCategories"`
+	Description           json.RawMessage         `json:"description,omitempty"` // Slate: array node JSON
 	Categories            []CreateCategoryRequest `json:"categories"`
 }
 
@@ -101,4 +107,6 @@ type UpdateEventConfigRequest struct {
 	PaymentTTLSeconds   *int  `json:"paymentTtlSeconds,omitempty"`
 	EditEnabled         *bool `json:"editEnabled,omitempty"`
 	MaxEdits            *int  `json:"maxEdits,omitempty"`
+	// Description replaces the Slate document; JSON null clears it, absent leaves it unchanged.
+	Description json.RawMessage `json:"description,omitempty"`
 }

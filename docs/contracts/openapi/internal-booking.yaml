@@ -881,6 +881,11 @@ components:
           default: 3
         allowMixedCategories:
           type: boolean
+        description:
+          type: array
+          description: Optional Slate document (array of object nodes), max 200 KB.
+          items:
+            type: object
         categories:
           type: array
           items:
@@ -926,6 +931,14 @@ components:
           type: boolean
         maxEdits:
           type: integer
+        description:
+          type:
+          - array
+          - 'null'
+          description: Replaces the Slate document (array of object nodes, max 200 KB).
+            JSON null clears it; absent leaves it unchanged.
+          items:
+            type: object
   securitySchemes:
     serviceBearer:
       type: http
