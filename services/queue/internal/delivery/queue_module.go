@@ -28,6 +28,7 @@ import (
 	queuetelemetry "github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/infrastructure/telemetry"
 	queuevalkey "github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/infrastructure/valkey"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/infrastructure/worker"
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/port/outbound"
 )
 
 type registrar interface{ Register(*http.ServeMux) }
@@ -77,11 +78,17 @@ func newQueueModule(cfg config.Config, clients *Clients, logger *slog.Logger) (*
 	if err != nil {
 		return nil, err
 	}
-	userVerifier := security.NewUserTokenVerifier(userVerifierCore, clk.Now).WithDenylist(revocation.NewStore(clients.VK.VK(), clients.VK)) // logout mencabut access token (SCRUM-53)
+	denylist := revocation.NewStore(clients.VK.VK(), clients.VK)
+	userVerifier := security.NewUserTokenVerifier(userVerifierCore, clk.Now).WithDenylist(denylist) // logout mencabut access token (SCRUM-53)
+	adminVerifier, err := newAdminVerifier(cfg, clk.Now, denylist)
+	if err != nil {
+		return nil, err
+	}
 
 	store := queuevalkey.NewQueueStore(clients.VK.VK(), clients.VK, clk, cfg.Liveness.Shards)
 	limiter := queuevalkey.NewRateLimiter(clients.VK.VK(), clients.VK, clk.Now)
 	settingsRepo := queuepg.NewEventSettings(clients.PG.Pool())
+	settingsAdminRepo := queuepg.NewEventSettingsAdmin(clients.PG.Pool())
 	auditRepo := queuepg.NewEntryAudit(clients.PG.Pool())
 
 	breaker, err := resilience.NewBreaker(resilience.BreakerConfig{
@@ -118,6 +125,8 @@ func newQueueModule(cfg config.Config, clients *Clients, logger *slog.Logger) (*
 		WithLimiter(limiter, cfg.RateLimit.HeartbeatPerVisitor, cfg.RateLimit.MePerVisitorWindow)
 	claimUC := usecase.NewClaimTurn(store, tokens, clk, cfg.Booking.BaseURL+"/book")
 	leaveUC := usecase.NewLeaveQueue(store, booking, clk)
+	getSettingsUC := usecase.NewGetQueueSettings(settingsRepo)
+	setSettingsUC := usecase.NewSetQueueSettings(settingsRepo, booking, settingsAdminRepo, clk)
 
 	trustProxy := cfg.App.Env != "local"
 	handlers := []registrar{
@@ -127,6 +136,7 @@ func newQueueModule(cfg config.Config, clients *Clients, logger *slog.Logger) (*
 		queuehttp.NewHeartbeatHandler(heartbeatUC, visitorAuth),
 		queuehttp.NewClaimHandler(claimUC, visitorAuth),
 		queuehttp.NewLeaveHandler(leaveUC, visitorAuth),
+		queuehttp.NewSettingsAdminHandler(getSettingsUC, setSettingsUC, adminVerifier),
 	}
 
 	promoter := worker.NewPromoter(store, settingsRepo, booking, publisher, auditRepo, clk, logger, promoterTuning(cfg)).
@@ -234,6 +244,25 @@ func loadUserVerifier(cfg config.Config, fallback *token.Verifier) (*token.Verif
 	v, err := token.NewVerifier(map[string]ed25519.PublicKey{cfg.Token.UserKeyID: pub}, cfg.Token.UserIssuer, cfg.Token.Audience, 5*time.Second)
 	if err != nil {
 		return nil, err
+	}
+	return v, nil
+}
+
+// newAdminVerifier builds the verifier for the internal admin routes from the User Service public key and the
+// ADMIN_EMAILS allow-list. Without TOKEN_PUBLIC_KEY_FILE it returns an untyped nil: the handler then denies every
+// request. Unlike user tokens there is deliberately no fallback to Queue's own key (QSA-5.2): that key signs visitor,
+// queue and service tokens, so trusting it for admin access would weaken the guard.
+func newAdminVerifier(cfg config.Config, now func() time.Time, deny revocation.Denylist) (outbound.IAdminTokenVerifier, error) {
+	if cfg.Token.PublicKeyFile == "" {
+		return nil, nil
+	}
+	userKey, err := loadUserVerifier(cfg, nil)
+	if err != nil {
+		return nil, err
+	}
+	v := security.NewAdminVerifier(userKey, now, cfg.Admin.Emails)
+	if deny != nil {
+		v = v.WithDenylist(deny)
 	}
 	return v, nil
 }

@@ -40,6 +40,15 @@
 		reverse_proxy user-api:8085
 	}
 
+	# Pengaturan antrean per event (GET/PUT) dilayani Queue, bukan Booking. Harus sebelum @admin; IP guard sama.
+	@queue_admin {
+		path /internal/v1/admin/events/*/queue-settings
+		remote_ip {$ADMIN_ALLOW_IPS:127.0.0.1}
+	}
+	handle @queue_admin {
+		reverse_proxy queue-api:8081
+	}
+
 	# Admin (buat event, unggah gambar): hanya dari IP yang diizinkan, dan tetap butuh token admin.
 	@admin {
 		path /internal/v1/admin/*

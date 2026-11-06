@@ -100,6 +100,8 @@ services:
       POSTGRES_SCHEMA: queue
       TOKEN_PRIVATE_KEY_FILE: /run/keys/queue-token.pem
       TOKEN_PUBLIC_KEY_FILE: /run/keys/user-token.pub.pem
+      # Admin pengaturan antrean: buyer token email ini saja; kosong = tidak ada yang boleh (fail closed).
+      ADMIN_EMAILS: ${ADMIN_EMAILS:-}
       BOOKING_SERVICE_URL: http://booking-api:8082
       # ADR-030 liveness (R03.8 defaults; OQ-2 owner may change). end > stale > 2 x interval.
       QUEUE_HEARTBEAT_INTERVAL_SECONDS: "30"

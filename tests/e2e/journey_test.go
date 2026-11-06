@@ -46,6 +46,23 @@ func newEvent(t *testing.T, adminToken string, capacity int) (eventID, categoryI
 // stock needs a small per-order limit to admit anyone at all.
 func newEventWith(t *testing.T, adminToken string, capacity, perOrder int) (eventID, categoryID string) {
 	t.Helper()
+	eventID, categoryID = newPublishedEvent(t, adminToken, capacity, perOrder)
+	configureQueue(t, adminToken, eventID, 500)
+	return eventID, categoryID
+}
+
+// configureQueue sets the queue settings through the internal admin endpoint. Join is strict (QSA-6): an event is
+// unjoinable until this PUT, so every journey does it after publish and before the first join.
+func configureQueue(t *testing.T, adminToken, eventID string, capacity int) {
+	t.Helper()
+	r := call(t, "PUT", queueURL+"/internal/v1/admin/events/"+eventID+"/queue-settings",
+		map[string]string{"Authorization": "Bearer " + adminToken}, map[string]any{"activeSlotCapacity": capacity})
+	mustStatus(t, 201, r, "set queue settings")
+}
+
+// newPublishedEvent creates and publishes an event WITHOUT queue settings.
+func newPublishedEvent(t *testing.T, adminToken string, capacity, perOrder int) (eventID, categoryID string) {
+	t.Helper()
 	slug := fmt.Sprintf("e2e-%d", time.Now().UnixNano())
 	r := call(t, "POST", bookingURL+"/internal/v1/admin/events", map[string]string{"Authorization": "Bearer " + adminToken}, map[string]any{
 		"name": "E2E Konser", "slug": slug, "venue": "GBK",
@@ -307,4 +324,37 @@ func TestCancelledEvent_LeavesTheListButStaysReadable(t *testing.T) {
 	mustStatus(t, 200, list, "daftar katalog")
 	assert.NotContains(t, list.Raw, eventID, "event dibatalkan tidak ada di daftar bawaan")
 	assert.Contains(t, call(t, "GET", bookingURL+"/api/v1/events?status=CANCELLED", nil, nil).Raw, eventID, "bisa disaring lewat status")
+}
+
+// QSA-6 / QSA-1 / QSA-2 end to end: an event without queue settings is unjoinable; the internal admin endpoint
+// configures it (201, then 200 on a repeat); only an allow-listed admin may use it; afterwards the join works.
+func TestQueueSettings_StrictJoinAndAdminEndpoint(t *testing.T) {
+	admin := adminToken(t)
+	eventID, _ := newPublishedEvent(t, admin, 5, 1)
+	path := queueURL + "/internal/v1/admin/events/" + eventID + "/queue-settings"
+	adminH := map[string]string{"Authorization": "Bearer " + admin}
+	join := func() resp {
+		email := fmt.Sprintf("strict-%d@contoh.id", time.Now().UnixNano())
+		return call(t, "POST", queueURL+"/api/v1/events/"+eventID+"/queue-entries", map[string]string{"X-Client-Type": "mobile"}, map[string]any{
+			"buyerNik": nikFor(nextSerial()), "email": email, "emailConfirmation": email, "consentNik": true,
+		})
+	}
+
+	r := join()
+	assert.Equal(t, 409, r.Status, r.Raw)
+	assert.Contains(t, r.Raw, "QUEUE_NOT_CONFIGURED")
+	assert.Equal(t, 404, call(t, "GET", path, adminH, nil).Status, "GET sebelum dikonfigurasi")
+
+	assert.Equal(t, 401, call(t, "PUT", path, nil, map[string]any{"activeSlotCapacity": 5}).Status, "tanpa token")
+	buyerToken := login(t, fmt.Sprintf("buyer-%d@contoh.id", time.Now().UnixNano()))
+	assert.Equal(t, 401, call(t, "PUT", path, map[string]string{"Authorization": "Bearer " + buyerToken}, map[string]any{"activeSlotCapacity": 5}).Status, "pembeli bukan admin")
+	assert.Equal(t, 400, call(t, "PUT", path, adminH, map[string]any{"activeSlotCapacity": 0}).Status, "di luar batas")
+
+	mustStatus(t, 201, call(t, "PUT", path, adminH, map[string]any{"activeSlotCapacity": 5}), "buat pengaturan")
+	mustStatus(t, 200, call(t, "PUT", path, adminH, map[string]any{"activeSlotCapacity": 5}), "ulangi tanpa perubahan")
+	g := call(t, "GET", path, adminH, nil)
+	mustStatus(t, 200, g, "baca pengaturan")
+	assert.Equal(t, "5", fmt.Sprint(g.Data["activeSlotCapacity"]), g.Raw)
+
+	mustStatus(t, 201, join(), "join setelah dikonfigurasi")
 }

@@ -110,7 +110,9 @@ paths:
                 - meta
                 - data
         '409':
-          description: 'Konflik antrean — errorCode: `ACCOUNT_ALREADY_IN_QUEUE`, `EVENT_NOT_ON_SALE`'
+          description: 'Konflik antrean — errorCode: `ACCOUNT_ALREADY_IN_QUEUE`, `EVENT_NOT_ON_SALE`, `QUEUE_NOT_CONFIGURED`
+            (event belum punya pengaturan antrean; admin harus PUT /internal/v1/admin/events/{eventId}/queue-settings setelah event terbit.
+            Id event yang tidak dikenal menjawab sama, tanpa membocorkan keberadaan event. Klien: tampilkan pesan tenang, jangan coba ulang otomatis.)'
           content:
             application/json:
               schema:
@@ -375,6 +377,117 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
+  "/internal/v1/admin/events/{eventId}/queue-settings":
+    get:
+      tags:
+      - admin
+      summary: Baca pengaturan antrean sebuah event (internal, admin)
+      operationId: adminGetQueueSettings
+      description: |
+        Internal, bukan bagian dari routing publik (CloudFront/ALB tidak meneruskan jalur ini; dev Caddy membatasi IP).
+        Token pembeli User Service (scope `buyer`) yang emailnya ada di ADMIN_EMAILS Queue. Semua kegagalan autentikasi
+        menjawab 401 (tidak pernah 403). Tanpa baris pengaturan: 404 `QUEUE_NOT_CONFIGURED`, tanpa nilai bawaan.
+      security:
+      - adminBearer: []
+      parameters:
+      - $ref: '#/components/parameters/EventId'
+      responses:
+        '200':
+          description: Pengaturan tersimpan. Cache-Control no-store.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QueueSettingsEnvelope'
+        '400':
+          description: 'eventId bukan UUID — errorCode: `VALIDATION_ERROR`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '401':
+          description: 'Bearer tidak ada, tidak valid, kedaluwarsa, bukan scope buyer, atau bukan admin — errorCode: `UNAUTHORIZED`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '404':
+          description: 'Pengaturan antrean belum dibuat — errorCode: `QUEUE_NOT_CONFIGURED`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+    put:
+      tags:
+      - admin
+      summary: Buat atau ubah pengaturan antrean sebuah event (internal, admin)
+      operationId: adminPutQueueSettings
+      description: |
+        Upsert. Hanya `activeSlotCapacity` wajib; field lain opsional (JSON `null` dianggap tidak dikirim). Saat membuat,
+        field yang tidak dikirim memakai nilai bawaan kolom (migrasi 0001); saat mengubah, field yang tidak dikirim
+        dipertahankan. Aturan lintas-field dinilai pada nilai hasil gabungan: `pollNearMs ≤ pollMidMs ≤ pollFarMs` dan
+        `statusPublishIntervalMs ≤ pollNearMs`.
+
+        Event harus dikenal Booking (satu panggilan `supply`), jadi event draf belum bisa dikonfigurasi; lakukan PUT
+        setelah event terbit dan sebelum penjualan dimulai. Selama penjualan terbuka (waktu server ≥ `salesStartsAt`),
+        `oneActivePerVisitor` dan `oneActivePerEmail` terkunci: mengubahnya menjawab 409 `EVENT_RULES_LOCKED`;
+        field lain tetap boleh diubah. Menurunkan `activeSlotCapacity` di bawah jumlah aktif diterima dan tidak mencabut
+        entri aktif. Pengiriman identik adalah no-op (200, tanpa catatan audit). Setiap perubahan dicatat per field
+        (siapa, kapan, nilai lama → baru) dalam transaksi yang sama; `actor` selalu subject token, bukan dari body.
+        Race di batas `salesStartsAt`: keputusan kunci memakai snapshot Booking sesaat sebelum transaksi, jadi PUT yang
+        bersamaan persis dengan awal penjualan dapat dinilai "belum terbuka" paling lama satu round-trip (ADR-031).
+      security:
+      - adminBearer: []
+      parameters:
+      - $ref: '#/components/parameters/EventId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QueueSettingsRequest'
+      responses:
+        '200':
+          description: Pengaturan diperbarui atau pengiriman identik (no-op). Cache-Control no-store.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QueueSettingsEnvelope'
+        '201':
+          description: Baris pengaturan dibuat oleh permintaan ini. Cache-Control no-store.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QueueSettingsEnvelope'
+        '400':
+          description: 'JSON rusak, field tidak dikenal, tipe salah, `activeSlotCapacity` hilang, di luar batas, atau melanggar aturan lintas-field; pesan menyebut nama field — errorCode: `VALIDATION_ERROR`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '401':
+          description: 'Bearer tidak ada, tidak valid, kedaluwarsa, bukan scope buyer, atau bukan admin — errorCode: `UNAUTHORIZED`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '404':
+          description: 'Event tidak dikenal Booking (atau masih draf) — errorCode: `NOT_FOUND`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '409':
+          description: 'Penjualan sudah terbuka dan permintaan mengubah aturan terkunci — errorCode: `EVENT_RULES_LOCKED`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '503':
+          description: 'Booking tidak tersedia; tidak ada yang ditulis — errorCode: `DEPENDENCY_UNAVAILABLE`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
   /health:
     get:
       tags:
@@ -396,6 +509,14 @@ paths:
               schema:
                 $ref: '#/components/schemas/Health'
 components:
+  parameters:
+    EventId:
+      name: eventId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
   schemas:
     Meta:
       type: object
@@ -431,6 +552,108 @@ components:
       - meta
       - data
       description: Error envelope SRS §3.1.4. Tidak pernah memuat SQL, stack trace, secret, atau payload provider.
+    QueueSettingsRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - activeSlotCapacity
+      properties:
+        activeSlotCapacity:
+          type: integer
+          minimum: 1
+          maximum: 100000
+        nearFrontMultiplier:
+          type: integer
+          minimum: 1
+          maximum: 10
+          description: Bawaan saat membuat 2
+        statusPublishIntervalMs:
+          type: integer
+          minimum: 250
+          maximum: 5000
+          description: Bawaan saat membuat 1000; harus ≤ pollNearMs
+        pollFarMs:
+          type: integer
+          minimum: 5000
+          maximum: 60000
+          description: Bawaan saat membuat 30000
+        pollMidMs:
+          type: integer
+          minimum: 2000
+          maximum: 30000
+          description: Bawaan saat membuat 10000; harus ≤ pollFarMs
+        pollNearMs:
+          type: integer
+          minimum: 1000
+          maximum: 5000
+          description: Bawaan saat membuat 3000; harus ≤ pollMidMs
+        oneActivePerVisitor:
+          type: boolean
+          description: Terkunci selama penjualan terbuka. Bawaan saat membuat true
+        oneActivePerEmail:
+          type: boolean
+          description: Terkunci selama penjualan terbuka. Bawaan saat membuat true
+        categoryLimitedThresholdPct:
+          type: integer
+          minimum: 1
+          maximum: 50
+          description: Bawaan saat membuat 5
+        preTurnNotifyEnabled:
+          type: boolean
+          description: Bawaan saat membuat true
+    QueueSettings:
+      type: object
+      required:
+      - eventId
+      - activeSlotCapacity
+      - nearFrontMultiplier
+      - statusPublishIntervalMs
+      - pollFarMs
+      - pollMidMs
+      - pollNearMs
+      - oneActivePerVisitor
+      - oneActivePerEmail
+      - categoryLimitedThresholdPct
+      - preTurnNotifyEnabled
+      - updatedAt
+      properties:
+        eventId:
+          type: string
+          format: uuid
+        activeSlotCapacity:
+          type: integer
+        nearFrontMultiplier:
+          type: integer
+        statusPublishIntervalMs:
+          type: integer
+        pollFarMs:
+          type: integer
+        pollMidMs:
+          type: integer
+        pollNearMs:
+          type: integer
+        oneActivePerVisitor:
+          type: boolean
+        oneActivePerEmail:
+          type: boolean
+        categoryLimitedThresholdPct:
+          type: integer
+        preTurnNotifyEnabled:
+          type: boolean
+        updatedAt:
+          type: string
+          format: date-time
+          description: RFC3339 UTC
+    QueueSettingsEnvelope:
+      type: object
+      properties:
+        meta:
+          $ref: '#/components/schemas/Meta'
+        data:
+          $ref: '#/components/schemas/QueueSettings'
+      required:
+      - meta
+      - data
     Health:
       type: object
       properties:
@@ -734,3 +957,9 @@ components:
         Access token User Service (login OTP, opsional).
         Saat join queue (ADR-030) token hanya mengidentifikasi akun untuk dedup (satu entri aktif per akun);
         claim NIK pada token tidak dipakai. NIK dan email pembeli diisi di halaman Booking.
+    adminBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT (EdDSA)
+      description: Access token pembeli User Service (scope `buyer`) yang emailnya ada di ADMIN_EMAILS Queue. Tanpa kunci
+        publik User Service atau tanpa konfigurasi, semua permintaan ditolak (401).
