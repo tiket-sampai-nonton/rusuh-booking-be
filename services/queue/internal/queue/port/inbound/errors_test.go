@@ -12,6 +12,7 @@ import (
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/domain/entity"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/port/inbound"
+	shared "github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/shared/entity"
 )
 
 func TestMapError(t *testing.T) {
@@ -58,4 +59,41 @@ func TestMapError_UnknownBecomesInternal(t *testing.T) {
 
 func TestMapError_Nil(t *testing.T) {
 	assert.Nil(t, inbound.MapError(nil))
+}
+
+func TestMapError_QueueSettings(t *testing.T) {
+	tests := []struct {
+		name       string
+		err        error
+		wantStatus int
+		wantCode   apperror.Code
+	}{
+		{"not configured join", entity.ErrNotConfigured, http.StatusConflict, inbound.CodeQueueNotConfigured},
+		{"settings not found get", entity.ErrSettingsNotFound, http.StatusNotFound, inbound.CodeQueueNotConfigured},
+		{"rules locked", entity.ErrRulesLocked, http.StatusConflict, inbound.CodeEventRulesLocked},
+		{"event not found", entity.ErrEventNotFound, http.StatusNotFound, apperror.CodeNotFound},
+		{"wrapped rules locked", fmt.Errorf("apply: %w", entity.ErrRulesLocked), http.StatusConflict, inbound.CodeEventRulesLocked},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ae := inbound.MapError(tt.err)
+			assert.Equal(t, tt.wantStatus, ae.HTTPStatus)
+			assert.Equal(t, tt.wantCode, ae.Code)
+		})
+	}
+}
+
+func TestMapError_ValidationErrorsCarryDetails(t *testing.T) {
+	ae := inbound.MapError(shared.ValidationErrors{{Field: "pollNearMs", Message: "terlalu besar"}})
+	assert.Equal(t, http.StatusBadRequest, ae.HTTPStatus)
+	assert.Equal(t, apperror.CodeValidationFailed, ae.Code)
+	assert.Equal(t, map[string]string{"pollNearMs": "terlalu besar"}, ae.Details)
+	wrapped := inbound.MapError(fmt.Errorf("x: %w", shared.ValidationErrors{{Field: "a", Message: "b"}}))
+	assert.Equal(t, apperror.CodeValidationFailed, wrapped.Code)
+}
+
+func TestErrUnauthorized(t *testing.T) {
+	assert.Equal(t, http.StatusUnauthorized, inbound.ErrUnauthorized.HTTPStatus)
+	assert.Equal(t, apperror.CodeUnauthorized, inbound.ErrUnauthorized.Code)
+	assert.Same(t, inbound.ErrUnauthorized, inbound.MapError(inbound.ErrUnauthorized))
 }

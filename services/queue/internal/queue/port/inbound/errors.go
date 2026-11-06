@@ -7,6 +7,7 @@ import (
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/apperror"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/domain/entity"
+	shared "github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/shared/entity"
 )
 
 // Queue-specific error codes (design §9). Shared codes (VALIDATION_ERROR, NOT_FOUND,
@@ -20,7 +21,12 @@ const (
 	CodeTurnMissed          apperror.Code = "TURN_MISSED"
 	CodeNotAdmitted         apperror.Code = "NOT_ADMITTED"
 	CodeEntryMoved          apperror.Code = "ENTRY_MOVED"
+	CodeQueueNotConfigured  apperror.Code = "QUEUE_NOT_CONFIGURED"
+	CodeEventRulesLocked    apperror.Code = "EVENT_RULES_LOCKED"
 )
+
+// ErrUnauthorized is returned by the admin guard for any authentication failure (401, never 403).
+var ErrUnauthorized = apperror.New(apperror.CodeUnauthorized, http.StatusUnauthorized, "akses token tidak valid atau kedaluwarsa")
 
 // errMapping pairs a domain sentinel with its stable code and HTTP status.
 type errMapping struct {
@@ -38,6 +44,9 @@ var errMappings = []errMapping{
 	{entity.ErrTurnMissed, CodeTurnMissed, http.StatusGone},
 	{entity.ErrNotAdmitted, CodeNotAdmitted, http.StatusConflict},
 	{entity.ErrEntryMoved, CodeEntryMoved, http.StatusConflict},
+	{entity.ErrNotConfigured, CodeQueueNotConfigured, http.StatusConflict},
+	{entity.ErrSettingsNotFound, CodeQueueNotConfigured, http.StatusNotFound},
+	{entity.ErrRulesLocked, CodeEventRulesLocked, http.StatusConflict},
 	{entity.ErrNotOwner, apperror.CodeNotFound, http.StatusNotFound},
 	{entity.ErrNotFound, apperror.CodeNotFound, http.StatusNotFound},
 	{entity.ErrEventNotFound, apperror.CodeNotFound, http.StatusNotFound},
@@ -53,6 +62,11 @@ func MapError(err error) *apperror.Error {
 	var ae *apperror.Error
 	if errors.As(err, &ae) {
 		return ae
+	}
+	var ve shared.ValidationErrors
+	if errors.As(err, &ve) {
+		return apperror.Wrap(err, apperror.CodeValidationFailed, http.StatusBadRequest, "permintaan tidak valid").
+			WithDetails(shared.MapValidationErrors(ve))
 	}
 	for _, m := range errMappings {
 		if errors.Is(err, m.target) {

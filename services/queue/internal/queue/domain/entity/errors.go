@@ -24,4 +24,11 @@ var (
 	ErrEntryMoved    = errors.New("queue: entry dipindahkan ke perangkat lain")
 
 	ErrDependencyUnavailable = errors.New("queue: dependency tidak tersedia")
+
+	// ErrNotConfigured: join for an event that has no queue settings row (QSA-6) -> 409 QUEUE_NOT_CONFIGURED.
+	ErrNotConfigured = errors.New("queue: antrean belum dikonfigurasi untuk event ini")
+	// ErrSettingsNotFound: admin GET for an event with no settings row -> 404 QUEUE_NOT_CONFIGURED.
+	ErrSettingsNotFound = errors.New("queue: pengaturan antrean belum ada")
+	// ErrRulesLocked: a locked rule would change while the sale is open (QSA-3) -> 409 EVENT_RULES_LOCKED.
+	ErrRulesLocked = errors.New("queue: aturan event terkunci selama penjualan")
 )

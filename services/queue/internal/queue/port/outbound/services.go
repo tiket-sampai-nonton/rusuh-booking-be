@@ -68,3 +68,9 @@ const (
 	MetricUnknownOutcome = "queue_promote_unknown_outcome_total"
 	MetricJoinLeaseRetry = "queue_join_lease_retry_total"
 )
+
+// IAdminTokenVerifier authenticates an admin bearer (buyer scope + email allow-list, ADR-025) and returns the
+// account id (token subject) used as the audit actor. Any failure returns an error; callers answer 401.
+type IAdminTokenVerifier interface {
+	VerifyAdmin(bearer string) (subject string, err error)
+}
