@@ -50,6 +50,7 @@ type Config struct {
 	RateLimit    RateLimit
 	WorkerTuning WorkerTuning
 	Liveness     Liveness
+	Admin        Admin
 }
 
 // Validate checks cross-field rules.

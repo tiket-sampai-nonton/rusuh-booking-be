@@ -48,3 +48,17 @@ func NewUUID() string {
 	b[8] = (b[8] & 0x3f) | 0x80
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
 }
+
+// EventID identifies an event (Booking owns the event; Queue only validates the shape).
+type EventID struct{ value string }
+
+// NewEventID validates s as a UUID.
+func NewEventID(s string) (EventID, error) {
+	if !uuidPattern.MatchString(s) {
+		return EventID{}, ErrInvalidID
+	}
+	return EventID{value: s}, nil
+}
+
+// String returns the uuid.
+func (e EventID) String() string { return e.value }

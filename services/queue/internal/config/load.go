@@ -114,6 +114,8 @@ func Load() (Config, error) {
 		Shards:            r.Int("QUEUE_LIVENESS_SHARDS", 16),
 	}
 
+	cfg.Admin = Admin{Emails: parseAdminEmails(r.String("ADMIN_EMAILS", ""))}
+
 	// Kesalahan parsing dan validasi dilaporkan bersama agar semua variable yang salah terlihat sekaligus.
 	if err := errors.Join(append(parseErrs, r.Err(), cfg.Validate())...); err != nil {
 		return Config{}, fmt.Errorf("config: %w", err)

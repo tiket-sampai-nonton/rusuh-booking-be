@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/crypto"
@@ -192,4 +193,26 @@ func (l Liveness) Validate() error {
 		errs = append(errs, fmt.Errorf("QUEUE_LIVENESS_SHARDS %d di luar rentang 1..256", l.Shards))
 	}
 	return errors.Join(errs...)
+}
+
+// Admin holds the admin allow-list for the internal queue-settings endpoint (ADR-025). It is auth configuration, not
+// a queue default: capacity and tuning are only ever set through the endpoint (QSA-8.1).
+type Admin struct {
+	// Emails are lower-cased, de-duplicated allow-list entries ("user@host" or "@domain"). Empty admits nobody.
+	Emails []string
+}
+
+// parseAdminEmails splits a comma-separated list, trimming, lower-casing and de-duplicating while keeping order.
+func parseAdminEmails(raw string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, e := range strings.Split(raw, ",") {
+		e = strings.ToLower(strings.TrimSpace(e))
+		if e == "" || seen[e] {
+			continue
+		}
+		seen[e] = true
+		out = append(out, e)
+	}
+	return out
 }

@@ -235,3 +235,32 @@ func TestLoad_NoPIIEncKeyRequired(t *testing.T) {
 	_, err := Load()
 	assert.NoError(t, err)
 }
+
+func TestLoad_AdminEmails(t *testing.T) {
+	cases := []struct {
+		name string
+		env  *string
+		want []string
+	}{
+		{"unset", nil, nil},
+		{"empty", strPtr(""), nil},
+		{"only spaces and commas", strPtr(" , ,, "), nil},
+		{"single", strPtr("admin@contoh.id"), []string{"admin@contoh.id"}},
+		{"spaces and mixed case", strPtr("  Admin@Contoh.ID , Ops@Contoh.id "), []string{"admin@contoh.id", "ops@contoh.id"}},
+		{"domain entry", strPtr("a@x.id,@lokal.test"), []string{"a@x.id", "@lokal.test"}},
+		{"duplicates collapsed", strPtr("a@x.id,A@X.ID,a@x.id"), []string{"a@x.id"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			setBase(t)
+			if c.env != nil {
+				t.Setenv("ADMIN_EMAILS", *c.env)
+			}
+			cfg, err := Load()
+			require.NoError(t, err)
+			assert.Equal(t, c.want, cfg.Admin.Emails)
+		})
+	}
+}
+
+func strPtr(s string) *string { return &s }

@@ -83,11 +83,12 @@ func TestMapError_QueueSettings(t *testing.T) {
 	}
 }
 
-func TestMapError_ValidationErrorsCarryDetails(t *testing.T) {
-	ae := inbound.MapError(shared.ValidationErrors{{Field: "pollNearMs", Message: "terlalu besar"}})
+func TestMapError_ValidationErrorsNameTheFields(t *testing.T) {
+	ae := inbound.MapError(shared.ValidationErrors{{Field: "pollNearMs", Message: "terlalu besar"}, {Field: "activeSlotCapacity", Message: "wajib diisi"}})
 	assert.Equal(t, http.StatusBadRequest, ae.HTTPStatus)
 	assert.Equal(t, apperror.CodeValidationFailed, ae.Code)
-	assert.Equal(t, map[string]string{"pollNearMs": "terlalu besar"}, ae.Details)
+	assert.Equal(t, "permintaan tidak valid: pollNearMs: terlalu besar; activeSlotCapacity: wajib diisi", ae.Message, "client body names every field")
+	assert.Equal(t, map[string]string{"pollNearMs": "terlalu besar", "activeSlotCapacity": "wajib diisi"}, ae.Details)
 	wrapped := inbound.MapError(fmt.Errorf("x: %w", shared.ValidationErrors{{Field: "a", Message: "b"}}))
 	assert.Equal(t, apperror.CodeValidationFailed, wrapped.Code)
 }

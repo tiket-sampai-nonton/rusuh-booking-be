@@ -3,6 +3,7 @@ package inbound
 import (
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/apperror"
 
@@ -65,7 +66,8 @@ func MapError(err error) *apperror.Error {
 	}
 	var ve shared.ValidationErrors
 	if errors.As(err, &ve) {
-		return apperror.Wrap(err, apperror.CodeValidationFailed, http.StatusBadRequest, "permintaan tidak valid").
+		// The client body only carries the message (details go to the log), so the fields are named here.
+		return apperror.Wrap(err, apperror.CodeValidationFailed, http.StatusBadRequest, "permintaan tidak valid: "+validationSummary(ve)).
 			WithDetails(shared.MapValidationErrors(ve))
 	}
 	for _, m := range errMappings {
@@ -74,4 +76,13 @@ func MapError(err error) *apperror.Error {
 		}
 	}
 	return apperror.From(err)
+}
+
+// validationSummary lists "field: message" pairs in order; messages are static rule text, never request data.
+func validationSummary(ve shared.ValidationErrors) string {
+	parts := make([]string, 0, len(ve))
+	for _, e := range ve {
+		parts = append(parts, e.Field+": "+e.Message)
+	}
+	return strings.Join(parts, "; ")
 }
