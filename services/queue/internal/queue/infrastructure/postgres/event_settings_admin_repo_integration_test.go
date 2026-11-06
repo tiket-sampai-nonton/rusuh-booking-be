@@ -5,6 +5,8 @@ package postgres
 import (
 	"context"
 	"fmt"
+	"io"
+	"log/slog"
 	"sync"
 	"testing"
 	"time"
@@ -13,6 +15,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/migrate"
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/deployments/migrations"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/domain/entity"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/port/outbound"
 )
@@ -256,4 +260,35 @@ func TestEventSettingsAdmin_InvalidEventID(t *testing.T) {
 		EventID: "bukan-uuid", Actor: "a", Now: time.Now(), Decide: entity.Decide(entity.SettingsPatch{ActiveSlotCapacity: intp(5)}, false),
 	})
 	assert.Error(t, err)
+}
+
+// QSA-8.2: migration 0004 reverts and re-applies cleanly, and 0001-0003 are untouched by the round trip.
+func TestMigration0004_DownThenUpAgain(t *testing.T) {
+	pool := setup(t)
+	ctx := context.Background()
+	migs, err := migrate.Load(migrations.FS, ".")
+	require.NoError(t, err)
+	runner, err := migrate.NewRunner(pool, "queue", migs, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	require.NoError(t, err)
+
+	exists := func() bool {
+		var n int
+		require.NoError(t, pool.QueryRow(ctx, `SELECT count(*) FROM information_schema.tables WHERE table_schema='queue' AND table_name='event_settings_audit'`).Scan(&n))
+		return n == 1
+	}
+	require.True(t, exists())
+	n, err := runner.Down(ctx, 1)
+	require.NoError(t, err)
+	assert.Equal(t, 1, n)
+	assert.False(t, exists(), "down menghapus tabel audit")
+	var fn int
+	require.NoError(t, pool.QueryRow(ctx, `SELECT count(*) FROM pg_proc WHERE proname='event_settings_audit_immutable'`).Scan(&fn))
+	assert.Zero(t, fn, "down menghapus fungsi trigger")
+	var rows int
+	require.NoError(t, pool.QueryRow(ctx, `SELECT count(*) FROM event_settings`).Scan(&rows), "tabel 0001 tetap ada")
+
+	n, err = runner.Up(ctx, 0)
+	require.NoError(t, err)
+	assert.Equal(t, 1, n)
+	assert.True(t, exists(), "up kedua membuat ulang tabel audit")
 }
