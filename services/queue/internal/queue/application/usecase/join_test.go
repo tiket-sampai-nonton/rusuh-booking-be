@@ -215,36 +215,38 @@ func TestJoin_StorePropagatesError(t *testing.T) {
 	assert.ErrorIs(t, err, boom)
 }
 
-func TestJoin_FirstJoinForKnownEventCreatesDefaultSettings(t *testing.T) {
-	uc, m := newJoin(t)
-	ctx := context.Background()
+// TestJoin_UnconfiguredEventIsRefused covers QSA-6 / P10: an event without a settings row is refused with the exact
+// sentinel before ANY side effect. gomock fails the test on an unexpected Supply, Store.Join, ReserveBatch, token
+// or audit call. An unknown id and a real event without a row take the same path (no disclosure).
+func TestJoin_UnconfiguredEventIsRefused(t *testing.T) {
+	for _, ev := range []string{"nope", "real-event-without-row"} {
+		t.Run(ev, func(t *testing.T) {
+			uc, m := newJoin(t)
+			ctx := context.Background()
+			m.limiter.EXPECT().Allow(ctx, gomock.Any(), gomock.Any(), gomock.Any()).Return(true, nil)
+			m.settings.EXPECT().Get(ctx, ev).Return(entity.EventSettings{}, false, nil)
+			m.booking.EXPECT().Supply(gomock.Any(), gomock.Any()).Times(0)
+			m.booking.EXPECT().ReserveBatch(gomock.Any(), gomock.Any()).Times(0)
+			m.store.EXPECT().Join(gomock.Any(), gomock.Any()).Times(0)
+			m.tokens.EXPECT().IssueQueue(gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
+			m.tokens.EXPECT().IssueVisitor(gomock.Any(), gomock.Any()).Times(0)
+			m.audit.EXPECT().Append(gomock.Any(), gomock.Any()).Times(0)
 
-	m.limiter.EXPECT().Allow(ctx, gomock.Any(), gomock.Any(), gomock.Any()).Return(true, nil)
-	m.settings.EXPECT().Get(ctx, "ev1").Return(entity.EventSettings{}, false, nil)
-	m.booking.EXPECT().Supply(ctx, "ev1").Return(outbound.SupplySnapshot{EventID: "ev1"}, nil)
-	m.settings.EXPECT().Ensure(ctx, "ev1").Return(entity.EventSettings{ActiveSlotCapacity: 0}, nil)
-	m.store.EXPECT().Join(ctx, gomock.Any()).DoAndReturn(func(_ context.Context, p outbound.JoinParams) (outbound.JoinResult, error) {
-		return created(p, 1), nil
-	})
-	m.audit.EXPECT().Append(ctx, gomock.Any()).Return(nil)
-	m.tokens.EXPECT().IssueQueue(gomock.Any(), gomock.Any(), gomock.Any()).Return("qt", nil)
-	m.tokens.EXPECT().IssueVisitor(gomock.Any(), gomock.Any()).Return("vt", nil)
-
-	resp, err := uc.Join(ctx, inbound.JoinInput{EventID: "ev1", ClientIP: "1.2.3.4"})
-	require.NoError(t, err)
-	assert.Equal(t, "WAITING", resp.Status)
+			_, err := uc.Join(ctx, inbound.JoinInput{EventID: ev, ClientIP: "1.2.3.4"})
+			require.ErrorIs(t, err, entity.ErrNotConfigured)
+			ae := inbound.MapError(err)
+			assert.Equal(t, 409, ae.HTTPStatus)
+			assert.Equal(t, inbound.CodeQueueNotConfigured, ae.Code)
+		})
+	}
 }
 
-func TestJoin_UnknownEventIsRefusedWithoutTouchingTheQueue(t *testing.T) {
+func TestJoin_SettingsReadErrorPropagates(t *testing.T) {
 	uc, m := newJoin(t)
 	ctx := context.Background()
-
+	boom := errors.New("pg down")
 	m.limiter.EXPECT().Allow(ctx, gomock.Any(), gomock.Any(), gomock.Any()).Return(true, nil)
-	m.settings.EXPECT().Get(ctx, "nope").Return(entity.EventSettings{}, false, nil)
-	m.booking.EXPECT().Supply(ctx, "nope").Return(outbound.SupplySnapshot{}, entity.ErrEventNotFound)
-	// no settings.Ensure, no store.Join: gomock fails the test on any unexpected call
-
-	_, err := uc.Join(ctx, inbound.JoinInput{EventID: "nope", ClientIP: "1.2.3.4"})
-	require.ErrorIs(t, err, entity.ErrEventNotFound)
-	assert.Equal(t, 404, inbound.MapError(err).HTTPStatus)
+	m.settings.EXPECT().Get(ctx, "ev1").Return(entity.EventSettings{}, false, boom)
+	_, err := uc.Join(ctx, inbound.JoinInput{EventID: "ev1", ClientIP: "1.2.3.4"})
+	assert.ErrorIs(t, err, boom)
 }

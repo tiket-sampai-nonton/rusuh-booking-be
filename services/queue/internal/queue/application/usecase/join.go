@@ -126,13 +126,9 @@ func (u *JoinQueue) Join(ctx context.Context, in inbound.JoinInput) (dto.QueueEn
 		return dto.QueueEntry{}, err
 	}
 	if !found {
-		// First join for this event: only a real event (known to Booking) gets queue settings; unknown ids are refused.
-		if _, err := u.d.Booking.Supply(ctx, in.EventID); err != nil {
-			return dto.QueueEntry{}, err
-		}
-		if settings, err = u.d.Settings.Ensure(ctx, in.EventID); err != nil {
-			return dto.QueueEntry{}, err
-		}
+		// Strict configuration (QSA-6): only the admin PUT creates settings. No Booking call, no write, no side effect;
+		// an unknown id and a real event without a row are indistinguishable here.
+		return dto.QueueEntry{}, entity.ErrNotConfigured
 	}
 
 	res, err := u.d.Store.Join(ctx, outbound.JoinParams{

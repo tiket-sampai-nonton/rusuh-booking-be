@@ -63,7 +63,7 @@ func setup(t *testing.T) *pgxpool.Pool {
 	return pool
 }
 
-func TestEventSettings_GetEnsureAndList(t *testing.T) {
+func TestEventSettings_GetAndList(t *testing.T) {
 	pool := setup(t)
 	ctx := context.Background()
 	repo := NewEventSettings(pool)
@@ -79,18 +79,11 @@ func TestEventSettings_GetEnsureAndList(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, ids)
 
-	s, err := repo.Ensure(ctx, ev)
+	// Ensure is gone (QSA-6): rows are created only by the admin PUT; here a raw insert stands in for it.
+	_, err = pool.Exec(ctx, `INSERT INTO event_settings (event_id) VALUES ($1::uuid)`, ev)
 	require.NoError(t, err)
-	assert.Equal(t, ev, s.EventID)
-	assert.Equal(t, 500, s.ActiveSlotCapacity, "bawaan kolom")
-	assert.True(t, s.OneActivePerVisitor)
-	assert.True(t, s.OneActivePerEmail)
-
 	_, err = pool.Exec(ctx, `UPDATE event_settings SET active_slot_capacity = 20 WHERE event_id = $1::uuid`, ev)
 	require.NoError(t, err)
-	again, err := repo.Ensure(ctx, ev)
-	require.NoError(t, err)
-	assert.Equal(t, 20, again.ActiveSlotCapacity, "Ensure tidak menimpa pengaturan yang sudah ada")
 
 	got, found, err := repo.Get(ctx, ev)
 	require.NoError(t, err)

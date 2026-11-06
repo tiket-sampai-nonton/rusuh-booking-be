@@ -52,8 +52,7 @@ type fakeSettings struct {
 func (f *fakeSettings) Get(context.Context, string) (entity.EventSettings, bool, error) {
 	return f.s, true, nil
 }
-func (f *fakeSettings) ListEventIDs(context.Context) ([]string, error)               { return []string{"ev"}, nil }
-func (f *fakeSettings) Ensure(context.Context, string) (entity.EventSettings, error) { return f.s, nil }
+func (f *fakeSettings) ListEventIDs(context.Context) ([]string, error) { return []string{"ev"}, nil }
 
 type fakePub struct {
 	mu      sync.Mutex
