@@ -54,7 +54,9 @@ type JoinQueue struct {
 
 type noopMetrics struct{}
 
-func (noopMetrics) Inc(string, ...string) {}
+func (noopMetrics) Inc(string, ...string) {
+	// Intentionally empty: null-object default so callers need no nil check until a real metrics sink is wired.
+}
 
 // NewJoinQueue accepts interfaces and returns the concrete usecase. Zero-valued tuning gets defaults here so the
 // composition root does not need to change until the config is wired.
