@@ -101,7 +101,7 @@ func sleepCtx(ctx context.Context, d time.Duration) error {
 // defaultJitter returns 15-35 ms: long enough for an idle promoter tick (it holds the lease only across a few
 // Valkey reads and no Booking call) to finish, far below BOOKING_TIMEOUT.
 func defaultJitter() time.Duration {
-	return 15*time.Millisecond + time.Duration(rand.Int64N(int64(20*time.Millisecond)))
+	return 15*time.Millisecond + time.Duration(rand.Int64N(int64(20*time.Millisecond))) // #nosec G404 -- jitter timing, not security-sensitive
 }
 
 // defaultAdmissionUnits is the quantity guarantee per admission (decision 3): Booking reserves this many units

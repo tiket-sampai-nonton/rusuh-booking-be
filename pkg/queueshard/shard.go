@@ -11,7 +11,7 @@ func Shard(entryID string, b int) int {
 	if b <= 1 {
 		return 0
 	}
-	return int(crc16([]byte(entryID)) % uint16(b))
+	return int(crc16([]byte(entryID))) % b
 }
 
 // crc16Tab is the CCITT (XMODEM) polynomial 0x1021 table used by Redis cluster for hash-slot assignment.

@@ -140,7 +140,7 @@ func (u *UnitOfWork) hold(ctx context.Context, tx pgx.Tx, spec outbound.HoldSpec
 
 	// Step 5: throttle after the refusal budget; capped exponential backoff on the injected clock.
 	if spec.RefusalBudget > 0 && refusals >= spec.RefusalBudget && lastRefusal != nil {
-		wait := spec.ThrottleBase << uint(min(refusals-spec.RefusalBudget, 20))
+		wait := spec.ThrottleBase << min(refusals-spec.RefusalBudget, 20)
 		if wait <= 0 || wait > spec.ThrottleMax {
 			wait = spec.ThrottleMax
 		}
