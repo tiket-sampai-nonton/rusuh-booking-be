@@ -2502,6 +2502,10 @@ Semua nilai di bawah configurable. Kolom "Saat penjualan" menjelaskan apakah nil
 | `category_limited_threshold_pct` | 5 | 1–50 | Boleh | Status `LIMITED` |
 | `one_active_per_visitor` / `one_active_per_email` | true | — | **Dikunci** (validator Queue) | Anti-calo (AS-17) |
 
+Kolom "Default" di tabel Queue adalah nilai bawaan kolom yang dipakai **saat admin membuat** pengaturan dan tidak mengirim field itu; tidak ada baris yang dibuat otomatis (ADR-031).
+
+**Runbook (ADR-031).** Pengaturan antrean dibuat dan diubah lewat `PUT /internal/v1/admin/events/{eventId}/queue-settings` (internal, allow-list admin, lihat `docs/contracts/openapi/queue.yaml`). Setiap event baru tidak bisa di-join (`409 QUEUE_NOT_CONFIGURED`) sampai admin melakukan PUT **setelah event terbit dan sebelum penjualan dimulai**; event draf belum bisa dikonfigurasi. Pengaturan staging, prod, setup e2e, dan uji beban wajib menyertakan langkah ini sebelum join pertama. Selama penjualan terbuka, hanya `one_active_per_*` yang terkunci (409 `EVENT_RULES_LOCKED`); kapasitas dan interval polling boleh diubah dan dipakai promotor pada tick berikutnya tanpa restart. Keterbatasan: keputusan kunci memakai snapshot `Supply` sebelum transaksi, sehingga PUT yang jatuh persis di `salesStartsAt` dapat dinilai "belum terbuka" paling lama satu round-trip Booking (ADR-031).
+
 #### Per Service — env (perubahan lewat deploy)
 
 | Parameter | Lokasi | Default | Batas aman | Keterangan |

@@ -122,3 +122,7 @@ service lain (9.R1, 13.R1, 14.R1 diblokir) dan 16.1 (menunggu pemilihan library 
 ## Notes
 - Lua hanya untuk atomisitas antrean; aturan lain di Go.
 - Routing key dan format error mengikuti platform task 12 dan 2.6.
+
+## Pengaturan antrean per event (ADR-031)
+
+- [x] 18. Endpoint admin internal `GET`/`PUT .../queue-settings`, audit append-only (migrasi 0004), join ketat tanpa `Ensure`, worker regresi, OpenAPI, dokumen. _Requirements: QSA-1..10_

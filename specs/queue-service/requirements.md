@@ -377,3 +377,17 @@ make mock                                  # regen _mock/ bila port berubah
   kriteria di-assert mesin di `TestHeartbeatLoad` (B=16). Pemisahan indeks liveness ke instance/thread Valkey terpisah
   (opsi B) didokumentasikan sebagai opsi infra MASA DEPAN (tidak dibangun). Lihat ADR-030 Amandemen dan evidence
   2026-11-05 §3b/§3e.
+
+## Pengaturan antrean per event (ADR-031, 2026-11-06)
+
+- Baris `queue.event_settings` hanya dibuat dan diubah oleh `PUT /internal/v1/admin/events/{eventId}/queue-settings`
+  (admin allow-list `ADMIN_EMAILS`, token pembeli User Service scope `buyer`, rute internal); `GET` pada jalur yang sama
+  membaca pengaturan tersimpan. `Settings.Ensure` (pembuatan malas saat join pertama, `4c609b0`) DIHAPUS.
+- WHEN event tidak punya baris pengaturan, THE Queue Service SHALL menjawab join dengan `409 QUEUE_NOT_CONFIGURED`
+  tanpa memanggil Booking, Valkey, atau token; id event tak dikenal menjawab sama. Admin harus PUT setelah event terbit
+  dan sebelum penjualan dimulai (event draf belum bisa dikonfigurasi).
+- Perubahan dicatat per field di `queue.event_settings_audit` (append-only lewat trigger, satu transaksi dengan baris
+  pengaturan, `actor` = subject token). Selama penjualan terbuka `oneActivePerVisitor`/`oneActivePerEmail` terkunci
+  (`409 EVENT_RULES_LOCKED`). Worker membaca ulang `event_settings` tiap tick, jadi perubahan kapasitas berlaku di tick
+  berikutnya.
+- Sumber: ADR-031; kontrak `docs/contracts/openapi/queue.yaml`; TC-CFG-05..12 di `docs/analisa/06-TP-RBT-001.md`.

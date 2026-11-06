@@ -726,8 +726,8 @@ Kontrak per endpoint (contoh request/response) ada di SDD-RBT-001 Interface view
 | SRS-F-26-04 | Invalid combinations shall be rejected early by data constraints, a validator at service start, or on save. | GR-12 | M | T | TC-CFG-03 |
 | SRS-F-26-05 | Related values shall derive from one parent value (e.g., gateway expiry from `paymentExpiresAt`). | GR-12 | M | I | TC-PAY-02 |
 | SRS-F-26-06 | Client configuration (polling interval, ticket limit, TTL) shall be delivered by the server; client env values shall be fallbacks only; the UI shall not hard-code rule numbers. | GR-12 | M | I | TC-QUE-15 |
-| SRS-F-26-07 | Every change shall be recorded (who, when, old → new), and an internal endpoint shall show the effective configuration per event. | GR-12 | M | T | TC-CFG-04 |
-| SRS-F-26-08 | Per-event changes shall be made through migration/seed or an internal admin endpoint (back-office is out of scope). | PDF §11 | M | I | — |
+| SRS-F-26-07 | Every change shall be recorded (who, when, old → new), and an internal endpoint shall show the effective configuration per event. For queue settings the record is one row per changed field in `queue.event_settings_audit` (append-only, written in the same transaction as the change, actor = verified admin account id) and the endpoint is `GET /internal/v1/admin/events/{eventId}/queue-settings` (ADR-031). | GR-12 | M | T | TC-CFG-04, TC-CFG-08 |
+| SRS-F-26-08 | Per-event changes shall be made through migration/seed or an internal admin endpoint (back-office is out of scope). Queue settings are created and changed only through `PUT /internal/v1/admin/events/{eventId}/queue-settings` (admin allow-list, internal route, ADR-031); the Queue Service shall not create settings implicitly, and a join for an event without settings shall be refused with `409 QUEUE_NOT_CONFIGURED`. | PDF §11 | M | T | TC-CFG-05..TC-CFG-10 |
 
 #### 3.2.27 Optional Account and OTP Login (USR-01)
 
@@ -861,7 +861,7 @@ Kontrak per endpoint (contoh request/response) ada di SDD-RBT-001 Interface view
 | SRS-D-05 | Payment attempt, callback, refund case | Payment | Monotonic status; callback fingerprint unique | [Retensi transaksi: ditetapkan Ops] | Financial |
 | SRS-D-06 | Queue entry and entry audit | Queue | One active per buyer NIK, visitor, email per event; audit is the recovery source for FIFO | Event + 30 hari | Personal (hash, encrypted email) |
 | SRS-D-07 | Delivery, push subscription | Notification | Unique (source message, type); push token encrypted | Push token dihapus saat penjualan berakhir | Personal |
-| SRS-D-08 | Configuration audit | Booking | Every change recorded | Permanent | Internal |
+| SRS-D-08 | Configuration audit | Booking, Queue (`queue.event_settings_audit`, ADR-031) | Every change recorded; Queue audit is append-only (database trigger) with one row per changed field | Permanent | Internal |
 | SRS-D-09 | All timestamps shall be `timestamptz` UTC; all amounts integer minor unit (IDR). | All | — | — | — |
 | SRS-D-10 | Booking events (event store) | Booking | Append-only; key (booking, version); payload without plaintext NIK/email/token | Event + 30 hari (payload tanpa data pribadi plaintext) | Personal (hash) |
 | SRS-D-11 | Payment attempt events (event store) | Payment | Append-only; key (attempt, version) | [Retensi transaksi: ditetapkan Ops] | Financial |
@@ -1532,9 +1532,9 @@ Semua TTL, jendela, batas, dan flag dapat dikonfigurasi (daftar lengkap, default
 4. **Satu sumber kebenaran.** Nilai yang saling terkait diturunkan dari satu nilai induk; contohnya expiry transaksi Midtrans diturunkan dari `paymentExpiresAt`, bukan parameter terpisah.
 5. **Konfigurasi klien dikendalikan server.** Interval polling, batas tiket, dan TTL dikirim lewat Status Document dan respons API; env klien hanya cadangan.
 6. **UI tidak meng-hardcode angka aturan** ("3 menit", "maks 3 tiket"); semua teks memakai nilai dari server.
-7. **Setiap perubahan tercatat** di `booking.config_audit` (siapa, kapan, nilai lama → baru); endpoint internal menampilkan konfigurasi efektif per event sebagai evidence.
+7. **Setiap perubahan tercatat** di `booking.config_audit` untuk Booking dan di `queue.event_settings_audit` untuk pengaturan antrean (siapa, kapan, nilai lama → baru, satu baris per field); endpoint internal menampilkan konfigurasi efektif per event sebagai evidence.
 
-Lokasi: per event di database (`booking.events`, `queue.event_settings`), setelan teknis per service di env (perubahan lewat deploy), dan nilai cadangan di klien. Perubahan per event dilakukan lewat migration/seed atau endpoint internal admin (back-office di luar scope).
+Lokasi: per event di database (`booking.events`, `queue.event_settings`), setelan teknis per service di env (perubahan lewat deploy), dan nilai cadangan di klien. Perubahan per event dilakukan lewat migration/seed atau endpoint internal admin (back-office di luar scope). Pengaturan antrean hanya dibuat dan diubah lewat `PUT /internal/v1/admin/events/{eventId}/queue-settings` (ADR-031): tidak ada nilai bawaan implisit, jadi event baru tidak bisa di-join (`409 QUEUE_NOT_CONFIGURED`) sampai admin menyimpan pengaturannya.
 
 ---
 

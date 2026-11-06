@@ -809,3 +809,15 @@ Untuk setiap Status Document dan payload `queue.turn.*`, tidak ada NIK, email, a
 - Migrasi: `services/queue/deployments/migrations/0001_init.up.sql`, `0002_account_ref.up.sql`.
 - Test Plan: `docs/analisa/06-TP-RBT-001.md` (TC-QUE-*, TC-GST-*, TC-USR-09*, TC-PERF-*).
 - Steering: `.kiro/steering/{structure,code-principles,tech,security-privacy,invariants,testing-review}.md`.
+
+## 15. Pengaturan antrean per event (ADR-031)
+
+- Rute `GET`/`PUT /internal/v1/admin/events/{eventId}/queue-settings` (`infrastructure/http/settings_admin_handler.go`),
+  guard `IAdminTokenVerifier` (adapter `security.AdminVerifier`: scope `buyer` wajib + allow-list `ADMIN_EMAILS`, kunci publik
+  User Service; tanpa `TOKEN_PUBLIC_KEY_FILE` semua permintaan 401, tanpa fallback ke kunci Queue).
+- `SetQueueSettings`: validasi statis -> dry run `entity.Decide` terhadap baris tersimpan -> satu `Booking.Supply`
+  (event ada, `salesStartsAt`) -> `IEventSettingsAdminRepo.Apply`, yang menjalankan `entity.Decide` yang sama di dalam
+  transaksi di bawah `pg_advisory_xact_lock` per event, menulis baris dan satu baris audit per field berubah.
+- `JoinQueue` ketat: `Settings.Get` tidak menemukan baris -> `entity.ErrNotConfigured` (409) sebelum `Supply`.
+  `IEventSettingsRepo` kini hanya `Get` dan `ListEventIDs`.
+- Migrasi `0004_event_settings_audit` (tabel + trigger append-only). Batas race di `salesStartsAt` dan alasan penolakan opsi lain: ADR-031.

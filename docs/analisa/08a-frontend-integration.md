@@ -71,7 +71,8 @@ Booking saat hold. Klien lama yang masih mengirim `buyerNik`/`email`/`consentNik
 - `Idempotency-Key`: 16..64 karakter (opsional; replay mengembalikan entri yang sama dengan 200).
 
 **Respons:** `201` entri baru, `200` entri aktif yang sudah ada (token valid, re-attach akun, replay key), `409
-ACCOUNT_ALREADY_IN_QUEUE`, `429` batas lunak per IP (hormati `Retry-After`).
+ACCOUNT_ALREADY_IN_QUEUE`, `409
+QUEUE_NOT_CONFIGURED` (event belum disiapkan admin; ADR-031), `429` batas lunak per IP (hormati `Retry-After`).
 
 **Responses:**
 
@@ -456,6 +457,9 @@ Antrean (Queue):
    bearer bila ada, serta `Idempotency-Key` untuk retry).
 2. Tangani `200` (entri sudah ada) sama dengan `201`; simpan visitor token baru bila ada di respons (re-attach akun).
 3. Tangani `409 ACCOUNT_ALREADY_IN_QUEUE`: tampilkan bahwa akun sudah antre di perangkat lain.
+3a. Tangani `409 QUEUE_NOT_CONFIGURED`: antrean untuk event ini belum dibuka oleh penyelenggara. Tampilkan pesan tenang
+    (mis. "Antrean belum dibuka, silakan kembali sebentar lagi"), **jangan** coba ulang otomatis dan jangan tampilkan
+    kode error ke pembeli; tombol manual "Coba lagi" boleh. Kode ini juga dijawab untuk id event yang tidak dikenal.
 4. Hapus pemeriksaan bot di klien (Turnstile, proof-of-work, Play Integrity/App Attest): tidak dibangun.
 5. Tangani 429 dengan `Retry-After` pada join (batas lunak per IP).
 

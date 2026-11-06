@@ -231,6 +231,11 @@ GET /internal/v1/events/{id}/supply → Booking Service
 
 ---
 
+> **Pengaturan antrean per event (ADR-031).** Baris `queue.event_settings` hanya dibuat dan diubah oleh
+> `PUT /internal/v1/admin/events/{eventId}/queue-settings`; join untuk event tanpa baris dijawab `409 QUEUE_NOT_CONFIGURED`
+> (id event tidak dikenal menjawab sama). Perubahan dicatat per field di `queue.event_settings_audit` (append-only).
+> Runbook dan batas race `salesStartsAt`: SDD-RBT-001 §6.
+
 ## 5. Data Model
 
 ### 5.1 PostgreSQL (`queue` schema)
@@ -567,6 +572,8 @@ func HashNIK(nik string, secret []byte) []byte {
 | `BUYER_QUOTA_EXHAUSTED` | 409 | Kuota NIK habis | Tidak bisa join lagi |
 | `NIK_REQUIRED` | 422 | buyerNik kosong untuk guest/logged-in tanpa NIK | Isi NIK |
 | `EVENT_NOT_ON_SALE` | 409 | Belum/sudah tutup | Tunggu jadwal |
+| `QUEUE_NOT_CONFIGURED` | 409 (join) / 404 (GET admin) | Event belum punya pengaturan antrean (ADR-031) | Pembeli: coba lagi nanti, tanpa retry otomatis; admin: PUT queue-settings |
+| `EVENT_RULES_LOCKED` | 409 (PUT admin) | Penjualan terbuka dan `oneActivePerVisitor`/`oneActivePerEmail` berubah | Ubah field lain atau tunggu event selesai |
 | `EVENT_SOLD_OUT` | 410 | Tiket habis | Event sold out |
 | `CLAIM_DEADLINE_PASSED` | 403 | Giliran hangus | Kembali ke antrean |
 | `ENTRY_NOT_ADMITTED` | 403 | Belum giliran | Tunggu giliran |
