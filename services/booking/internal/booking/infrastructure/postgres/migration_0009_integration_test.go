@@ -72,7 +72,7 @@ func TestMigration0009_UpDownBackfill(t *testing.T) {
 	ins("a0000000-0000-0000-0000-000000000001", "RESERVED", "h1")
 	ins("a0000000-0000-0000-0000-000000000002", "ACTIVE", "h2")
 
-	n, err = r.Up(ctx, 0)
+	n, err = r.Up(ctx, 1) // only 0009: later migrations (0010+) must not change the count
 	require.NoError(t, err)
 	require.Equal(t, 1, n, "0009 applied")
 	var o1, o2 int
@@ -103,7 +103,7 @@ func TestMigration0009_UpDownBackfill(t *testing.T) {
 	require.NoError(t, err)
 	_, err = r.Down(ctx, 1)
 	require.NoError(t, err)
-	n, err = r.Up(ctx, 0)
+	n, err = r.Up(ctx, 1) // only 0009: later migrations (0010+) must not change the count
 	require.NoError(t, err)
 	assert.Equal(t, 1, n)
 	require.NoError(t, pool.QueryRow(ctx, `SELECT outstanding_units FROM booking.admissions WHERE id='a0000000-0000-0000-0000-000000000002'`).Scan(&o2))
