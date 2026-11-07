@@ -5,7 +5,9 @@ package valkey
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"strconv"
 	"time"
@@ -13,6 +15,7 @@ import (
 	vk "github.com/valkey-io/valkey-go"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/clock"
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/queueshard"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/assets/lua"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/domain/entity"
@@ -28,42 +31,79 @@ type Keyer interface {
 // QueueStore implements outbound.IQueueStore. It caches Lua scripts as valkey-go Script helpers
 // (EVALSHA with EVAL fallback on NOSCRIPT).
 type QueueStore struct {
-	c     vk.Client
-	keyer Keyer
-	clk   clock.IClock
+	c      vk.Client
+	keyer  Keyer
+	clk    clock.IClock
+	shards int
 
 	join     *vk.Lua
 	promote  *vk.Lua
 	claim    *vk.Lua
 	leave    *vk.Lua
 	endEntry *vk.Lua
+
+	releaseLease *vk.Lua
+
+	heartbeat    *vk.Lua
+	liveness     *vk.Lua
+	livenessTick *vk.Lua
 }
 
-// NewQueueStore returns the store with the embedded scripts loaded.
-func NewQueueStore(c vk.Client, keyer Keyer, clk clock.IClock) *QueueStore {
+// NewQueueStore returns the store with the embedded scripts loaded. shards is the liveness-index shard count
+// (QUEUE_LIVENESS_SHARDS); values <= 0 collapse to a single shard (pre-sharding behaviour).
+func NewQueueStore(c vk.Client, keyer Keyer, clk clock.IClock, shards int) *QueueStore {
+	if shards < 1 {
+		shards = 1
+	}
 	return &QueueStore{
-		c: c, keyer: keyer, clk: clk,
+		c: c, keyer: keyer, clk: clk, shards: shards,
 		join:     vk.NewLuaScript(lua.Join),
 		promote:  vk.NewLuaScript(lua.Promote),
 		claim:    vk.NewLuaScript(lua.Claim),
 		leave:    vk.NewLuaScript(lua.Leave),
 		endEntry: vk.NewLuaScript(lua.EndEntry),
+
+		releaseLease: vk.NewLuaScript(lua.ReleaseLease),
+
+		heartbeat:    vk.NewLuaScript(lua.Heartbeat),
+		liveness:     vk.NewLuaScript(lua.Liveness),
+		livenessTick: vk.NewLuaScript(lua.LivenessTick),
 	}
 }
 
 // --- key builders (design §3.1; hash tag {e:<eventId>} keeps a script's keys in one slot) ---
 
-func (s *QueueStore) tag(eventID string) string   { return "q:{e:" + eventID + "}" }
+func (s *QueueStore) tag(eventID string) string { return "q:{e:" + eventID + "}" }
+
+// prefix is the per-event key prefix scripts use to build the keys they touch (all in the event's slot).
+func (s *QueueStore) prefix(e string) string      { return s.keyer.Key(s.tag(e) + ":") }
+func (s *QueueStore) k(e, name string) string     { return s.prefix(e) + name }
 func (s *QueueStore) kSeq(e string) string        { return s.keyer.Key(s.tag(e) + ":seq") }
 func (s *QueueStore) kWaiting(e string) string    { return s.keyer.Key(s.tag(e) + ":waiting") }
 func (s *QueueStore) kActive(e string) string     { return s.keyer.Key(s.tag(e) + ":active") }
 func (s *QueueStore) kEntry(e, id string) string  { return s.keyer.Key(s.tag(e) + ":entry:" + id) }
-func (s *QueueStore) kNik(e, h string) string     { return s.keyer.Key(s.tag(e) + ":nik:" + h) }
+func (s *QueueStore) kAccount(e, a string) string { return s.keyer.Key(s.tag(e) + ":account:" + a) }
 func (s *QueueStore) kVisitor(e, v string) string { return s.keyer.Key(s.tag(e) + ":visitor:" + v) }
-func (s *QueueStore) kEmail(e, h string) string   { return s.keyer.Key(s.tag(e) + ":email:" + h) }
-func (s *QueueStore) kQuota(e string) string      { return s.keyer.Key(s.tag(e) + ":quota_exhausted") }
-func (s *QueueStore) kStatus(e string) string     { return s.keyer.Key(s.tag(e) + ":status") }
-func (s *QueueStore) kSale(e string) string       { return s.keyer.Key(s.tag(e) + ":sale") }
+
+// kUnused names an inert slot of the leave/end scripts (the old email constraint key; ADR-030 has no email).
+func (s *QueueStore) kUnused(e string) string { return s.keyer.Key(s.tag(e) + ":unused") }
+func (s *QueueStore) kStatus(e string) string { return s.keyer.Key(s.tag(e) + ":status") }
+func (s *QueueStore) kSale(e string) string   { return s.keyer.Key(s.tag(e) + ":sale") }
+func (s *QueueStore) kLease(e string) string  { return s.keyer.Key(s.tag(e) + ":promoter:lock") }
+
+// shardOf returns the entry's liveness shard index as a string, deterministic per entry id.
+func (s *QueueStore) shardOf(entryID string) string {
+	return strconv.Itoa(queueshard.Shard(entryID, s.shards))
+}
+
+// kHbShard / kHbStaleShard are the per-shard liveness index keys (ADR-030 Amendment: hb/hbstale are sharded so the
+// promoter tick and the heartbeat writes no longer contend on one key).
+func (s *QueueStore) kHbShard(e, shard string) string {
+	return s.keyer.Key(s.tag(e) + ":hb:" + shard)
+}
+func (s *QueueStore) kHbStaleShard(e, shard string) string {
+	return s.keyer.Key(s.tag(e) + ":hbstale:" + shard)
+}
 
 func bstr(b bool) string {
 	if b {
@@ -72,18 +112,35 @@ func bstr(b bool) string {
 	return "0"
 }
 
-// Join runs join.lua atomically and maps the array reply to a JoinResult (design §4.1).
+// Join runs join.lua atomically and maps the array reply to a JoinResult (ADR-030: anonymous join).
 func (s *QueueStore) Join(ctx context.Context, p outbound.JoinParams) (outbound.JoinResult, error) {
-	keys := []string{
-		s.kSeq(p.EventID), s.kWaiting(p.EventID), s.kEntry(p.EventID, p.EntryID),
-		s.kNik(p.EventID, p.NikHash), s.kVisitor(p.EventID, p.VisitorID),
-		s.kEmail(p.EventID, p.EmailHash()), s.kQuota(p.EventID),
+	idem := ""
+	if p.IdemKey != "" {
+		scope := "n"
+		switch {
+		case p.AccountID != "":
+			scope = "a:" + p.AccountID
+		case p.TokenVisitorID != "":
+			scope = "v:" + p.TokenVisitorID
+		}
+		idem = scope + ":" + p.IdemKey
 	}
+	idemTTL := int(p.IdemTTL.Seconds())
+	if idemTTL < 1 {
+		idemTTL = 600
+	}
+	tokTTL := int(p.TokenTTL.Seconds())
+	if tokTTL < 1 {
+		tokTTL = 24 * 3600
+	}
+	shard := s.shardOf(p.EntryID)
 	args := []string{
-		p.EntryID, p.VisitorID, p.NikHash, string(p.EmailEnc), p.AccountID,
-		strconv.FormatInt(p.NowMs, 10), bstr(p.OneActivePerVisitor), bstr(p.OneActivePerEmail), p.EmailHashHex, p.NikMasked,
+		s.prefix(p.EventID), p.EntryID, p.NewVisitorID, p.TokenVisitorID, strconv.FormatInt(p.TokenGen, 10), p.AccountID,
+		idem, strconv.FormatInt(p.NowMs, 10), bstr(p.OneActivePerVisitor), strconv.Itoa(idemTTL), strconv.Itoa(tokTTL),
+		shard, s.kHbShard(p.EventID, shard),
 	}
-	arr, err := s.join.Exec(ctx, s.c, keys, args).ToArray()
+	// The declared key keeps the script routed to the event's slot; the script builds the rest from the prefix.
+	arr, err := s.join.Exec(ctx, s.c, []string{s.kSeq(p.EventID)}, args).ToArray()
 	if err != nil {
 		return outbound.JoinResult{}, fmt.Errorf("valkey: join.lua: %w", err)
 	}
@@ -91,65 +148,102 @@ func (s *QueueStore) Join(ctx context.Context, p outbound.JoinParams) (outbound.
 }
 
 func mapJoin(arr []vk.ValkeyMessage) (outbound.JoinResult, error) {
-	if len(arr) == 0 {
-		return outbound.JoinResult{}, fmt.Errorf("valkey: join.lua balasan kosong")
+	if len(arr) < 6 {
+		return outbound.JoinResult{}, fmt.Errorf("valkey: join.lua balasan tak terduga (%d elemen)", len(arr))
 	}
+	gen, _ := arr[5].AsInt64()
 	tag, _ := arr[0].ToString()
-	switch tag {
-	case "OK":
-		seq, _ := arr[1].ToInt64()
-		return outbound.JoinResult{Outcome: outbound.JoinOK, Seq: seq}, nil
-	case "EXISTING":
-		kind, _ := arr[1].ToString()
-		id, _ := arr[2].ToString()
-		switch kind {
-		case "NIK":
-			return outbound.JoinResult{Outcome: outbound.JoinExistingNIK, ExistingEntryID: id}, nil
-		case "VISITOR":
-			return outbound.JoinResult{Outcome: outbound.JoinExistingVisit, ExistingEntryID: id}, nil
-		case "EMAIL":
-			return outbound.JoinResult{Outcome: outbound.JoinExistingEmail, ExistingEntryID: id}, nil
-		}
-	case "ERR":
-		return outbound.JoinResult{Outcome: outbound.JoinQuotaExhausted}, nil
+	res := outbound.JoinResult{Outcome: outbound.JoinOutcome(tag)}
+	res.EntryID, _ = arr[1].ToString()
+	seq, _ := arr[2].ToString()
+	res.Seq, _ = strconv.ParseInt(seq, 10, 64)
+	res.VisitorID, _ = arr[3].ToString()
+	res.Status, _ = arr[4].ToString()
+	res.Gen = gen
+	switch res.Outcome {
+	case outbound.JoinCreated, outbound.JoinExisting, outbound.JoinReattach, outbound.JoinAccountInQueue:
+		return res, nil
 	}
 	return outbound.JoinResult{}, fmt.Errorf("valkey: join.lua tag tak dikenal %q", tag)
 }
 
-// Promote moves reserved candidates waiting→active atomically (design §4.2) and returns promoted ids.
-func (s *QueueStore) Promote(ctx context.Context, eventID string, cands []outbound.PromoteCandidate, capacity int, nowMs int64) ([]string, error) {
-	keys := []string{s.kWaiting(eventID), s.kActive(eventID)}
+// Promote moves reserved candidates waiting→active atomically, fenced by the promoter lease token
+// (design §5.4, ADR-029). An empty token is an error before any Valkey call: an unfenced promote is a defect.
+func (s *QueueStore) Promote(ctx context.Context, eventID string, cands []outbound.PromoteCandidate, capacity int, nowMs int64, opts outbound.PromoteOpts) (outbound.PromoteResult, error) {
+	if opts.LeaseToken == "" {
+		return outbound.PromoteResult{}, errors.New("valkey: promote: LeaseToken wajib (fence promoter)")
+	}
+	if len(cands) == 0 {
+		return outbound.PromoteResult{}, nil
+	}
+	keys := []string{s.kWaiting(eventID), s.kActive(eventID), s.kLease(eventID)}
 	for _, c := range cands {
 		keys = append(keys, s.kEntry(eventID, c.EntryID))
 	}
-	args := []string{strconv.Itoa(capacity), strconv.FormatInt(nowMs, 10)}
+	args := []string{strconv.Itoa(capacity), strconv.FormatInt(nowMs, 10), bstr(opts.RequireHead), opts.LeaseToken}
 	for _, c := range cands {
-		args = append(args, c.EntryID, c.AllocationID, strconv.FormatInt(c.ClaimDeadlineMs, 10))
+		shard := s.shardOf(c.EntryID)
+		args = append(args, c.EntryID, c.AllocationID, strconv.FormatInt(c.ClaimDeadlineMs, 10), s.kHbShard(eventID, shard))
 	}
 	arr, err := s.promote.Exec(ctx, s.c, keys, args).ToArray()
 	if err != nil {
-		return nil, fmt.Errorf("valkey: promote.lua: %w", err)
+		return outbound.PromoteResult{}, fmt.Errorf("valkey: promote.lua: %w", err)
 	}
-	if len(arr) == 0 {
-		return nil, nil
-	}
-	tag, _ := arr[0].ToString()
-	if tag == "FULL" || len(arr) < 2 {
-		return nil, nil
-	}
-	ids, err := arr[1].ToArray()
-	if err != nil {
-		return nil, nil
-	}
-	out := make([]string, 0, len(ids))
-	for _, m := range ids {
-		id, _ := m.ToString()
-		out = append(out, id)
-	}
-	return out, nil
+	return mapPromote(arr)
 }
 
-// Claim runs claim.lua (design §4.3). Maps ERR tags to domain errors.
+// mapPromote parses the promote.lua reply. Anything that is not a documented shape is an error: swallowing it
+// as "nothing promoted" would strand a RESERVED allocation without anyone noticing (Q-03).
+func mapPromote(arr []vk.ValkeyMessage) (outbound.PromoteResult, error) {
+	if len(arr) == 0 {
+		return outbound.PromoteResult{}, errors.New("valkey: promote.lua balasan kosong")
+	}
+	tag, _ := arr[0].ToString()
+	switch tag {
+	case "LEASE_LOST":
+		return outbound.PromoteResult{LeaseLost: true}, nil
+	case "FULL":
+		return outbound.PromoteResult{Full: true}, nil
+	case "OK":
+	default:
+		return outbound.PromoteResult{}, fmt.Errorf("valkey: promote.lua tag tak dikenal %q", tag)
+	}
+	if len(arr) < 3 {
+		return outbound.PromoteResult{}, fmt.Errorf("valkey: promote.lua balasan OK terlalu pendek (%d)", len(arr))
+	}
+	promotedArr, err := arr[1].ToArray()
+	if err != nil {
+		return outbound.PromoteResult{}, fmt.Errorf("valkey: promote.lua daftar promoted: %w", err)
+	}
+	skippedArr, err := arr[2].ToArray()
+	if err != nil {
+		return outbound.PromoteResult{}, fmt.Errorf("valkey: promote.lua daftar skipped: %w", err)
+	}
+	res := outbound.PromoteResult{}
+	for _, m := range promotedArr {
+		id, err := m.ToString()
+		if err != nil {
+			return outbound.PromoteResult{}, fmt.Errorf("valkey: promote.lua id promoted: %w", err)
+		}
+		res.Promoted = append(res.Promoted, id)
+	}
+	for _, m := range skippedArr {
+		f, err := m.ToArray()
+		if err != nil || len(f) < 2 {
+			return outbound.PromoteResult{}, fmt.Errorf("valkey: promote.lua baris skipped tidak valid")
+		}
+		sk := outbound.PromoteSkip{}
+		sk.EntryID, _ = f[0].ToString()
+		sk.Status, _ = f[1].ToString()
+		if len(f) >= 3 {
+			sk.AllocationID, _ = f[2].ToString()
+		}
+		res.Skipped = append(res.Skipped, sk)
+	}
+	return res, nil
+}
+
+// Claim runs claim.lua (design §5.3). Maps ERR tags to domain errors; GONE (terminal) is reported as not found.
 func (s *QueueStore) Claim(ctx context.Context, eventID, entryID, visitorID string, nowMs int64) (outbound.ClaimResult, error) {
 	keys := []string{s.kEntry(eventID, entryID), s.kActive(eventID)}
 	args := []string{entryID, strconv.FormatInt(nowMs, 10), visitorID}
@@ -164,70 +258,94 @@ func (s *QueueStore) Claim(ctx context.Context, eventID, entryID, visitorID stri
 	detail, _ := arr[1].ToString()
 	if tag == "ERR" {
 		switch detail {
-		case "NOT_FOUND":
+		case "NOT_FOUND", "GONE":
 			return outbound.ClaimResult{}, entity.ErrNotFound
+		case "NOT_ADMITTED":
+			return outbound.ClaimResult{}, entity.ErrNotAdmitted
 		case "TURN_MISSED":
 			return outbound.ClaimResult{}, entity.ErrTurnMissed
 		}
 		return outbound.ClaimResult{}, fmt.Errorf("valkey: claim.lua err %q", detail)
 	}
-	return outbound.ClaimResult{Status: detail}, nil
+	res := outbound.ClaimResult{Status: detail}
+	if len(arr) >= 3 {
+		res.AllocationID, _ = arr[2].ToString()
+	}
+	return res, nil
 }
 
-// Leave runs leave.lua (design §4.4). wasActive=true means a slot was freed.
-func (s *QueueStore) Leave(ctx context.Context, eventID, entryID, visitorID string, nowMs int64) (bool, error) {
+// Leave runs leave.lua (design §5.2). Ownership and status are decided inside the script; the Go pre-read only
+// derives the immutable constraint-key names. NOT_FOUND (also for a wrong owner) is entity.ErrNotFound.
+func (s *QueueStore) Leave(ctx context.Context, eventID, entryID, visitorID string, nowMs int64) (outbound.LeaveResult, error) {
 	ent, ok, err := s.GetEntry(ctx, eventID, entryID)
 	if err != nil {
-		return false, err
+		return outbound.LeaveResult{}, err
 	}
-	nikKey, emailKey := s.kNik(eventID, ""), s.kEmail(eventID, "")
+	// leave.lua deletes each constraint key only while it still points at this entry. The NIK/email slots are gone
+	// (ADR-030); they now carry the account key and an inert placeholder so the script stays unchanged.
+	nikKey, emailKey := s.kAccount(eventID, ""), s.kUnused(eventID)
 	if ok {
-		nikKey = s.kNik(eventID, ent.BuyerNikHashHex())
-		emailKey = s.kEmail(eventID, ent.EmailHashHex())
+		nikKey = s.kAccount(eventID, ent.AccountID)
 	}
 	keys := []string{
 		s.kEntry(eventID, entryID), s.kWaiting(eventID), s.kActive(eventID),
 		nikKey, s.kVisitor(eventID, visitorID), emailKey,
 	}
-	args := []string{entryID, visitorID, strconv.FormatInt(nowMs, 10)}
+	shard := s.shardOf(entryID)
+	args := []string{
+		entryID, visitorID, strconv.FormatInt(nowMs, 10), s.prefix(eventID),
+		s.kHbShard(eventID, shard), s.kHbStaleShard(eventID, shard),
+	}
 	arr, err := s.leave.Exec(ctx, s.c, keys, args).ToArray()
 	if err != nil {
-		return false, fmt.Errorf("valkey: leave.lua: %w", err)
+		return outbound.LeaveResult{}, fmt.Errorf("valkey: leave.lua: %w", err)
 	}
-	if len(arr) < 1 {
-		return false, fmt.Errorf("valkey: leave.lua balasan kosong")
+	if len(arr) < 2 {
+		return outbound.LeaveResult{}, fmt.Errorf("valkey: leave.lua balasan tak terduga")
 	}
 	tag, _ := arr[0].ToString()
-	if tag == "ERR" {
-		return false, entity.ErrNotFound
+	second, _ := arr[1].ToString()
+	switch tag {
+	case "ERR":
+		return outbound.LeaveResult{}, entity.ErrNotFound
+	case "IGNORED":
+		return outbound.LeaveResult{Tag: "IGNORED", PrevStatus: second}, nil
+	case "OK":
+		res := outbound.LeaveResult{Tag: "OK", PrevStatus: second}
+		if len(arr) >= 3 {
+			res.AllocationID, _ = arr[2].ToString()
+		}
+		return res, nil
 	}
-	wasActive := int64(0)
-	if len(arr) >= 2 {
-		wasActive, _ = arr[1].ToInt64()
-	}
-	return wasActive == 1, nil
+	return outbound.LeaveResult{}, fmt.Errorf("valkey: leave.lua tag tak dikenal %q", tag)
 }
 
 // EndEntry runs end_entry.lua for the booking.journey.ended consumer (design §4.5). Idempotent.
-func (s *QueueStore) EndEntry(ctx context.Context, eventID, entryID, outcome string, nowMs int64) (string, error) {
+func (s *QueueStore) EndEntry(ctx context.Context, eventID, entryID, outcome string, nowMs int64) (outbound.EndResult, error) {
 	ent, _, err := s.GetEntry(ctx, eventID, entryID)
 	if err != nil {
-		return "", err
+		return outbound.EndResult{}, err
 	}
 	keys := []string{
 		s.kEntry(eventID, entryID), s.kActive(eventID),
-		s.kNik(eventID, ent.BuyerNikHashHex()), s.kVisitor(eventID, ent.VisitorID), s.kEmail(eventID, ent.EmailHashHex()),
+		s.kAccount(eventID, ent.AccountID), s.kVisitor(eventID, ent.VisitorID), s.kUnused(eventID),
+		s.kWaiting(eventID),
 	}
-	args := []string{entryID, outcome, strconv.FormatInt(nowMs, 10)}
+	shard := s.shardOf(entryID)
+	args := []string{
+		entryID, outcome, strconv.FormatInt(nowMs, 10), s.prefix(eventID),
+		s.kHbShard(eventID, shard), s.kHbStaleShard(eventID, shard),
+	}
 	arr, err := s.endEntry.Exec(ctx, s.c, keys, args).ToArray()
 	if err != nil {
-		return "", fmt.Errorf("valkey: end_entry.lua: %w", err)
+		return outbound.EndResult{}, fmt.Errorf("valkey: end_entry.lua: %w", err)
 	}
 	if len(arr) < 2 {
-		return "", nil
+		return outbound.EndResult{}, nil
 	}
+	tag, _ := arr[0].ToString()
 	final, _ := arr[1].ToString()
-	return final, nil
+	return outbound.EndResult{Tag: tag, Status: final}, nil
 }
 
 // GetEntry reads the entry hash (design §3.2).
@@ -276,87 +394,18 @@ func (s *QueueStore) TopWaiting(ctx context.Context, eventID string, n int) ([]s
 	return ids, nil
 }
 
-// ExpiredActive returns active entry ids whose claim deadline is at or before nowMs.
-func (s *QueueStore) ExpiredActive(ctx context.Context, eventID string, nowMs int64) ([]string, error) {
+// ExpiredActive returns at most limit active entry ids whose claim deadline is at or before nowMs, oldest first.
+// limit must be positive (REQ-QSH-11.2): an unbounded scan would let a poison page grow without bound.
+func (s *QueueStore) ExpiredActive(ctx context.Context, eventID string, nowMs int64, limit int) ([]string, error) {
+	if limit <= 0 {
+		return nil, fmt.Errorf("valkey: ExpiredActive limit harus positif, dapat %d", limit)
+	}
 	ids, err := s.c.Do(ctx, s.c.B().Zrange().Key(s.kActive(eventID)).Min("0").
-		Max(strconv.FormatInt(nowMs, 10)).Byscore().Build()).AsStrSlice()
+		Max(strconv.FormatInt(nowMs, 10)).Byscore().Limit(0, int64(limit)).Build()).AsStrSlice()
 	if err != nil {
 		return nil, fmt.Errorf("valkey: zrangebyscore active expired: %w", err)
 	}
 	return ids, nil
-}
-
-// MarkMissed atomically removes an expired entry from active and sets status MISSED.
-func (s *QueueStore) MarkMissed(ctx context.Context, eventID, entryID string, nowMs int64) (bool, error) {
-	ent, ok, err := s.GetEntry(ctx, eventID, entryID)
-	if err != nil {
-		return false, err
-	}
-	if !ok || ent.Status != valueobject.StatusAdmitted {
-		return false, nil
-	}
-	for _, resp := range s.c.DoMulti(ctx,
-		s.c.B().Zrem().Key(s.kActive(eventID)).Member(entryID).Build(),
-		s.c.B().Hset().Key(s.kEntry(eventID, entryID)).FieldValue().FieldValue("status", string(valueobject.StatusMissed)).Build(),
-	) {
-		if err := resp.Error(); err != nil {
-			return false, fmt.Errorf("valkey: mark missed: %w", err)
-		}
-	}
-	return true, nil
-}
-
-// MarkMissedAndClean atomically sets status MISSED, removes from active ZSET, and cleans
-// NIK/visitor/email constraint keys so the user can rejoin (TC-QUE-09).
-// Uses raw EVAL (not the LuaScript EVALSHA wrapper) to avoid cluster routing issues.
-func (s *QueueStore) MarkMissedAndClean(ctx context.Context, eventID, entryID string, nowMs int64) (bool, error) {
-	ent, ok, err := s.GetEntry(ctx, eventID, entryID)
-	if err != nil {
-		return false, err
-	}
-	if !ok {
-		return false, nil
-	}
-
-	// If already MISSED (set by claim.lua before sweeper ran), still clean constraint keys.
-	if ent.Status == valueobject.StatusMissed {
-		keys := []string{
-			s.kNik(eventID, ent.BuyerNikHashHex()),
-			s.kVisitor(eventID, ent.VisitorID),
-			s.kEmail(eventID, ent.EmailHashHex()),
-		}
-		for _, resp := range s.c.DoMulti(ctx,
-			s.c.B().Del().Key(keys[0]).Build(),
-			s.c.B().Del().Key(keys[1]).Build(),
-			s.c.B().Del().Key(keys[2]).Build(),
-			s.c.B().Zrem().Key(s.kActive(eventID)).Member(entryID).Build(),
-		) {
-			_ = resp.Error() // best-effort cleanup
-		}
-		return true, nil
-	}
-
-	if ent.Status != valueobject.StatusAdmitted {
-		return false, nil
-	}
-
-	keys := []string{
-		s.kEntry(eventID, entryID), s.kActive(eventID),
-		s.kNik(eventID, ent.BuyerNikHashHex()), s.kVisitor(eventID, ent.VisitorID), s.kEmail(eventID, ent.EmailHashHex()),
-	}
-	args := []string{entryID, "UNCLAIMED", strconv.FormatInt(nowMs, 10)}
-
-	// Use raw EVAL to ensure the current end_entry.lua runs on the correct master node.
-	arr, eerr := s.c.Do(ctx, s.c.B().Eval().Script(lua.EndEntry).
-		Numkeys(int64(len(keys))).Key(keys...).Arg(args...).Build()).ToArray()
-	if eerr != nil {
-		return false, fmt.Errorf("valkey: end_entry (missed+clean): %w", eerr)
-	}
-	if len(arr) == 0 {
-		return false, nil
-	}
-	tag, _ := arr[0].ToString()
-	return tag == "OK", nil
 }
 
 // WasNotifiedSoon reports whether a pre-turn notification was already sent for this entry.
@@ -372,12 +421,11 @@ func (s *QueueStore) WasNotifiedSoon(ctx context.Context, eventID, entryID strin
 // MarkNotifiedSoon records that a pre-turn notification was sent (idempotent SETNX, TTL=600s).
 func (s *QueueStore) MarkNotifiedSoon(ctx context.Context, eventID, entryID string) error {
 	key := s.keyer.Key(s.tag(eventID) + ":notified_soon:" + entryID)
-	return s.c.Do(ctx, s.c.B().Set().Key(key).Value("1").Nx().Ex(600*time.Second).Build()).Error()
-}
-
-// AddQuotaExhausted records a NIK hash in the quota_exhausted set (idempotent SADD).
-func (s *QueueStore) AddQuotaExhausted(ctx context.Context, eventID, nikHash string) error {
-	return s.c.Do(ctx, s.c.B().Sadd().Key(s.kQuota(eventID)).Member(nikHash).Build()).Error()
+	err := s.c.Do(ctx, s.c.B().Set().Key(key).Value("1").Nx().Ex(600*time.Second).Build()).Error()
+	if vk.IsValkeyNil(err) {
+		return nil // SET NX answers nil when the mark already exists: marking twice is idempotent
+	}
+	return err
 }
 
 // SetSale writes the sale-state hash.
@@ -393,9 +441,6 @@ func (s *QueueStore) GetSale(ctx context.Context, eventID string) (outbound.Sale
 		return outbound.SaleState{}, fmt.Errorf("valkey: hgetall sale: %w", err)
 	}
 	st := outbound.SaleState{SaleState: m["saleState"], SoldOut: m["soldOut"] == "1"}
-	if v, ok := m["servingSeq"]; ok {
-		st.ServingSeq, _ = strconv.ParseInt(v, 10, 64)
-	}
 	return st, nil
 }
 
@@ -421,15 +466,9 @@ func hashToEntry(id string, m map[string]string) entity.Entry {
 	if seq, err := strconv.ParseInt(m["seq"], 10, 64); err == nil {
 		e.Seq = valueobject.Seq(seq)
 	}
-	if b, err := hex.DecodeString(m["buyerNikHash"]); err == nil {
-		e.BuyerNikHash = b
-	}
-	if b, err := hex.DecodeString(m["emailHash"]); err == nil {
-		e.EmailHash = b
-	}
-	e.EmailEnc = []byte(m["emailEnc"])
-	e.BuyerNikMasked = m["nikMasked"]
 	e.Status = valueobject.Status(m["status"])
+	e.LastSignalMs = parseMs(m["lastSignalMs"])
+	e.EndReason = m["endReason"]
 	e.JoinedAtMs = parseMs(m["joinedAtMs"])
 	e.AdmittedAtMs = parseMs(m["admittedAtMs"])
 	e.ClaimedAtMs = parseMs(m["claimedAtMs"])
@@ -442,24 +481,182 @@ func parseMs(v string) int64 {
 	return n
 }
 
-// AcquirePromoterLease tries to set a distributed lock for the promoter on a given event.
-// Uses SET NX PX so only one worker instance holds the lease at a time (spec 11.R3, req 6.12).
-// Returns true if the lease was acquired.
-func (s *QueueStore) AcquirePromoterLease(ctx context.Context, eventID string, ttlMs int64) (bool, error) {
-	key := s.keyer.Key(s.tag(eventID) + ":promoter:lock")
-	ttl := time.Duration(ttlMs) * time.Millisecond
-	res, err := s.c.Do(ctx, s.c.B().Set().Key(key).Value("1").Nx().Px(ttl).Build()).ToString()
+// AcquirePromoterLease tries to set the per-event promoter lease (SET NX PX) with a fresh random token as the
+// value, so release and the promote.lua fence can tell the holder from a later holder (design §5.5, ADR-029).
+func (s *QueueStore) AcquirePromoterLease(ctx context.Context, eventID string, ttl time.Duration) (string, bool, error) {
+	tok, err := newLeaseToken()
+	if err != nil {
+		return "", false, err
+	}
+	res, err := s.c.Do(ctx, s.c.B().Set().Key(s.kLease(eventID)).Value(tok).Nx().Px(ttl).Build()).ToString()
 	if vk.IsValkeyNil(err) {
-		return false, nil // another instance holds the lease
+		return "", false, nil // another instance holds the lease
 	}
 	if err != nil {
-		return false, fmt.Errorf("valkey: acquire_promoter_lease: %w", err)
+		return "", false, fmt.Errorf("valkey: acquire_promoter_lease: %w", err)
 	}
-	return res == "OK", nil
+	if res != "OK" {
+		return "", false, nil
+	}
+	return tok, true, nil
 }
 
-// ReleasePromoterLease releases a previously acquired promoter lease.
-func (s *QueueStore) ReleasePromoterLease(ctx context.Context, eventID string) error {
-	key := s.keyer.Key(s.tag(eventID) + ":promoter:lock")
-	return s.c.Do(ctx, s.c.B().Del().Key(key).Build()).Error()
+// ReleasePromoterLease deletes the lease only if token still owns it (compare-and-delete). A stale holder whose TTL
+// lapsed must never delete the lease of whoever acquired it afterwards.
+func (s *QueueStore) ReleasePromoterLease(ctx context.Context, eventID, token string) error {
+	if token == "" {
+		return errors.New("valkey: release_promoter_lease: token kosong")
+	}
+	if err := s.releaseLease.Exec(ctx, s.c, []string{s.kLease(eventID)}, []string{token}).Error(); err != nil {
+		return fmt.Errorf("valkey: release_promoter_lease: %w", err)
+	}
+	return nil
+}
+
+func newLeaseToken() (string, error) {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("valkey: lease token: %w", err)
+	}
+	return hex.EncodeToString(b), nil
+}
+
+// --- ADR-030: liveness, token generation and FIFO-by-seq positions ---
+
+// Heartbeat runs heartbeat.lua, passing the visitor's entry shard keys. The entry id is unknown here (the script
+// resolves it from vlast), so the caller cannot precompute the shard; instead the script addresses hb/hbstale
+// from the keys Go passes for the resolved entry. To avoid a round-trip, Go resolves the entry first.
+func (s *QueueStore) Heartbeat(ctx context.Context, eventID, visitorID string, gen, nowMs int64) (outbound.HeartbeatResult, error) {
+	// Resolve the entry id so the shard keys are addressed to the shard the entry lives in. The script re-reads and
+	// re-validates everything atomically; this read only picks the shard keys (the shard is a pure function of id).
+	entryID, _ := s.c.Do(ctx, s.c.B().Get().Key(s.k(eventID, "vlast:"+visitorID)).Build()).ToString()
+	shard := s.shardOf(entryID)
+	arr, err := s.heartbeat.Exec(ctx, s.c, []string{s.kSeq(eventID)},
+		[]string{
+			s.prefix(eventID), visitorID, strconv.FormatInt(gen, 10), strconv.FormatInt(nowMs, 10),
+			s.kHbShard(eventID, shard), s.kHbStaleShard(eventID, shard),
+		}).ToArray()
+	if err != nil {
+		return outbound.HeartbeatResult{}, fmt.Errorf("valkey: heartbeat.lua: %w", err)
+	}
+	tag, _ := arr[0].ToString()
+	res := outbound.HeartbeatResult{Tag: outbound.HeartbeatTag(tag)}
+	if res.Tag == outbound.HeartbeatOK && len(arr) >= 5 {
+		res.EntryID, _ = arr[1].ToString()
+		res.Status, _ = arr[2].ToString()
+		res.Seq, _ = arr[3].AsInt64()
+		rv, _ := arr[4].AsInt64()
+		res.Revived = rv == 1
+	}
+	return res, nil
+}
+
+// TokenGen reads vtok:<visitor>.
+func (s *QueueStore) TokenGen(ctx context.Context, eventID, visitorID string) (int64, bool, error) {
+	g, err := s.c.Do(ctx, s.c.B().Get().Key(s.k(eventID, "vtok:"+visitorID)).Build()).AsInt64()
+	if vk.IsValkeyNil(err) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, fmt.Errorf("valkey: get vtok: %w", err)
+	}
+	return g, true, nil
+}
+
+// FindLastByVisitor follows vlast:<visitor> to the most recent entry in any state.
+func (s *QueueStore) FindLastByVisitor(ctx context.Context, eventID, visitorID string) (entity.Entry, bool, error) {
+	id, err := s.c.Do(ctx, s.c.B().Get().Key(s.k(eventID, "vlast:"+visitorID)).Build()).ToString()
+	if vk.IsValkeyNil(err) {
+		return entity.Entry{}, false, nil
+	}
+	if err != nil {
+		return entity.Entry{}, false, fmt.Errorf("valkey: get vlast: %w", err)
+	}
+	return s.GetEntry(ctx, eventID, id)
+}
+
+// SweepLiveness runs liveness.lua once per shard under the lease token (ADR-030 Amendment: the hb/hbstale index is
+// sharded, so the per-tick sweep fans out over all shards instead of contending on one key). The lease fence is
+// re-checked at the start of every shard call; a lost lease aborts the whole fan-out. batch bounds the work PER
+// SHARD (so up to shards*batch entries can be swept per tick).
+func (s *QueueStore) SweepLiveness(ctx context.Context, eventID, leaseToken string, staleBeforeMs, endBeforeMs int64, batch int, nowMs int64) (outbound.LivenessResult, error) {
+	// One EVAL sweeps ALL shards (the script loops s=0..B-1). Fanning out as B separate EVALs multiplied the
+	// promoter-tick latency because every round-trip queues behind the heartbeat traffic on Valkey's single command
+	// thread (design-change §4.3); a single round-trip keeps the tick within +20 % of base under load.
+	arr, err := s.liveness.Exec(ctx, s.c, []string{s.kSeq(eventID)}, []string{
+		s.prefix(eventID), leaseToken, strconv.FormatInt(staleBeforeMs, 10), strconv.FormatInt(endBeforeMs, 10),
+		strconv.Itoa(batch), strconv.FormatInt(nowMs, 10), strconv.Itoa(s.shards),
+	}).ToArray()
+	if err != nil {
+		return outbound.LivenessResult{}, fmt.Errorf("valkey: liveness.lua (B=%d): %w", s.shards, err)
+	}
+	tag, _ := arr[0].ToString()
+	if tag == "LEASE_LOST" {
+		return outbound.LivenessResult{LeaseLost: true}, nil
+	}
+	st, _ := arr[1].AsInt64()
+	en, _ := arr[2].AsInt64()
+	return outbound.LivenessResult{Staled: int(st), Ended: int(en)}, nil
+}
+
+// SweepLivenessTick acquires the promoter lease, sweeps all shards and releases the lease in ONE round-trip
+// (liveness_tick.lua). The liveness worker uses this instead of the acquire → SweepLiveness → release triple so the
+// promoter tick issues a single command under heartbeat load: on Valkey's single command thread each extra round-trip
+// queues behind the heartbeat traffic, so collapsing three round-trips into one keeps the tick within +20 % of base
+// (design-change §4.3). ttl bounds the lease the script takes for the duration of its own execution. The entry
+// liveness rules (STALE/revive/end) are identical to SweepLiveness.
+func (s *QueueStore) SweepLivenessTick(ctx context.Context, eventID string, staleBeforeMs, endBeforeMs int64, batch int, nowMs int64, ttl time.Duration, topN int) (outbound.LivenessResult, []string, error) {
+	tok, err := newLeaseToken()
+	if err != nil {
+		return outbound.LivenessResult{}, nil, err
+	}
+	arr, err := s.livenessTick.Exec(ctx, s.c, []string{s.kLease(eventID)}, []string{
+		s.prefix(eventID), tok, strconv.FormatInt(staleBeforeMs, 10), strconv.FormatInt(endBeforeMs, 10),
+		strconv.Itoa(batch), strconv.FormatInt(nowMs, 10), strconv.Itoa(s.shards), strconv.FormatInt(ttl.Milliseconds(), 10),
+		strconv.Itoa(topN),
+	}).ToArray()
+	if err != nil {
+		return outbound.LivenessResult{}, nil, fmt.Errorf("valkey: liveness_tick.lua (B=%d): %w", s.shards, err)
+	}
+	tag, _ := arr[0].ToString()
+	if tag == "LEASE_LOST" {
+		return outbound.LivenessResult{LeaseLost: true}, nil, nil
+	}
+	st, _ := arr[1].AsInt64()
+	en, _ := arr[2].AsInt64()
+	var top []string
+	if len(arr) >= 4 {
+		top, _ = arr[3].AsStrSlice()
+	}
+	return outbound.LivenessResult{Staled: int(st), Ended: int(en)}, top, nil
+}
+
+// WaitingSeqAt returns the seq (score) of the live waiting entry at 0-based index idx.
+func (s *QueueStore) WaitingSeqAt(ctx context.Context, eventID string, idx int64) (int64, bool, error) {
+	zs, err := s.c.Do(ctx, s.c.B().Zrange().Key(s.kWaiting(eventID)).Min(strconv.FormatInt(idx, 10)).Max(strconv.FormatInt(idx, 10)).Withscores().Build()).AsZScores()
+	if err != nil {
+		return 0, false, fmt.Errorf("valkey: zrange waiting: %w", err)
+	}
+	if len(zs) == 0 {
+		return 0, false, nil
+	}
+	return int64(zs[0].Score), true, nil
+}
+
+// WaitingCount is ZCARD waiting (live entries only; STALE are in their own set).
+func (s *QueueStore) WaitingCount(ctx context.Context, eventID string) (int64, error) {
+	n, err := s.c.Do(ctx, s.c.B().Zcard().Key(s.kWaiting(eventID)).Build()).AsInt64()
+	if err != nil {
+		return 0, fmt.Errorf("valkey: zcard waiting: %w", err)
+	}
+	return n, nil
+}
+
+// LivePosition returns 1 + ZCOUNT waiting -inf (seq.
+func (s *QueueStore) LivePosition(ctx context.Context, eventID string, seq int64) (int64, error) {
+	n, err := s.c.Do(ctx, s.c.B().Zcount().Key(s.kWaiting(eventID)).Min("-inf").Max("("+strconv.FormatInt(seq, 10)).Build()).AsInt64()
+	if err != nil {
+		return 0, fmt.Errorf("valkey: zcount waiting: %w", err)
+	}
+	return n + 1, nil
 }

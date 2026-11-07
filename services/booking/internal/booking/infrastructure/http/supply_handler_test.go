@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -99,4 +100,33 @@ func TestInternalHandler_Supply_RefusesWithoutAServiceToken(t *testing.T) {
 			assert.Equal(t, http.StatusUnauthorized, w.Code)
 		})
 	}
+}
+
+// Producer side of the contract: the handler output must equal the golden fixture that the Queue's
+// bookingclient test decodes. The golden is the only copy of the field names.
+func TestInternalHandler_GetSupply_MatchesGolden(t *testing.T) {
+	raw, err := os.ReadFile("../../../../../../docs/contracts/fixtures/internal-booking-supply.json")
+	require.NoError(t, err)
+	var snap dto.SupplySnapshot
+	require.NoError(t, json.Unmarshal(raw, &snap), "golden decodes into the producer DTO")
+	assert.Equal(t, 6, snap.AllocatedUnits)
+	assert.Equal(t, 4, snap.HeldUnits)
+	assert.Equal(t, 2, snap.FreeUnits)
+	assert.Equal(t, 3, snap.MaxTicketsPerOrder)
+	assert.False(t, snap.SalesStartsAt.IsZero())
+	assert.False(t, snap.SalesEndsAt.IsZero())
+
+	h := bookinghttp.NewInternalHandler(nil, allowAll{}).WithSupply(&stubSupply{snap: snap})
+	mux := http.NewServeMux()
+	h.Register(mux)
+	req := httptest.NewRequest(http.MethodGet, "/internal/v1/events/x/supply", nil)
+	req.Header.Set("Authorization", "Bearer t")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+	var env struct {
+		Data json.RawMessage `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &env))
+	assert.JSONEq(t, string(raw), string(env.Data))
 }

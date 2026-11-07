@@ -4,6 +4,7 @@ package postgres
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -366,6 +367,50 @@ func TestEventWriteRepo_CreateAndUpdateConfig(t *testing.T) {
 	assert.Equal(t, 120, e.SelectionTTLSeconds)
 	assert.Equal(t, 900, e.PaymentTTLSeconds)
 	assert.ErrorIs(t, w.UpdateConfig(ctx, "00000000-0000-0000-0000-000000000000", dto.UpdateEventConfigRequest{SelectionTTLSeconds: &sel}), inbound.ErrNotFound)
+}
+
+func TestEventWriteRepo_Description(t *testing.T) {
+	f := seed(t)
+	ctx := context.Background()
+	w, r := NewEventWriteRepo(f.pool), NewEventRepo(f.pool)
+	id := f.q(t, `SELECT gen_random_uuid()::text`)
+	doc := json.RawMessage(`[{"type":"paragraph","children":[{"text":"halo"}]}]`)
+	require.NoError(t, w.CreateEvent(ctx, id, dto.CreateEventRequest{
+		Name: "Desc", Slug: "desc", Venue: "JIS", Description: doc,
+		StartsAt: time.Now().Add(72 * time.Hour), SalesStartsAt: time.Now().Add(time.Hour), SalesEndsAt: time.Now().Add(48 * time.Hour),
+		MaxTicketsPerOrder: 2, MaxTicketsPerBuyerNIK: 2,
+		Categories: []dto.CreateCategoryRequest{{Code: "GA", Name: "General", PriceMinor: 50000, Capacity: 20}},
+	}))
+	e, err := r.GetByID(ctx, id)
+	require.NoError(t, err)
+	assert.JSONEq(t, string(doc), string(e.Description), "disimpan saat create dan dibaca di detail")
+
+	// Absent leaves the document unchanged (no-op update).
+	sel := 100
+	require.NoError(t, w.UpdateConfig(ctx, id, dto.UpdateEventConfigRequest{SelectionTTLSeconds: &sel}))
+	e, err = r.GetByID(ctx, id)
+	require.NoError(t, err)
+	assert.JSONEq(t, string(doc), string(e.Description), "tanpa field description tidak berubah")
+
+	// Replace.
+	next := json.RawMessage(`[{"type":"h1","children":[{"text":"baru"}]}]`)
+	require.NoError(t, w.UpdateConfig(ctx, id, dto.UpdateEventConfigRequest{Description: next}))
+	e, err = r.GetByID(ctx, id)
+	require.NoError(t, err)
+	assert.JSONEq(t, string(next), string(e.Description))
+
+	// JSON null clears it.
+	require.NoError(t, w.UpdateConfig(ctx, id, dto.UpdateEventConfigRequest{Description: json.RawMessage(`null`)}))
+	e, err = r.GetByID(ctx, id)
+	require.NoError(t, err)
+	assert.Empty(t, e.Description, "null menghapus deskripsi")
+
+	// The catalog list never loads it.
+	list, err := r.ListEvents(ctx, dto.EventListQuery{})
+	require.NoError(t, err)
+	for _, ev := range list {
+		assert.Empty(t, ev.Description)
+	}
 }
 
 func TestEventRepo_OnSaleAvailability_ClampsAndHonoursTheSalesWindow(t *testing.T) {

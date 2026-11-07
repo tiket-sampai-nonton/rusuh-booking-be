@@ -2116,7 +2116,7 @@ stateDiagram-v2
 
 #### Script Lua Join dan Akhir Entry
 
-**Diuji ulang pada Valkey 8.1.4 (16 Oktober 2026, v4.5)** dengan client `valkey-go` v1.0.67, di **standalone dan cluster mode 3 node**: join baru, NIK yang sama (mengembalikan entry lama), perangkat sama dengan NIK lain (`VISITOR_ALREADY_IN_QUEUE`), email sama (`EMAIL_ALREADY_IN_QUEUE`), entry berakhir lalu perangkat yang sama join lagi (berhasil), admit entry yang sudah keluar (`NOT_WAITING`), admit menaikkan `servingSeq`, NIK dengan kuota habis, join setelah sold out, dan join saat penjualan ditutup — 13/13 lulus di kedua mode. 10.000 join paralel pada satu event menghasilkan seq unik 1–10.000 tanpa celah. Script tidak diubah dari versi Redis 7 (v4.3); `redis.call` didukung Valkey. Harness uji disimpan di `tests/design/valkey/`.
+**Diuji ulang pada Valkey 8.1.4 (16 Oktober 2026, v4.5)** dengan client `valkey-go` v1.0.67, di **standalone dan cluster mode 3 node**: join baru, NIK yang sama (mengembalikan entry lama), perangkat sama dengan NIK lain (`VISITOR_ALREADY_IN_QUEUE`), email sama (`EMAIL_ALREADY_IN_QUEUE`), entry berakhir lalu perangkat yang sama join lagi (berhasil), admit entry yang sudah keluar (`NOT_WAITING`), admit entry hidup terdepan (`headSeq` maju), NIK dengan kuota habis, join setelah sold out, dan join saat penjualan ditutup — 13/13 lulus di kedua mode. 10.000 join paralel pada satu event menghasilkan seq unik 1–10.000 tanpa celah. Script tidak diubah dari versi Redis 7 (v4.3); `redis.call` didukung Valkey. Harness uji disimpan di `tests/design/valkey/`.
 
 ```lua
 -- join.lua — atomik per event (semua key memakai hash tag {e:<eventId>})
@@ -2188,8 +2188,6 @@ redis.call('ZREM', KEYS[1], ARGV[1])
 redis.call('HSET', KEYS[4], 'status', 'ADMITTED', 'allocationId', ARGV[3],
   'admittedAtMs', ARGV[5], 'claimDeadlineMs', ARGV[4])
 redis.call('ZADD', KEYS[2], tonumber(ARGV[4]), ARGV[1])
-local serving = tonumber(redis.call('HGET', KEYS[3], 'servingSeq') or '0')
-if tonumber(ARGV[2]) > serving then redis.call('HSET', KEYS[3], 'servingSeq', ARGV[2]) end
 return {'ADMITTED'}
 ```
 
@@ -2205,7 +2203,7 @@ func (p *Publisher) Tick(ctx context.Context, eventID string) error {
 
     doc := StatusDocument{
         SaleState:          supply.SaleState,
-        ServingSeq:         p.store.ServingSeq(ctx, eventID),
+        HeadSeq:            p.store.HeadSeq(ctx, eventID),      // seq entri hidup terdepan; null/0 bila kosong
         GuaranteedUntilSeq: p.store.SeqAtRank(ctx, eventID, guaranteedRank), // ZRANGE waiting k-1 k-1; nil bila waiting < k
         PossibleUntilSeq:   p.store.SeqAtRank(ctx, eventID, possibleRank),
         SoldOut:            supply.Free+supply.Allocated+supply.Held == 0,
@@ -2226,7 +2224,7 @@ func (p *Publisher) Tick(ctx context.Context, eventID string) error {
 }
 ```
 
-`SeqAtRank` dengan `rank ≤ 0` mengembalikan `servingSeq` (tidak ada yang dijamin). Bila jumlah pengantre lebih kecil dari `rank`, nilainya `null` yang berarti semua pengantre saat ini berada di zona tersebut.
+`SeqAtRank` dengan `rank ≤ 0` mengembalikan `headSeq` (tidak ada yang dijamin). Bila jumlah pengantre lebih kecil dari `rank`, nilainya `null` yang berarti semua pengantre saat ini berada di zona tersebut. Posisi eksak pengantre dihitung server lewat `LivePosition` (ZCOUNT hidup atas `q:{e}:waiting`), bukan di klien.
 
 #### Perhitungan Posisi di Klien
 
@@ -2237,7 +2235,7 @@ Diuji dengan TypeScript strict + Node 22 (posisi terkoreksi, zona, ETA, interval
 export interface RemovedBuckets { size: number; fromSeq: number; counts: number[] }
 export interface StatusDocument {
   saleState: 'NOT_STARTED' | 'OPEN' | 'CLOSED';
-  servingSeq: number;
+  headSeq: number | null;
   guaranteedUntilSeq: number | null;
   possibleUntilSeq: number | null;
   soldOut: boolean;
@@ -2264,25 +2262,16 @@ export type QueueView =
   | { kind: 'YOUR_TURN' }
   | { kind: 'WAITING'; position: number; zone: Zone; etaMin: number | null; pollMs: number; turnSoon: boolean };
 
-export function computeView(seq: number, doc: StatusDocument): QueueView {
+export function computeView(seq: number, exactPosition: number, doc: StatusDocument): QueueView {
   if (doc.soldOut) return { kind: 'SOLD_OUT' };
   if (doc.saleState !== 'OPEN') return { kind: 'CLOSED' };
-  if (seq <= doc.servingSeq) return { kind: 'YOUR_TURN' };
+  // "Giliran Anda" ditentukan server: entry sudah ADMITTED (lihat EntryStatus.status), bukan aritmetika seq di klien.
+  if (exactPosition <= 0) return { kind: 'YOUR_TURN' };
 
-  // Koreksi entry yang sudah keluar di antara servingSeq dan seq saya.
-  // Pembulatan ke bawah membuat posisi menjadi batas atas: posisi asli tidak pernah lebih buruk.
-  let removedAhead = 0;
-  const b = doc.removedBuckets;
-  if (b) {
-    b.counts.forEach((count, i) => {
-      const lo = b.fromSeq + i * b.size;
-      const hi = lo + b.size;
-      if (hi <= doc.servingSeq || lo >= seq) return;
-      const overlap = Math.min(hi, seq) - Math.max(lo, doc.servingSeq + 1);
-      removedAhead += Math.floor((count * Math.max(0, overlap)) / b.size);
-    });
-  }
-  const position = Math.max(1, seq - doc.servingSeq - removedAhead);
+  // exactPosition berasal dari server (EntryStatus via /queue-entries/me), dihitung dari LivePosition
+  // (ZCOUNT hidup atas q:{e}:waiting). Entry STALE/LEFT sudah tidak ada di set waiting, jadi tidak perlu
+  // koreksi removedAhead di klien; nilai ini sudah live-akurat dan merupakan batas atas posisi sebenarnya.
+  const position = Math.max(1, exactPosition);
 
   const zone: Zone =
     doc.guaranteedUntilSeq !== null && seq <= doc.guaranteedUntilSeq ? 'GUARANTEED'
@@ -2592,7 +2581,7 @@ Nama variabel mengikuti konvensi BE-2 dan berlaku untuk semua service. Semua div
 
 | Service | Metrik utama |
 |---|---|
-| Queue | jumlah pengantre, laju join, laju admission, claim rate, missed turn rate, waktu tunggu p50/p95, servingSeq, zona peluang (jumlah per zona), waktu sold-out ke notifikasi, umur Status Document, peringatan giliran terkirim |
+| Queue | jumlah pengantre, laju join, laju admission, claim rate, missed turn rate, waktu tunggu p50/p95, headSeq, zona peluang (jumlah per zona), waktu sold-out ke notifikasi, umur Status Document, peringatan giliran terkirim |
 | Booking | slot aktif, alokasi/hold/sold per event, konversi admitted → hold → paid, expiry rate (sesi dan pembayaran), VERIFYING count, REVIEW count, penolakan NIK pemegang, lock wait, ubah pesanan (berhasil/gagal/batas), alasan kunci, submit di masa tenggang, pemulihan sesi |
 | Payment | attempt per metode, sukses/gagal/unknown, latensi gateway, breaker state, callback duplikat, refund cases |
 | Notification | delivery sent/retry/dead, umur DLQ, push terkirim/dibuang, latensi push |

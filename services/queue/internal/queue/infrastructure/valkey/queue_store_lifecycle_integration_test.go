@@ -15,15 +15,16 @@ import (
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/port/outbound"
 )
 
-func joinOne(t *testing.T, s *QueueStore, ev string, n int, nowMs int64) (entryID, visitorID, nikHash string) {
+// joinOne joins an anonymous entry bound to account "acct-<n>" (so both constraint keys exist) and returns
+// (entryID, visitorID, accountID). Anonymous join has no NIK/email (ADR-030).
+func joinOne(t *testing.T, s *QueueStore, ev string, n int, nowMs int64) (entryID, visitorID, accountID string) {
 	t.Helper()
-	entryID, visitorID, nikHash = fmt.Sprintf("entry-%d", n), fmt.Sprintf("visitor-%d", n), fmt.Sprintf("%064x", n)
+	entryID, visitorID, accountID = fmt.Sprintf("entry-%d", n), fmt.Sprintf("visitor-%d", n), fmt.Sprintf("acct-%d", n)
 	res, err := s.Join(context.Background(), outbound.JoinParams{
-		EventID: ev, EntryID: entryID, VisitorID: visitorID, NikHash: nikHash, EmailHashHex: fmt.Sprintf("%064x", n+1000),
-		EmailEnc: []byte("sealed"), NikMasked: "3174********0001", NowMs: nowMs, OneActivePerVisitor: true, OneActivePerEmail: true,
+		EventID: ev, EntryID: entryID, NewVisitorID: visitorID, AccountID: accountID, NowMs: nowMs, OneActivePerVisitor: true,
 	})
 	require.NoError(t, err)
-	require.Equal(t, outbound.JoinOK, res.Outcome)
+	require.Equal(t, outbound.JoinCreated, res.Outcome)
 	return
 }
 
@@ -50,15 +51,14 @@ func TestQueueStore_EntryLifecycle(t *testing.T) {
 	assert.Equal(t, 0, active)
 
 	// Promote two with different claim deadlines; capacity 2 admits both and refuses a third.
-	promoted, err := s.Promote(ctx, ev, []outbound.PromoteCandidate{
+	promoted := promoteBatch(t, s, ev, []outbound.PromoteCandidate{
 		{EntryID: a, AllocationID: "alloc-a", ClaimDeadlineMs: now + 60_000},
 		{EntryID: b, AllocationID: "alloc-b", ClaimDeadlineMs: now - 1_000}, // already past: will be missed
 	}, 2, now)
-	require.NoError(t, err)
-	assert.ElementsMatch(t, []string{a, b}, promoted)
-	full, err := s.Promote(ctx, ev, []outbound.PromoteCandidate{{EntryID: c, AllocationID: "alloc-c", ClaimDeadlineMs: now + 60_000}}, 2, now)
-	require.NoError(t, err)
-	assert.Empty(t, full, "slot penuh")
+	assert.ElementsMatch(t, []string{a, b}, promoted.Promoted)
+	full := promoteBatch(t, s, ev, []outbound.PromoteCandidate{{EntryID: c, AllocationID: "alloc-c", ClaimDeadlineMs: now + 60_000}}, 2, now)
+	assert.Empty(t, full.Promoted, "slot penuh")
+	assert.True(t, full.Full)
 
 	entA, found, err := s.GetEntry(ctx, ev, a)
 	require.NoError(t, err)
@@ -84,32 +84,39 @@ func TestQueueStore_EntryLifecycle(t *testing.T) {
 	assert.ErrorIs(t, err, entity.ErrTurnMissed, "tenggat klaim sudah lewat")
 
 	// Sweeper: the expired turn is found, marked missed, and its constraint keys are cleaned so the buyer can rejoin.
-	expired, err := s.ExpiredActive(ctx, ev, now)
+	expired, err := s.ExpiredActive(ctx, ev, now, 100)
 	require.NoError(t, err)
 	assert.Contains(t, expired, b)
-	cleaned, err := s.MarkMissedAndClean(ctx, ev, b, now)
+	cleaned, err := s.EndEntry(ctx, ev, b, outbound.EndSweepMissed, now)
 	require.NoError(t, err)
-	assert.True(t, cleaned)
+	assert.True(t, cleaned.Changed())
 	_, found, err = s.FindByVisitor(ctx, ev, visB)
 	require.NoError(t, err)
 	assert.False(t, found, "visitor bisa antre lagi")
-	missedAgain, err := s.MarkMissedAndClean(ctx, ev, "tidak-ada", now)
+	missedAgain, err := s.EndEntry(ctx, ev, "tidak-ada", outbound.EndSweepMissed, now)
 	require.NoError(t, err)
-	assert.False(t, missedAgain)
+	assert.False(t, missedAgain.Changed())
 
-	// Leaving frees the slot of an admitted entry; leaving something unknown is not found.
-	wasActive, err := s.Leave(ctx, ev, a, visA, now)
+	// A CLAIMED entry cannot leave (QSH-OQ-3, provisional): the slot is freed by journey.ended, not by leave.
+	ignored, err := s.Leave(ctx, ev, a, visA, now)
 	require.NoError(t, err)
-	assert.True(t, wasActive)
+	assert.Equal(t, "IGNORED", ignored.Tag)
+	assert.Equal(t, "CLAIMED", ignored.PrevStatus)
+	// Leaving frees the slot of an admitted entry; leaving something unknown is not found.
+	d, visD, _ := joinOne(t, s, ev, 4, now)
+	promoteOne(t, s, ev, d, "alloc-d", now+60_000, now, 5)
+	left, err := s.Leave(ctx, ev, d, visD, now)
+	require.NoError(t, err)
+	assert.Equal(t, "OK", left.Tag)
+	assert.Equal(t, "ADMITTED", left.PrevStatus)
 	_, err = s.Leave(ctx, ev, "tidak-ada", "visitor-x", now)
 	assert.ErrorIs(t, err, entity.ErrNotFound)
 
 	// End a promoted entry with the outcome Booking reports (idempotent).
-	_, err = s.Promote(ctx, ev, []outbound.PromoteCandidate{{EntryID: c, AllocationID: "alloc-c", ClaimDeadlineMs: now + 60_000}}, 5, now)
-	require.NoError(t, err)
+	promoteBatch(t, s, ev, []outbound.PromoteCandidate{{EntryID: c, AllocationID: "alloc-c", ClaimDeadlineMs: now + 60_000}}, 5, now)
 	final, err := s.EndEntry(ctx, ev, c, "PAID", now)
 	require.NoError(t, err)
-	assert.NotEmpty(t, final)
+	assert.NotEmpty(t, final.Status)
 	_, err = s.EndEntry(ctx, ev, c, "PAID", now)
 	require.NoError(t, err, "idempoten")
 	_, _, _ = visC, nikC, c
@@ -140,34 +147,28 @@ func TestQueueStore_SaleStatusDocLeaseAndNotifications(t *testing.T) {
 	require.True(t, ok)
 	assert.JSONEq(t, `{"x":1}`, string(doc))
 
-	// A buyer whose quota is spent cannot join again.
-	nik := fmt.Sprintf("%064x", 999)
-	require.NoError(t, s.AddQuotaExhausted(ctx, ev, nik))
-	res, err := s.Join(ctx, outbound.JoinParams{EventID: ev, EntryID: "e-q", VisitorID: "v-q", NikHash: nik, EmailHashHex: fmt.Sprintf("%064x", 998), NowMs: time.Now().UnixMilli()})
-	require.NoError(t, err)
-	assert.Equal(t, outbound.JoinQuotaExhausted, res.Outcome)
-
 	// "Your turn is soon" is sent once per entry.
 	was, err := s.WasNotifiedSoon(ctx, ev, "e1")
 	require.NoError(t, err)
 	assert.False(t, was)
 	require.NoError(t, s.MarkNotifiedSoon(ctx, ev, "e1"))
+	require.NoError(t, s.MarkNotifiedSoon(ctx, ev, "e1"), "menandai dua kali idempoten, bukan galat 'valkey nil message'")
 	was, err = s.WasNotifiedSoon(ctx, ev, "e1")
 	require.NoError(t, err)
 	assert.True(t, was)
 
 	// Only one worker instance promotes an event at a time.
-	got, err := s.AcquirePromoterLease(ctx, ev, 5_000)
+	tok, got, err := s.AcquirePromoterLease(ctx, ev, 5*time.Second)
 	require.NoError(t, err)
 	assert.True(t, got)
-	got, err = s.AcquirePromoterLease(ctx, ev, 5_000)
+	_, got, err = s.AcquirePromoterLease(ctx, ev, 5*time.Second)
 	require.NoError(t, err)
 	assert.False(t, got, "lease dipegang instance lain")
-	require.NoError(t, s.ReleasePromoterLease(ctx, ev))
-	got, err = s.AcquirePromoterLease(ctx, ev, 5_000)
+	require.NoError(t, s.ReleasePromoterLease(ctx, ev, tok))
+	tok, got, err = s.AcquirePromoterLease(ctx, ev, 5*time.Second)
 	require.NoError(t, err)
 	assert.True(t, got)
-	require.NoError(t, s.ReleasePromoterLease(ctx, ev))
+	require.NoError(t, s.ReleasePromoterLease(ctx, ev, tok))
 }
 
 func TestRateLimiter_AllowsUpToTheLimitPerWindow(t *testing.T) {

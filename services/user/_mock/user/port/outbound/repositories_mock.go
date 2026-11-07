@@ -217,17 +217,18 @@ func (mr *MockISessionRepositoryMockRecorder) Revoke(ctx, id, at any) *gomock.Ca
 }
 
 // RevokeAllForAccount mocks base method.
-func (m *MockISessionRepository) RevokeAllForAccount(ctx context.Context, accountID string, at time.Time) error {
+func (m *MockISessionRepository) RevokeAllForAccount(ctx context.Context, accountID string, at, denylistSince time.Time) ([]string, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "RevokeAllForAccount", ctx, accountID, at)
-	ret0, _ := ret[0].(error)
-	return ret0
+	ret := m.ctrl.Call(m, "RevokeAllForAccount", ctx, accountID, at, denylistSince)
+	ret0, _ := ret[0].([]string)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
 }
 
 // RevokeAllForAccount indicates an expected call of RevokeAllForAccount.
-func (mr *MockISessionRepositoryMockRecorder) RevokeAllForAccount(ctx, accountID, at any) *gomock.Call {
+func (mr *MockISessionRepositoryMockRecorder) RevokeAllForAccount(ctx, accountID, at, denylistSince any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RevokeAllForAccount", reflect.TypeOf((*MockISessionRepository)(nil).RevokeAllForAccount), ctx, accountID, at)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RevokeAllForAccount", reflect.TypeOf((*MockISessionRepository)(nil).RevokeAllForAccount), ctx, accountID, at, denylistSince)
 }
 
 // Rotate mocks base method.

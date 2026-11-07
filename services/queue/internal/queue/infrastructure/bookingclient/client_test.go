@@ -2,9 +2,11 @@ package bookingclient_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 	"time"
 
@@ -152,4 +154,20 @@ func TestClient_AsksForAFreshServiceTokenOnEveryCall(t *testing.T) {
 	_, err = c.ReserveBatch(context.Background(), req)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"Bearer tok-1", "Bearer tok-2"}, seen, "token tidak boleh dibekukan saat client dibuat")
+}
+
+// Consumer side of the supply contract: the golden fixture decodes into the Queue's snapshot and every new
+// field is populated (non-zero), so a field-name mismatch with Booking fails here.
+func TestSupplySnapshot_DecodesGoldenFixture(t *testing.T) {
+	raw, err := os.ReadFile("../../../../../../docs/contracts/fixtures/internal-booking-supply.json")
+	require.NoError(t, err)
+	var snap outbound.SupplySnapshot
+	require.NoError(t, json.Unmarshal(raw, &snap))
+	assert.Equal(t, 6, snap.AllocatedUnits)
+	assert.Equal(t, 4, snap.HeldUnits)
+	assert.Equal(t, 2, snap.FreeUnits)
+	assert.Equal(t, 3, snap.MaxTicketsPerOrder)
+	assert.False(t, snap.SalesStartsAt.IsZero())
+	assert.False(t, snap.SalesEndsAt.IsZero())
+	assert.True(t, snap.SalesEndsAt.After(snap.SalesStartsAt))
 }

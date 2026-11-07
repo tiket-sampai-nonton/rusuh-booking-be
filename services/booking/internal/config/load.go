@@ -34,6 +34,11 @@ func Load() (Config, error) {
 			Interval:           r.Duration("WORKER_INTERVAL", 5*time.Second),
 			VerifyGraceSeconds: r.Int("VERIFY_GRACE_SECONDS", 180),
 		},
+		Hold: Hold{
+			BuyerNikAttemptBudget: r.Int("BUYER_NIK_ATTEMPT_BUDGET", 10),
+			ThrottleBase:          time.Duration(r.Int("BUYER_NIK_THROTTLE_BASE_SECONDS", 2)) * time.Second,
+			ThrottleMax:           time.Duration(r.Int("BUYER_NIK_THROTTLE_MAX_SECONDS", 30)) * time.Second,
+		},
 	}
 
 	cfg.Postgres = postgres.Config{

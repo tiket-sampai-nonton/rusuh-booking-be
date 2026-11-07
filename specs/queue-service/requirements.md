@@ -72,7 +72,7 @@ Status kode per 2026-10-20: **boilerplate standar organisasi berfungsi**; logika
 | Claim gagal | `403 CLAIM_DEADLINE_PASSED`, `403 ENTRY_NOT_ADMITTED` | `410 TURN_MISSED`, `410 EVENT_SOLD_OUT` |
 | ClaimResponse | `{ admissionToken, expiresAt }` | `{ admissionToken, bookingUrl }` (TTL 60s didokumentasikan pada field) |
 | Leave sukses | `200` | `204 No Content` |
-| StatusDocument | `{ servingSeq, waitingCount, activeSlots, maxActiveSlots, saleStatus, config.pollingIntervalMs }` | `saleState` (`NOT_STARTED\|OPEN\|CLOSED`), `servingSeq`, `guaranteedUntilSeq`, `possibleUntilSeq`, `soldOut`, `remainingTickets`, `admissionRatePerMin`, `removedBuckets`, `nextPollAfterMs`, `poll{farMs,midMs,nearMs,farAbove,midAbove}`, `preTurnNotifyPosition`, `categories[]`, `updatedAt` |
+| StatusDocument | `{ servingSeq, waitingCount, activeSlots, maxActiveSlots, saleStatus, config.pollingIntervalMs }` | `saleState` (`NOT_STARTED\|OPEN\|CLOSED`), `headSeq`, `guaranteedUntilSeq`, `possibleUntilSeq`, `soldOut`, `remainingTickets`, `admissionRatePerMin`, `removedBuckets`, `nextPollAfterMs`, `poll{farMs,midMs,nearMs,farAbove,midAbove}`, `preTurnNotifyPosition`, `categories[]`, `updatedAt` |
 | Status enum | `WAITING\|ADMITTED\|CLAIMED\|REJECTED\|UNCLAIMED\|ENDED` | `WAITING\|ADMITTED\|CLAIMED\|MISSED\|LEFT\|SOLD_OUT\|CLOSED\|COMPLETED\|ENDED` (QueueEntry) |
 | Turn events payload | `{ entryId, eventId, pushToken, position/claimDeadline }` | `{ eventId, queueEntryId, visitorId[, claimDeadline] }` — **tanpa** pushToken/position (Notification me-resolve kontak) |
 | Event key naming | `entryId` | `queueEntryId` (semua event schema) |
@@ -87,7 +87,7 @@ Status kode per 2026-10-20: **boilerplate standar organisasi berfungsi**; logika
 
 - **Entry** — satu antrean pembeli per event (`q:{e}:entry:<entryId>`), status `WAITING → ADMITTED → CLAIMED → COMPLETED/ENDED` atau terminal `MISSED/LEFT/SOLD_OUT/CLOSED`.
 - **seq** — nomor urut FIFO monotonik per event (`INCR` atomik di `join.lua`).
-- **servingSeq** — seq terdepan yang sedang dilayani; posisi = `seq − servingSeq − removedAhead`.
+- **headSeq** — seq entri hidup terdepan (null/0 bila antrean kosong); posisi eksak dihitung server lewat `LivePosition` (ZCOUNT hidup atas `q:{e}:waiting`), bukan aritmetika klien.
 - **Active slot** — kapasitas entry `ADMITTED`/`CLAIMED` bersamaan (`event_settings.active_slot_capacity`).
 - **Admission / allocation** — reservasi unit di Booking untuk entry (`allocationId = admissions.id`); entry hanya `ADMITTED` bila Booking membalas `GRANTED`.
 - **Claim window / claimDeadline** — batas klaim giliran (dari Booking `claimDeadline`, default 180 s).
@@ -170,7 +170,7 @@ Status kode per 2026-10-20: **boilerplate standar organisasi berfungsi**; logika
 
 ### Acceptance Criteria (EARS)
 
-1. WHEN `GET /api/v1/queue-status/{eventId}` dipanggil, THE Queue Service SHALL mengembalikan Status Document dengan field wajib `eventId`, `saleState`, `servingSeq`, `soldOut`, `updatedAt`, serta field zona/polling bila tersedia.
+1. WHEN `GET /api/v1/queue-status/{eventId}` dipanggil, THE Queue Service SHALL mengembalikan Status Document dengan field wajib `eventId`, `saleState`, `soldOut`, `updatedAt`, serta field zona/polling (`headSeq`, `guaranteedUntilSeq`, `possibleUntilSeq`) bila tersedia.
 2. THE Queue Service SHALL menyetel header `Cache-Control: public, max-age=1, stale-while-revalidate=2` sehingga CloudFront menyimpan dokumen 1 detik.
 3. THE worker Status Publisher SHALL memperbarui `q:{e}:status` dengan TTL 1 detik pada interval `event_settings.status_publish_interval_ms`.
 4. THE Queue Service SHALL mengendalikan interval polling klien lewat objek `poll` (`farMs`, `midMs`, `nearMs`, `farAbove`, `midAbove`) dan `nextPollAfterMs` (server-authoritative); klien hanya menyimpan cadangan bila field tidak ada (TC-QUE-15).
@@ -192,7 +192,7 @@ Status kode per 2026-10-20: **boilerplate standar organisasi berfungsi**; logika
 ### Acceptance Criteria (EARS)
 
 1. WHEN dipanggil dengan visitor valid, THE Queue Service SHALL mengembalikan `EntryStatus` dengan `entryId`, `seq`, `status`, `exactPosition`, dan `zone ∈ {GUARANTEED,POSSIBLE,NOT_ENOUGH}`.
-2. THE `exactPosition` SHALL dihitung = `mySeq - servingSeq - removedAhead` (memperhitungkan entry yang keluar di depan).
+2. THE `exactPosition` SHALL dihitung server-side lewat `LivePosition` = `1 + ZCOUNT(q:{e}:waiting, [-inf, (mySeq))` (entry STALE/LEFT sudah tidak ada di set waiting, jadi sudah live-akurat tanpa koreksi `removedAhead`).
 3. WHEN status entry `ADMITTED`, THE Queue Service SHALL menyertakan `claimDeadline` dan `redirect` (ke booking) di `EntryStatus`.
 4. IF entry tidak ditemukan untuk visitor itu, THEN THE Queue Service SHALL menjawab `404 NOT_FOUND`.
 5. IF entry sudah `MISSED`/`LEFT`/`SOLD_OUT`/`CLOSED`, THEN THE Queue Service SHALL mengembalikan `status` tersebut beserta `reason` agar klien menampilkan pesan yang tepat.
@@ -356,3 +356,24 @@ make mock                                  # regen _mock/ bila port berubah
 | Zona Dijamin/Peluang + `ceil` sisa < 3 | TC-QUE-10, TC-QUE-11 | Unit + integration |
 | Status Document flat load | TC-PERF-01, TC-PERF-03 | k6 |
 | Sold-out notification ≤ 5s | TC-PERF-05 | k6 |
+
+> **Amandemen Queue hardening (2026-11-04, ADR-028/029):** butir 6.3 ("entry dengan seq lebih besar dalam batch yang sama juga tidak diadmit pada siklus itu") diamandemen menjadi inversi FIFO terbatas: grant yang mengikuti `NO_SUPPLY_NOW` dalam satu batch diadopsi, bukan dilepas, karena melepasnya mengakhiri pembeli yang masih hidup. Lihat `docs/analisa/05-ADR-RBT.md` ADR-029 dan TC-QUE-19b/19k.
+
+
+## Pembaruan ADR-030 (join anonim)
+
+- Join tidak membawa NIK, email, atau consent; dedup satu entri aktif per visitor dan per akun (bearer = identitas saja).
+- Promoter dan join langsung meminta 3 unit per admission tanpa field pembeli; `booking.quota.exhausted` no-op acknowledge satu rilis.
+- Heartbeat/STALE/revive/akhir (sweeper liveness di bawah lease), **zona berbasis seq (FIFO ketat; jendela acak
+  pembukaan/undian DIBUANG — ADR-030 Amandemen 2026-11-05)**, generasi token visitor + klaim perangkat, dan `me`
+  ENDED dengan alasan sudah diimplementasikan.
+- Indeks liveness `hb`/`hbstale` di-shard (`QUEUE_LIVENESS_SHARDS`, default 16) dan sweep dijalankan dalam satu EVAL
+  (`liveness_tick.lua`: acquire-lease + baca kandidat + sweep + release dalam satu round-trip). Kriteria penerimaan
+  tick promotor DIRATIFIKASI PEMILIK 2026-11-06 (opsi A — MENGGANTIKAN label "keputusan pemilik 2026-11-05 opsi A"
+  sebelumnya yang BUKAN dari pemilik): **(1) latensi tick absolut tidak regresi vs baseline pra-perubahan** (loaded
+  ~1,2 ms vs ~3,3 ms pra-perubahan) + **(2) biaya marginal sweep atas no-op kecil** — BUKAN rasio loaded/base ≤ 1,20
+  yang terbukti tak tercapai secara fisik pada Valkey satu-thread (tick_ratio 1,27–1,46, floor `GET` ~1,39–1,59, dan
+  rasio tak berubah pada koneksi dedicated → penyebab = command-thread tunggal, bukan kontensi koneksi). Kedua
+  kriteria di-assert mesin di `TestHeartbeatLoad` (B=16). Pemisahan indeks liveness ke instance/thread Valkey terpisah
+  (opsi B) didokumentasikan sebagai opsi infra MASA DEPAN (tidak dibangun). Lihat ADR-030 Amandemen dan evidence
+  2026-11-05 §3b/§3e.

@@ -107,7 +107,7 @@ func TestEntryAudit_AppendsForGuestAndAccount(t *testing.T) {
 	repo := NewEntryAudit(pool)
 	rec := outbound.AuditRecord{
 		EventID: "11111111-1111-1111-1111-111111111111", EntryID: "22222222-2222-2222-2222-222222222222", Seq: 7,
-		BuyerNikHash: []byte{0xaa}, Action: "JOINED", OccurredAt: time.Now(),
+		Action: "JOINED", OccurredAt: time.Now(),
 	}
 	require.NoError(t, repo.Append(ctx, rec), "tamu: account_id NULL, metadata kosong")
 	rec.Action, rec.AccountID, rec.Metadata = "ADMITTED", "33333333-3333-3333-3333-333333333333", map[string]any{"via": "direct"}
@@ -117,6 +117,9 @@ func TestEntryAudit_AppendsForGuestAndAccount(t *testing.T) {
 	require.NoError(t, pool.QueryRow(ctx, `SELECT count(*), count(account_id) FROM entry_audit`).Scan(&n, &withAccount))
 	assert.Equal(t, 2, n)
 	assert.Equal(t, 1, withAccount)
+	var withNIK int
+	require.NoError(t, pool.QueryRow(ctx, `SELECT count(buyer_nik_hash) FROM entry_audit`).Scan(&withNIK))
+	assert.Zero(t, withNIK, "ADR-030: anonymous entries write no NIK to the audit")
 
 	_, err := pool.Exec(ctx, `UPDATE entry_audit SET action='X'`)
 	assert.Error(t, err, "tabel audit append-only")

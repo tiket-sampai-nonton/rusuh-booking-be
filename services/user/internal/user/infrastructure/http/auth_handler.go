@@ -16,11 +16,13 @@ type AuthHandler struct {
 	profile    inbound.IProfileUsecase
 	verifier   inbound.IAccessTokenVerifier
 	trustProxy bool
+	proxyHops  int
 }
 
-// NewAuthHandler creates the handler. trustProxy=true di belakang ALB (X-Forwarded-For).
-func NewAuthHandler(auth inbound.IAuthUsecase, profile inbound.IProfileUsecase, verifier inbound.IAccessTokenVerifier, trustProxy bool) *AuthHandler {
-	return &AuthHandler{auth: auth, profile: profile, verifier: verifier, trustProxy: trustProxy}
+// NewAuthHandler creates the handler. trustProxy=true di belakang proxy tepercaya; proxyHops = jumlah proxy yang
+// menambah entri X-Forwarded-For (1 = ALB saja, 2 = CloudFront → ALB).
+func NewAuthHandler(auth inbound.IAuthUsecase, profile inbound.IProfileUsecase, verifier inbound.IAccessTokenVerifier, trustProxy bool, proxyHops int) *AuthHandler {
+	return &AuthHandler{auth: auth, profile: profile, verifier: verifier, trustProxy: trustProxy, proxyHops: proxyHops}
 }
 
 // Register mounts the routes.
@@ -34,7 +36,7 @@ func (h *AuthHandler) Register(mux *stdhttp.ServeMux) {
 }
 
 func (h *AuthHandler) client(r *stdhttp.Request) inbound.ClientInfo {
-	return inbound.ClientInfo{IP: httpx.ClientIP(r, h.trustProxy), UserAgent: r.UserAgent()}
+	return inbound.ClientInfo{IP: httpx.ClientIPHops(r, h.trustProxy, h.proxyHops), UserAgent: r.UserAgent()}
 }
 
 func noStore(w stdhttp.ResponseWriter) { w.Header().Set("Cache-Control", "no-store") }

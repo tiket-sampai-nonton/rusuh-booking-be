@@ -16,4 +16,14 @@ var (
 	Leave string
 	//go:embed end_entry.lua
 	EndEntry string
+	//go:embed rate_limit.lua
+	RateLimit string
+	//go:embed release_lease.lua
+	ReleaseLease string
+	//go:embed heartbeat.lua
+	Heartbeat string
+	//go:embed liveness.lua
+	Liveness string
+	//go:embed liveness_tick.lua
+	LivenessTick string
 )

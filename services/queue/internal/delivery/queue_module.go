@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/clock"
@@ -24,6 +25,7 @@ import (
 	queuepg "github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/infrastructure/postgres"
 	queuerabbitmq "github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/infrastructure/rabbitmq"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/infrastructure/security"
+	queuetelemetry "github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/infrastructure/telemetry"
 	queuevalkey "github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/infrastructure/valkey"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/infrastructure/worker"
 )
@@ -59,15 +61,17 @@ func newQueueModule(cfg config.Config, clients *Clients, logger *slog.Logger) (*
 	}
 	_ = priv
 
-	encKey, _ := crypto.ParseKey(cfg.PII.EncKeyHex) // validated in config.Load
-	hashKey, _ := crypto.ParseKey(cfg.PII.HashKeyHex)
-	pii, err := security.NewPII(encKey, hashKey)
+	tokens := security.NewTokenIssuer(signer, cfg.Token.Issuer, cfg.Token.Audience, cfg.Token.AdmissionTTL, cfg.Token.VisitorTTL, cfg.Token.QueueTTL)
+	// Device claim key: the PII HMAC key (validated at start); only the HMAC of X-Device-Id is ever kept.
+	deviceKey, err := crypto.ParseKey(cfg.PII.HashKeyHex)
 	if err != nil {
 		return nil, err
 	}
-
-	tokens := security.NewTokenIssuer(signer, cfg.Token.Issuer, cfg.Token.Audience, cfg.Token.AdmissionTTL, cfg.Token.VisitorTTL, cfg.Token.QueueTTL)
-	visitorAuth := security.NewVisitorAuthenticator(verifier, clk.Now)
+	deviceHasher, err := security.NewDeviceHasher(deviceKey)
+	if err != nil {
+		return nil, err
+	}
+	visitorAuth := security.NewVisitorAuthenticator(verifier, clk.Now).WithDeviceHasher(deviceHasher)
 
 	userVerifierCore, err := loadUserVerifier(cfg, verifier)
 	if err != nil {
@@ -75,7 +79,7 @@ func newQueueModule(cfg config.Config, clients *Clients, logger *slog.Logger) (*
 	}
 	userVerifier := security.NewUserTokenVerifier(userVerifierCore, clk.Now).WithDenylist(revocation.NewStore(clients.VK.VK(), clients.VK)) // logout mencabut access token (SCRUM-53)
 
-	store := queuevalkey.NewQueueStore(clients.VK.VK(), clients.VK, clk)
+	store := queuevalkey.NewQueueStore(clients.VK.VK(), clients.VK, clk, cfg.Liveness.Shards)
 	limiter := queuevalkey.NewRateLimiter(clients.VK.VK(), clients.VK, clk.Now)
 	settingsRepo := queuepg.NewEventSettings(clients.PG.Pool())
 	auditRepo := queuepg.NewEntryAudit(clients.PG.Pool())
@@ -101,16 +105,17 @@ func newQueueModule(cfg config.Config, clients *Clients, logger *slog.Logger) (*
 	}
 	publisher := queuerabbitmq.NewEventPublisher(rmqPub, clk.Now)
 
+	promoterMetrics := sharedPromoterMetrics()
 	joinUC := usecase.NewJoinQueue(usecase.JoinDeps{
 		Store: store, Settings: settingsRepo, Booking: booking, Limiter: limiter,
-		Tokens: tokens, UserVerifier: userVerifier, PII: pii, Audit: auditRepo, Clock: clk,
-	}, usecase.JoinSettings{
-		JoinPerEmail: cfg.RateLimit.JoinPerEmail, JoinPerEmailWindow: cfg.RateLimit.JoinPerEmailWindow,
-		JoinPerIP: cfg.RateLimit.JoinPerIP, JoinPerIPWindow: cfg.RateLimit.JoinPerIPWindow,
-		ClaimWindow: cfg.Token.AdmissionTTL, StatusURLTemplate: "/api/v1/queue-status/",
-	})
+		Tokens: tokens, UserVerifier: userVerifier, Audit: auditRepo, Clock: clk,
+	}, joinSettings(cfg)).WithMetrics(promoterMetrics).WithLogger(logger)
 	statusUC := usecase.NewGetStatus(store)
-	myEntryUC := usecase.NewGetMyEntry(store)
+	hbPolicy := heartbeatPolicy(cfg)
+	myEntryUC := usecase.NewGetMyEntry(store).WithHeartbeat(hbPolicy).
+		WithLimiter(limiter, cfg.RateLimit.MePerVisitor, cfg.RateLimit.MePerVisitorWindow)
+	heartbeatUC := usecase.NewHeartbeat(store, clk, hbPolicy).
+		WithLimiter(limiter, cfg.RateLimit.HeartbeatPerVisitor, cfg.RateLimit.MePerVisitorWindow)
 	claimUC := usecase.NewClaimTurn(store, tokens, clk, cfg.Booking.BaseURL+"/book")
 	leaveUC := usecase.NewLeaveQueue(store, booking, clk)
 
@@ -119,22 +124,71 @@ func newQueueModule(cfg config.Config, clients *Clients, logger *slog.Logger) (*
 		queuehttp.NewJoinHandler(joinUC, trustProxy).WithAuth(visitorAuth),
 		queuehttp.NewStatusHandler(statusUC),
 		queuehttp.NewMyEntryHandler(myEntryUC, visitorAuth),
+		queuehttp.NewHeartbeatHandler(heartbeatUC, visitorAuth),
 		queuehttp.NewClaimHandler(claimUC, visitorAuth),
 		queuehttp.NewLeaveHandler(leaveUC, visitorAuth),
 	}
 
-	promoter := worker.NewPromoter(store, settingsRepo, booking, publisher, auditRepo, pii, clk, logger, cfg.WorkerTuning.PromoteBatchMax)
-	sweeper := worker.NewSweeper(store, settingsRepo, clk)
-	statusPub := worker.NewStatusPublisher(store, settingsRepo, booking, clk, cfg.WorkerTuning.StatusInterval)
+	promoter := worker.NewPromoter(store, settingsRepo, booking, publisher, auditRepo, clk, logger, promoterTuning(cfg)).
+		WithMetrics(promoterMetrics)
+	liveness := worker.NewLiveness(store, settingsRepo, clk, livenessTuning(cfg))
+	sweeper := worker.NewSweeper(store, settingsRepo, clk, sweepBatch(cfg))
+	statusPub := worker.NewStatusPublisher(store, settingsRepo, booking, clk, cfg.WorkerTuning.StatusTTL(cfg.Worker.Interval))
 	jobs := []Job{
 		{Name: "promoter", Run: promoter.Run},
 		{Name: "sweeper", Run: sweeper.Run},
 		{Name: "status-publisher", Run: statusPub.Run},
+		{Name: "liveness", Run: liveness.Run},
 	}
 
 	consumer := queuerabbitmq.NewConsumer(store, clk)
 
 	return &queueModule{handlers: handlers, jobs: jobs, consumer: consumer, rmqConn: rmqConn}, nil
+}
+
+var (
+	promoterMetricsOnce sync.Once
+	promoterMetricsInst *queuetelemetry.PromoterMetrics
+)
+
+// sharedPromoterMetrics registers the promoter counters on the process-wide registry exactly once (registering the
+// same names twice panics), however many modules a process builds.
+func sharedPromoterMetrics() *queuetelemetry.PromoterMetrics {
+	promoterMetricsOnce.Do(func() { promoterMetricsInst = queuetelemetry.NewPromoterMetrics(telemetry.Default) })
+	return promoterMetricsInst
+}
+
+// promoterTuning maps config to the promoter knobs (validated at start, D-24).
+func promoterTuning(cfg config.Config) worker.PromoterTuning {
+	t := cfg.WorkerTuning
+	return worker.PromoterTuning{
+		BatchMax: t.PromoteBatchMax, LeaseTTL: t.PromoterLeaseTTL,
+		NoSupplySuspectTicks: t.NoSupplySuspectTicks,
+	}
+}
+
+// heartbeatPolicy maps config to the server-controlled heartbeat interval (R03.1).
+func heartbeatPolicy(cfg config.Config) usecase.HeartbeatPolicy {
+	return usecase.HeartbeatPolicy{BaseMs: cfg.Liveness.HeartbeatInterval.Milliseconds(), NearMs: cfg.Liveness.NearInterval.Milliseconds()}
+}
+
+// livenessTuning maps config to the liveness sweeper (it shares the promoter lease TTL).
+func livenessTuning(cfg config.Config) worker.LivenessTuning {
+	l := cfg.Liveness
+	return worker.LivenessTuning{StaleAfter: l.StaleAfter, EndAfter: l.EndAfter, BatchMax: l.BatchMax, LeaseTTL: cfg.WorkerTuning.PromoterLeaseTTL}
+}
+
+// sweepBatch is the max number of expired entries the sweeper ends per event and tick.
+func sweepBatch(cfg config.Config) int { return cfg.WorkerTuning.SweepBatchMax }
+
+// joinSettings maps config to the join usecase settings; the admission lease TTL matches the promoter's.
+func joinSettings(cfg config.Config) usecase.JoinSettings {
+	return usecase.JoinSettings{
+		JoinPerIP: cfg.RateLimit.JoinPerIP, JoinPerIPWindow: cfg.RateLimit.JoinPerIPWindow,
+		ClaimWindow: cfg.Token.AdmissionTTL, StatusURLTemplate: "/api/v1/queue-status/",
+		AdmissionLeaseTTL: cfg.WorkerTuning.PromoterLeaseTTL,
+		VisitorTokenTTL:   cfg.Token.VisitorTTL,
+	}
 }
 
 // loadTokens reads the EdDSA private key and builds the signer and the verifier (own public key).

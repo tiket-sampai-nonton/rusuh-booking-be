@@ -31,7 +31,7 @@ Rincian perintah demi perintah ada di `PANDUAN-INFRA-DEV-VPS-DAN-AWS.md` bagian 
 
 ## Batasan di dev (VPS dengan gateway bersama)
 
-Gateway penyedia meneruskan HTTPS tanpa mengubahnya, sehingga aplikasi melihat semua pengunjung berasal dari satu IP (`10.10.0.1`). Karena itu batas per-IP dilonggarkan di template env dev (`RATE_LIMIT_PER_IP=3000`, `RATE_LIMIT_JOIN_PER_IP=100000`, `OTP_MAX_PER_IP_HOUR=100000`); batas per email (OTP, join antrean) tetap berlaku. Ini batasan lingkungan dev, bukan perilaku produksi: di AWS IP klien terbaca dan nilai bawaan dipakai. Caddy sengaja tidak dikonfigurasi `trusted_proxies`, karena header `X-Forwarded-For` hanya ada di jalur HTTP (yang hanya mengalihkan ke HTTPS).
+Gateway penyedia meneruskan HTTPS tanpa mengubahnya, sehingga aplikasi melihat semua pengunjung berasal dari satu IP (`10.10.0.1`). Karena itu batas per-IP dilonggarkan di template env dev (`RATE_LIMIT_PER_IP=3000`, `RATE_LIMIT_JOIN_PER_IP=100000`, `OTP_MAX_PER_IP_HOUR=1000` (batas atas validasi), `OTP_MAX_VERIFY_PER_IP_MIN=6000`, `TOKEN_MAX_REFRESH_PER_IP_MIN=6000`); batas per email (OTP, join antrean) tetap berlaku. Ini batasan lingkungan dev, bukan perilaku produksi: di AWS IP klien terbaca dan nilai bawaan dipakai. Caddy sengaja tidak dikonfigurasi `trusted_proxies`, karena header `X-Forwarded-For` hanya ada di jalur HTTP (yang hanya mengalihkan ke HTTPS).
 
 ## Aturan
 

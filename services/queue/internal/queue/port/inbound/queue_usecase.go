@@ -16,6 +16,11 @@ type JoinInput struct {
 	VisitorID string // existing visitor id (cookie/header); "" to mint a new one
 	IsMobile  bool   // true → return visitorToken in body, false → handler sets cookie
 	ClientIP  string
+	// IdempotencyKey is the optional Idempotency-Key header (16..64 chars); a replay returns the same entry.
+	IdempotencyKey string
+	// TokenGen is the generation of the verified visitor token (0 = none); DeviceHash is the HMAC of X-Device-Id.
+	TokenGen   int64
+	DeviceHash string
 }
 
 // IJoinUsecase joins a queue (design §2.1).
@@ -32,6 +37,19 @@ type IStatusUsecase interface {
 type MyEntryInput struct {
 	EventID   string
 	VisitorID string
+	Gen       int64 // generation of the verified visitor token
+}
+
+// HeartbeatInput identifies the caller's entry for a liveness signal.
+type HeartbeatInput struct {
+	EventID   string
+	VisitorID string
+	Gen       int64
+}
+
+// IHeartbeatUsecase records a liveness signal (ADR-030, R03).
+type IHeartbeatUsecase interface {
+	Heartbeat(ctx context.Context, in HeartbeatInput) (dto.HeartbeatStatus, error)
 }
 
 // IMyEntryUsecase returns the caller's own entry status (design §2.3).
@@ -44,6 +62,7 @@ type ClaimInput struct {
 	EntryID   string
 	VisitorID string
 	EventID   string
+	Gen       int64 // generation of the verified visitor token; a rotated-out token is refused (ADR-030)
 }
 
 // IClaimUsecase claims an admitted turn (design §2.4).
@@ -56,6 +75,7 @@ type LeaveInput struct {
 	EntryID   string
 	VisitorID string
 	EventID   string
+	Gen       int64 // generation of the verified visitor token; a rotated-out token is refused (ADR-030)
 }
 
 // ILeaveUsecase removes the caller's entry (design §2.5).

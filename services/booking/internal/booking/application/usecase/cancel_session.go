@@ -18,6 +18,9 @@ func NewCancelSession(admissions outbound.IAdmissionRepo) *CancelSession {
 
 // CancelSession releases the admission. Idempotent for terminal admissions.
 func (uc *CancelSession) CancelSession(ctx context.Context, sessionID, visitorID string) error {
+	if !isUUID(sessionID) {
+		return inbound.Validation("sessionId", "sessionId harus UUID")
+	}
 	adm, err := uc.admissions.GetByID(ctx, sessionID)
 	if err != nil {
 		return err

@@ -20,6 +20,8 @@ func Load() (Config, error) {
 			Env:  r.String("APP_ENV", "local"),
 			Name: r.String("APP_NAME", ServiceName),
 			Port: r.Int("APP_PORT", 8085),
+
+			TrustedProxyHops: r.Int("APP_TRUSTED_PROXY_HOPS", 1),
 		},
 		Log: logger.Config{Level: r.String("LOG_LEVEL", "info"), Format: r.String("LOG_FORMAT", "json")},
 		HTTP: HTTP{
@@ -56,6 +58,8 @@ func Load() (Config, error) {
 		PrivateKeyFile: r.String("TOKEN_PRIVATE_KEY_FILE", ""),
 		AccessTTL:      r.Duration("TOKEN_ACCESS_TTL", 15*time.Minute),
 		RefreshTTL:     r.Duration("TOKEN_REFRESH_TTL", 30*24*time.Hour),
+
+		MaxRefreshPerIPMinute: r.Int("TOKEN_MAX_REFRESH_PER_IP_MIN", 300),
 	}
 	cfg.OTP = OTP{
 		TTL:             r.Duration("OTP_TTL", 5*time.Minute),
@@ -63,6 +67,8 @@ func Load() (Config, error) {
 		MaxAttempts:     r.Int("OTP_MAX_ATTEMPTS", 5),
 		MaxPerEmailHour: r.Int("OTP_MAX_PER_EMAIL_HOUR", 5),
 		MaxPerIPHour:    r.Int("OTP_MAX_PER_IP_HOUR", 20),
+
+		MaxVerifyPerIPMinute: r.Int("OTP_MAX_VERIFY_PER_IP_MIN", 60),
 	}
 	cfg.PII = PII{
 		EncKeyHex:  r.String("PII_ENC_KEY", ""),

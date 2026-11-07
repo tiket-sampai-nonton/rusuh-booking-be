@@ -35,7 +35,8 @@ const eventCols = `e.id::text, e.slug, e.name, e.venue, e.city, e.genre,
 	e.max_attendee_checks_per_session, e.selection_edit_enabled, e.max_selection_edits, e.selection_submit_grace_seconds,
 	(e.published_at IS NOT NULL)`
 
-func scanEvent(row pgx.Row, minPrice *int64) (entity.Event, error) {
+// scanEvent scans eventCols, then minPrice when given, then any extra destinations (columns appended to the query).
+func scanEvent(row pgx.Row, minPrice *int64, extra ...any) (entity.Event, error) {
 	var e entity.Event
 	dest := []any{
 		&e.ID, &e.Slug, &e.Name, &e.Venue, &e.City, &e.Genres,
@@ -49,6 +50,7 @@ func scanEvent(row pgx.Row, minPrice *int64) (entity.Event, error) {
 	if minPrice != nil {
 		dest = append(dest, minPrice)
 	}
+	dest = append(dest, extra...)
 	err := row.Scan(dest...)
 	return e, err
 }
@@ -179,15 +181,33 @@ func (r *EventRepo) Facets(ctx context.Context, q dto.EventListQuery) (entity.Ev
 
 // GetByID returns one event or inbound.ErrNotFound.
 func (r *EventRepo) GetByID(ctx context.Context, eventID string) (entity.Event, error) {
-	sql := fmt.Sprintf(`SELECT %s FROM booking.events e WHERE e.id = $1::uuid`, eventCols)
-	e, err := scanEvent(r.pool.QueryRow(ctx, sql, eventID), nil)
+	// description is only needed on the detail path; keeping it out of eventCols keeps the catalog list light.
+	sql := fmt.Sprintf(`SELECT %s, e.description FROM booking.events e WHERE e.id = $1::uuid`, eventCols)
+	var description []byte
+	e, err := scanEvent(r.pool.QueryRow(ctx, sql, eventID), nil, &description)
 	switch {
 	case errors.Is(err, pgx.ErrNoRows), pkgpg.IsCode(err, "22P02"):
 		return entity.Event{}, inbound.ErrNotFound
 	case err != nil:
 		return entity.Event{}, fmt.Errorf("events: get: %w", err)
 	}
+	e.Description = description
 	return e, nil
+}
+
+// GetSupply returns the event-level ledger row.
+func (r *EventRepo) GetSupply(ctx context.Context, eventID string) (entity.Supply, error) {
+	var s entity.Supply
+	err := r.pool.QueryRow(ctx, `SELECT event_id::text, total_capacity, allocated_units, held_units, sold_units
+		FROM booking.event_supply WHERE event_id = $1::uuid`, eventID).
+		Scan(&s.EventID, &s.TotalCapacity, &s.AllocatedUnits, &s.HeldUnits, &s.SoldUnits)
+	switch {
+	case errors.Is(err, pgx.ErrNoRows), pkgpg.IsCode(err, "22P02"):
+		return entity.Supply{}, inbound.ErrNotFound
+	case err != nil:
+		return entity.Supply{}, fmt.Errorf("events: supply: %w", err)
+	}
+	return s, nil
 }
 
 // GetDetail returns an event with its categories and live availability.

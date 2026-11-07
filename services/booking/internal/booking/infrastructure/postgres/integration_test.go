@@ -38,7 +38,7 @@ func seedTestEvent(t *testing.T, pool *pgxpool.Pool, suffix string, capacity int
 			 max_tickets_per_order, max_tickets_per_buyer_nik, selection_ttl_seconds,
 			 payment_ttl_seconds, claim_window_seconds, max_attendee_checks_per_session, published_at)
 		VALUES ($1::uuid, $2, $2, 'Venue', now()+interval '1 hour', now()-interval '1 hour',
-			now()+interval '2 hours', 'AVAILABLE', 1, 3, 300, 600, 180, 10, now())
+			now()+interval '2 hours', 'AVAILABLE', 3, 3, 300, 600, 180, 10, now())
 		ON CONFLICT (id) DO NOTHING`, eventID, "slug-"+eventID)
 	require.NoError(t, err)
 
@@ -70,13 +70,13 @@ func seedActiveAdmission(t *testing.T, pool *pgxpool.Pool, admID, eventID, visit
 		INSERT INTO booking.admissions
 			(id, event_id, queue_entry_id, queue_seq, visitor_id,
 			 buyer_nik_hash, buyer_email_enc,
-			 units, status, admission_jti,
+			 units, outstanding_units, status, admission_jti,
 			 cfg_selection_ttl_seconds, cfg_payment_ttl_seconds, cfg_submit_grace_seconds,
 			 cfg_edit_enabled, cfg_max_edits, cfg_allow_mixed_categories,
 			 reserved_at, expires_at)
 		VALUES ($1::uuid, $2::uuid, gen_random_uuid(), 1, $3::uuid,
 			$4, 'test@test.id',
-			1, 'ACTIVE', gen_random_uuid(),
+			1, 1, 'ACTIVE', gen_random_uuid(),
 			300, 600, 5, true, 3, true,
 			now(), now()+interval '10 minutes')
 		ON CONFLICT (id) DO NOTHING`, admID, eventID, visitorID, nikHash)
@@ -138,7 +138,6 @@ func TestTC_BKG07_NoOversell(t *testing.T) {
 				}},
 				CorrelationID:  fmt.Sprintf("corr-%d", i),
 				CfgEditEnabled: true,
-				AdmissionUnits: 1,
 			}
 			if _, holdErr := uow.Hold(ctx, spec); holdErr == nil {
 				atomic.AddInt64(&success, 1)

@@ -61,3 +61,10 @@ func TestToBookingSession_WithCategories(t *testing.T) {
 	assert.Equal(t, "VIP", sess.Categories[0].Code)
 	assert.Equal(t, 5, sess.Categories[0].Available)
 }
+
+func TestSessionView_ExposesOutstandingUnits(t *testing.T) {
+	a := entity.Admission{ID: "s", Units: 3, OutstandingUnits: 2, Status: vo.AdmissionActive}
+	v := mapper.ToBookingSession(a, entity.EventDetail{}, nil, time.Now())
+	assert.Equal(t, 3, v.ReservedUnits)
+	assert.Equal(t, 2, v.OutstandingUnits)
+}

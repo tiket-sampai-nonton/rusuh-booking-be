@@ -1,6 +1,7 @@
 package http
 
 import (
+	"io"
 	stdhttp "net/http"
 	"strings"
 
@@ -13,7 +14,7 @@ import (
 // JoinHandler serves POST /api/v1/events/{eventId}/queue-entries (design §2.1).
 type JoinHandler struct {
 	uc         inbound.IJoinUsecase
-	auth       VisitorAuthenticator // decodes rb_visitor JWT to get the visitor UUID
+	auth       VisitorTokenAuthenticator // verifies the visitor token (id, generation, device claim)
 	trustProxy bool
 }
 
@@ -24,7 +25,7 @@ func NewJoinHandler(uc inbound.IJoinUsecase, trustProxy bool) *JoinHandler {
 }
 
 // WithAuth sets the visitor authenticator (call this to enable JWT decoding on join).
-func (h *JoinHandler) WithAuth(auth VisitorAuthenticator) *JoinHandler {
+func (h *JoinHandler) WithAuth(auth VisitorTokenAuthenticator) *JoinHandler {
 	h.auth = auth
 	return h
 }
@@ -35,28 +36,34 @@ func (h *JoinHandler) Register(mux *stdhttp.ServeMux) {
 }
 
 func (h *JoinHandler) join(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	// The join is anonymous (ADR-030): the body is not a contract. A legacy client may still send
+	// buyerNik/email/consent; the bytes are drained (bounded) and discarded, never parsed, stored, logged or echoed.
 	var body dto.JoinRequest
-	if err := httpx.DecodeJSON(w, r, &body, 0); err != nil {
-		httpx.WriteError(w, r, err)
-		return
+	if r.Body != nil {
+		_, _ = io.Copy(io.Discard, stdhttp.MaxBytesReader(w, r.Body, 4096))
 	}
 	bearer, _ := httpx.BearerToken(r)
-	// Resolve visitor ID: if a visitor JWT cookie is present and auth is set, decode it to get
-	// the UUID subject (so the constraint key q:{e}:visitor:<uuid> is consistent with the first join).
-	// Without this, the raw JWT is used as the visitor ID, breaking the one-active-per-visitor constraint.
-	vid := visitorID(r)
-	if vid != "" && h.auth != nil {
-		if decoded, ok := h.auth.Resolve(r); ok {
-			vid = decoded
+	// Resolve visitor ID: ONLY a verified JWT subject is used as the visitor id (TC-QUE-29, INV-3). The raw
+	// cookie/header value is never trusted directly — using it as a fallback let a forged X-Visitor-ID or
+	// rb_visitor cookie impersonate another visitor's queue identity (VISITOR_ALREADY_IN_QUEUE for the attacker,
+	// or an entry keyed to the victim's visitor id). No credential at all simply means a fresh visitor id is minted.
+	vid, gen, device := "", int64(0), ""
+	if h.auth != nil {
+		if c, ok := h.auth.ResolveToken(r); ok {
+			vid, gen = c.VisitorID, c.Gen
 		}
+		device = h.auth.DeviceHash(r) // only the HMAC reaches the usecase and the token, never the raw id
 	}
 	in := inbound.JoinInput{
-		EventID:   r.PathValue("eventId"),
-		Body:      body,
-		Bearer:    bearer,
-		VisitorID: vid,
-		IsMobile:  isMobile(r),
-		ClientIP:  httpx.ClientIP(r, h.trustProxy),
+		EventID:        r.PathValue("eventId"),
+		Body:           body,
+		IdempotencyKey: r.Header.Get("Idempotency-Key"),
+		TokenGen:       gen,
+		DeviceHash:     device,
+		Bearer:         bearer,
+		VisitorID:      vid,
+		IsMobile:       isMobile(r),
+		ClientIP:       httpx.ClientIP(r, h.trustProxy),
 	}
 	resp, err := h.uc.Join(r.Context(), in)
 	if err != nil {
@@ -72,7 +79,11 @@ func (h *JoinHandler) join(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		resp.VisitorToken = ""
 	}
 	w.Header().Set("Cache-Control", "no-store")
-	httpx.WriteData(w, r, stdhttp.StatusCreated, resp)
+	status := stdhttp.StatusCreated
+	if resp.Existing {
+		status = stdhttp.StatusOK // an already-active entry is returned idempotently
+	}
+	httpx.WriteData(w, r, status, resp)
 }
 
 // isMobile reports whether the client is a native app (returns the visitor token in the body).

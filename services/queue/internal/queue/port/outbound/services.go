@@ -30,10 +30,18 @@ type IRateLimiter interface {
 	Allow(ctx context.Context, key string, limit int, window time.Duration) (bool, error)
 }
 
+// VisitorClaim is what a visitor token carries (ADR-030): the visitor id, the server-side token generation (a
+// rotation revokes earlier generations) and an optional device hash (HMAC of X-Device-Id, never the raw value).
+type VisitorClaim struct {
+	VisitorID  string
+	Gen        int64
+	DeviceHash string
+}
+
 // ITokenIssuer signs admission/visitor/queue tokens (EdDSA).
 type ITokenIssuer interface {
 	IssueAdmission(entryID, eventID, allocationID string, now time.Time) (string, time.Time, error)
-	IssueVisitor(visitorID string, now time.Time) (string, error)
+	IssueVisitor(c VisitorClaim, now time.Time) (string, error)
 	IssueQueue(entryID, visitorID string, now time.Time) (string, error)
 }
 
@@ -42,12 +50,21 @@ type IUserTokenVerifier interface {
 	Verify(bearer string) (UserIdentity, error)
 }
 
-// IPIIProtector hashes NIK/email and seals/unseals email.
-type IPIIProtector interface {
-	HashNIK(nik string) []byte
-	HashEmail(email string) []byte
-	SealEmail(email string) ([]byte, error)
-	// SealBuyerEmail returns the base64 ciphertext sent to Booking (never the plaintext).
-	SealBuyerEmail(email string) (string, error)
-	UnsealEmail(enc []byte) (string, error)
+// IPromoterMetrics counts promoter and join events (labels as alternating key, value strings).
+// Names and label sets are fixed by the telemetry adapter; an unknown name is dropped.
+type IPromoterMetrics interface {
+	Inc(name string, labels ...string)
 }
+
+// Counter names shared by the join usecase and the promoter (design §5.4a.2 rule 5). The telemetry adapter registers
+// exactly these names; the port is their one home so application code never imports infrastructure.
+const (
+	MetricFullAfterGrant = "queue_promote_full_after_grant_total"
+	MetricLeaseLost      = "queue_promote_lease_lost_total"
+	MetricEntryEnded     = "queue_entry_ended_total" // label outcome
+	MetricLapsedReplay   = "queue_promote_lapsed_replay_skipped_total"
+	MetricFifoAdopted    = "queue_promote_fifo_adopted_total"          // label suspect
+	MetricHeadNoSupply   = "queue_promote_head_no_supply_repeat_total" // label adopted
+	MetricUnknownOutcome = "queue_promote_unknown_outcome_total"
+	MetricJoinLeaseRetry = "queue_join_lease_retry_total"
+)

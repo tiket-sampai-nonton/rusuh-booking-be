@@ -46,10 +46,20 @@ func (uc *GetEventSupply) GetSupply(ctx context.Context, eventID string) (dto.Su
 	}
 	soldOut := detail.Event.Status == entity.EventSoldOut || detail.Event.Status == entity.EventCancelled || remaining == 0
 
+	supply, err := uc.events.GetSupply(ctx, eventID)
+	if err != nil {
+		return dto.SupplySnapshot{}, err
+	}
 	return dto.SupplySnapshot{
-		EventID:          eventID,
-		RemainingTickets: remaining,
-		SoldOut:          soldOut,
-		Categories:       cats,
+		EventID:            eventID,
+		RemainingTickets:   remaining,
+		SoldOut:            soldOut,
+		Categories:         cats,
+		AllocatedUnits:     supply.AllocatedUnits,
+		HeldUnits:          supply.HeldUnits,
+		FreeUnits:          supply.Free(),
+		MaxTicketsPerOrder: detail.Event.MaxTicketsPerOrder,
+		SalesStartsAt:      detail.Event.SalesStartsAt,
+		SalesEndsAt:        detail.Event.SalesEndsAt,
 	}, nil
 }

@@ -6,7 +6,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/domain/entity"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/domain/valueobject"
 )
 
@@ -52,49 +51,6 @@ func TestStatus_IsTerminal(t *testing.T) {
 	}
 }
 
-func TestZoneFor(t *testing.T) {
-	tests := []struct {
-		name                  string
-		seq, guaranteed, poss valueobject.Seq
-		want                  valueobject.Zone
-	}{
-		{"within guaranteed", 100, 150, 200, valueobject.ZoneGuaranteed},
-		{"at guaranteed boundary", 150, 150, 200, valueobject.ZoneGuaranteed},
-		{"within possible", 175, 150, 200, valueobject.ZonePossible},
-		{"at possible boundary", 200, 150, 200, valueobject.ZonePossible},
-		{"beyond possible", 201, 150, 200, valueobject.ZoneNotEnough},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, valueobject.ZoneFor(tt.seq, tt.guaranteed, tt.poss))
-		})
-	}
-}
-
-func TestValidateNIKFormat(t *testing.T) {
-	tests := []struct {
-		name    string
-		nik     string
-		wantErr bool
-	}{
-		{"valid 16 digit", "3201234567890123", false},
-		{"letters", "32012345678901ab", true},
-		{"too short", "320123456789012", true},
-		{"too long", "32012345678901234", true},
-		{"empty", "", true},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := valueobject.ValidateNIKFormat(tt.nik)
-			if tt.wantErr {
-				require.ErrorIs(t, err, entity.ErrNikInvalid)
-			} else {
-				require.NoError(t, err)
-			}
-		})
-	}
-}
-
 func TestNewSeq(t *testing.T) {
 	s, err := valueobject.NewSeq(5)
 	require.NoError(t, err)
@@ -120,9 +76,4 @@ func TestNewIDs(t *testing.T) {
 	require.ErrorIs(t, err, valueobject.ErrInvalidID)
 	_, err = valueobject.NewEntryID("")
 	require.ErrorIs(t, err, valueobject.ErrInvalidID)
-}
-
-func TestBuyerNikHash_Hex(t *testing.T) {
-	h := valueobject.BuyerNikHash([]byte{0xde, 0xad, 0xbe, 0xef})
-	assert.Equal(t, "deadbeef", h.Hex())
 }

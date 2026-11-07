@@ -6,12 +6,11 @@ import (
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/clock"
 
-	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/domain/valueobject"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/port/inbound"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/port/outbound"
 )
 
-// LeaveQueue implements inbound.ILeaveUsecase: removes the caller's entry (design §2.5).
+// LeaveQueue implements inbound.ILeaveUsecase: removes the caller's entry (design §2.5, §5.2).
 type LeaveQueue struct {
 	store   outbound.IQueueStore
 	booking outbound.IBookingClient
@@ -24,21 +23,25 @@ func NewLeaveQueue(store outbound.IQueueStore, booking outbound.IBookingClient, 
 	return &LeaveQueue{store: store, booking: booking, clock: clk, logger: slog.Default()}
 }
 
-// Leave removes the entry atomically. If the entry was ADMITTED, it releases the allocation as
-// saga compensation before leaving (spec 14.R1, req 7.2, ADR-018). Release failure is best-effort:
-// Booking's own session sweeper releases the allocation when the claim window expires (K7).
+// Leave removes the entry atomically in Valkey FIRST: leave.lua decides ownership and status in one step and answers
+// NOT_FOUND for a stranger without changing anything. Only when it reports that it moved an ADMITTED entry to LEFT
+// does the usecase release the Booking allocation (saga compensation, spec 14.R1, req 7.2, ADR-018). Doing the
+// release before the commit (as before) let anyone who knew an entry id free another buyer's reserved ticket, since
+// the stranger was only rejected afterwards. Release failure is best-effort: Booking's own session sweeper
+// releases the allocation when the claim window expires (K7).
 func (u *LeaveQueue) Leave(ctx context.Context, in inbound.LeaveInput) error {
-	ent, found, err := u.store.GetEntry(ctx, in.EventID, in.EntryID)
+	if err := checkTokenGen(ctx, u.store, in.EventID, in.VisitorID, in.Gen); err != nil {
+		return err
+	}
+	res, err := u.store.Leave(ctx, in.EventID, in.EntryID, in.VisitorID, u.clock.Now().UnixMilli())
 	if err != nil {
 		return err
 	}
-	if found && ent.Status == valueobject.StatusAdmitted && ent.AllocationID != "" {
-		if rerr := u.booking.ReleaseAllocation(ctx, ent.AllocationID, "QUEUE_ENTRY_GONE"); rerr != nil {
-			// Best-effort: log and continue. Booking sweeper handles the fallback on claim deadline.
+	if res.Tag == "OK" && res.PrevStatus == "ADMITTED" && res.AllocationID != "" {
+		if rerr := u.booking.ReleaseAllocation(ctx, res.AllocationID, outbound.ReleaseReasonEntryGone); rerr != nil {
 			u.logger.Warn("leave: gagal melepas alokasi Booking; sweeper akan membersihkan saat deadline",
-				"allocationId", ent.AllocationID, "error", rerr)
+				"eventId", in.EventID, "entryId", in.EntryID, "allocationId", res.AllocationID, "error", rerr)
 		}
 	}
-	_, err = u.store.Leave(ctx, in.EventID, in.EntryID, in.VisitorID, u.clock.Now().UnixMilli())
-	return err
+	return nil
 }

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"regexp"
 	"strings"
+	"unicode"
 )
 
 // ErrInvalidEmail is returned for malformed email addresses.
@@ -17,7 +18,12 @@ type Email struct{ value string }
 // NewEmail validates and normalizes s.
 func NewEmail(s string) (Email, error) {
 	v := strings.ToLower(strings.TrimSpace(s))
+	// Satu aturan panjang, dalam byte: seluruh alamat ≤ 254 dan local part ≤ 64 (regex menghitung rune, jadi dicek eksplisit).
 	if len(v) > 254 || !emailPattern.MatchString(v) {
+		return Email{}, ErrInvalidEmail
+	}
+	local, _, _ := strings.Cut(v, "@")
+	if len(local) > 64 || strings.IndexFunc(local, unicode.IsControl) >= 0 {
 		return Email{}, ErrInvalidEmail
 	}
 	return Email{value: v}, nil

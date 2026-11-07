@@ -40,7 +40,7 @@ Queue Service mengelola waiting room untuk war tiket. Service ini menangani lonj
 | Queue Join | §3.2.4 | Masuk antrean dengan NIK + email |
 | Direct Admission | §3.2.4 | Langsung masuk jika slot tersedia |
 | Queue Status | §3.2.5 | Status Document (CDN cached) |
-| Position Calculation | §3.2.5 | Posisi = mySeq - servingSeq |
+| Position Calculation | §3.2.5 | Posisi eksak dihitung server lewat `LivePosition` (ZCOUNT hidup atas `q:{e}:waiting`) |
 | Admission & Claim | §3.2.6 | Promotor batch, claim window 3 menit |
 | Sold-Out Closure | §3.2.10 | Tutup antrean saat sold out |
 | Turn Notification | §3.2.25 | Trigger push notification |
@@ -135,7 +135,7 @@ GET /api/v1/queue-status/{eventId}
 ```json
 {
   "eventId": "uuid",
-  "servingSeq": 12300,
+  "headSeq": 12300,
   "waitingCount": 500,
   "activeSlots": 45,
   "maxActiveSlots": 50,
@@ -364,7 +364,7 @@ claimDeadlineMs, allocationId
 **Interval:** 500ms
 
 **Logic:**
-1. Compute: servingSeq, waitingCount, activeSlots
+1. Compute: headSeq, waitingCount, activeSlots
 2. Build Status Document JSON
 3. SET to `q:{e}:status` with 1s TTL
 4. CloudFront caches this endpoint

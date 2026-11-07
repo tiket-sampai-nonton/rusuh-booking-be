@@ -8,3 +8,7 @@ e795b45aa2619e0700a46f050d478a751ce23228:services/payment/internal/payment/infra
 e795b45aa2619e0700a46f050d478a751ce23228:services/payment/internal/payment/infrastructure/postgres/repositories_integration_test.go:generic-api-key:318
 e52f3e5812405ba873a81370ce9c4dd3abdcab8c:specs/payment-service/design.md:generic-api-key:332
 ad2d5f938b3ed2cc2d1f0fce60b3ce80c25123be:services/booking/internal/booking/application/usecase/hold_test.go:generic-api-key:25
+# Fixture Idempotency-Key di test queue (nilai 'idem-*', bukan kredensial).
+4b0c540b9e8dba460e342a07fc8110b6999b1371:services/queue/internal/queue/application/usecase/join_test.go:generic-api-key:105
+4b0c540b9e8dba460e342a07fc8110b6999b1371:services/queue/internal/queue/infrastructure/valkey/queue_store_integration_test.go:generic-api-key:207
+4b0c540b9e8dba460e342a07fc8110b6999b1371:services/queue/internal/queue/infrastructure/valkey/queue_store_integration_test.go:generic-api-key:208

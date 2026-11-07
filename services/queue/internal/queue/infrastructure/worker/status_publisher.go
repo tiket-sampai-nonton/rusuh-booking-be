@@ -3,6 +3,7 @@ package worker
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -10,6 +11,7 @@ import (
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/domain/dto"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/domain/entity"
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/domain/valueobject"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/port/outbound"
 )
 
@@ -37,12 +39,13 @@ func (p *StatusPublisher) Run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	var errs []error
 	for _, eventID := range ids {
 		if err := p.runEvent(ctx, eventID); err != nil {
-			return err
+			errs = append(errs, fmt.Errorf("status publisher event %s: %w", eventID, err))
 		}
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func (p *StatusPublisher) runEvent(ctx context.Context, eventID string) error {
@@ -54,9 +57,12 @@ func (p *StatusPublisher) runEvent(ctx context.Context, eventID string) error {
 	if err != nil {
 		return err
 	}
-	supply, serr := p.booking.Supply(ctx, eventID) // best-effort; on error we publish with zero stock
+	supply, serr := p.booking.Supply(ctx, eventID) // best-effort; on error the previous boundaries are kept
 
 	doc := p.build(eventID, settings, sale, supply, serr == nil)
+	if err := p.ranks(ctx, eventID, settings, supply, serr == nil, &doc); err != nil {
+		return err
+	}
 	raw, err := json.Marshal(doc)
 	if err != nil {
 		return fmt.Errorf("status publisher: marshal: %w", err)
@@ -76,16 +82,9 @@ func (p *StatusPublisher) build(eventID string, s entity.EventSettings, sale out
 		remaining = supply.RemainingTickets
 		soldOut = soldOut || supply.SoldOut
 	}
-	// Guaranteed covers the next `remaining` seqs; possible extends by near_front_multiplier.
-	guaranteedUntil := sale.ServingSeq + int64(remaining)
-	possibleUntil := sale.ServingSeq + int64(remaining*maxInt(1, s.NearFrontMultiplier))
-
 	return dto.StatusDocument{
 		EventID:               eventID,
 		SaleState:             saleState,
-		ServingSeq:            sale.ServingSeq,
-		GuaranteedUntilSeq:    guaranteedUntil,
-		PossibleUntilSeq:      possibleUntil,
 		SoldOut:               soldOut,
 		RemainingTickets:      remaining,
 		NextPollAfterMs:       s.PollNearMs,
@@ -94,6 +93,47 @@ func (p *StatusPublisher) build(eventID string, s entity.EventSettings, sale out
 		Categories:            categoriesFrom(supply, s.CategoryLimitedThresholdPct, haveSupply),
 		UpdatedAt:             now.Format(time.RFC3339),
 	}
+}
+
+// ranks fills the seq-based zone fields (ADR-030, R05.1): G = ceil(F/M) and P = ceil((F+A+H)/M) front-most LIVE
+// entries (STALE are not in the waiting set), boundary = seq of the G-th / P-th live entry (the last live seq when
+// fewer live entries exist), 0 for an empty zone. All joins are strict FIFO by seq (ADR-030 Amendment: the
+// opening-window draw was dropped).
+func (p *StatusPublisher) ranks(ctx context.Context, eventID string, s entity.EventSettings, supply outbound.SupplySnapshot, haveSupply bool, doc *dto.StatusDocument) error {
+	count, err := p.store.WaitingCount(ctx, eventID)
+	if err != nil {
+		return err
+	}
+	seqOfNth := func(n int64) (*int64, error) {
+		var r int64
+		if n > 0 && count > 0 {
+			got, _, err := p.store.WaitingSeqAt(ctx, eventID, min(n, count)-1)
+			if err != nil {
+				return nil, err
+			}
+			r = got
+		}
+		return &r, nil
+	}
+	if doc.HeadSeq, err = seqOfNth(1); err != nil {
+		return err
+	}
+	if !haveSupply {
+		// Booking unavailable: keep the last published boundaries instead of telling everyone "not enough".
+		if raw, ok, gerr := p.store.GetStatusDoc(ctx, eventID); gerr == nil && ok {
+			var prev dto.StatusDocument
+			if json.Unmarshal(raw, &prev) == nil {
+				doc.GuaranteedUntilSeq, doc.PossibleUntilSeq = prev.GuaranteedUntilSeq, prev.PossibleUntilSeq
+			}
+		}
+		return nil
+	}
+	g, pp := valueobject.ZoneCounts(supply.FreeUnits, supply.AllocatedUnits, supply.HeldUnits, supply.MaxTicketsPerOrder)
+	if doc.GuaranteedUntilSeq, err = seqOfNth(g); err != nil {
+		return err
+	}
+	doc.PossibleUntilSeq, err = seqOfNth(pp)
+	return err
 }
 
 func categoriesFrom(supply outbound.SupplySnapshot, limitedPct int, haveSupply bool) []dto.CategoryState {
@@ -112,11 +152,4 @@ func categoriesFrom(supply outbound.SupplySnapshot, limitedPct int, haveSupply b
 		out = append(out, dto.CategoryState{Code: c.Code, Name: c.Name, State: state})
 	}
 	return out
-}
-
-func maxInt(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
 }

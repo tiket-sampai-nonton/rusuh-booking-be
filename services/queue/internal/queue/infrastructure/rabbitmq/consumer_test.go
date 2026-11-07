@@ -15,6 +15,7 @@ import (
 
 	mock_outbound "github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/_mock/queue/port/outbound"
 	queuerabbitmq "github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/infrastructure/rabbitmq"
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/port/outbound"
 )
 
 func delivery(t *testing.T, routingKey string, payload any) pkgrabbitmq.Delivery {
@@ -37,7 +38,7 @@ func newConsumer(t *testing.T) (*queuerabbitmq.Consumer, *mock_outbound.MockIQue
 
 func TestConsumer_JourneyEnded(t *testing.T) {
 	c, store := newConsumer(t)
-	store.EXPECT().EndEntry(gomock.Any(), "ev1", "e1", "PAID", gomock.Any()).Return("COMPLETED", nil)
+	store.EXPECT().EndEntry(gomock.Any(), "ev1", "e1", "PAID", gomock.Any()).Return(outbound.EndResult{Tag: "OK", Status: "COMPLETED"}, nil)
 	err := c.Subscription().Handler(context.Background(), delivery(t, "booking.journey.ended",
 		map[string]string{"eventId": "ev1", "queueEntryId": "e1", "outcome": "PAID"}))
 	assert.NoError(t, err)
@@ -46,15 +47,16 @@ func TestConsumer_JourneyEnded(t *testing.T) {
 func TestConsumer_JourneyEnded_DoubleDeliveryIdempotent(t *testing.T) {
 	c, store := newConsumer(t)
 	// end_entry.lua is idempotent; the consumer just calls it each time.
-	store.EXPECT().EndEntry(gomock.Any(), "ev1", "e1", "PAID", gomock.Any()).Return("COMPLETED", nil).Times(2)
+	store.EXPECT().EndEntry(gomock.Any(), "ev1", "e1", "PAID", gomock.Any()).Return(outbound.EndResult{Tag: "OK", Status: "COMPLETED"}, nil).Times(2)
 	d := delivery(t, "booking.journey.ended", map[string]string{"eventId": "ev1", "queueEntryId": "e1", "outcome": "PAID"})
 	require.NoError(t, c.Subscription().Handler(context.Background(), d))
 	require.NoError(t, c.Subscription().Handler(context.Background(), d))
 }
 
-func TestConsumer_QuotaExhausted(t *testing.T) {
-	c, store := newConsumer(t)
-	store.EXPECT().AddQuotaExhausted(gomock.Any(), "ev1", "deadbeef").Return(nil)
+// ADR-030: booking.quota.exhausted is a one-release no-op acknowledge (no store call: a strict mock would fail),
+// so a stale message from an old Booking pod can neither DLQ-storm nor end a live buyer.
+func TestConsumer_QuotaExhaustedIsNoOpAck(t *testing.T) {
+	c, _ := newConsumer(t)
 	err := c.Subscription().Handler(context.Background(), delivery(t, "booking.quota.exhausted",
 		map[string]string{"eventId": "ev1", "buyerNikHash": "deadbeef"}))
 	assert.NoError(t, err)
@@ -96,4 +98,31 @@ func TestConsumer_SubscriptionBindings(t *testing.T) {
 	sub := c.Subscription()
 	assert.Equal(t, "queue.booking-events", sub.Queue)
 	assert.ElementsMatch(t, []string{"booking.journey.ended", "booking.quota.exhausted", "booking.sold_out"}, sub.RoutingKeys)
+}
+
+// QSH-T16: an IGNORED result (PAID on a WAITING entry, terminal entry, orphan) is acked, never retried or sent to the
+// DLQ: end_entry.lua already made the redelivery a no-op, so there is nothing for the broker to redo.
+func TestConsumer_JourneyEnded_IgnoredResultIsAcked(t *testing.T) {
+	for _, res := range []outbound.EndResult{
+		{Tag: "IGNORED", Status: "WAITING"}, // PAID on WAITING
+		{Tag: "IGNORED", Status: "ENDED"},
+		{Tag: "IGNORED", Status: "NO_ENTRY"},
+		{Tag: "OK_CLEANUP", Status: "MISSED"},
+	} {
+		c, store := newConsumer(t)
+		store.EXPECT().EndEntry(gomock.Any(), "ev1", "e1", "PAID", gomock.Any()).Return(res, nil)
+		err := c.Subscription().Handler(context.Background(), delivery(t, "booking.journey.ended",
+			map[string]string{"eventId": "ev1", "queueEntryId": "e1", "outcome": "PAID"}))
+		assert.NoError(t, err, res.Tag+"/"+res.Status)
+	}
+}
+
+// A Valkey error is transient: it must be returned (so the broker retries with backoff) and never marked permanent.
+func TestConsumer_JourneyEnded_ValkeyErrorIsRetriedNotPermanent(t *testing.T) {
+	c, store := newConsumer(t)
+	store.EXPECT().EndEntry(gomock.Any(), "ev1", "e1", "PAID", gomock.Any()).Return(outbound.EndResult{}, assert.AnError)
+	err := c.Subscription().Handler(context.Background(), delivery(t, "booking.journey.ended",
+		map[string]string{"eventId": "ev1", "queueEntryId": "e1", "outcome": "PAID"}))
+	require.Error(t, err)
+	assert.False(t, pkgrabbitmq.IsPermanent(err))
 }

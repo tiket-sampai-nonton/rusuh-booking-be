@@ -1,0 +1,15 @@
+{
+  "eventId": "22222222-2222-2222-2222-222222222222",
+  "remainingTickets": 12,
+  "soldOut": false,
+  "categories": [
+    {"code": "VIP", "name": "VIP", "sold": 0, "total": 7},
+    {"code": "REG", "name": "Regular", "sold": 0, "total": 5}
+  ],
+  "allocatedUnits": 6,
+  "heldUnits": 4,
+  "freeUnits": 2,
+  "maxTicketsPerOrder": 3,
+  "salesStartsAt": "2030-01-01T10:00:00Z",
+  "salesEndsAt": "2030-01-01T14:00:00Z"
+}

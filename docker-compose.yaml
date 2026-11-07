@@ -40,7 +40,7 @@ services:
       POSTGRES_USER: rbt
       POSTGRES_PASSWORD: rbt-local-only
       POSTGRES_DB: rbt
-    ports: ["5432:5432"]
+    ports: ["5433:5432"]  # host 5433 to avoid clash with telkomsel_db_postgresql on 5432
     volumes:
       - ./deployments/compose/postgres-init.sql:/docker-entrypoint-initdb.d/00-init.sql:ro
       - ./deployments/compose/postgres-local-passwords.sql:/docker-entrypoint-initdb.d/01-local-passwords.sql:ro
@@ -53,7 +53,7 @@ services:
 
   valkey:
     image: valkey/valkey:8.1-alpine
-    ports: ["6379:6379"]
+    ports: ["6380:6379"]  # host 6380 to avoid clash with telkomsel_redis on 6379
     healthcheck:
       test: ["CMD", "valkey-cli", "ping"]
       interval: 5s
@@ -101,6 +101,12 @@ services:
       TOKEN_PRIVATE_KEY_FILE: /run/keys/queue-token.pem
       TOKEN_PUBLIC_KEY_FILE: /run/keys/user-token.pub.pem
       BOOKING_SERVICE_URL: http://booking-api:8082
+      # ADR-030 liveness (R03.8 defaults; OQ-2 owner may change). end > stale > 2 x interval.
+      QUEUE_HEARTBEAT_INTERVAL_SECONDS: "30"
+      QUEUE_HEARTBEAT_NEAR_INTERVAL_SECONDS: "10"
+      QUEUE_STALE_AFTER_SECONDS: "90"
+      QUEUE_END_AFTER_SECONDS: "300"
+      RATE_LIMIT_JOIN_PER_IP: "200" # soft cap per minute (mobile NAT), never a block
     depends_on: { postgres: { condition: service_healthy } }
     volumes: *keys-volume
     restart: "no"
@@ -124,6 +130,10 @@ services:
       PAYMENT_TOKEN_PUBLIC_KEY_PATH: /run/keys/payment-token.pub.pem
       # Admin endpoints: buyer tokens of these emails only; empty = nobody (fail closed).
       ADMIN_EMAILS: ${ADMIN_EMAILS:-}
+      # ADR-030 buyer-NIK attempt budget at hold, then 2 s doubling to 30 s (PROVISIONAL, human gate OQ-15).
+      BUYER_NIK_ATTEMPT_BUDGET: "10"
+      BUYER_NIK_THROTTLE_BASE_SECONDS: "2"
+      BUYER_NIK_THROTTLE_MAX_SECONDS: "30"
     depends_on: { postgres: { condition: service_healthy } }
     restart: "no"
 

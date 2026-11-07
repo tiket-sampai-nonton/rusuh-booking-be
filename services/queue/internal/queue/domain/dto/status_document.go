@@ -2,11 +2,14 @@ package dto
 
 // StatusDocument is the public queue status served via CDN (design §2.2). No PII.
 type StatusDocument struct {
-	EventID               string          `json:"eventId"`
-	SaleState             string          `json:"saleState"`
-	ServingSeq            int64           `json:"servingSeq"`
-	GuaranteedUntilSeq    int64           `json:"guaranteedUntilSeq"`
-	PossibleUntilSeq      int64           `json:"possibleUntilSeq"`
+	EventID   string `json:"eventId"`
+	SaleState string `json:"saleState"`
+	// HeadSeq is the seq of the front-most live entry; GuaranteedUntilSeq / PossibleUntilSeq are the seqs of the
+	// G-th / P-th live entry (R05.1), 0 when that zone is empty. All joins are strict FIFO by seq (ADR-030
+	// Amendment: the opening-window draw was dropped).
+	HeadSeq               *int64          `json:"headSeq"`
+	GuaranteedUntilSeq    *int64          `json:"guaranteedUntilSeq"`
+	PossibleUntilSeq      *int64          `json:"possibleUntilSeq"`
 	SoldOut               bool            `json:"soldOut"`
 	RemainingTickets      int             `json:"remainingTickets"`
 	AdmissionRatePerMin   int             `json:"admissionRatePerMin"`

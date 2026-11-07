@@ -663,7 +663,8 @@ paths:
                 "$ref": "#/components/schemas/ErrorEnvelope"
         '409':
           description: 'Konflik — errorCode: `ATTENDEE_NIK_ALREADY_REGISTERED`, `ATTENDEE_NIK_DUPLICATE_IN_ORDER`,
-            `CATEGORY_UNAVAILABLE`, `BUYER_QUOTA_EXHAUSTED`, `IDEMPOTENCY_KEY_REUSED`, `EVENT_CANCELLED`'
+            `CATEGORY_UNAVAILABLE` (pesan `CATEGORY_UNAVAILABLE: <categoryId>[,<categoryId>]`, id terurut, dipisah koma;
+            baca ulang ketersediaan kategori lewat endpoint/SSE yang ada), `IDEMPOTENCY_KEY_REUSED`, `EVENT_CANCELLED`'
           content:
             application/json:
               schema:
@@ -676,7 +677,17 @@ paths:
                 "$ref": "#/components/schemas/ErrorEnvelope"
         '422':
           description: 'Melebihi batas atau aturan event — errorCode: `QUANTITY_EXCEEDS_LIMIT`,
-            `MIXED_CATEGORIES_NOT_ALLOWED`, `NIK_INVALID`'
+            `QUANTITY_INVALID` (kosong atau lebih dari unit yang dicadangkan untuk sesi ini), `MIXED_CATEGORIES_NOT_ALLOWED`,
+            `NIK_INVALID`, `EMAIL_MISMATCH`, `CONSENT_REQUIRED`, `BUYER_NIK_LIMIT_REACHED` ("NIK ini sudah mencapai batas,
+            gunakan NIK lain"; sesi, unit cadangan, dan timer tetap; boleh dicoba lagi dengan NIK pembeli lain dan
+            Idempotency-Key yang sama)'
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ErrorEnvelope"
+        '429':
+          description: 'Terlalu banyak percobaan NIK pembeli pada sesi ini; tunggu sesuai header Retry-After — errorCode:
+            `BUYER_NIK_THROTTLED`'
           content:
             application/json:
               schema:
@@ -1211,6 +1222,11 @@ components:
         published:
           type: boolean
           description: Selalu true di katalog publik (event draf menjawab 404). Draf hanya terlihat oleh admin.
+        description:
+          type: array
+          description: Dokumen Slate (array node objek). Tidak dikirim bila event tidak punya deskripsi.
+          items:
+            type: object
         categories:
           type: array
           items:
@@ -1264,6 +1280,9 @@ components:
           - ENDED
         reason:
           type: string
+        outstandingUnits:
+          type: integer
+          description: Unit cadangan yang belum di-hold (0 setelah hold); batas jumlah item pada hold
         reservedUnits:
           type: integer
         maxSelectable:
@@ -1355,10 +1374,36 @@ components:
         sessionId:
           type: string
           format: uuid
+        buyer:
+          type: object
+          description: |
+            Data pembeli diisi di halaman Booking (ADR-030) dan diikat ke admission di dalam transaksi hold.
+            Pengguna login boleh diprefill dari akun di klien; server tetap memvalidasi. Bearer opsional hanya
+            mengidentifikasi akun, tidak pernah menyuplai NIK.
+          properties:
+            nik:
+              type: string
+              pattern: "^[0-9]{16}$"
+              description: NIK pembeli 16 digit (struktur dicek; disimpan hanya sebagai HMAC dan versi tersamar)
+            email:
+              type: string
+              format: email
+            emailConfirmation:
+              type: string
+              format: email
+            consent:
+              type: boolean
+              const: true
+          required:
+          - nik
+          - email
+          - emailConfirmation
+          - consent
         items:
           type: array
           minItems: 1
           maxItems: 3
+          description: Satu item per tiket; 1 qty = 1 NIK pemegang. Jumlah item tidak boleh melebihi outstandingUnits sesi.
           items:
             type: object
             properties:
@@ -1375,7 +1420,7 @@ components:
                       plaintext)
                   fullName:
                     type: string
-                    minLength: 1
+                    minLength: 2
                     maxLength: 100
                 required:
                 - nik
@@ -1385,6 +1430,7 @@ components:
             - attendee
       required:
       - sessionId
+      - buyer
       - items
     ReplaceItemsRequest:
       type: object
@@ -1412,7 +1458,7 @@ components:
                         plaintext)
                     fullName:
                       type: string
-                      minLength: 1
+                      minLength: 2
                       maxLength: 100
                   required:
                   - nik

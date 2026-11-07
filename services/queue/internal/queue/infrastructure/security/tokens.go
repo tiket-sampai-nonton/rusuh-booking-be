@@ -1,6 +1,7 @@
 package security
 
 import (
+	"strconv"
 	"sync"
 	"time"
 
@@ -60,10 +61,14 @@ func (t *TokenIssuer) IssueAdmission(entryID, eventID, allocationID string, now 
 	return tok, exp, err
 }
 
-// IssueVisitor mints a visitor token identifying a device.
-func (t *TokenIssuer) IssueVisitor(visitorID string, now time.Time) (string, error) {
-	tok, _, err := t.sign(visitorID, ScopeVisitor, now, t.visitorTTL)
-	return tok, err
+// IssueVisitor mints a visitor token: sub = visitor id; jti = "<gen>.<deviceHash>" (the generation the server
+// compares on every call, and the optional device claim). No NIK, email or raw device id is ever in the token.
+func (t *TokenIssuer) IssueVisitor(c outbound.VisitorClaim, now time.Time) (string, error) {
+	exp := now.Add(t.visitorTTL)
+	return t.signer.Sign(token.Claims{
+		Issuer: t.issuer, Subject: c.VisitorID, Audience: t.audience, Scope: ScopeVisitor,
+		ID: strconv.FormatInt(c.Gen, 10) + "." + c.DeviceHash, IssuedAt: now.Unix(), ExpiresAt: exp.Unix(),
+	})
 }
 
 // IssueQueue mints a queue token for an entry.

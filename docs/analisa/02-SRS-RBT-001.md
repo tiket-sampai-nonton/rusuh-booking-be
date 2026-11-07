@@ -105,7 +105,7 @@ Guest session dan data pembeli (§3.2.1); daftar dan detail event (§3.2.2–3.2
 | Waiting Room | Antrean virtual sebelum akses ke halaman beli |
 | Queue Sequence | Nomor urut antrean yang monoton per event, diberikan server saat join (FIFO) |
 | Queue Token | Token bertanda tangan milik pengantre, berisi `eventId`, `entryId`, `seq`, `visitorId` |
-| Status Document | Dokumen JSON kecil per event yang di-cache CDN: `servingSeq`, ambang peluang, `soldOut` |
+| Status Document | Dokumen JSON kecil per event yang di-cache CDN: `headSeq`, ambang peluang, `soldOut` |
 | Active Slot | Customer yang sedang berada di halaman beli atau pembayaran |
 | Admission | Momen giliran tiba: alokasi stok berhasil direservasi untuk customer |
 | Allocation (Reservasi) | Unit stok tingkat event (N = min(3, sisa kuota pembeli, stok bebas)) yang disiapkan untuk satu customer yang di-admit; belum terikat kategori |
@@ -287,7 +287,7 @@ Contoh request/response dan error code lengkap di Lampiran A [v4.6 → SDD §4.6
 {
   "eventId": "8f0c…",
   "saleState": "OPEN",
-  "servingSeq": 182340,
+  "headSeq": 182340,
   "guaranteedUntilSeq": 183100,
   "possibleUntilSeq": 196500,
   "soldOut": false,
@@ -338,6 +338,7 @@ Status: 400, 401/403, 404, 409, 410, 422, 429, 503. Tidak membocorkan SQL, stack
 | 409 | `BUYER_QUOTA_EXHAUSTED` | Queue, Booking | Kuota 3 tiket NIK pembeli habis | Tidak dapat membeli lagi |
 | 409 | `EVENT_NOT_ON_SALE` | Queue | Di luar jendela penjualan | Tunggu jam buka |
 | 410 | `EVENT_SOLD_OUT` | Queue, Booking | Tiket habis | Kembali ke home |
+| 409 | `NOT_ADMITTED` | Queue | Claim untuk entry yang masih WAITING (belum mendapat giliran) | Tetap menunggu di antrean |
 | 410 | `TURN_MISSED` | Queue, Booking | Claim window lewat | Kembali ke home / antre ulang |
 | 410 | `SESSION_EXPIRED` | Booking | TTL Booking habis | Kembali ke home |
 | 403 | `ADMISSION_TOKEN_INVALID` | Booking | Token salah/dipakai ulang | Kembali ke antrean |
@@ -431,7 +432,7 @@ Kontrak per endpoint (contoh request/response) ada di SDD-RBT-001 Interface view
 | SRS-F-04-04 | The Queue Service shall assign each entry a monotonically increasing sequence number per event, generated atomically, and shall record the join time in UTC. | GR-07, NFR-05 | M | T | TC-QUE-08 |
 | SRS-F-04-05 | If the buyer NIK quota for the event is exhausted, then the join shall be rejected with `409 BUYER_QUOTA_EXHAUSTED`. | BR-02, FR-14 | M | T | TC-BKG-01 |
 | SRS-F-04-06 | A device (visitor) and an email shall each have at most one active entry per event (`409 VISITOR_ALREADY_IN_QUEUE`, `409 EMAIL_ALREADY_IN_QUEUE`); after the entry ends, a new join shall be placed at the back. | AS-17 | M | T | TC-GST-04, TC-GST-05 |
-| SRS-F-04-07 | When there is no earlier waiter, an active slot is free, and the allocation succeeds, the customer shall be admitted directly in the join response. | FR-05 | M | T | TC-QUE-02 |
+| SRS-F-04-07 | When there is no earlier waiter, an active slot is free, and the allocation succeeds, the customer shall be admitted directly in the join response. *(Amended by Queue hardening design rev 5: applies while the per-event admission lease is obtained, with one jittered 15-35 ms retry; otherwise the join returns `WAITING` with no Booking call and the promoter admits the entry within `PromotorInterval`. See ADR-029, TC-QUE-20b.)* | FR-05 | M | T | TC-QUE-02 |
 | SRS-F-04-08 | When an earlier waiter exists or the active slots are full, the entry shall be `WAITING` and the customer shall be directed to the waiting room. | FR-04 | M | T | TC-QUE-01 |
 | SRS-F-04-09 | The join endpoint shall be protected by an edge challenge, a rate-based rule, and a per-IP rate limit in the Queue Service. | NFR-01 | M | I | [TP] |
 | SRS-F-04-10 | The queue position shall persist across refresh and multiple tabs: the queue token shall be kept in cookie/secure storage and the entry shall be held server-side per buyer NIK. | FR-10 | M | T | TC-QUE-07 |
@@ -443,7 +444,7 @@ Kontrak per endpoint (contoh request/response) ada di SDD-RBT-001 Interface view
 | ID | Requirement | Source | Pri | Ver | Test |
 |----|-------------|--------|-----|-----|------|
 | SRS-F-05-01 | The Queue Service shall publish one Status Document per event (fields in §3.1.4) that contains no personal data and is cacheable for 1 second. | FR-06, NFR-01 | M | T | TC-QUE-03 |
-| SRS-F-05-02 | The client shall display "Anda antrian ke-n" where n = `seq − servingSeq − removedAhead`; n shall be an upper bound of the true position. | FR-06 | M | T | TC-QUE-03 |
+| SRS-F-05-02 | The client shall display "Anda antrian ke-n" where n = `exactPosition` from the server (computed via `LivePosition` = ZCOUNT of live entries over `q:{e}:waiting`); n shall be an upper bound of the true position. | FR-06 | M | T | TC-QUE-03 |
 | SRS-F-05-03 | When n ≤ the near threshold (PROPOSED 2 × active slot capacity), the client shall use the exact-position endpoint. | FR-06 | M | T | TC-QUE-03 |
 | SRS-F-05-04 | The polling interval shall be adaptive and controlled by the server through the `poll` field (defaults: n > 50.000 → 30 s; 5.000–50.000 → 10 s; < 5.000 → 3 s), with ±20% jitter; client values shall be fallbacks only. | FR-07 | M | T | TC-QUE-15 |
 | SRS-F-05-05 | The waiting room shall show "Diperbarui N detik lalu" derived from `updatedAt`. | FR-07 | M | T | TC-QUE-04 |
@@ -700,7 +701,7 @@ Kontrak per endpoint (contoh request/response) ada di SDD-RBT-001 Interface view
 | ID | Requirement | Source | Pri | Ver | Test |
 |----|-------------|--------|-----|-----|------|
 | SRS-F-25-01 | Information shall be refreshed within these maximum delays: position/zone near (< 5.000) ≤ 5 s; mid ≤ 12 s; far ≤ 32 s; turn arrival (app/tab open) ≤ 5 s; sold out ≤ 5 s near / ≤ 30 s far; category availability on the buying page ≤ 2 s (≤ 3 s in fallback); payment status ≤ 3 s after the notification is received. | FR-07, AS-20 | M | T | TC-QUE-04, TC-PERF-05, TC-SSE-01 |
-| SRS-F-25-02 | Claim order shall be decided only by the sequence number; polling more often shall give no advantage. | NFR-05 | M | T | TC-QUE-14 |
+| SRS-F-25-02 | Claim order shall be decided only by the sequence number; polling more often shall give no advantage. *(Amended by Queue hardening design rev 6: a bounded FIFO inversion is allowed only when stock returns between two entries of one Booking batch; the later grant is adopted instead of released, counted and logged. See ADR-029, TC-QUE-19b/19k.)* | NFR-05 | M | T | TC-QUE-14 |
 | SRS-F-25-03 | The buying page shall receive category availability through an SSE stream that sends `availability` only on change and at most once per `SSE_AVAILABILITY_INTERVAL_MS` (default 1000), a `session` event with remaining time, and heartbeats every `SSE_HEARTBEAT_SECONDS`. | FR-12 | M | T | TC-SSE-01 |
 | SRS-F-25-04 | If the SSE connection fails, is rejected, or is silent for 3 × the heartbeat interval, then the client shall poll `GET /booking-sessions/{id}` every 3 s and retry SSE with backoff 2, 4, 8, 16 s (max 30) plus jitter; data older than 10 s shall show "diperbarui N detik lalu". | FR-12 | M | T | TC-SSE-02 |
 | SRS-F-25-05 | SSE figures shall be informational; holds shall always be validated by the server. | NFR-04 | M | T | TC-SSE-03 |
@@ -1052,7 +1053,7 @@ Source requirement → SRS requirement. Alokasi ke komponen ada di HLD §6; test
 | FR-05 | MUST | Jika tidak ada antrian, customer langsung masuk ke Detail Ticket Page. | Admission instan di jalur join; customer tidak melihat waiting room | QUE-01 |
 | FR-06 | MUST | Sistem menampilkan posisi antrian ("Anda antrian ke-n"). | Posisi dari CDN (batas atas) dan posisi eksak saat mendekati giliran | QUE-02 |
 | FR-07 | MUST | Posisi diperbarui otomatis setiap antrian di depannya berkurang. | Antrean maju saat transaksi di depan selesai/expired/batal (grooming D-9); near-real-time ≤ 5 detik untuk pengantre dekat (§5.25 [v4.6 → SRS §3.2.25]) | QUE-02, QUE-05 |
-| FR-08 | MUST | Customer otomatis dipindahkan ke Detail Ticket Page saat gilirannya tiba. | Klaim otomatis oleh klien saat `servingSeq ≥ seq` | QUE-03 |
+| FR-08 | MUST | Customer otomatis dipindahkan ke Detail Ticket Page saat gilirannya tiba. | Klaim otomatis oleh klien saat entry berstatus `ADMITTED` (ditentukan server) | QUE-03 |
 | FR-09 | COULD | Estimasi waktu tunggu berdasarkan laju antrian. | Disediakan dari laju admission; disembunyikan bila tidak stabil | QUE-02 |
 | FR-10 | MUST | Posisi konsisten saat refresh. | Queue token di cookie/secure storage; entry server-side per NIK pembeli | QUE-01 |
 | FR-11 | MUST | Detail event beserta kategori tempat. | Info event publik; aksi beli hanya setelah admission | EVT-02 |
@@ -1223,8 +1224,8 @@ Requirement normatif ada di §3.2. Appendix ini menyalin utuh deskripsi capabili
 
 ### QUE-02 Queue Status and Honest Indicator
 
-- Klien membaca **Status Document** dari CDN: `servingSeq`, `guaranteedUntilSeq`, `possibleUntilSeq`, `soldOut`, `saleState`, `admissionRatePerMin`, `removedBuckets`, `updatedAt`.
-- Posisi ditampilkan sebagai "Anda antrian ke-n" dengan n = `seq − servingSeq − removedAhead` (koreksi dari `removedBuckets`). Nilai ini adalah batas atas: posisi sebenarnya tidak pernah lebih buruk.
+- Klien membaca **Status Document** dari CDN: `headSeq`, `guaranteedUntilSeq`, `possibleUntilSeq`, `soldOut`, `saleState`, `admissionRatePerMin`, `removedBuckets`, `updatedAt`.
+- Posisi ditampilkan sebagai "Anda antrian ke-n" dengan n = `exactPosition` dari server (dihitung lewat `LivePosition` = ZCOUNT entri hidup atas `q:{e}:waiting`; entry STALE/LEFT sudah tidak ada di set waiting). Nilai ini adalah batas atas: posisi sebenarnya tidak pernah lebih buruk.
 - Saat n ≤ ambang dekat (PROPOSED 2 × kapasitas slot aktif), klien beralih ke endpoint posisi eksak di origin.
 - Interval polling adaptif **dikendalikan server** lewat field `poll` di Status Document (default: n > 50.000 → 30 detik; 5.000–50.000 → 10 detik; < 5.000 → 3 detik), ditambah jitter ±20%. Klien hanya menyimpan nilai cadangan. Batas keterlambatan dan alasan pemilihan polling ada di §5.25 [v4.6 → SRS §3.2.25].
 - Waiting room menampilkan "Diperbarui N detik lalu" dari `updatedAt`, sehingga customer tahu kesegaran data.
@@ -1536,3 +1537,22 @@ Semua TTL, jendela, batas, dan flag dapat dikonfigurasi (daftar lengkap, default
 Lokasi: per event di database (`booking.events`, `queue.event_settings`), setelan teknis per service di env (perubahan lewat deploy), dan nilai cadangan di klien. Perubahan per event dilakukan lewat migration/seed atau endpoint internal admin (back-office di luar scope).
 
 ---
+
+---
+
+## Catatan perubahan ADR-030 (join anonim, NIK di halaman Booking)
+
+Status: diusulkan, menunggu konfirmasi pemilik untuk butir bertanda "menunggu konfirmasi". Menimpa persyaratan lama
+bila bertentangan.
+
+| Persyaratan | Perubahan |
+|---|---|
+| SRS-F-01-01..09 (identitas pembeli saat join) | NIK, email, dan consent dipindah dari join ke halaman Booking (blok `buyer` pada hold). Join anonim untuk guest dan login. |
+| SRS-F-01-04 | menunggu konfirmasi: "tidak ada aturan pembelian baru setelah masuk halaman beli" diartikan sebagai: pembeli yang masuk selalu mendapat tiket sebanyak yang dipilih sampai 3 (jaminan KUANTITAS). Penolakan NIK pembeli yang sudah mencapai batas saat hold (`BUYER_NIK_LIMIT_REACHED`) dipertahankan sebagai aturan yang diterima pemilik. |
+| SRS-F-04-03/05/06/09 | Dedup antrean per visitor dan per akun (bearer); kuota NIK bukan lagi syarat antrean (tetap dijaga di hold lewat `buyer_quotas`). |
+| SRS-F-05-07/09 | Admission mereservasi `min(3, stok bebas)` unit tanpa NIK; kategori dipilih bebas dengan stok hidup. |
+| SRS-F-09-01 / 09-04 | Hold memakai hanya unit admission itu sendiri; sisa unit kembali ke stok saat hold (menggantikan "sisa tertahan sampai payment-lock"). |
+| SRS-F-11-02 | Hold terjadi di halaman Booking; timer 5 menit mulai saat tombol lanjut ditekan. |
+| SRS-F-25-02 | **WITHDRAWN (draw dibuang, pemilik 2026-11-05):** jendela acak pembukaan dibatalkan. Urutan klaim SELALU FIFO ketat atas `seq` untuk SEMUA join, tanpa jendela. (ADR-030 Amandemen 2026-11-05.) |
+| SRS-F-05-04/06, SRS-F-06-02 | Heartbeat liveness: STALE setelah 90 dtk senyap (dilewati, rank tetap, revive), ENDED setelah 300 dtk tanpa admisi. |
+| SRS-F-05-09 | Zona dalam ENTRI atas **seq** (FIFO ketat; draw dibuang): G = ceil(bebas/3), P = ceil((bebas+teralokasi+ditahan)/3); field zona tetap `guaranteedUntilSeq`/`possibleUntilSeq`/`headSeq` (tidak ada rename ke `*Rank`). (ADR-030 Amandemen 2026-11-05.) |

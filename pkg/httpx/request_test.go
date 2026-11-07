@@ -90,3 +90,55 @@ func TestWriteData(t *testing.T) {
 	assert.Equal(t, http.StatusCreated, rec.Code)
 	assert.JSONEq(t, `{"meta":{"code":201,"requestId":"req-9"},"data":{"id":"x"}}`, rec.Body.String())
 }
+
+func TestClientIPHops(t *testing.T) {
+	tests := []struct {
+		name     string
+		lines    []string
+		remote   string
+		trust    bool
+		hops     int
+		expected string
+	}{
+		{"hops 1 takes last", []string{"6.6.6.6, 203.0.113.9"}, "10.0.1.5:1", true, 1, "203.0.113.9"},
+		{"hops 2 skips edge, forged leftmost ignored", []string{"1.2.3.4, 198.51.100.7, 130.176.0.1"}, "10.0.1.5:1", true, 2, "198.51.100.7"},
+		{"fewer entries than hops falls back", []string{"203.0.113.9"}, "10.0.1.5:1", true, 2, "10.0.1.5"},
+		{"invalid entry falls back", []string{"6.6.6.6, not-an-ip"}, "10.0.1.5:1", true, 1, "10.0.1.5"},
+		{"trust off ignores header", []string{"203.0.113.9"}, "10.0.1.5:1", false, 1, "10.0.1.5"},
+		{"hops below 1 falls back", []string{"203.0.113.9"}, "10.0.1.5:1", true, 0, "10.0.1.5"},
+		{"two header lines joined, last wins", []string{"spoof", "203.0.113.9"}, "10.0.1.5:1", true, 1, "203.0.113.9"},
+		{"two header lines hops 2", []string{"9.9.9.9", "198.51.100.7, 130.176.0.1"}, "10.0.1.5:1", true, 2, "198.51.100.7"},
+		{"no header", nil, "10.0.1.5:1", true, 1, "10.0.1.5"},
+		{"ipv6 canonicalised", []string{"2001:DB8::1"}, "10.0.1.5:1", true, 1, "2001:db8::1"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodGet, "/", nil)
+			r.RemoteAddr = tt.remote
+			for _, l := range tt.lines {
+				r.Header.Add("X-Forwarded-For", l)
+			}
+			assert.Equal(t, tt.expected, ClientIPHops(r, tt.trust, tt.hops))
+		})
+	}
+}
+
+// Pin: shared ClientIP keeps reading only the first header line (Queue depends on it; HRD-001.4).
+func TestClientIP_MultiLinePinned(t *testing.T) {
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	r.RemoteAddr = "10.0.1.5:1"
+	r.Header.Add("X-Forwarded-For", "203.0.113.9")
+	r.Header.Add("X-Forwarded-For", "6.6.6.6")
+	assert.Equal(t, "203.0.113.9", ClientIP(r, true))
+}
+
+func TestClientIPHops_MatchesClientIPForSingleLine(t *testing.T) {
+	for _, xff := range []string{"203.0.113.9", "6.6.6.6, 203.0.113.9", "bad", "6.6.6.6, bad", ""} {
+		r := httptest.NewRequest(http.MethodGet, "/", nil)
+		r.RemoteAddr = "10.0.1.5:1"
+		if xff != "" {
+			r.Header.Set("X-Forwarded-For", xff)
+		}
+		assert.Equal(t, ClientIP(r, true), ClientIPHops(r, true, 1), xff)
+	}
+}

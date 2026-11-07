@@ -66,6 +66,8 @@ Satu parameter per service berisi isi file env (lihat `services/<svc>/.env.examp
 aws ssm put-parameter --type SecureString --name /rusuh-staging/payment.env --value file://payment.env --overwrite
 ```
 
+`user.env` wajib memuat `APP_TRUSTED_PROXY_HOPS` (jumlah proxy tepercaya yang menambah entri `X-Forwarded-For`): `1` untuk topologi sekarang (ALB saja). Ubah ke `2` hanya setelah CloudFront dipasang (INF-2) **dan** smoke test staging membuktikan alamat yang terbaca sama dengan IP klien (panggil API lewat CloudFront dengan `X-Forwarded-For: 1.2.3.4` palsu, bandingkan `client_ip` pada baris `login_audit` terbaru di DB staging dengan IP penelepon). Nilai `1` di belakang CloudFront salah: yang terbaca adalah alamat edge. Terraform tidak memiliki env aplikasi, jadi tidak ada perubahan `.tf`.
+
 Kunci token Ed25519 (`make keys` lokal) dipasok sebagai file lewat parameter yang sama atau mount; prosedur lengkapnya mengikuti `.env.example` tiap service.
 
 ## Deploy

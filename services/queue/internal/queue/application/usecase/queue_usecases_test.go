@@ -17,7 +17,6 @@ import (
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/application/usecase"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/domain/dto"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/domain/entity"
-	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/domain/valueobject"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/port/inbound"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/port/outbound"
 )
@@ -27,99 +26,146 @@ var fixedNow = clock.Fixed{T: time.Date(2026, 10, 20, 10, 0, 0, 0, time.UTC)}
 func TestClaim_Success(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	store := mock_outbound.NewMockIQueueStore(ctrl)
+	store.EXPECT().TokenGen(gomock.Any(), "ev1", gomock.Any()).Return(int64(1), true, nil).AnyTimes()
 	tokens := mock_outbound.NewMockITokenIssuer(ctrl)
 	ctx := context.Background()
 
-	store.EXPECT().Claim(ctx, "ev1", "e1", "v1", gomock.Any()).Return(outbound.ClaimResult{Status: "CLAIMED"}, nil)
-	// Claim usecase reads allocationId from Valkey after claim.lua
-	store.EXPECT().GetEntry(ctx, "ev1", "e1").Return(entity.Entry{AllocationID: "alloc-1"}, true, nil)
+	// The allocation id comes from claim.lua itself: no second GetEntry (it could race a concurrent change).
+	store.EXPECT().Claim(ctx, "ev1", "e1", "v1", gomock.Any()).Return(outbound.ClaimResult{Status: "CLAIMED", AllocationID: "alloc-1"}, nil)
 	tokens.EXPECT().IssueAdmission("e1", "ev1", "alloc-1", fixedNow.T).Return("adm-token", fixedNow.T.Add(time.Minute), nil)
 
 	uc := usecase.NewClaimTurn(store, tokens, fixedNow, "https://app/book")
-	resp, err := uc.Claim(ctx, inbound.ClaimInput{EntryID: "e1", VisitorID: "v1", EventID: "ev1"})
+	resp, err := uc.Claim(ctx, inbound.ClaimInput{EntryID: "e1", VisitorID: "v1", EventID: "ev1", Gen: 1})
 	require.NoError(t, err)
 	assert.Equal(t, "adm-token", resp.AdmissionToken)
 	assert.Equal(t, "https://app/book/e1", resp.BookingURL)
 }
 
-func TestClaim_TurnMissed(t *testing.T) {
+// A claim that Valkey accepted but that carries no allocation id must not mint an admission token: the token's JTI
+// is the Booking primary key, so an empty one would be unusable and mask a real inconsistency.
+func TestClaim_EmptyAllocationIDIsDependencyUnavailableAndSignsNothing(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	store := mock_outbound.NewMockIQueueStore(ctrl)
-	tokens := mock_outbound.NewMockITokenIssuer(ctrl)
+	store.EXPECT().TokenGen(gomock.Any(), "ev1", gomock.Any()).Return(int64(1), true, nil).AnyTimes()
+	tokens := mock_outbound.NewMockITokenIssuer(ctrl) // IssueAdmission must never be called
 	ctx := context.Background()
-	store.EXPECT().Claim(ctx, "ev1", "e1", "v1", gomock.Any()).Return(outbound.ClaimResult{}, entity.ErrTurnMissed)
+	store.EXPECT().Claim(ctx, "ev1", "e1", "v1", gomock.Any()).Return(outbound.ClaimResult{Status: "CLAIMED"}, nil)
 
 	uc := usecase.NewClaimTurn(store, tokens, fixedNow, "https://app/book")
-	_, err := uc.Claim(ctx, inbound.ClaimInput{EntryID: "e1", VisitorID: "v1", EventID: "ev1"})
-	assert.ErrorIs(t, err, entity.ErrTurnMissed)
+	_, err := uc.Claim(ctx, inbound.ClaimInput{EntryID: "e1", VisitorID: "v1", EventID: "ev1", Gen: 1})
+	assert.ErrorIs(t, err, entity.ErrDependencyUnavailable)
 }
 
-func TestLeave_WaitingSkipsRelease(t *testing.T) {
+func TestClaim_StoreErrorsAreReturned(t *testing.T) {
+	for name, storeErr := range map[string]error{
+		"turn missed":  entity.ErrTurnMissed,
+		"not admitted": entity.ErrNotAdmitted,
+		"not found":    entity.ErrNotFound,
+		"valkey down":  errors.New("valkey: down"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			store := mock_outbound.NewMockIQueueStore(ctrl)
+			store.EXPECT().TokenGen(gomock.Any(), "ev1", gomock.Any()).Return(int64(1), true, nil).AnyTimes()
+			tokens := mock_outbound.NewMockITokenIssuer(ctrl)
+			ctx := context.Background()
+			store.EXPECT().Claim(ctx, "ev1", "e1", "v1", gomock.Any()).Return(outbound.ClaimResult{}, storeErr)
+			uc := usecase.NewClaimTurn(store, tokens, fixedNow, "https://app/book")
+			_, err := uc.Claim(ctx, inbound.ClaimInput{EntryID: "e1", VisitorID: "v1", EventID: "ev1", Gen: 1})
+			assert.ErrorIs(t, err, storeErr)
+		})
+	}
+}
+
+// --- Leave (T11): ownership and status are decided by leave.lua BEFORE Booking is touched ---
+
+func TestLeave_WaitingDoesNotCallBooking(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	store := mock_outbound.NewMockIQueueStore(ctrl)
-	booking := mock_outbound.NewMockIBookingClient(ctrl)
+	store.EXPECT().TokenGen(gomock.Any(), "ev1", gomock.Any()).Return(int64(1), true, nil).AnyTimes()
+	booking := mock_outbound.NewMockIBookingClient(ctrl) // any call fails the test
 	ctx := context.Background()
-	// Entry is WAITING — no booking release call expected.
-	store.EXPECT().GetEntry(ctx, "ev1", "e1").Return(entity.Entry{ID: "e1", Status: valueobject.StatusWaiting}, true, nil)
-	store.EXPECT().Leave(ctx, "ev1", "e1", "v1", gomock.Any()).Return(true, nil)
+	store.EXPECT().Leave(ctx, "ev1", "e1", "v1", gomock.Any()).Return(outbound.LeaveResult{Tag: "OK", PrevStatus: "WAITING"}, nil)
 
 	uc := usecase.NewLeaveQueue(store, booking, fixedNow)
-	err := uc.Leave(ctx, inbound.LeaveInput{EntryID: "e1", VisitorID: "v1", EventID: "ev1"})
-	require.NoError(t, err)
+	require.NoError(t, uc.Leave(ctx, inbound.LeaveInput{EntryID: "e1", VisitorID: "v1", EventID: "ev1", Gen: 1}))
 }
 
-func TestLeave_AdmittedCallsRelease(t *testing.T) {
+func TestLeave_AdmittedReleasesTheAllocationAfterTheCommit(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	store := mock_outbound.NewMockIQueueStore(ctrl)
+	store.EXPECT().TokenGen(gomock.Any(), "ev1", gomock.Any()).Return(int64(1), true, nil).AnyTimes()
 	booking := mock_outbound.NewMockIBookingClient(ctrl)
 	ctx := context.Background()
-	// Entry is ADMITTED — booking release must be called with correct allocationID and reason.
-	store.EXPECT().GetEntry(ctx, "ev1", "e1").Return(entity.Entry{
-		ID: "e1", Status: valueobject.StatusAdmitted, AllocationID: "alloc-42",
-	}, true, nil)
-	booking.EXPECT().ReleaseAllocation(ctx, "alloc-42", "QUEUE_ENTRY_GONE").Return(nil)
-	store.EXPECT().Leave(ctx, "ev1", "e1", "v1", gomock.Any()).Return(true, nil)
-
+	gomock.InOrder(
+		store.EXPECT().Leave(ctx, "ev1", "e1", "v1", gomock.Any()).Return(outbound.LeaveResult{Tag: "OK", PrevStatus: "ADMITTED", AllocationID: "alloc-42"}, nil),
+		booking.EXPECT().ReleaseAllocation(ctx, "alloc-42", "QUEUE_ENTRY_GONE").Return(nil),
+	)
 	uc := usecase.NewLeaveQueue(store, booking, fixedNow)
-	err := uc.Leave(ctx, inbound.LeaveInput{EntryID: "e1", VisitorID: "v1", EventID: "ev1"})
-	require.NoError(t, err)
+	require.NoError(t, uc.Leave(ctx, inbound.LeaveInput{EntryID: "e1", VisitorID: "v1", EventID: "ev1", Gen: 1}))
 }
 
-func TestLeave_AdmittedReleaseFailureContinues(t *testing.T) {
+func TestLeave_AdmittedReleaseFailureDoesNotFailTheRequest(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	store := mock_outbound.NewMockIQueueStore(ctrl)
+	store.EXPECT().TokenGen(gomock.Any(), "ev1", gomock.Any()).Return(int64(1), true, nil).AnyTimes()
 	booking := mock_outbound.NewMockIBookingClient(ctrl)
 	ctx := context.Background()
-	store.EXPECT().GetEntry(ctx, "ev1", "e1").Return(entity.Entry{
-		ID: "e1", Status: valueobject.StatusAdmitted, AllocationID: "alloc-42",
-	}, true, nil)
-	// Release fails — Leave still proceeds (best-effort, spec 14.R1 K7).
+	store.EXPECT().Leave(ctx, "ev1", "e1", "v1", gomock.Any()).Return(outbound.LeaveResult{Tag: "OK", PrevStatus: "ADMITTED", AllocationID: "alloc-42"}, nil)
 	booking.EXPECT().ReleaseAllocation(ctx, "alloc-42", "QUEUE_ENTRY_GONE").Return(errors.New("booking down"))
-	store.EXPECT().Leave(ctx, "ev1", "e1", "v1", gomock.Any()).Return(true, nil)
 
 	uc := usecase.NewLeaveQueue(store, booking, fixedNow)
-	err := uc.Leave(ctx, inbound.LeaveInput{EntryID: "e1", VisitorID: "v1", EventID: "ev1"})
-	require.NoError(t, err) // leave still succeeds
+	require.NoError(t, uc.Leave(ctx, inbound.LeaveInput{EntryID: "e1", VisitorID: "v1", EventID: "ev1", Gen: 1}))
 }
 
-func TestLeave_NotFound(t *testing.T) {
+// Security regression: a visitor who is not the owner must never cause a Booking release. Before the fix the
+// usecase read the entry first and released its allocation BEFORE leave.lua rejected the stranger, so anyone who
+// knew an entry id could free another buyer's reserved ticket.
+func TestLeave_StrangerCausesNoBookingCall(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	store := mock_outbound.NewMockIQueueStore(ctrl)
-	booking := mock_outbound.NewMockIBookingClient(ctrl)
+	store.EXPECT().TokenGen(gomock.Any(), "ev1", gomock.Any()).Return(int64(1), true, nil).AnyTimes()
+	booking := mock_outbound.NewMockIBookingClient(ctrl) // any call fails the test
 	ctx := context.Background()
-	store.EXPECT().GetEntry(ctx, "ev1", "e1").Return(entity.Entry{}, false, nil)
-	store.EXPECT().Leave(ctx, "ev1", "e1", "v1", gomock.Any()).Return(false, entity.ErrNotFound)
+	store.EXPECT().Leave(ctx, "ev1", "e1", "intruder", gomock.Any()).Return(outbound.LeaveResult{}, entity.ErrNotFound)
 
 	uc := usecase.NewLeaveQueue(store, booking, fixedNow)
-	err := uc.Leave(ctx, inbound.LeaveInput{EntryID: "e1", VisitorID: "v1", EventID: "ev1"})
+	err := uc.Leave(ctx, inbound.LeaveInput{EntryID: "e1", VisitorID: "intruder", EventID: "ev1", Gen: 1})
 	assert.ErrorIs(t, err, entity.ErrNotFound)
+}
+
+func TestLeave_StoreErrorMeansBookingIsNeverCalled(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	store := mock_outbound.NewMockIQueueStore(ctrl)
+	store.EXPECT().TokenGen(gomock.Any(), "ev1", gomock.Any()).Return(int64(1), true, nil).AnyTimes()
+	booking := mock_outbound.NewMockIBookingClient(ctrl)
+	ctx := context.Background()
+	store.EXPECT().Leave(ctx, "ev1", "e1", "v1", gomock.Any()).Return(outbound.LeaveResult{}, errors.New("valkey: down"))
+	uc := usecase.NewLeaveQueue(store, booking, fixedNow)
+	require.Error(t, uc.Leave(ctx, inbound.LeaveInput{EntryID: "e1", VisitorID: "v1", EventID: "ev1", Gen: 1}))
+}
+
+// TC-QUE-23: terminal and CLAIMED entries answer 204 with zero releases.
+func TestLeave_IgnoredStatusesReleaseNothing(t *testing.T) {
+	for _, st := range []string{"COMPLETED", "ENDED", "LEFT", "MISSED", "CLAIMED"} {
+		t.Run(st, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			store := mock_outbound.NewMockIQueueStore(ctrl)
+			store.EXPECT().TokenGen(gomock.Any(), "ev1", gomock.Any()).Return(int64(1), true, nil).AnyTimes()
+			booking := mock_outbound.NewMockIBookingClient(ctrl)
+			ctx := context.Background()
+			store.EXPECT().Leave(ctx, "ev1", "e1", "v1", gomock.Any()).Return(outbound.LeaveResult{Tag: "IGNORED", PrevStatus: st, AllocationID: "alloc-42"}, nil)
+			uc := usecase.NewLeaveQueue(store, booking, fixedNow)
+			require.NoError(t, uc.Leave(ctx, inbound.LeaveInput{EntryID: "e1", VisitorID: "v1", EventID: "ev1", Gen: 1}))
+		})
+	}
 }
 
 func TestGetStatus_Found(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	store := mock_outbound.NewMockIQueueStore(ctrl)
 	ctx := context.Background()
-	doc := dto.StatusDocument{EventID: "ev1", SaleState: "OPEN", ServingSeq: 100, SoldOut: false}
+	doc := dto.StatusDocument{EventID: "ev1", SaleState: "OPEN", SoldOut: false}
 	raw, _ := json.Marshal(doc)
 	store.EXPECT().GetStatusDoc(ctx, "ev1").Return(raw, true, nil)
 
@@ -151,51 +197,24 @@ func TestGetStatus_StorageError(t *testing.T) {
 	assert.Error(t, err)
 }
 
-func TestGetMyEntry_WithStatusContext(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	store := mock_outbound.NewMockIQueueStore(ctrl)
-	ctx := context.Background()
+// A rotated-out visitor token (generation no longer current) can neither claim nor leave: nothing reaches the store
+// or Booking (ADR-030 R01.4; a stale device must not claim an admission that holds 3 units).
+func TestClaimAndLeave_RotatedOutTokenIsRefused(t *testing.T) {
+	for name, gen := range map[string]int64{"older generation": 1, "no generation": 0} {
+		t.Run(name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			store := mock_outbound.NewMockIQueueStore(ctrl) // Claim/Leave must never be called
+			tokens := mock_outbound.NewMockITokenIssuer(ctrl)
+			booking := mock_outbound.NewMockIBookingClient(ctrl)
+			ctx := context.Background()
+			store.EXPECT().TokenGen(ctx, "ev1", "v1").Return(int64(2), true, nil).Times(2)
 
-	ent := entity.Entry{ID: "e1", Seq: valueobject.Seq(100), Status: valueobject.StatusWaiting, VisitorID: "v1"}
-	store.EXPECT().FindByVisitor(ctx, "ev1", "v1").Return(ent, true, nil)
-	doc := dto.StatusDocument{ServingSeq: 55, GuaranteedUntilSeq: 150, PossibleUntilSeq: 200}
-	raw, _ := json.Marshal(doc)
-	store.EXPECT().GetStatusDoc(ctx, "ev1").Return(raw, true, nil)
-
-	uc := usecase.NewGetMyEntry(store)
-	got, err := uc.GetMyEntry(ctx, inbound.MyEntryInput{EventID: "ev1", VisitorID: "v1"})
-	require.NoError(t, err)
-	assert.Equal(t, int64(45), got.ExactPosition)
-	assert.Equal(t, "GUARANTEED", got.Zone)
-}
-
-func TestGetMyEntry_RemovedAhead(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	store := mock_outbound.NewMockIQueueStore(ctrl)
-	ctx := context.Background()
-
-	ent := entity.Entry{ID: "e1", Seq: valueobject.Seq(100), Status: valueobject.StatusWaiting, VisitorID: "v1"}
-	store.EXPECT().FindByVisitor(ctx, "ev1", "v1").Return(ent, true, nil)
-	doc := dto.StatusDocument{
-		ServingSeq: 55, GuaranteedUntilSeq: 150, PossibleUntilSeq: 200,
-		RemovedBuckets: &dto.RemovedBuckets{Size: 10, FromSeq: 0, Counts: []int64{2, 3}}, // buckets starting 0,10 both < 100
+			_, err := usecase.NewClaimTurn(store, tokens, fixedNow, "https://app/book").
+				Claim(ctx, inbound.ClaimInput{EntryID: "e1", VisitorID: "v1", EventID: "ev1", Gen: gen})
+			assert.ErrorIs(t, err, entity.ErrVisitorTokenInvalid)
+			err = usecase.NewLeaveQueue(store, booking, fixedNow).
+				Leave(ctx, inbound.LeaveInput{EntryID: "e1", VisitorID: "v1", EventID: "ev1", Gen: gen})
+			assert.ErrorIs(t, err, entity.ErrVisitorTokenInvalid)
+		})
 	}
-	raw, _ := json.Marshal(doc)
-	store.EXPECT().GetStatusDoc(ctx, "ev1").Return(raw, true, nil)
-
-	uc := usecase.NewGetMyEntry(store)
-	got, err := uc.GetMyEntry(ctx, inbound.MyEntryInput{EventID: "ev1", VisitorID: "v1"})
-	require.NoError(t, err)
-	assert.Equal(t, int64(40), got.ExactPosition) // 100-55-(2+3)
-}
-
-func TestGetMyEntry_NotFound(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	store := mock_outbound.NewMockIQueueStore(ctrl)
-	ctx := context.Background()
-	store.EXPECT().FindByVisitor(ctx, "ev1", "v1").Return(entity.Entry{}, false, nil)
-
-	uc := usecase.NewGetMyEntry(store)
-	_, err := uc.GetMyEntry(ctx, inbound.MyEntryInput{EventID: "ev1", VisitorID: "v1"})
-	assert.ErrorIs(t, err, entity.ErrNotFound)
 }

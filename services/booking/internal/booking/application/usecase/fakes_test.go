@@ -14,6 +14,10 @@ type fakeNIK struct{}
 
 func (fakeNIK) HashNIK(nik string) []byte          { return []byte("h:" + nik) }
 func (fakeNIK) SealNIK(nik string) ([]byte, error) { return []byte("e:" + nik), nil }
+func (fakeNIK) SealBuyerEmail(email string) (string, error) {
+	return "sealed:" + email, nil
+}
+func (fakeNIK) Fingerprint(data []byte) []byte { return append([]byte("fp:"), data...) }
 
 // fakeIDs returns predictable identifiers.
 type fakeIDs struct {
@@ -51,6 +55,7 @@ func itoa(n int) string {
 // fakeEventRepo serves a fixed event + detail.
 type fakeEventRepo struct {
 	detail    entity.EventDetail
+	supply    entity.Supply
 	event     entity.Event
 	list      []entity.Event
 	facets    entity.EventFacets // returned by Facets
@@ -66,6 +71,9 @@ func (f *fakeEventRepo) ListEvents(_ context.Context, q dto.EventListQuery) ([]e
 }
 func (f *fakeEventRepo) GetDetail(context.Context, string) (entity.EventDetail, error) {
 	return f.detail, f.err
+}
+func (f *fakeEventRepo) GetSupply(context.Context, string) (entity.Supply, error) {
+	return f.supply, f.err
 }
 func (f *fakeEventRepo) GetByID(context.Context, string) (entity.Event, error) {
 	if f.event.ID == "" && f.detail.Event.ID != "" {
@@ -92,6 +100,7 @@ func boolPtr(b bool) *bool { return &b }
 type fakeAdmissionRepo struct {
 	admission     entity.Admission
 	getErr        error
+	getCalls      int // number of GetByID calls (REQ-4: assert malformed ids never reach the repo)
 	activated     entity.Admission
 	activErr      error
 	reserve       []outbound.ReserveOutcome
@@ -112,6 +121,7 @@ func (f *fakeAdmissionRepo) FindActiveByEvent(context.Context, string, string) (
 	return f.admission, f.getErr
 }
 func (f *fakeAdmissionRepo) GetByID(context.Context, string) (entity.Admission, error) {
+	f.getCalls++
 	return f.admission, f.getErr
 }
 func (f *fakeAdmissionRepo) Activate(context.Context, string, time.Time) (entity.Admission, error) {
@@ -145,14 +155,22 @@ type fakeIdem struct {
 	beginErr    error
 	completed   bool
 	completeErr error
+	aborted     int
+	gotHash     []byte
 }
 
-func (f *fakeIdem) Begin(context.Context, string, string, string, []byte, time.Duration) (outbound.IdempotencyRecord, bool, error) {
+func (f *fakeIdem) Begin(_ context.Context, _, _, _ string, hash []byte, _ time.Duration) (outbound.IdempotencyRecord, bool, error) {
+	f.gotHash = hash
 	return f.rec, f.found, f.beginErr
 }
 func (f *fakeIdem) Complete(context.Context, string, string, string, int, []byte) error {
 	f.completed = true
 	return f.completeErr
+}
+
+func (f *fakeIdem) Abort(context.Context, string, string, string, []byte) error {
+	f.aborted++
+	return nil
 }
 
 // fakeUoW records specs and returns canned results.

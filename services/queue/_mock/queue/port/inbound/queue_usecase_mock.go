@@ -96,6 +96,45 @@ func (mr *MockIStatusUsecaseMockRecorder) GetStatus(ctx, eventID any) *gomock.Ca
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetStatus", reflect.TypeOf((*MockIStatusUsecase)(nil).GetStatus), ctx, eventID)
 }
 
+// MockIHeartbeatUsecase is a mock of IHeartbeatUsecase interface.
+type MockIHeartbeatUsecase struct {
+	ctrl     *gomock.Controller
+	recorder *MockIHeartbeatUsecaseMockRecorder
+	isgomock struct{}
+}
+
+// MockIHeartbeatUsecaseMockRecorder is the mock recorder for MockIHeartbeatUsecase.
+type MockIHeartbeatUsecaseMockRecorder struct {
+	mock *MockIHeartbeatUsecase
+}
+
+// NewMockIHeartbeatUsecase creates a new mock instance.
+func NewMockIHeartbeatUsecase(ctrl *gomock.Controller) *MockIHeartbeatUsecase {
+	mock := &MockIHeartbeatUsecase{ctrl: ctrl}
+	mock.recorder = &MockIHeartbeatUsecaseMockRecorder{mock}
+	return mock
+}
+
+// EXPECT returns an object that allows the caller to indicate expected use.
+func (m *MockIHeartbeatUsecase) EXPECT() *MockIHeartbeatUsecaseMockRecorder {
+	return m.recorder
+}
+
+// Heartbeat mocks base method.
+func (m *MockIHeartbeatUsecase) Heartbeat(ctx context.Context, in inbound.HeartbeatInput) (dto.HeartbeatStatus, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Heartbeat", ctx, in)
+	ret0, _ := ret[0].(dto.HeartbeatStatus)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// Heartbeat indicates an expected call of Heartbeat.
+func (mr *MockIHeartbeatUsecaseMockRecorder) Heartbeat(ctx, in any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Heartbeat", reflect.TypeOf((*MockIHeartbeatUsecase)(nil).Heartbeat), ctx, in)
+}
+
 // MockIMyEntryUsecase is a mock of IMyEntryUsecase interface.
 type MockIMyEntryUsecase struct {
 	ctrl     *gomock.Controller

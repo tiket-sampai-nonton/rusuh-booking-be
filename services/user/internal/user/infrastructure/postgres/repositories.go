@@ -137,8 +137,9 @@ func scanSession(row pgx.Row) (entity.Session, error) {
 // Create stores a session.
 func (r *Sessions) Create(ctx context.Context, n entity.NewSession) (entity.Session, error) {
 	s, err := scanSession(r.pool.QueryRow(ctx, `
-		INSERT INTO sessions (account_id, refresh_token_hash, user_agent, expires_at) VALUES ($1::uuid, $2, $3, $4)
-		RETURNING `+sessionCols, n.AccountID, n.RefreshTokenHash, n.UserAgent, n.ExpiresAt))
+		INSERT INTO sessions (id, account_id, refresh_token_hash, user_agent, expires_at)
+		VALUES (COALESCE(NULLIF($1::text, '')::uuid, gen_random_uuid()), $2::uuid, $3, $4, $5)
+		RETURNING `+sessionCols, n.ID, n.AccountID, n.RefreshTokenHash, n.UserAgent, n.ExpiresAt))
 	if err != nil {
 		return entity.Session{}, fmt.Errorf("sessions: create: %w", err)
 	}
@@ -163,8 +164,9 @@ func (r *Sessions) Rotate(ctx context.Context, oldID string, next entity.NewSess
 	var out entity.Session
 	err := pkgpg.WithTx(ctx, r.pool, pgx.TxOptions{}, func(tx pgx.Tx) error {
 		s, err := scanSession(tx.QueryRow(ctx, `
-			INSERT INTO sessions (account_id, refresh_token_hash, user_agent, expires_at) VALUES ($1::uuid, $2, $3, $4)
-			RETURNING `+sessionCols, next.AccountID, next.RefreshTokenHash, next.UserAgent, next.ExpiresAt))
+			INSERT INTO sessions (id, account_id, refresh_token_hash, user_agent, expires_at)
+			VALUES (COALESCE(NULLIF($1::text, '')::uuid, gen_random_uuid()), $2::uuid, $3, $4, $5)
+			RETURNING `+sessionCols, next.ID, next.AccountID, next.RefreshTokenHash, next.UserAgent, next.ExpiresAt))
 		if err != nil {
 			return fmt.Errorf("sessions: rotate insert: %w", err)
 		}
@@ -187,10 +189,31 @@ func (r *Sessions) Revoke(ctx context.Context, id string, at time.Time) error {
 	return err
 }
 
-// RevokeAllForAccount revokes every active session of the account.
-func (r *Sessions) RevokeAllForAccount(ctx context.Context, accountID string, at time.Time) error {
-	_, err := r.pool.Exec(ctx, `UPDATE sessions SET revoked_at = $2 WHERE account_id = $1::uuid AND revoked_at IS NULL`, accountID, at)
-	return err
+// RevokeAllForAccount revokes every active session of the account in one statement and returns the ids that must be
+// denylisted: those just revoked plus those revoked at or after denylistSince. Satu snapshot untuk CTE dan SELECT,
+// jadi pengulangan setelah penulisan denylist gagal tetap mendapat id yang sama.
+func (r *Sessions) RevokeAllForAccount(ctx context.Context, accountID string, at, denylistSince time.Time) ([]string, error) {
+	rows, err := r.pool.Query(ctx, `
+		WITH r AS (UPDATE sessions SET revoked_at = $2 WHERE account_id = $1::uuid AND revoked_at IS NULL RETURNING id)
+		SELECT id::text FROM r
+		UNION
+		SELECT id::text FROM sessions WHERE account_id = $1::uuid AND revoked_at >= $3`, accountID, at, denylistSince)
+	if err != nil {
+		return nil, fmt.Errorf("sessions: revoke all: %w", err)
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("sessions: revoke all scan: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("sessions: revoke all: %w", err)
+	}
+	return ids, nil
 }
 
 // Audit implements outbound.ILoginAudit.

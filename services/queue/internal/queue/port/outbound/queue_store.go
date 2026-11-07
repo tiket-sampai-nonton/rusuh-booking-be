@@ -12,19 +12,15 @@ import (
 // IQueueStore is the Valkey-backed hot state of the queue. Lua scripts provide atomicity.
 type IQueueStore interface {
 	Join(ctx context.Context, p JoinParams) (JoinResult, error)
-	Promote(ctx context.Context, eventID string, cands []PromoteCandidate, capacity int, nowMs int64) ([]string, error)
+	Promote(ctx context.Context, eventID string, cands []PromoteCandidate, capacity int, nowMs int64, opts PromoteOpts) (PromoteResult, error)
 	Claim(ctx context.Context, eventID, entryID, visitorID string, nowMs int64) (ClaimResult, error)
-	Leave(ctx context.Context, eventID, entryID, visitorID string, nowMs int64) (wasActive bool, err error)
-	EndEntry(ctx context.Context, eventID, entryID, outcome string, nowMs int64) (final string, err error)
+	Leave(ctx context.Context, eventID, entryID, visitorID string, nowMs int64) (LeaveResult, error)
+	EndEntry(ctx context.Context, eventID, entryID, outcome string, nowMs int64) (EndResult, error)
 	GetEntry(ctx context.Context, eventID, entryID string) (entity.Entry, bool, error)
 	FindByVisitor(ctx context.Context, eventID, visitorID string) (entity.Entry, bool, error)
 	ActiveCount(ctx context.Context, eventID string) (int, error)
 	TopWaiting(ctx context.Context, eventID string, n int) ([]string, error)
-	ExpiredActive(ctx context.Context, eventID string, nowMs int64) ([]string, error)
-	MarkMissed(ctx context.Context, eventID, entryID string, nowMs int64) (bool, error)
-	// MarkMissedAndClean atomically sets MISSED + cleans NIK/visitor/email constraint keys (TC-QUE-09).
-	MarkMissedAndClean(ctx context.Context, eventID, entryID string, nowMs int64) (bool, error)
-	AddQuotaExhausted(ctx context.Context, eventID, nikHash string) error
+	ExpiredActive(ctx context.Context, eventID string, nowMs int64, limit int) ([]string, error)
 	SetSale(ctx context.Context, eventID, saleState string, soldOut bool) error
 	GetSale(ctx context.Context, eventID string) (SaleState, error)
 	SetStatusDoc(ctx context.Context, eventID string, doc []byte, ttl time.Duration) error
@@ -36,7 +32,31 @@ type IQueueStore interface {
 	// AcquirePromoterLease tries to acquire a per-event distributed lock (SET NX PX) so only one
 	// worker instance promotes a given event per tick (spec 11.R3, req 6.12, Property 7).
 	// Returns true if the lease was acquired, false if another instance holds it.
-	AcquirePromoterLease(ctx context.Context, eventID string, ttlMs int64) (bool, error)
-	// ReleasePromoterLease releases a previously acquired promoter lease.
-	ReleasePromoterLease(ctx context.Context, eventID string) error
+	AcquirePromoterLease(ctx context.Context, eventID string, ttl time.Duration) (token string, acquired bool, err error)
+	// ReleasePromoterLease releases the lease only when token still owns it (compare-and-delete).
+	ReleasePromoterLease(ctx context.Context, eventID, token string) error
+
+	// --- ADR-030: liveness, token generation and FIFO-by-seq positions ---
+
+	// Heartbeat records a liveness signal for the visitor's current entry, reviving a STALE entry at its seq.
+	Heartbeat(ctx context.Context, eventID, visitorID string, gen, nowMs int64) (HeartbeatResult, error)
+	// TokenGen returns the visitor's current token generation (false when there is no record).
+	TokenGen(ctx context.Context, eventID, visitorID string) (int64, bool, error)
+	// FindLastByVisitor returns the visitor's most recent entry in any state (me on an ENDED entry).
+	FindLastByVisitor(ctx context.Context, eventID, visitorID string) (entity.Entry, bool, error)
+	// SweepLiveness marks silent WAITING entries STALE and ends long-silent ones, fenced by the lease token. It
+	// sweeps the sharded liveness index hb:{s}/hbstale:{s} (ADR-030 Amendment) in a single EVAL over all shards.
+	SweepLiveness(ctx context.Context, eventID, leaseToken string, staleBeforeMs, endBeforeMs int64, batch int, nowMs int64) (LivenessResult, error)
+	// SweepLivenessTick acquires the promoter lease, reads the top-N waiting candidates, runs the same sharded sweep,
+	// and releases the lease in ONE round-trip (liveness_tick.lua). The liveness worker uses it (topN=0) so the
+	// promoter tick issues a single command under heartbeat load, keeping the tick within +20 % of base
+	// (design-change §4.3). ttl bounds the lease the script holds for its own execution; the returned slice is the
+	// top-N live WAITING ids by seq (nil when topN=0 or LEASE_LOST).
+	SweepLivenessTick(ctx context.Context, eventID string, staleBeforeMs, endBeforeMs int64, batch int, nowMs int64, ttl time.Duration, topN int) (LivenessResult, []string, error)
+	// WaitingSeqAt returns the seq of the live (WAITING, non-STALE) entry at 0-based position idx.
+	WaitingSeqAt(ctx context.Context, eventID string, idx int64) (int64, bool, error)
+	// WaitingCount returns the number of live waiting entries.
+	WaitingCount(ctx context.Context, eventID string) (int64, error)
+	// LivePosition returns 1 + the number of live entries with a smaller seq.
+	LivePosition(ctx context.Context, eventID string, seq int64) (int64, error)
 }

@@ -21,17 +21,10 @@ func TestMapError(t *testing.T) {
 		wantStatus int
 		wantCode   apperror.Code
 	}{
-		{"nik invalid", entity.ErrNikInvalid, http.StatusUnprocessableEntity, inbound.CodeNikInvalid},
-		{"nik required", entity.ErrNikRequired, http.StatusUnprocessableEntity, inbound.CodeNikRequired},
-		{"email mismatch", entity.ErrEmailMismatch, http.StatusUnprocessableEntity, inbound.CodeEmailMismatch},
-		{"consent", entity.ErrConsentNik, http.StatusBadRequest, apperror.CodeValidationFailed},
-		{"nik in queue", entity.ErrNikInQueue, http.StatusConflict, inbound.CodeNikInQueue},
-		{"visitor in queue", entity.ErrVisitorInQueue, http.StatusConflict, inbound.CodeVisitorInQueue},
-		{"email in queue", entity.ErrEmailInQueue, http.StatusConflict, inbound.CodeEmailInQueue},
-		{"quota", entity.ErrQuotaExhausted, http.StatusConflict, inbound.CodeQuotaExhausted},
 		{"not on sale", entity.ErrNotOnSale, http.StatusConflict, inbound.CodeEventNotOnSale},
 		{"sold out", entity.ErrSoldOut, http.StatusGone, inbound.CodeEventSoldOut},
 		{"turn missed", entity.ErrTurnMissed, http.StatusGone, inbound.CodeTurnMissed},
+		{"not admitted", entity.ErrNotAdmitted, http.StatusConflict, inbound.CodeNotAdmitted},
 		{"not found", entity.ErrNotFound, http.StatusNotFound, apperror.CodeNotFound},
 		{"not owner maps to not found", entity.ErrNotOwner, http.StatusNotFound, apperror.CodeNotFound},
 		{"dependency", entity.ErrDependencyUnavailable, http.StatusServiceUnavailable, apperror.CodeDependencyUnavailable},

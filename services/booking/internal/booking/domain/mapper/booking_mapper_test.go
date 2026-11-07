@@ -38,6 +38,23 @@ func TestToEventDetail(t *testing.T) {
 	assert.Equal(t, "AVAILABLE", out.Event.Status)
 }
 
+func TestToEventDetail_Description(t *testing.T) {
+	now := time.Now().UTC()
+	doc := json.RawMessage(`[{"type":"paragraph","children":[{"text":"hi"}]}]`)
+
+	with := mapper.ToEventDetail(entity.EventDetail{Event: entity.Event{ID: "e1", Description: doc}}, now)
+	assert.JSONEq(t, string(doc), string(with.Description))
+	b, err := json.Marshal(with)
+	assert.NoError(t, err)
+	assert.Contains(t, string(b), `"description":[`)
+
+	without := mapper.ToEventDetail(entity.EventDetail{Event: entity.Event{ID: "e1"}}, now)
+	assert.Nil(t, without.Description)
+	b, err = json.Marshal(without)
+	assert.NoError(t, err)
+	assert.NotContains(t, string(b), `"description"`, "omitted when the event has none")
+}
+
 // The API shows one of NOT_STARTED, AVAILABLE, SOLD_OUT, CLOSED (FE enum). A stored DRAFT/NOT_STARTED/AVAILABLE
 // status follows the sales window and the stock, because nothing else ever advances it.
 func TestEventStatusFollowsTheSalesWindowAndStock(t *testing.T) {

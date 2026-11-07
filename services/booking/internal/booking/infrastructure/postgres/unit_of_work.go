@@ -52,14 +52,15 @@ func (u *UnitOfWork) Hold(ctx context.Context, spec outbound.HoldSpec) (outbound
 func (u *UnitOfWork) hold(ctx context.Context, tx pgx.Tx, spec outbound.HoldSpec) (outbound.HoldResult, error) {
 	n := len(spec.Lines)
 
-	// Design §9.0 + §9.2 Step 2: lock admission first — serialises concurrent holds on same session.
+	// Step 1: lock the admission first (serialises every attempt on one session) and read its own counters.
 	var admStatus string
 	var admExpiresAt time.Time
-	var cfgGrace int
+	var cfgGrace, outstanding, refusals int
+	var lastRefusal *time.Time
 	if err := tx.QueryRow(ctx, `
-		SELECT status, expires_at, cfg_submit_grace_seconds
+		SELECT status, expires_at, cfg_submit_grace_seconds, outstanding_units, buyer_nik_refusals, buyer_nik_last_refusal_at
 		FROM booking.admissions WHERE id=$1::uuid AND visitor_id=$2::uuid FOR UPDATE`,
-		spec.AdmissionID, spec.VisitorID).Scan(&admStatus, &admExpiresAt, &cfgGrace); err != nil {
+		spec.AdmissionID, spec.VisitorID).Scan(&admStatus, &admExpiresAt, &cfgGrace, &outstanding, &refusals, &lastRefusal); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return outbound.HoldResult{}, inbound.ErrSessionExpired
 		}
@@ -74,33 +75,98 @@ func (u *UnitOfWork) hold(ctx context.Context, tx pgx.Tx, spec outbound.HoldSpec
 	}
 	// inGrace: request arrived after TTL but within the grace window.
 	inGrace := time.Now().UTC().After(admExpiresAt)
+	// The hold may take only this admission's own reserved units (F1): never another admission's.
+	if n < 1 || n > outstanding {
+		return outbound.HoldResult{}, inbound.ErrQuantityInvalid
+	}
 
-	// (3) SUPPLY — serialises concurrent holds per event (still before category/quota per design §9.0).
+	// Step 2: SUPPLY lock (fixed order admission → supply → quota → category).
 	if _, err := tx.Exec(ctx, `SELECT 1 FROM booking.event_supply WHERE event_id=$1::uuid FOR UPDATE`, spec.EventID); err != nil {
 		return outbound.HoldResult{}, err
 	}
-	// (4) QUOTA — upsert then lock the buyer row.
+
+	// Step 3: QUOTA row — upsert (cap from the event) then lock; read held/paid/max.
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO booking.buyer_quotas (event_id, buyer_nik_hash) VALUES ($1::uuid, $2)
+		INSERT INTO booking.buyer_quotas (event_id, buyer_nik_hash, max_quantity)
+		SELECT $1::uuid, $2, ev.max_tickets_per_buyer_nik FROM booking.events ev WHERE ev.id=$1::uuid
 		ON CONFLICT (event_id, buyer_nik_hash) DO NOTHING`, spec.EventID, spec.BuyerNIKHash); err != nil {
 		return outbound.HoldResult{}, err
 	}
-	if _, err := tx.Exec(ctx, `SELECT 1 FROM booking.buyer_quotas WHERE event_id=$1::uuid AND buyer_nik_hash=$2 FOR UPDATE`,
-		spec.EventID, spec.BuyerNIKHash); err != nil {
+	var heldQ, paidQ, maxQ int
+	if err := tx.QueryRow(ctx, `SELECT held_quantity, paid_quantity, max_quantity FROM booking.buyer_quotas
+		WHERE event_id=$1::uuid AND buyer_nik_hash=$2 FOR UPDATE`, spec.EventID, spec.BuyerNIKHash).Scan(&heldQ, &paidQ, &maxQ); err != nil {
 		return outbound.HoldResult{}, err
 	}
-	// (5) CATEGORY rows in deterministic id order (ASC per design §9.0).
+
+	// Step 4: CATEGORY rows in id order; live availability per requested category.
 	byCat := map[string]int{}
 	for _, l := range spec.Lines {
 		byCat[l.CategoryID]++
 	}
-	for cat := range byCat {
-		if _, err := tx.Exec(ctx, `SELECT 1 FROM booking.category_inventories WHERE category_id=$1::uuid FOR UPDATE`, cat); err != nil {
+	cats := make([]string, 0, len(byCat))
+	for c := range byCat {
+		cats = append(cats, c)
+	}
+	rows, err := tx.Query(ctx, `
+		SELECT category_id::text, capacity - held_quantity - sold_quantity
+		  FROM booking.category_inventories WHERE category_id = ANY($1::uuid[]) ORDER BY category_id FOR UPDATE`, cats)
+	if err != nil {
+		return outbound.HoldResult{}, err
+	}
+	avail := map[string]int{}
+	for rows.Next() {
+		var id string
+		var a int
+		if err := rows.Scan(&id, &a); err != nil {
+			rows.Close()
 			return outbound.HoldResult{}, err
+		}
+		avail[id] = a
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return outbound.HoldResult{}, err
+	}
+	var refused []string
+	for c, want := range byCat {
+		if avail[c] < want {
+			refused = append(refused, c)
+		}
+	}
+	if len(refused) > 0 {
+		// Typed error → rollback: the admission and its reserved units are untouched (the buyer may pick another category).
+		return outbound.HoldResult{}, inbound.CategoryUnavailable(refused)
+	}
+
+	// Step 5: throttle after the refusal budget; capped exponential backoff on the injected clock.
+	if spec.RefusalBudget > 0 && refusals >= spec.RefusalBudget && lastRefusal != nil {
+		wait := spec.ThrottleBase << min(refusals-spec.RefusalBudget, 20)
+		if wait <= 0 || wait > spec.ThrottleMax {
+			wait = spec.ThrottleMax
+		}
+		if until := lastRefusal.Add(wait); spec.Now.Before(until) {
+			secs := int(until.Sub(spec.Now).Seconds())
+			if time.Duration(secs)*time.Second < until.Sub(spec.Now) {
+				secs++
+			}
+			if secs < 1 {
+				secs = 1
+			}
+			return outbound.HoldResult{}, inbound.BuyerNikThrottled(secs)
 		}
 	}
 
-	// (6) append event store (optimistic).
+	// Step 6: buyer-NIK cap. The refusal counter must survive, so this is a result (commit), not an error.
+	if heldQ+paidQ+n > maxQ {
+		if _, err := tx.Exec(ctx, `
+			UPDATE booking.admissions SET buyer_nik_refusals = buyer_nik_refusals + 1, buyer_nik_last_refusal_at = $2
+			 WHERE id=$1::uuid`, spec.AdmissionID, spec.Now); err != nil {
+			return outbound.HoldResult{}, err
+		}
+		return outbound.HoldResult{Refused: outbound.RefusedBuyerNikLimit}, nil
+	}
+
+	// Step 7: append event (optimistic) and project the read model (booking LAST).
 	payload := domevent.BookingHeld{
 		BookingID: spec.BookingID, EventID: spec.EventID, AdmissionID: spec.AdmissionID,
 		AmountMinor: spec.AmountMinor, ItemQuantity: n, Items: itemSnapshots(spec.Lines),
@@ -110,8 +176,6 @@ func (u *UnitOfWork) hold(ctx context.Context, tx pgx.Tx, spec outbound.HoldSpec
 	}); err != nil {
 		return outbound.HoldResult{}, err
 	}
-
-	// (7) project read model (booking LAST).
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO booking.bookings (id, public_ref, event_id, admission_id, visitor_id, buyer_nik_hash,
 			buyer_email_enc, status, amount_minor, item_quantity, payment_expires_at, version, account_id)
@@ -120,33 +184,36 @@ func (u *UnitOfWork) hold(ctx context.Context, tx pgx.Tx, spec outbound.HoldSpec
 		spec.BuyerEmailEnc, spec.AmountMinor, n, spec.PaymentExpiresAt, spec.AccountID); err != nil {
 		return outbound.HoldResult{}, mapHoldErr(err)
 	}
+	itemIDs := make([]string, 0, len(spec.Lines))
 	for _, l := range spec.Lines {
-		if _, err := tx.Exec(ctx, `
+		var itemID string
+		if err := tx.QueryRow(ctx, `
 			INSERT INTO booking.booking_items (booking_id, event_id, category_id, unit_price_minor,
 				attendee_nik_hash, attendee_nik_enc, attendee_nik_masked, attendee_name, item_status)
-			VALUES ($1::uuid,$2::uuid,$3::uuid,$4,$5,$6,$7,$8,'HELD')`,
+			VALUES ($1::uuid,$2::uuid,$3::uuid,$4,$5,$6,$7,$8,'HELD') RETURNING id`,
 			spec.BookingID, spec.EventID, l.CategoryID, l.UnitPriceMinor,
-			l.AttendeeNIKHash, l.AttendeeNIKEnc, l.AttendeeNIKMasked, l.AttendeeName); err != nil {
+			l.AttendeeNIKHash, l.AttendeeNIKEnc, l.AttendeeNIKMasked, l.AttendeeName).Scan(&itemID); err != nil {
 			return outbound.HoldResult{}, mapHoldErr(err)
 		}
+		itemIDs = append(itemIDs, itemID) // loop iteration order == spec.Lines order
 	}
 
-	// (8) bump counters — anti-oversell CHECKs validated here.
+	// Step 8: counters. allocated_units drops by this admission's own outstanding units only; the n held
+	// units move to held_units and the rest (outstanding - n) become free stock in this commit (F1/F2).
 	for cat, cn := range byCat {
 		if _, err := tx.Exec(ctx, `UPDATE booking.category_inventories SET held_quantity=held_quantity+$2, updated_at=now() WHERE category_id=$1::uuid`, cat, cn); err != nil {
 			return outbound.HoldResult{}, mapHoldErr(err)
 		}
 	}
-	if _, err := tx.Exec(ctx, `UPDATE booking.event_supply SET allocated_units=allocated_units-$2, held_units=held_units+$2, version=version+1, updated_at=now() WHERE event_id=$1::uuid`, spec.EventID, n); err != nil {
+	if _, err := tx.Exec(ctx, `UPDATE booking.event_supply SET allocated_units=allocated_units-$2, held_units=held_units+$3, version=version+1, updated_at=now() WHERE event_id=$1::uuid`, spec.EventID, outstanding, n); err != nil {
 		return outbound.HoldResult{}, mapHoldErr(err)
 	}
 	if _, err := tx.Exec(ctx, `UPDATE booking.buyer_quotas SET held_quantity=held_quantity+$3, updated_at=now() WHERE event_id=$1::uuid AND buyer_nik_hash=$2`, spec.EventID, spec.BuyerNIKHash, n); err != nil {
 		return outbound.HoldResult{}, mapHoldErr(err)
 	}
 
+	// Step 9: bind the buyer and settle the counter in the same statement as the status change.
 	version := 1
-	// (9) Design §9.2 Step 11: transition admission to EDITABLE or CONVERTED.
-	// Lock immediately if edit is disabled OR request arrived in grace window.
 	if !spec.CfgEditEnabled || inGrace {
 		lockReason := "EDIT_DISABLED"
 		if inGrace {
@@ -154,20 +221,11 @@ func (u *UnitOfWork) hold(ctx context.Context, tx pgx.Tx, spec outbound.HoldSpec
 		}
 		if _, err := tx.Exec(ctx, `
 			UPDATE booking.admissions
-			   SET status='CONVERTED', lock_reason=$2, locked_at=now(), ended_at=now(), end_reason='CONVERTED'
-			 WHERE id=$1::uuid`, spec.AdmissionID, lockReason); err != nil {
+			   SET status='CONVERTED', lock_reason=$2, locked_at=now(), ended_at=now(), end_reason='CONVERTED',
+			       outstanding_units=0, buyer_nik_hash=$3, buyer_nik_masked=NULLIF($4,''), buyer_email_enc=NULLIF($5,'')
+			 WHERE id=$1::uuid`, spec.AdmissionID, lockReason, spec.BuyerNIKHash, spec.BuyerNIKMasked, spec.BuyerEmailEnc); err != nil {
 			return outbound.HoldResult{}, err
 		}
-		// Release unused reservation units (units - n) back to allocated.
-		releaseUnits := spec.AdmissionUnits - n
-		if releaseUnits > 0 {
-			if _, err := tx.Exec(ctx, `
-				UPDATE booking.event_supply SET allocated_units=allocated_units+$2, version=version+1, updated_at=now()
-				 WHERE event_id=$1::uuid`, spec.EventID, releaseUnits); err != nil {
-				return outbound.HoldResult{}, err
-			}
-		}
-		// Append BookingLocked event for audit trail.
 		if _, err := u.store.Append(ctx, tx, spec.BookingID, 1, eventstore.NewEvent{
 			Type: domevent.TypeBookingLocked, SchemaVersion: 1,
 			Payload:  domevent.BookingLocked{BookingID: spec.BookingID, Reason: lockReason},
@@ -180,16 +238,17 @@ func (u *UnitOfWork) hold(ctx context.Context, tx pgx.Tx, spec outbound.HoldSpec
 			return outbound.HoldResult{}, err
 		}
 		version = 2
-	} else {
-		// Normal case: admission → EDITABLE (buyer may still edit before paying).
-		if _, err := tx.Exec(ctx, `UPDATE booking.admissions SET status='EDITABLE' WHERE id=$1::uuid`, spec.AdmissionID); err != nil {
-			return outbound.HoldResult{}, err
-		}
+	} else if _, err := tx.Exec(ctx, `
+		UPDATE booking.admissions
+		   SET status='EDITABLE', outstanding_units=0, buyer_nik_hash=$2, buyer_nik_masked=NULLIF($3,''), buyer_email_enc=NULLIF($4,'')
+		 WHERE id=$1::uuid`, spec.AdmissionID, spec.BuyerNIKHash, spec.BuyerNIKMasked, spec.BuyerEmailEnc); err != nil {
+		return outbound.HoldResult{}, err
 	}
 
 	return outbound.HoldResult{
 		BookingID: spec.BookingID, PublicRef: spec.PublicRef, Version: version,
 		Status: string(vo.BookingPendingPayment), AmountMinor: spec.AmountMinor, PaymentExpiresAt: spec.PaymentExpiresAt,
+		ItemIDs: itemIDs,
 	}, nil
 }
 
@@ -249,6 +308,16 @@ func (u *UnitOfWork) replace(ctx context.Context, tx pgx.Tx, spec outbound.Repla
 		return 0, inbound.ErrVersionConflict
 	}
 
+	// Lock order aligned with hold (admission → booking → supply → quota → category): an increase needs free
+	// stock from the supply row, so it is locked before the quota and category rows.
+	if _, err := tx.Exec(ctx, `SELECT 1 FROM booking.event_supply WHERE event_id=$1::uuid FOR UPDATE`, spec.EventID); err != nil {
+		return 0, err
+	}
+	if _, err := tx.Exec(ctx, `SELECT 1 FROM booking.buyer_quotas WHERE event_id=$1::uuid AND buyer_nik_hash=$2 FOR UPDATE`,
+		spec.EventID, spec.BuyerNIKHash); err != nil {
+		return 0, err
+	}
+
 	// Release old held units per category before inserting the new ones.
 	oldByCat, err := heldByCategory(ctx, tx, spec.BookingID)
 	if err != nil {
@@ -303,8 +372,10 @@ func (u *UnitOfWork) replace(ctx context.Context, tx pgx.Tx, spec outbound.Repla
 	}
 	supplyDelta := len(spec.Lines) - sum(oldByCat)
 	if supplyDelta != 0 {
-		// Design §9.3 step 6: held += (n_new - n_old); allocated += (n_old - n_new).
-		if _, err := tx.Exec(ctx, `UPDATE booking.event_supply SET held_units=held_units+$2, allocated_units=allocated_units+$3, version=version+1, updated_at=now() WHERE event_id=$1::uuid`, spec.EventID, supplyDelta, -supplyDelta); err != nil {
+		// E1 (ADR-030, PROVISIONAL pending the human gate; E2 would refuse delta > 0): after hold the admission owns no reserved units, so an edit moves only held_units. An
+		// increase is limited by free stock (the supply CHECK is the backstop → CATEGORY_UNAVAILABLE) and a
+		// decrease returns units to free stock immediately.
+		if _, err := tx.Exec(ctx, `UPDATE booking.event_supply SET held_units=held_units+$2, version=version+1, updated_at=now() WHERE event_id=$1::uuid`, spec.EventID, supplyDelta); err != nil {
 			return 0, mapHoldErr(err)
 		}
 		if _, err := tx.Exec(ctx, `UPDATE booking.buyer_quotas SET held_quantity=held_quantity+$3, updated_at=now() WHERE event_id=$1::uuid AND buyer_nik_hash=$2`, spec.EventID, spec.BuyerNIKHash, supplyDelta); err != nil {
@@ -548,9 +619,12 @@ func (u *UnitOfWork) settle(ctx context.Context, tx pgx.Tx, spec outbound.Settle
 	// (paymentLock §9.4 normally converts it first; this handles the race where payment.succeeded
 	// arrives before payment-lock was called.)
 	if admStatus == "EDITABLE" {
+		if err := releaseOutstanding(ctx, tx, eventID, admissionID); err != nil {
+			return false, err
+		}
 		if _, err := tx.Exec(ctx, `
 			UPDATE booking.admissions
-			   SET status='CONVERTED', lock_reason='BOOKING_ENDED',
+			   SET status='CONVERTED', outstanding_units=0, lock_reason='BOOKING_ENDED',
 			       locked_at=now(), ended_at=now(), end_reason='CONVERTED'
 			 WHERE id=$1::uuid AND status='EDITABLE'`, admissionID); err != nil {
 			return false, err
@@ -686,9 +760,12 @@ func (u *UnitOfWork) expire(ctx context.Context, tx pgx.Tx, spec outbound.Expire
 		}
 		// §7.2 / §9.6: convert EDITABLE admission on any terminal booking path.
 		if admStatus == "EDITABLE" {
+			if err := releaseOutstanding(ctx, tx, eventID, admissionID); err != nil {
+				return false, err
+			}
 			if _, err := tx.Exec(ctx, `
 				UPDATE booking.admissions
-				   SET status='CONVERTED', lock_reason='BOOKING_ENDED',
+				   SET status='CONVERTED', outstanding_units=0, lock_reason='BOOKING_ENDED',
 				       locked_at=now(), ended_at=now(), end_reason='CONVERTED'
 				 WHERE id=$1::uuid AND status='EDITABLE'`, admissionID); err != nil {
 				return false, err
@@ -745,9 +822,12 @@ func (u *UnitOfWork) expire(ctx context.Context, tx pgx.Tx, spec outbound.Expire
 	}
 	// §7.2 NOT_PAID/NO_ATTEMPT: convert admission EDITABLE→CONVERTED(BOOKING_ENDED).
 	if admStatus == "EDITABLE" {
+		if err := releaseOutstanding(ctx, tx, eventID, admissionID); err != nil {
+			return false, err
+		}
 		if _, err := tx.Exec(ctx, `
 			UPDATE booking.admissions
-			   SET status='CONVERTED', lock_reason='BOOKING_ENDED',
+			   SET status='CONVERTED', outstanding_units=0, lock_reason='BOOKING_ENDED',
 			       locked_at=now(), ended_at=now(), end_reason='CONVERTED'
 			 WHERE id=$1::uuid AND status='EDITABLE'`, admissionID); err != nil {
 			return false, err
@@ -820,7 +900,7 @@ func (u *UnitOfWork) paymentLock(ctx context.Context, tx pgx.Tx, spec outbound.P
 	var admStatus string
 	var admUnits int
 	if err := tx.QueryRow(ctx, `
-		SELECT status, units FROM booking.admissions WHERE id=$1::uuid FOR UPDATE`, admissionID).
+		SELECT status, outstanding_units FROM booking.admissions WHERE id=$1::uuid FOR UPDATE`, admissionID).
 		Scan(&admStatus, &admUnits); err != nil {
 		return outbound.PaymentLockResult{}, err
 	}
@@ -861,21 +941,20 @@ func (u *UnitOfWork) paymentLock(ctx context.Context, tx pgx.Tx, spec outbound.P
 		return outbound.PaymentLockResult{}, err
 	}
 
-	// Step 5 (§9.4): if admission is still EDITABLE, release surplus allocated units and convert it.
-	// admission.units is the originally reserved count; item_quantity is what the buyer chose.
-	// surplus (units − item_quantity) was held in allocated_units; release it back to free stock.
+	// Step 5 (§9.4): if the admission is still EDITABLE, convert it. Unused units were already returned to
+	// free stock at hold (outstanding_units = 0); a legacy row with a leftover counter releases it here.
 	if admStatus == "EDITABLE" {
-		if surplus := admUnits - itemQuantity; surplus > 0 {
+		if admUnits > 0 {
 			if _, err := tx.Exec(ctx, `
 				UPDATE booking.event_supply
 				   SET allocated_units = allocated_units - $2, version = version + 1, updated_at = now()
-				 WHERE event_id = $1::uuid`, eventID, surplus); err != nil {
+				 WHERE event_id = $1::uuid`, eventID, admUnits); err != nil {
 				return outbound.PaymentLockResult{}, err
 			}
 		}
 		if _, err := tx.Exec(ctx, `
 			UPDATE booking.admissions
-			   SET status = 'CONVERTED', lock_reason = 'PAYMENT_STARTED',
+			   SET status = 'CONVERTED', outstanding_units = 0, lock_reason = 'PAYMENT_STARTED',
 			       locked_at = now(), ended_at = now(), end_reason = 'CONVERTED'
 			 WHERE id = $1::uuid AND status = 'EDITABLE'`, admissionID); err != nil {
 			return outbound.PaymentLockResult{}, err
@@ -1003,7 +1082,7 @@ func mapHoldErr(err error) error {
 	}
 	if pkgpg.IsCode(err, pkgpg.CodeCheckViolation) {
 		if pkgpg.ConstraintName(err) == "buyer_quotas_check" {
-			return inbound.ErrBuyerQuota
+			return inbound.ErrBuyerNikLimitReached
 		}
 		return inbound.ErrCategoryUnavailable
 	}
@@ -1045,4 +1124,22 @@ func sum(m map[string]int) int {
 		t += v
 	}
 	return t
+}
+
+// releaseOutstanding returns an admission's still-reserved units to free stock and zeroes its counter. The
+// admission row is already locked by the caller. After the ADR-030 hold the counter is 0, so this only
+// matters for rows created before migration 0009 or admissions that never reached hold.
+func releaseOutstanding(ctx context.Context, tx pgx.Tx, eventID, admissionID string) error {
+	var outstanding int
+	if err := tx.QueryRow(ctx, `SELECT outstanding_units FROM booking.admissions WHERE id=$1::uuid`, admissionID).Scan(&outstanding); err != nil {
+		return err
+	}
+	if outstanding == 0 {
+		return nil
+	}
+	if _, err := tx.Exec(ctx, `UPDATE booking.event_supply SET allocated_units=allocated_units-$2, version=version+1, updated_at=now() WHERE event_id=$1::uuid`, eventID, outstanding); err != nil {
+		return err
+	}
+	_, err := tx.Exec(ctx, `UPDATE booking.admissions SET outstanding_units=0 WHERE id=$1::uuid`, admissionID)
+	return err
 }

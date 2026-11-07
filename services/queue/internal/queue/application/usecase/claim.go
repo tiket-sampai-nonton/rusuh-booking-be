@@ -7,6 +7,7 @@ import (
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/clock"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/domain/dto"
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/domain/entity"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/port/inbound"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/port/outbound"
 )
@@ -26,17 +27,25 @@ func NewClaimTurn(store outbound.IQueueStore, tokens outbound.ITokenIssuer, clk 
 	return &ClaimTurn{store: store, tokens: tokens, clock: clk, bookingURL: strings.TrimRight(bookingURLBase, "/")}
 }
 
-// Claim validates the turn via claim.lua then issues an EdDSA admission token (TTL 60s).
+// Claim validates the turn via claim.lua then issues an EdDSA admission token (TTL 60s). The allocation id comes
+// from claim.lua's own reply (design §5.3), never from a second GetEntry: a second read would race a concurrent
+// change and could sign a token for a stale allocation.
 func (u *ClaimTurn) Claim(ctx context.Context, in inbound.ClaimInput) (dto.ClaimResponse, error) {
-	now := u.clock.Now()
-	if _, err := u.store.Claim(ctx, in.EventID, in.EntryID, in.VisitorID, now.UnixMilli()); err != nil {
+	if err := checkTokenGen(ctx, u.store, in.EventID, in.VisitorID, in.Gen); err != nil {
 		return dto.ClaimResponse{}, err
 	}
-	// Read allocationId from Valkey — used as JTI so Booking can activate by admission primary key.
-	entry, _, _ := u.store.GetEntry(ctx, in.EventID, in.EntryID)
-	allocationID := entry.AllocationID // set during promote.lua
+	now := u.clock.Now()
+	res, err := u.store.Claim(ctx, in.EventID, in.EntryID, in.VisitorID, now.UnixMilli())
+	if err != nil {
+		return dto.ClaimResponse{}, err
+	}
+	if res.AllocationID == "" {
+		// The entry was admitted (claim.lua only answers OK for an ADMITTED turn) but carries no allocation id. This
+		// should not happen (promote.lua always writes one); refuse rather than sign an unusable token.
+		return dto.ClaimResponse{}, entity.ErrDependencyUnavailable
+	}
 
-	token, _, err := u.tokens.IssueAdmission(in.EntryID, in.EventID, allocationID, now)
+	token, _, err := u.tokens.IssueAdmission(in.EntryID, in.EventID, res.AllocationID, now)
 	if err != nil {
 		return dto.ClaimResponse{}, err
 	}

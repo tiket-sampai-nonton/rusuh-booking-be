@@ -23,6 +23,9 @@ func TestLoad_Defaults(t *testing.T) {
 	assert.Equal(t, "rusuh.events", cfg.RabbitMQ.Exchange)
 	assert.Len(t, cfg.RabbitMQ.RetryDelays, 3)
 	assert.Equal(t, 0, cfg.Valkey.DB)
+	assert.Equal(t, 10, cfg.Hold.BuyerNikAttemptBudget)
+	assert.Equal(t, 2*time.Second, cfg.Hold.ThrottleBase)
+	assert.Equal(t, 30*time.Second, cfg.Hold.ThrottleMax)
 }
 
 func TestLoad_ReportsInvalidValues(t *testing.T) {
@@ -37,6 +40,10 @@ func TestLoad_ReportsInvalidValues(t *testing.T) {
 		{"bad schema", "POSTGRES_SCHEMA", "public;drop", "POSTGRES_SCHEMA"},
 		{"bad valkey", "VALKEY_SERVER", "localhost:6379", "VALKEY_SERVER"},
 		{"bad delays", "RABBITMQ_RETRY_DELAYS", "soon", "RABBITMQ_RETRY_DELAYS"},
+		{"budget zero", "BUYER_NIK_ATTEMPT_BUDGET", "0", "BUYER_NIK_ATTEMPT_BUDGET"},
+		{"budget too big", "BUYER_NIK_ATTEMPT_BUDGET", "101", "BUYER_NIK_ATTEMPT_BUDGET"},
+		{"throttle base zero", "BUYER_NIK_THROTTLE_BASE_SECONDS", "0", "BUYER_NIK_THROTTLE_BASE_SECONDS"},
+		{"throttle max below base", "BUYER_NIK_THROTTLE_MAX_SECONDS", "1", "BUYER_NIK_THROTTLE_MAX_SECONDS"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
