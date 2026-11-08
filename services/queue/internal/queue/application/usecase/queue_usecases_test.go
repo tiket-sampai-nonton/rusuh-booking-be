@@ -146,9 +146,9 @@ func TestLeave_StoreErrorMeansBookingIsNeverCalled(t *testing.T) {
 	require.Error(t, uc.Leave(ctx, inbound.LeaveInput{EntryID: "e1", VisitorID: "v1", EventID: "ev1", Gen: 1}))
 }
 
-// TC-QUE-23: terminal and CLAIMED entries answer 204 with zero releases.
+// TC-QUE-23: terminal entries answer 204 with zero releases. (CLAIMED is refused with ErrEntryClaimed: TC-QUE-38.)
 func TestLeave_IgnoredStatusesReleaseNothing(t *testing.T) {
-	for _, st := range []string{"COMPLETED", "ENDED", "LEFT", "MISSED", "CLAIMED"} {
+	for _, st := range []string{"COMPLETED", "ENDED", "LEFT", "MISSED"} {
 		t.Run(st, func(t *testing.T) {
 			ctrl := gomock.NewController(t)
 			store := mock_outbound.NewMockIQueueStore(ctrl)

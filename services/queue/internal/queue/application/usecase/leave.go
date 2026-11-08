@@ -6,6 +6,7 @@ import (
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/clock"
 
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/domain/entity"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/port/inbound"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/port/outbound"
 )
@@ -27,7 +28,8 @@ func NewLeaveQueue(store outbound.IQueueStore, booking outbound.IBookingClient, 
 // NOT_FOUND for a stranger without changing anything. Only when it reports that it moved an ADMITTED entry to LEFT
 // does the usecase release the Booking allocation (saga compensation, spec 14.R1, req 7.2, ADR-018). Doing the
 // release before the commit (as before) let anyone who knew an entry id free another buyer's reserved ticket, since
-// the stranger was only rejected afterwards. Release failure is best-effort: Booking's own session sweeper
+// the stranger was only rejected afterwards. A CLAIMED entry is refused with ErrEntryClaimed (409): the booking
+// session, not the queue, owns it now, and the client must cancel it there. Release failure is best-effort: Booking's own session sweeper
 // releases the allocation when the claim window expires (K7).
 func (u *LeaveQueue) Leave(ctx context.Context, in inbound.LeaveInput) error {
 	if err := checkTokenGen(ctx, u.store, in.EventID, in.VisitorID, in.Gen); err != nil {
@@ -36,6 +38,10 @@ func (u *LeaveQueue) Leave(ctx context.Context, in inbound.LeaveInput) error {
 	res, err := u.store.Leave(ctx, in.EventID, in.EntryID, in.VisitorID, u.clock.Now().UnixMilli())
 	if err != nil {
 		return err
+	}
+	if res.Tag == "IGNORED" && res.PrevStatus == "CLAIMED" {
+		// Booking owns the session once the entry is claimed: refuse instead of a silent 204 that changes nothing.
+		return entity.ErrEntryClaimed
 	}
 	if res.Tag == "OK" && res.PrevStatus == "ADMITTED" && res.AllocationID != "" {
 		if rerr := u.booking.ReleaseAllocation(ctx, res.AllocationID, outbound.ReleaseReasonEntryGone); rerr != nil {

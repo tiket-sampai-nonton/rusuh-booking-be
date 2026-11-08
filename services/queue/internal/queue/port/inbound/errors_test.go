@@ -24,6 +24,7 @@ func TestMapError(t *testing.T) {
 	}{
 		{"not on sale", entity.ErrNotOnSale, http.StatusConflict, inbound.CodeEventNotOnSale},
 		{"sold out", entity.ErrSoldOut, http.StatusGone, inbound.CodeEventSoldOut},
+		{"entry claimed", entity.ErrEntryClaimed, http.StatusConflict, inbound.CodeEntryClaimed},
 		{"turn missed", entity.ErrTurnMissed, http.StatusGone, inbound.CodeTurnMissed},
 		{"not admitted", entity.ErrNotAdmitted, http.StatusConflict, inbound.CodeNotAdmitted},
 		{"not found", entity.ErrNotFound, http.StatusNotFound, apperror.CodeNotFound},
@@ -37,6 +38,12 @@ func TestMapError(t *testing.T) {
 			assert.Equal(t, tt.wantCode, ae.Code)
 		})
 	}
+}
+
+// TC-QUE-38: the ENTRY_CLAIMED message tells the client what to do instead.
+func TestMapError_EntryClaimedTellsClientToCancelTheBookingSession(t *testing.T) {
+	ae := inbound.MapError(entity.ErrEntryClaimed)
+	assert.Contains(t, ae.Error(), "batalkan sesi booking")
 }
 
 func TestMapError_WrappedSentinel(t *testing.T) {

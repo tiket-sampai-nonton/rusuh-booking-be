@@ -17,6 +17,7 @@ const (
 	CodeAccountInQueue      apperror.Code = "ACCOUNT_ALREADY_IN_QUEUE"
 	CodeVisitorTokenInvalid apperror.Code = "VISITOR_TOKEN_INVALID"
 	CodeEntryNotFound       apperror.Code = "ENTRY_NOT_FOUND"
+	CodeEntryClaimed        apperror.Code = "ENTRY_CLAIMED"
 	CodeEventNotOnSale      apperror.Code = "EVENT_NOT_ON_SALE"
 	CodeEventSoldOut        apperror.Code = "EVENT_SOLD_OUT"
 	CodeTurnMissed          apperror.Code = "TURN_MISSED"
@@ -40,6 +41,7 @@ var errMappings = []errMapping{
 	{entity.ErrAccountInQueue, CodeAccountInQueue, http.StatusConflict},
 	{entity.ErrVisitorTokenInvalid, CodeVisitorTokenInvalid, http.StatusUnauthorized},
 	{entity.ErrEntryNotFound, CodeEntryNotFound, http.StatusNotFound},
+	{entity.ErrEntryClaimed, CodeEntryClaimed, http.StatusConflict},
 	{entity.ErrNotOnSale, CodeEventNotOnSale, http.StatusConflict},
 	{entity.ErrSoldOut, CodeEventSoldOut, http.StatusGone},
 	{entity.ErrTurnMissed, CodeTurnMissed, http.StatusGone},

@@ -235,6 +235,20 @@ func TestLeaveHandler_NoContent(t *testing.T) {
 	require.Equal(t, http.StatusNoContent, rec.Code)
 }
 
+// TC-QUE-38 (P16): DELETE on a CLAIMED entry is 409 ENTRY_CLAIMED in the standard envelope, never a 204.
+func TestLeaveHandler_ClaimedEntryIsConflict(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	uc := mock_inbound.NewMockILeaveUsecase(ctrl)
+	uc.EXPECT().Leave(gomock.Any(), gomock.Any()).Return(entity.ErrEntryClaimed)
+	mux := http.NewServeMux()
+	queuehttp.NewLeaveHandler(uc, fakeAuth{id: "v1", ok: true}).Register(mux)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodDelete, "/api/v1/queue-entries/e1?eventId=ev1", nil))
+	require.Equal(t, http.StatusConflict, rec.Code)
+	assert.Contains(t, rec.Body.String(), `"meta":{"code":409,"message":"ENTRY_CLAIMED:`)
+	assert.Contains(t, rec.Body.String(), `"data":null`)
+}
+
 func TestLeaveHandler_Unauthorized(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	uc := mock_inbound.NewMockILeaveUsecase(ctrl)
