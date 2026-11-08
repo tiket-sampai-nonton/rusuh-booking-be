@@ -110,7 +110,7 @@ paths:
                 - meta
                 - data
         '409':
-          description: 'Konflik antrean — errorCode: `ACCOUNT_ALREADY_IN_QUEUE`, `EVENT_NOT_ON_SALE`, `QUEUE_NOT_CONFIGURED`
+          description: 'Konflik antrean — errorCode: `ACCOUNT_ALREADY_IN_QUEUE`, `EVENT_NOT_ON_SALE` (sebelum penjualan dibuka atau setelah ditutup), `QUEUE_NOT_CONFIGURED`
             (event belum punya pengaturan antrean; admin harus PUT /internal/v1/admin/events/{eventId}/queue-settings setelah event terbit.
             Id event yang tidak dikenal menjawab sama, tanpa membocorkan keberadaan event. Klien: tampilkan pesan tenang, jangan coba ulang otomatis.)'
           content:
@@ -130,7 +130,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
         '503':
-          description: 'Dependency sementara tidak tersedia; ulangi dengan Idempotency-Key yang sama — errorCode: `DEPENDENCY_UNAVAILABLE`'
+          description: 'Dependency sementara tidak tersedia (termasuk jendela penjualan yang belum diketahui saat Booking tidak terjangkau; join ditolak, tidak diterima diam-diam); ulangi dengan Idempotency-Key yang sama — errorCode: `DEPENDENCY_UNAVAILABLE`'
           content:
             application/json:
               schema:
@@ -373,6 +373,12 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
         '404':
           description: 'Tidak ada entry — errorCode: `NOT_FOUND`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '409':
+          description: 'Entri sudah diklaim; sesi booking yang memilikinya, jadi antrean tidak mengubah apa pun. Klien membatalkan lewat POST /api/v1/booking-sessions/{sessionId}/cancel — errorCode: `ENTRY_CLAIMED`'
           content:
             application/json:
               schema:

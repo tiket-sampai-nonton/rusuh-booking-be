@@ -609,6 +609,12 @@ paths:
             application/json:
               schema:
                 "$ref": "#/components/schemas/ErrorEnvelope"
+        '409':
+          description: 'Sesi sudah punya hold (pesanan terkunci); batalkan pesanan, bukan sesi — errorCode: `BOOKING_LOCKED`'
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ErrorEnvelope"
         '400':
           description: 'Parameter path bukan UUID atau body tidak valid — errorCode:
             `VALIDATION_ERROR`'
