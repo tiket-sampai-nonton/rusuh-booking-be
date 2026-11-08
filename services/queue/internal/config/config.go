@@ -5,6 +5,8 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/logger"
@@ -64,9 +66,16 @@ func (c Config) Validate() error {
 	if c.App.Port <= 0 || c.App.Port > 65535 {
 		errs = append(errs, fmt.Errorf("APP_PORT %d di luar rentang", c.App.Port))
 	}
-	if c.HTTP.ShutdownTimeout <= 0 || c.HTTP.HealthTimeout <= 0 || c.Worker.Interval <= 0 {
-		errs = append(errs, errors.New("HTTP_SHUTDOWN_TIMEOUT, HEALTH_TIMEOUT, dan WORKER_INTERVAL harus > 0"))
+	if c.HTTP.ShutdownTimeout <= 0 {
+		errs = append(errs, errors.New("HTTP_SHUTDOWN_TIMEOUT harus > 0"))
 	}
+	if c.HTTP.HealthTimeout <= 0 {
+		errs = append(errs, errors.New("HEALTH_TIMEOUT harus > 0"))
+	}
+	if c.Worker.Interval <= 0 {
+		errs = append(errs, errors.New("WORKER_INTERVAL harus > 0"))
+	}
+	errs = append(errs, validatePageBaseURL(c.Booking.PageBaseURL, c.App.Env))
 	errs = append(errs, c.Log.Validate())
 	errs = append(errs, c.Postgres.Validate())
 	errs = append(errs, c.Valkey.Validate())
@@ -75,6 +84,41 @@ func (c Config) Validate() error {
 	errs = append(errs, c.RateLimit.Validate(), c.WorkerTuning.Validate(c.Booking.Timeout), c.Liveness.Validate())
 	if err := errors.Join(errs...); err != nil {
 		return fmt.Errorf("config tidak valid: %w", err)
+	}
+	return nil
+}
+
+// validatePageBaseURL checks BOOKING_PAGE_BASE_URL: absolute http(s) URL with a host, no userinfo, query or fragment,
+// and https outside APP_ENV=local. Errors name the variable and the rule only, never other config values.
+func validatePageBaseURL(raw, env string) error {
+	const name = "BOOKING_PAGE_BASE_URL"
+	if raw == "" {
+		return errors.New(name + " wajib diisi")
+	}
+	if strings.IndexFunc(raw, func(r rune) bool { return r <= ' ' || r == 0x7f }) >= 0 {
+		return errors.New(name + " tidak boleh mengandung spasi atau karakter kontrol")
+	}
+	if strings.Contains(raw, "?") {
+		return errors.New(name + " tidak boleh mengandung query")
+	}
+	if strings.Contains(raw, "#") {
+		return errors.New(name + " tidak boleh mengandung fragment")
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme == "" {
+		return errors.New(name + " harus URL absolut (http/https)")
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return errors.New(name + " harus memakai skema http atau https")
+	}
+	if u.Hostname() == "" {
+		return errors.New(name + " harus punya host")
+	}
+	if u.User != nil {
+		return errors.New(name + " tidak boleh mengandung userinfo")
+	}
+	if u.Scheme == "http" && env != "local" {
+		return errors.New(name + " harus https kecuali APP_ENV=local")
 	}
 	return nil
 }

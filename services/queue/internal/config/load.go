@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/dotenv"
@@ -83,6 +84,8 @@ func Load() (Config, error) {
 	cfg.Booking = Booking{
 		BaseURL: r.String("BOOKING_SERVICE_URL", ""),
 		Timeout: r.Duration("BOOKING_TIMEOUT", 3*time.Second),
+		// Trailing slashes are normalised away so the claim URL has exactly one separator.
+		PageBaseURL: strings.TrimRight(r.String("BOOKING_PAGE_BASE_URL", ""), "/"),
 	}
 	cfg.RateLimit = RateLimit{
 		JoinPerIPWindow:     r.Duration("RATE_LIMIT_JOIN_PER_IP_WINDOW", time.Minute),

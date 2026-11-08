@@ -2,6 +2,7 @@ package usecase
 
 import (
 	"context"
+	"net/url"
 	"strings"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/clock"
@@ -15,16 +16,16 @@ import (
 // ClaimTurn implements inbound.IClaimUsecase: claims an admitted turn and issues the one-time
 // admission token (design §2.4, §4.3).
 type ClaimTurn struct {
-	store      outbound.IQueueStore
-	tokens     outbound.ITokenIssuer
-	clock      clock.IClock
-	bookingURL string // base URL template, e.g. "https://app/book"
+	store          outbound.IQueueStore
+	tokens         outbound.ITokenIssuer
+	clock          clock.IClock
+	bookingPageURL string // public booking page base (BOOKING_PAGE_BASE_URL), e.g. "https://app/book"
 }
 
-// NewClaimTurn accepts interfaces and returns the concrete usecase. bookingURLBase is joined with the
-// entry id to form the per-entry booking URL.
-func NewClaimTurn(store outbound.IQueueStore, tokens outbound.ITokenIssuer, clk clock.IClock, bookingURLBase string) *ClaimTurn {
-	return &ClaimTurn{store: store, tokens: tokens, clock: clk, bookingURL: strings.TrimRight(bookingURLBase, "/")}
+// NewClaimTurn accepts interfaces and returns the concrete usecase. bookingPageBase is the public booking page base
+// URL; it is joined with the (path-escaped) event id to form the page URL. The URL never carries a token.
+func NewClaimTurn(store outbound.IQueueStore, tokens outbound.ITokenIssuer, clk clock.IClock, bookingPageBase string) *ClaimTurn {
+	return &ClaimTurn{store: store, tokens: tokens, clock: clk, bookingPageURL: strings.TrimRight(bookingPageBase, "/")}
 }
 
 // Claim validates the turn via claim.lua then issues an EdDSA admission token (TTL 60s). The allocation id comes
@@ -51,6 +52,6 @@ func (u *ClaimTurn) Claim(ctx context.Context, in inbound.ClaimInput) (dto.Claim
 	}
 	return dto.ClaimResponse{
 		AdmissionToken: token,
-		BookingURL:     u.bookingURL + "/" + in.EntryID,
+		BookingURL:     u.bookingPageURL + "/" + url.PathEscape(in.EventID),
 	}, nil
 }

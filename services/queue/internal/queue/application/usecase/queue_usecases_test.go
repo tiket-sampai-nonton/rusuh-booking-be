@@ -38,7 +38,7 @@ func TestClaim_Success(t *testing.T) {
 	resp, err := uc.Claim(ctx, inbound.ClaimInput{EntryID: "e1", VisitorID: "v1", EventID: "ev1", Gen: 1})
 	require.NoError(t, err)
 	assert.Equal(t, "adm-token", resp.AdmissionToken)
-	assert.Equal(t, "https://app/book/e1", resp.BookingURL)
+	assert.Equal(t, "https://app/book/ev1", resp.BookingURL, "page URL is base/eventId, not entryId")
 }
 
 // A claim that Valkey accepted but that carries no allocation id must not mint an admission token: the token's JTI
@@ -71,8 +71,9 @@ func TestClaim_StoreErrorsAreReturned(t *testing.T) {
 			ctx := context.Background()
 			store.EXPECT().Claim(ctx, "ev1", "e1", "v1", gomock.Any()).Return(outbound.ClaimResult{}, storeErr)
 			uc := usecase.NewClaimTurn(store, tokens, fixedNow, "https://app/book")
-			_, err := uc.Claim(ctx, inbound.ClaimInput{EntryID: "e1", VisitorID: "v1", EventID: "ev1", Gen: 1})
+			resp, err := uc.Claim(ctx, inbound.ClaimInput{EntryID: "e1", VisitorID: "v1", EventID: "ev1", Gen: 1})
 			assert.ErrorIs(t, err, storeErr)
+			assert.Equal(t, dto.ClaimResponse{}, resp, "no token and no URL on failure")
 		})
 	}
 }
@@ -215,6 +216,44 @@ func TestClaimAndLeave_RotatedOutTokenIsRefused(t *testing.T) {
 			err = usecase.NewLeaveQueue(store, booking, fixedNow).
 				Leave(ctx, inbound.LeaveInput{EntryID: "e1", VisitorID: "v1", EventID: "ev1", Gen: gen})
 			assert.ErrorIs(t, err, entity.ErrVisitorTokenInvalid)
+		})
+	}
+}
+
+// TC-QUE-35 / TC-SEC-01: the booking page URL is base + "/" + escaped eventId and carries no token or internal host.
+func TestClaim_BookingURLShape(t *testing.T) {
+	tests := []struct {
+		name, base, eventID, want string
+	}{
+		{"plain", "https://app.example/book", "5b1f-uuid", "https://app.example/book/5b1f-uuid"},
+		{"trailing slash base", "https://app.example/book/", "ev1", "https://app.example/book/ev1"},
+		{"slash in id", "https://app.example/book", "a/b", "https://app.example/book/a%2Fb"},
+		{"query chars", "https://app.example/book", "a?x=1", "https://app.example/book/a%3Fx=1"},
+		{"fragment", "https://app.example/book", "a#f", "https://app.example/book/a%23f"},
+		{"space", "https://app.example/book", "a b", "https://app.example/book/a%20b"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			store := mock_outbound.NewMockIQueueStore(ctrl)
+			store.EXPECT().TokenGen(gomock.Any(), tt.eventID, gomock.Any()).Return(int64(1), true, nil).AnyTimes()
+			tokens := mock_outbound.NewMockITokenIssuer(ctrl)
+			ctx := context.Background()
+			store.EXPECT().Claim(ctx, tt.eventID, "entry-secret-id", "visitor-secret-id", gomock.Any()).
+				Return(outbound.ClaimResult{Status: "CLAIMED", AllocationID: "alloc-1"}, nil)
+			tokens.EXPECT().IssueAdmission("entry-secret-id", tt.eventID, "alloc-1", fixedNow.T).
+				Return("distinctive.admission.token", fixedNow.T.Add(time.Minute), nil)
+
+			resp, err := usecase.NewClaimTurn(store, tokens, fixedNow, tt.base).
+				Claim(ctx, inbound.ClaimInput{EntryID: "entry-secret-id", VisitorID: "visitor-secret-id", EventID: tt.eventID, Gen: 1})
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, resp.BookingURL)
+			assert.Equal(t, "distinctive.admission.token", resp.AdmissionToken)
+			for _, leak := range []string{"distinctive.admission.token", "entry-secret-id", "visitor-secret-id", "booking:8082"} {
+				assert.NotContains(t, resp.BookingURL, leak)
+			}
+			assert.NotContains(t, resp.BookingURL, "?")
+			assert.NotContains(t, resp.BookingURL, "#")
 		})
 	}
 }

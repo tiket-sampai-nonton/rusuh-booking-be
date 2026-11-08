@@ -172,3 +172,51 @@ func TestAnonymousQueueWiringFromConfig(t *testing.T) {
 	assert.Equal(t, worker.LivenessTuning{StaleAfter: 90 * time.Second, EndAfter: 300 * time.Second, BatchMax: 77, LeaseTTL: 7 * time.Second}, livenessTuning(cfg))
 	assert.Equal(t, 6*time.Hour, joinSettings(cfg).VisitorTokenTTL)
 }
+
+// TC-QUE-32 P8: status TTL follows the status publisher's own cadence, not WORKER_INTERVAL.
+func TestStatusTTL_UsesStatusInterval(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.WorkerTuning.StatusInterval = time.Second
+	cfg.Worker.Interval = 5 * time.Second
+	cfg.WorkerTuning.StatusTTLMultiplier = 4
+	assert.Equal(t, 4*time.Second, statusTTL(cfg), "must not be 4 x WORKER_INTERVAL (20s)")
+
+	cfg.WorkerTuning.StatusInterval = 2 * time.Second
+	assert.Equal(t, 8*time.Second, statusTTL(cfg))
+}
+
+func TestJobEvery_MapsEachJobToItsInterval(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.WorkerTuning.PromotorInterval = 100 * time.Millisecond
+	cfg.WorkerTuning.SweeperInterval = 10 * time.Second
+	cfg.WorkerTuning.StatusInterval = time.Second
+	cfg.Worker.Interval = 5 * time.Second
+	assert.Equal(t, map[string]time.Duration{
+		"promoter":         100 * time.Millisecond,
+		"sweeper":          10 * time.Second,
+		"status-publisher": time.Second,
+		"liveness":         5 * time.Second,
+	}, jobEvery(cfg))
+}
+
+func TestBuildJobs_CarryOwnInterval(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.Worker.Interval = 5 * time.Second
+	run := func(context.Context) error { return nil }
+	js := buildJobs(cfg, run, run, run, run)
+	got := map[string]time.Duration{}
+	for _, j := range js {
+		got[j.Name] = j.Every
+		assert.NotNil(t, j.Run, j.Name)
+	}
+	assert.Equal(t, jobEvery(cfg), got)
+	assert.Len(t, js, 4)
+}
+
+// QWC-03.4 / invariant #4: the admission token TTL default is unchanged and bounded.
+func TestAdmissionTTL_UnchangedAndBounded(t *testing.T) {
+	cfg := testConfig(t)
+	assert.Equal(t, 60*time.Second, cfg.Token.AdmissionTTL)
+	cfg.Token.AdmissionTTL = 6 * time.Minute
+	assert.Error(t, cfg.Token.Validate())
+}

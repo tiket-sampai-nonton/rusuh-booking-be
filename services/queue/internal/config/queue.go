@@ -61,8 +61,12 @@ func (p PII) Validate() error {
 
 // Booking holds the outbound Booking Service client config.
 type Booking struct {
-	BaseURL string
+	BaseURL string // BOOKING_SERVICE_URL: internal, service-to-service
 	Timeout time.Duration
+	// PageBaseURL is the public web URL of the booking page (BOOKING_PAGE_BASE_URL, e.g. https://app.example/book).
+	// The claim response returns PageBaseURL + "/" + eventId; it never carries a token. Validated in Config.Validate
+	// because the http-vs-https rule depends on APP_ENV.
+	PageBaseURL string
 }
 
 // Validate checks Booking.
@@ -93,8 +97,8 @@ type WorkerTuning struct {
 	StatusInterval   time.Duration
 	PromoteBatchMax  int
 
-	// StatusTTLMultiplier sets the published status-doc Valkey TTL as a multiple of the effective publish
-	// cadence (Worker.Interval), decoupling the key lifetime from the status publish interval so a direct
+	// StatusTTLMultiplier sets the published status-doc Valkey TTL as a multiple of the status publisher's own
+	// cadence (QUEUE_STATUS_INTERVAL_MS), decoupling the key lifetime from the status publish interval so a direct
 	// uncached GET /queue-status/{eventId} does not intermittently 404 between republishes
 	// (QUEUE_STATUS_TTL_MULTIPLIER, bounds minStatusTTLMult..maxStatusTTLMult). Grounded in [[caching-strategy]].
 	StatusTTLMultiplier int
@@ -129,6 +133,15 @@ const (
 // Validate checks WorkerTuning against the booking client timeout (the lease must outlive two Booking calls).
 func (w WorkerTuning) Validate(bookingTimeout time.Duration) error {
 	var errs []error
+	for name, d := range map[string]time.Duration{
+		"QUEUE_PROMOTOR_INTERVAL_MS": w.PromotorInterval,
+		"QUEUE_SWEEPER_INTERVAL_MS":  w.SweeperInterval,
+		"QUEUE_STATUS_INTERVAL_MS":   w.StatusInterval,
+	} {
+		if d <= 0 {
+			errs = append(errs, fmt.Errorf("%s %s harus > 0", name, d))
+		}
+	}
 	switch {
 	case w.PromoterLeaseTTL < minLeaseTTL || w.PromoterLeaseTTL > maxLeaseTTL:
 		errs = append(errs, fmt.Errorf("QUEUE_PROMOTER_LEASE_TTL_MS %s di luar rentang [%s, %s]", w.PromoterLeaseTTL, minLeaseTTL, maxLeaseTTL))

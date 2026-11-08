@@ -1,6 +1,7 @@
 package delivery
 
 import (
+	"context"
 	"crypto/ed25519"
 	"errors"
 	"fmt"
@@ -123,7 +124,7 @@ func newQueueModule(cfg config.Config, clients *Clients, logger *slog.Logger) (*
 		WithLimiter(limiter, cfg.RateLimit.MePerVisitor, cfg.RateLimit.MePerVisitorWindow)
 	heartbeatUC := usecase.NewHeartbeat(store, clk, hbPolicy).
 		WithLimiter(limiter, cfg.RateLimit.HeartbeatPerVisitor, cfg.RateLimit.MePerVisitorWindow)
-	claimUC := usecase.NewClaimTurn(store, tokens, clk, cfg.Booking.BaseURL+"/book")
+	claimUC := usecase.NewClaimTurn(store, tokens, clk, cfg.Booking.PageBaseURL)
 	leaveUC := usecase.NewLeaveQueue(store, booking, clk)
 	getSettingsUC := usecase.NewGetQueueSettings(settingsRepo)
 	setSettingsUC := usecase.NewSetQueueSettings(settingsRepo, booking, settingsAdminRepo, clk)
@@ -143,17 +144,38 @@ func newQueueModule(cfg config.Config, clients *Clients, logger *slog.Logger) (*
 		WithMetrics(promoterMetrics)
 	liveness := worker.NewLiveness(store, settingsRepo, clk, livenessTuning(cfg))
 	sweeper := worker.NewSweeper(store, settingsRepo, clk, sweepBatch(cfg))
-	statusPub := worker.NewStatusPublisher(store, settingsRepo, booking, clk, cfg.WorkerTuning.StatusTTL(cfg.Worker.Interval))
-	jobs := []Job{
-		{Name: "promoter", Run: promoter.Run},
-		{Name: "sweeper", Run: sweeper.Run},
-		{Name: "status-publisher", Run: statusPub.Run},
-		{Name: "liveness", Run: liveness.Run},
-	}
+	statusPub := worker.NewStatusPublisher(store, settingsRepo, booking, clk, statusTTL(cfg))
+	jobs := buildJobs(cfg, promoter.Run, sweeper.Run, statusPub.Run, liveness.Run)
 
 	consumer := queuerabbitmq.NewConsumer(store, clk)
 
 	return &queueModule{handlers: handlers, jobs: jobs, consumer: consumer, rmqConn: rmqConn}, nil
+}
+
+// statusTTL derives the status-doc TTL from the status publisher's own cadence (QUEUE_STATUS_INTERVAL_MS).
+func statusTTL(cfg config.Config) time.Duration {
+	return cfg.WorkerTuning.StatusTTL(cfg.WorkerTuning.StatusInterval)
+}
+
+// jobEvery maps a job name to its configured interval. Liveness has no dedicated knob and uses WORKER_INTERVAL.
+func jobEvery(cfg config.Config) map[string]time.Duration {
+	return map[string]time.Duration{
+		"promoter":         cfg.WorkerTuning.PromotorInterval,
+		"sweeper":          cfg.WorkerTuning.SweeperInterval,
+		"status-publisher": cfg.WorkerTuning.StatusInterval,
+		"liveness":         cfg.Worker.Interval,
+	}
+}
+
+// buildJobs assembles the worker jobs, each with its own interval from jobEvery.
+func buildJobs(cfg config.Config, promoter, sweeper, statusPub, liveness func(context.Context) error) []Job {
+	every := jobEvery(cfg)
+	return []Job{
+		{Name: "promoter", Every: every["promoter"], Run: promoter},
+		{Name: "sweeper", Every: every["sweeper"], Run: sweeper},
+		{Name: "status-publisher", Every: every["status-publisher"], Run: statusPub},
+		{Name: "liveness", Every: every["liveness"], Run: liveness},
+	}
 }
 
 var (
