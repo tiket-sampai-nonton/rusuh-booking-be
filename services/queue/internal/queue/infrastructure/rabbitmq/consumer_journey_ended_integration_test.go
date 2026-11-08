@@ -4,6 +4,8 @@ package rabbitmq_test
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"testing"
@@ -16,8 +18,11 @@ import (
 	pkgrabbitmq "github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/rabbitmq"
 	pkgvalkey "github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/valkey"
 
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/domain/dto"
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/domain/entity"
 	queuerabbitmq "github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/infrastructure/rabbitmq"
 	queuevalkey "github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/infrastructure/valkey"
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/infrastructure/worker"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/port/outbound"
 )
 
@@ -125,3 +130,75 @@ func TestConsumer_JourneyEnded_BrokenPayloadIsPermanent(t *testing.T) {
 	require.Error(t, err)
 	assert.True(t, pkgrabbitmq.IsPermanent(err))
 }
+
+// soldOutSettings and soldOutBooking are the minimal collaborators of the status publisher for the sold-out tests.
+type soldOutSettings struct{ outbound.IEventSettingsRepo }
+
+func (soldOutSettings) ListEventIDs(context.Context) ([]string, error) { return nil, nil }
+func (soldOutSettings) Get(context.Context, string) (entity.EventSettings, bool, error) {
+	return entity.EventSettings{ActiveSlotCapacity: 1, NearFrontMultiplier: 1}, true, nil
+}
+
+type soldOutBooking struct{ outbound.IBookingClient }
+
+func (soldOutBooking) Supply(context.Context, string) (outbound.SupplySnapshot, error) {
+	return outbound.SupplySnapshot{}, errors.New("booking not needed")
+}
+
+// TC-QUE-40 (5.4): a duplicate booking.sold_out leaves the sale state, including the cached window, unchanged.
+func TestConsumer_SoldOut_DuplicateLeavesSaleStateUnchanged(t *testing.T) {
+	s := realStore(t)
+	ctx := context.Background()
+	ev := fmt.Sprintf("ev-%d", time.Now().UnixNano())
+	c := queuerabbitmq.NewConsumer(s, clock.System{})
+	require.NoError(t, s.SetSaleWindow(ctx, ev, 1_000, 2_000))
+	d := delivery(t, "booking.sold_out", map[string]string{"eventId": ev})
+
+	require.NoError(t, c.Subscription().Handler(ctx, d))
+	first, err := s.GetSale(ctx, ev)
+	require.NoError(t, err)
+	require.NoError(t, c.Subscription().Handler(ctx, d))
+	second, err := s.GetSale(ctx, ev)
+	require.NoError(t, err)
+
+	assert.Equal(t, outbound.SaleState{SaleState: "CLOSED", SoldOut: true, SalesStartsMs: 1_000, SalesEndsMs: 2_000}, first)
+	assert.Equal(t, first, second, "second delivery changes nothing")
+}
+
+// TC-QUE-40 (5.5): a buyer admitted into WAITING in the race window before booking.sold_out is consumed is told
+// the event is sold out by the status document (SRS-F-10-02: waiters are informed and redirected home); it does not
+// keep seeing an open sale. The bound is the consumer delay plus one status-publisher tick plus the client poll.
+func TestConsumer_SoldOut_RaceJoinedWaiterSeesSoldOutInStatusDocument(t *testing.T) {
+	s := realStore(t)
+	ctx := context.Background()
+	ev := fmt.Sprintf("ev-%d", time.Now().UnixNano())
+	now := time.Now().UnixMilli()
+	c := queuerabbitmq.NewConsumer(s, clock.System{})
+
+	waiter := joinEntry(t, s, ev, 1, now) // accepted before the event is consumed
+	e, found, err := s.GetEntry(ctx, ev, waiter)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, "WAITING", string(e.Status))
+
+	require.NoError(t, c.Subscription().Handler(ctx, delivery(t, "booking.sold_out", map[string]string{"eventId": ev})))
+
+	// The publisher builds the document every tick; waiters poll it.
+	sp := worker.NewStatusPublisher(s, soldOutEvents{ev: ev}, soldOutBooking{}, clock.System{}, time.Second)
+	require.NoError(t, sp.Run(ctx))
+	raw, ok, err := s.GetStatusDoc(ctx, ev)
+	require.NoError(t, err)
+	require.True(t, ok)
+	var doc dto.StatusDocument
+	require.NoError(t, json.Unmarshal(raw, &doc))
+	assert.True(t, doc.SoldOut, "waiters are informed")
+	assert.Equal(t, dto.SaleClosed, doc.SaleState)
+}
+
+// soldOutEvents lists exactly one event for the publisher.
+type soldOutEvents struct {
+	soldOutSettings
+	ev string
+}
+
+func (s soldOutEvents) ListEventIDs(context.Context) ([]string, error) { return []string{s.ev}, nil }

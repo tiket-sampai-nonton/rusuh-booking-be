@@ -30,7 +30,27 @@ type joinMocks struct {
 	audit    *mock_outbound.MockIEntryAuditRepo
 }
 
+// joinNow is the fixed clock of every join test.
+var joinNow = time.Date(2026, 10, 20, 10, 0, 0, 0, time.UTC)
+
+// openSale is a cached sale window that contains joinNow: the join gate lets the request through.
+func openSale() outbound.SaleState {
+	return outbound.SaleState{
+		SalesStartsMs: joinNow.Add(-time.Hour).UnixMilli(),
+		SalesEndsMs:   joinNow.Add(time.Hour).UnixMilli(),
+	}
+}
+
+// newJoin builds the usecase with an always-open sale window, so tests about the admission path stay focused.
+// Gate behaviour (TC-QUE-39/40) uses newJoinRaw and sets its own GetSale expectations.
 func newJoin(t *testing.T) (*usecase.JoinQueue, joinMocks) {
+	t.Helper()
+	uc, m := newJoinRaw(t)
+	m.store.EXPECT().GetSale(gomock.Any(), gomock.Any()).Return(openSale(), nil).AnyTimes()
+	return uc, m
+}
+
+func newJoinRaw(t *testing.T) (*usecase.JoinQueue, joinMocks) {
 	t.Helper()
 	ctrl := gomock.NewController(t)
 	m := joinMocks{
@@ -45,7 +65,7 @@ func newJoin(t *testing.T) (*usecase.JoinQueue, joinMocks) {
 	uc := usecase.NewJoinQueue(usecase.JoinDeps{
 		Store: m.store, Settings: m.settings, Booking: m.booking, Limiter: m.limiter,
 		Tokens: m.tokens, UserVerifier: m.verifier, Audit: m.audit,
-		Clock: clock.Fixed{T: time.Date(2026, 10, 20, 10, 0, 0, 0, time.UTC)},
+		Clock: clock.Fixed{T: joinNow},
 	}, usecase.JoinSettings{
 		JoinPerIP: 60, JoinPerIPWindow: time.Minute,
 		ClaimWindow: time.Minute, StatusURLTemplate: "/api/v1/queue-status/",

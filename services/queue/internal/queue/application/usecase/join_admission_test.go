@@ -59,6 +59,7 @@ func newAdmission(t *testing.T) *admissionEnv {
 		verifier: mock_outbound.NewMockIUserTokenVerifier(ctrl),
 		audit:    mock_outbound.NewMockIEntryAuditRepo(ctrl),
 	}
+	e.m.store.EXPECT().GetSale(gomock.Any(), gomock.Any()).Return(openSale(), nil).AnyTimes()
 	e.uc = usecase.NewJoinQueue(usecase.JoinDeps{
 		Store: e.m.store, Settings: e.m.settings, Booking: e.m.booking, Limiter: e.m.limiter,
 		Tokens: e.m.tokens, UserVerifier: e.m.verifier, Audit: e.m.audit,

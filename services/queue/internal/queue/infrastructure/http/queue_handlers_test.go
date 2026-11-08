@@ -1,6 +1,7 @@
 package http_test
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -95,6 +96,39 @@ func TestJoinHandler_DomainError(t *testing.T) {
 
 	assert.Equal(t, http.StatusConflict, rec.Code)
 	assert.Contains(t, rec.Body.String(), "ACCOUNT_ALREADY_IN_QUEUE")
+}
+
+// TC-QUE-39/40: the join gate errors reach the client as 409 EVENT_NOT_ON_SALE, 410 EVENT_SOLD_OUT and
+// 503 DEPENDENCY_UNAVAILABLE, in the standard error envelope.
+func TestJoinHandler_SaleGateErrors(t *testing.T) {
+	tests := []struct {
+		name     string
+		err      error
+		wantCode int
+		wantBody string
+	}{
+		{"not on sale", entity.ErrNotOnSale, http.StatusConflict, "EVENT_NOT_ON_SALE"},
+		{"sold out", entity.ErrSoldOut, http.StatusGone, "EVENT_SOLD_OUT"},
+		{"sale window unavailable", entity.ErrDependencyUnavailable, http.StatusServiceUnavailable, "DEPENDENCY_UNAVAILABLE"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			uc := mock_inbound.NewMockIJoinUsecase(ctrl)
+			uc.EXPECT().Join(gomock.Any(), gomock.Any()).Return(dto.QueueEntry{}, tt.err)
+			mux := http.NewServeMux()
+			queuehttp.NewJoinHandler(uc, false).Register(mux)
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/events/ev1/queue-entries", strings.NewReader(`{}`))
+			req.Header.Set("Content-Type", "application/json")
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
+			assert.Equal(t, tt.wantCode, rec.Code)
+			assert.Contains(t, rec.Body.String(), fmt.Sprintf(`"meta":{"code":%d,"message":"%s:`, tt.wantCode, tt.wantBody))
+			assert.Contains(t, rec.Body.String(), `"data":null`)
+			assert.Empty(t, rec.Header().Get("Set-Cookie"), "a refused join issues no visitor cookie")
+			assert.NotContains(t, rec.Body.String(), "valkey")
+		})
+	}
 }
 
 func TestStatusHandler_OK(t *testing.T) {
