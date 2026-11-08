@@ -476,3 +476,50 @@ func TestRelease_TerminalIsNoOp(t *testing.T) {
 		})
 	}
 }
+
+func soldOutRows(t *testing.T, f acctFixture) int {
+	t.Helper()
+	var n int
+	require.NoError(t, f.pool.QueryRow(context.Background(),
+		`SELECT count(*) FROM booking.outbox_events WHERE routing_key='booking.sold_out' AND payload->>'eventId'=$1`, f.eventID).Scan(&n))
+	return n
+}
+
+// TC-QUE-40 (5.6, SRS-F-09-05): stock that can still come back is not a sell-out. Taking the last free units into a
+// reservation (which can be released) or paying while other reservations exist must not announce booking.sold_out;
+// only free + allocated + held = 0 does. A premature sold_out makes Queue refuse joins with 410 while tickets may return.
+func TestSoldOut_OnlyWhenNothingCanReturn(t *testing.T) {
+	t.Run("one reservation takes all free units", func(t *testing.T) {
+		f := newAcctFixture(t, suffixFor(t), 2)
+		out, err := NewAdmissionRepo(f.pool).ReserveBatch(context.Background(), f.eventID, []outbound.ReserveEntry{anonEntry(1, 3)}, time.Now())
+		require.NoError(t, err)
+		require.Equal(t, "GRANTED", out[0].Outcome)
+		require.Equal(t, 2, out[0].Units)
+		assert.Zero(t, soldOutRows(t, f), "the reservation can be released: not sold out")
+	})
+	t.Run("settle while another reservation still holds units", func(t *testing.T) {
+		f := newAcctFixture(t, suffixFor(t), 4)
+		spec := f.holdOne(t, 1, 2, 2)   // 2 held
+		_, _ = f.reserve(t, 2, 2, true) // 2 still allocated to another buyer
+		_, err := f.uow.Settle(context.Background(), settleSpec(spec.BookingID))
+		require.NoError(t, err)
+		require.Equal(t, 2, f.ledger(t).sold)
+		assert.Zero(t, soldOutRows(t, f), "allocated units can return: not sold out")
+	})
+	t.Run("settle of the last units with nothing outstanding is sold out", func(t *testing.T) {
+		f := newAcctFixture(t, suffixFor(t), 2)
+		spec := f.holdOne(t, 1, 2, 2)
+		_, err := f.uow.Settle(context.Background(), settleSpec(spec.BookingID))
+		require.NoError(t, err)
+		assert.Equal(t, 1, soldOutRows(t, f))
+	})
+	t.Run("reserve with nothing free, allocated or held is sold out", func(t *testing.T) {
+		f := newAcctFixture(t, suffixFor(t), 2)
+		spec := f.holdOne(t, 1, 2, 2)
+		_, err := f.uow.Settle(context.Background(), settleSpec(spec.BookingID))
+		require.NoError(t, err)
+		out, err := NewAdmissionRepo(f.pool).ReserveBatch(context.Background(), f.eventID, []outbound.ReserveEntry{anonEntry(2, 3)}, time.Now())
+		require.NoError(t, err)
+		assert.Equal(t, "SOLD_OUT", out[0].Outcome)
+	})
+}

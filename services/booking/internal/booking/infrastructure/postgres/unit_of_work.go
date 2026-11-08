@@ -592,12 +592,13 @@ func (u *UnitOfWork) settle(ctx context.Context, tx pgx.Tx, spec outbound.Settle
 		 WHERE event_id=$1::uuid`, eventID, n); err != nil {
 		return false, err
 	}
-	// Publish sold_out if event supply is exhausted — R3.5: free+allocated+held=0 ⟺ allocated+held+sold=total.
+	// Publish sold_out only when nothing can come back (SRS-F-09-05): free + allocated + held = 0 ⟺ sold = total
+	// with no allocation and no hold outstanding. Other buyers' reservations may still be released.
 	var allocUnits, heldUnits2, soldUnits2, totalCap int
 	if err := tx.QueryRow(ctx, `
 		SELECT allocated_units, held_units, sold_units, total_capacity FROM booking.event_supply WHERE event_id=$1::uuid`,
 		eventID).Scan(&allocUnits, &heldUnits2, &soldUnits2, &totalCap); err == nil &&
-		allocUnits+heldUnits2+soldUnits2 >= totalCap {
+		allocUnits+heldUnits2 == 0 && soldUnits2 >= totalCap {
 		soldOut := map[string]any{"eventId": eventID}
 		_ = enqueueOutbox(ctx, tx, "booking.sold_out", spec.BookingID, soldOut)
 	}

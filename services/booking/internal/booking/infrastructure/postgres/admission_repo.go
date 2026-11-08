@@ -213,14 +213,9 @@ func (r *AdmissionRepo) reserveOne(ctx context.Context, tx pgx.Tx, eventID strin
 		return res
 	}
 
-	// Step 7 (F4): mark SOLD_OUT only when nothing can come back: no other un-held reservation and no hold.
-	// Taking the last free units while other admissions still hold reservations is not a sell-out.
-	if freeUnits-units == 0 && allocUnits+heldUnits == 0 {
-		_, _ = tx.Exec(ctx, `
-			UPDATE booking.events SET status='SOLD_OUT'
-			 WHERE id=$1::uuid AND status='AVAILABLE'`, eventID)
-		_ = enqueueOutboxTx(ctx, tx, "booking.sold_out", eventID, map[string]any{"eventId": eventID})
-	}
+	// Step 7 (F4, SRS-F-09-05): never mark SOLD_OUT here. The units just reserved can still come back (cancel,
+	// unclaimed, expiry), so free + allocated + held > 0 after this step; only step 4 or the settle path, when that
+	// sum is 0, may announce the sell-out.
 
 	// Step 8: insert admission row.
 	var allocationID string
