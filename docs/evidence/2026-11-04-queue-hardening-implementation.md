@@ -20,7 +20,7 @@ Konteks: branch `improve/queue-service-hardening`, `services/queue`. Desain: `.a
 ## Keputusan yang mengubah perilaku terlihat pengguna (sudah ditetapkan di desain rev 8 §2a; ditandai di SRS/ADR)
 
 - Claim untuk entry WAITING: `409 NOT_ADMITTED` (sebelumnya `410 TURN_MISSED`). Claim untuk entry LEFT/ENDED/COMPLETED: `404` (QSH-OQ-4, provisional).
-- Leave pada entry CLAIMED atau terminal: `204` tanpa mengubah apa pun (QSH-OQ-3, provisional).
+- Leave pada entry CLAIMED atau terminal: `204` tanpa mengubah apa pun (QSH-OQ-3, provisional). **Digantikan sebagian (2026-11-09):** CLAIMED kini `409 ENTRY_CLAIMED`; terminal tetap 204 (`docs/evidence/2026-11-09-queue-booking-flow-fixes.md`).
 - Join langsung hanya saat lease admisi didapat (satu retry 15-35 ms); selain itu `WAITING` dan promoter mengadmit dalam `PromotorInterval` (amandemen SRS-F-04-07).
 - Inversi FIFO terbatas (adopsi) bila stok kembali di tengah satu batch Booking (amandemen SRS-F-25-02 dan specs 6.3).
 - Join dengan `X-Visitor-ID`/cookie yang tidak terverifikasi tidak lagi memakai id itu.

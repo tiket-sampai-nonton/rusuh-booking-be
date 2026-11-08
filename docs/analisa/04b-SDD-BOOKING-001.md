@@ -552,7 +552,7 @@ CREATE TABLE booking.idempotency_records (
 
 | Event | Routing Key | Consumer(s) | Payload |
 |-------|-------------|-------------|---------|
-| Journey Ended | `booking.journey.ended` | Queue | `{ bookingId, eventId, visitorId, queueEntryId, outcome }` |
+| Journey Ended | `booking.journey.ended` | Queue | `{ eventId, queueEntryId, outcome }` (sesuai skema `booking.journey.ended.v1`; `outcome` ∈ `PAID`, `EXPIRED`, `CANCELLED`, `LEFT_WITHOUT_BUYING`, `UNCLAIMED`; cancel sesi mengirim `LEFT_WITHOUT_BUYING`, `:release` mengirim `UNCLAIMED`, keduanya dalam transaksi yang sama dengan pelepasan stok) |
 | Quota Exhausted | `booking.quota.exhausted` | Queue | `{ eventId, buyerNikHash }` |
 | Sold Out | `booking.sold_out` | Queue | `{ eventId }` |
 | Paid | `booking.paid` | Notification | `{ bookingId, email, tickets[] }` |

@@ -339,6 +339,7 @@ Status: 400, 401/403, 404, 409, 410, 422, 429, 503. Tidak membocorkan SQL, stack
 | 409 | `BUYER_QUOTA_EXHAUSTED` | Queue, Booking | Kuota 3 tiket NIK pembeli habis | Tidak dapat membeli lagi |
 | 409 | `EVENT_NOT_ON_SALE` | Queue | Di luar jendela penjualan | Tunggu jam buka |
 | 410 | `EVENT_SOLD_OUT` | Queue, Booking | Tiket habis | Kembali ke home |
+| 409 | `ENTRY_CLAIMED` | Queue | `DELETE /queue-entries/{id}` pada entry yang sudah CLAIMED (sesi booking yang memilikinya) | Batalkan lewat `POST /booking-sessions/{id}/cancel` |
 | 409 | `NOT_ADMITTED` | Queue | Claim untuk entry yang masih WAITING (belum mendapat giliran) | Tetap menunggu di antrean |
 | 410 | `TURN_MISSED` | Queue, Booking | Claim window lewat | Kembali ke home / antre ulang |
 | 410 | `SESSION_EXPIRED` | Booking | TTL Booking habis | Kembali ke home |
@@ -558,7 +559,7 @@ Kontrak per endpoint (contoh request/response) ada di SDD-RBT-001 Interface view
 |----|-------------|--------|-----|-----|------|
 | SRS-F-13-01 | When the customer leaves the buying page without buying, the allocation should return and the slot should be promoted immediately. | GR-16 | S | T | TC-PAY-09 |
 | SRS-F-13-02 | When the customer cancels a booking awaiting payment, the Booking Service should ask the Payment Service to check and cancel the gateway transaction first; if it is already paid, the booking should become PAID and the customer be informed; otherwise CANCELLED and the slot freed. | GR-16 | S | T | TC-PAY-09 |
-| SRS-F-13-03 | A waiting customer should be able to leave the queue. | GR-16 | S | T | [TP] |
+| SRS-F-13-03 | A waiting customer should be able to leave the queue. | GR-16 | S | T | TC-QUE-17, TC-QUE-38 |
 
 #### 3.2.14 Payment Creation and Method Selection (PAY-01)
 
