@@ -13,23 +13,21 @@ type AdmitResult struct {
 	EntryID        string
 	VisitorToken   string
 	AdmissionToken string
+	// BuyerNIK and BuyerEmail are given at hold time (ADR-030), not at join; kept here so HoldTickets can send them.
+	BuyerNIK, BuyerEmail string
 }
 
 // AdmitVisitor joins an event queue and polls until ADMITTED, then claims the turn.
-// nik must be a structurally valid 16-digit NIK per pkg/nik.
-// The Queue join body requires: buyerNik, email, emailConfirmation, consentNik.
+// The join is anonymous (ADR-030): no body is sent. nik must be a structurally valid 16-digit NIK per pkg/nik and
+// email a valid address; both are only used later as the buyer block of the hold.
+// X-Client-Type: mobile makes Queue return visitorToken in the body (web gets the HttpOnly rb_visitor cookie).
 func AdmitVisitor(env *Env, eventID, nik, email string) (AdmitResult, error) {
 	ctx := context.Background()
 
 	// 1. Join queue
 	resp, err := PostJSON(ctx,
 		Queue(env, "/api/v1/events/"+eventID+"/queue-entries"),
-		map[string]any{
-			"buyerNik":          nik,
-			"email":             email,
-			"emailConfirmation": email,
-			"consentNik":        true,
-		}, nil)
+		nil, map[string]string{"X-Client-Type": "mobile"})
 	if err != nil {
 		return AdmitResult{}, fmt.Errorf("join: %w", err)
 	}
@@ -44,7 +42,12 @@ func AdmitVisitor(env *Env, eventID, nik, email string) (AdmitResult, error) {
 	entryID, _ := data["entryId"].(string)
 	visitorToken, _ := data["visitorToken"].(string)
 
-	// 2. Poll until ADMITTED (Queue worker must be running; up to 15 s)
+	if visitorToken == "" {
+		return AdmitResult{}, fmt.Errorf("visitorToken missing from join response: %v", joinBody)
+	}
+
+	// 2. Poll until ADMITTED (the promoter tick admits within ~100 ms; up to 15 s)
+	admitted := false
 	deadline := time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
 		sr, err := GetJSON(ctx,
@@ -54,15 +57,19 @@ func AdmitVisitor(env *Env, eventID, nik, email string) (AdmitResult, error) {
 			var sb map[string]any
 			_ = DecodeBody(sr, &sb)
 			if d, _ := sb["data"].(map[string]any); d != nil && d["status"] == "ADMITTED" {
+				admitted = true
 				break
 			}
 		}
-		time.Sleep(500 * time.Millisecond)
+		time.Sleep(200 * time.Millisecond)
+	}
+	if !admitted {
+		return AdmitResult{}, fmt.Errorf("entry %s not ADMITTED within 15s", entryID)
 	}
 
 	// 3. Claim turn to get the admission token
 	cr, err := PostJSON(ctx,
-		Queue(env, "/api/v1/queue-entries/"+entryID+"/claim"),
+		Queue(env, "/api/v1/queue-entries/"+entryID+"/claim?eventId="+eventID),
 		nil,
 		map[string]string{"X-Visitor-Token": visitorToken})
 	if err != nil {
@@ -80,7 +87,7 @@ func AdmitVisitor(env *Env, eventID, nik, email string) (AdmitResult, error) {
 		return AdmitResult{}, fmt.Errorf("admissionToken missing from claim response: %v", claimBody)
 	}
 
-	return AdmitResult{EntryID: entryID, VisitorToken: visitorToken, AdmissionToken: admToken}, nil
+	return AdmitResult{EntryID: entryID, VisitorToken: visitorToken, AdmissionToken: admToken, BuyerNIK: nik, BuyerEmail: email}, nil
 }
 
 // CreateSession creates a booking session from an admission token. Returns sessionId.
@@ -114,10 +121,20 @@ type HoldResult struct {
 }
 
 // HoldTickets performs a booking hold.
-func HoldTickets(env *Env, sessionID, visitorToken, idempotencyKey string, items []map[string]any) HoldResult {
+func HoldTickets(env *Env, sessionID string, a AdmitResult, idempotencyKey string, items []map[string]any) HoldResult {
+	return HoldTicketsAs(env, sessionID, a, a.BuyerNIK, idempotencyKey, items)
+}
+
+// HoldTicketsAs is HoldTickets with an explicit buyer NIK (to test buyer-block validation).
+func HoldTicketsAs(env *Env, sessionID string, a AdmitResult, buyerNIK, idempotencyKey string, items []map[string]any) HoldResult {
+	visitorToken := a.VisitorToken
 	resp, err := PostJSON(context.Background(),
 		Booking(env, "/api/v1/bookings"),
-		map[string]any{"sessionId": sessionID, "items": items},
+		map[string]any{
+			"sessionId": sessionID,
+			"buyer":     map[string]any{"nik": buyerNIK, "email": a.BuyerEmail, "emailConfirmation": a.BuyerEmail, "consent": true},
+			"items":     items,
+		},
 		map[string]string{
 			"X-Visitor-Token": visitorToken,
 			"Idempotency-Key": idempotencyKey,

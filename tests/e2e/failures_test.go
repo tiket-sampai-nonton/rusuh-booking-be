@@ -34,8 +34,8 @@ func startBooking(t *testing.T, eventID, categoryID string) held {
 	mustStatus(t, 201, s, "create session")
 	sid := s.str("sessionId")
 	h := call(t, "POST", bookingURL+"/api/v1/bookings", map[string]string{"X-Visitor-Token": b.visitorToken, "Idempotency-Key": "e2e-hold-" + sid[:20]}, map[string]any{
-		"sessionId": sid,
-		"items":     []map[string]any{{"categoryId": categoryID, "attendee": map[string]string{"nik": nikFor(nextSerial()), "fullName": "Siti Aminah"}}},
+		"sessionId": sid, "buyer": b.buyerBlock(),
+		"items": []map[string]any{{"categoryId": categoryID, "attendee": map[string]string{"nik": nikFor(nextSerial()), "fullName": "Siti Aminah"}}},
 	})
 	mustStatus(t, 201, h, "hold")
 	return held{b: b, sessionID: sid, bookingID: h.str("bookingId"), publicRef: h.str("publicRef"), vh: vh}
@@ -102,8 +102,8 @@ func TestHold_DuplicateRequestsAndUnauthorizedAccess(t *testing.T) {
 
 	// Same Idempotency-Key and body: the same booking comes back, no second hold.
 	again := call(t, "POST", bookingURL+"/api/v1/bookings", map[string]string{"X-Visitor-Token": h.b.visitorToken, "Idempotency-Key": "e2e-hold-" + h.sessionID[:20]}, map[string]any{
-		"sessionId": h.sessionID,
-		"items":     []map[string]any{{"categoryId": categoryID, "attendee": map[string]string{"nik": nikFor(nextSerial()), "fullName": "Siti Aminah"}}},
+		"sessionId": h.sessionID, "buyer": h.b.buyerBlock(),
+		"items": []map[string]any{{"categoryId": categoryID, "attendee": map[string]string{"nik": nikFor(nextSerial()), "fullName": "Siti Aminah"}}},
 	})
 	assert.NotEqual(t, 500, again.Status, again.Raw)
 	if again.Status == 201 {
@@ -166,9 +166,7 @@ func TestConcurrentBuyers_NeverOversell(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			b := &buyer{email: fmt.Sprintf("race-%d-%d@contoh.id", time.Now().UnixNano(), serialCounter.Add(1)), nik: nikFor(nextSerial())}
-			j := call(t, "POST", queueURL+"/api/v1/events/"+eventID+"/queue-entries", map[string]string{"X-Client-Type": "mobile"}, map[string]any{
-				"buyerNik": b.nik, "email": b.email, "emailConfirmation": b.email, "consentNik": true,
-			})
+			j := call(t, "POST", queueURL+"/api/v1/events/"+eventID+"/queue-entries", map[string]string{"X-Client-Type": "mobile"}, nil)
 			if j.Status != 201 {
 				rejected.Add(1)
 				return
@@ -199,7 +197,7 @@ func TestConcurrentBuyers_NeverOversell(t *testing.T) {
 			}
 			sid := s.str("sessionId")
 			h := call(t, "POST", bookingURL+"/api/v1/bookings", map[string]string{"X-Visitor-Token": b.visitorToken, "Idempotency-Key": "e2e-race-" + sid[:20]}, map[string]any{
-				"sessionId": sid, "items": []map[string]any{{"categoryId": categoryID, "attendee": map[string]string{"nik": nikFor(nextSerial()), "fullName": "Peserta"}}},
+				"sessionId": sid, "buyer": b.buyerBlock(), "items": []map[string]any{{"categoryId": categoryID, "attendee": map[string]string{"nik": nikFor(nextSerial()), "fullName": "Peserta"}}},
 			})
 			if h.Status == 201 {
 				holds.Add(1)

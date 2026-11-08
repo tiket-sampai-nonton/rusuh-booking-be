@@ -71,7 +71,7 @@ func (c *cancelCtx) holdOne(_ int) error {
 	if err != nil {
 		return err
 	}
-	r := helpers.HoldTickets(c.env, sessionID, admit.VisitorToken,
+	r := helpers.HoldTickets(c.env, sessionID, admit,
 		fmt.Sprintf("cancel-key-%d", time.Now().UnixNano()),
 		[]map[string]any{{"categoryId": c.catID, "attendee": map[string]string{"nik": "3174010101800001", "fullName": "Budi"}}})
 	if r.StatusCode != 201 {

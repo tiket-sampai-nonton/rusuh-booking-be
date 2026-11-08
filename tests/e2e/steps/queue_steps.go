@@ -66,12 +66,7 @@ func (q *queueCtx) seedEvent(cap int) error {
 func (q *queueCtx) aVisitorJoins() error {
 	resp, err := helpers.PostJSON(context.Background(),
 		helpers.Queue(q.env, "/api/v1/events/"+q.eventID+"/queue-entries"),
-		map[string]any{
-			"buyerNik":          "3174030303800003",
-			"email":             "c@example.test",
-			"emailConfirmation": "c@example.test",
-			"consentNik":        true,
-		}, nil)
+		nil, map[string]string{"X-Client-Type": "mobile"}) // anonymous join (ADR-030): no body
 	if err != nil {
 		return err
 	}
@@ -106,7 +101,7 @@ func (q *queueCtx) waitAdmitted(secs int) error {
 
 func (q *queueCtx) claimAndGetToken() error {
 	cr, err := helpers.PostJSON(context.Background(),
-		helpers.Queue(q.env, "/api/v1/queue-entries/"+q.admit.EntryID+"/claim"),
+		helpers.Queue(q.env, "/api/v1/queue-entries/"+q.admit.EntryID+"/claim?eventId="+q.eventID),
 		nil, map[string]string{"X-Visitor-Token": q.admit.VisitorToken})
 	if err != nil {
 		return err
@@ -165,7 +160,7 @@ func (q *queueCtx) holdTickets(n int) error {
 			"attendee":   map[string]string{"nik": niks[i%len(niks)], "fullName": fmt.Sprintf("Budi %d", i+1)},
 		}
 	}
-	r := helpers.HoldTickets(q.env, q.sessionID, q.admit.VisitorToken,
+	r := helpers.HoldTickets(q.env, q.sessionID, q.admit,
 		fmt.Sprintf("q-key-%d", time.Now().UnixNano()), items)
 	q.resp = &http.Response{StatusCode: r.StatusCode}
 	q.body = r.Body

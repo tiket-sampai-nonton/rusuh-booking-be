@@ -90,12 +90,16 @@ type buyer struct {
 	email, nik, visitorToken, admissionToken string
 }
 
-// admit takes a buyer through the queue: join -> admitted -> claim -> admission token.
+// buyerBlock is the HoldRequest.buyer block (ADR-030): the buyer's NIK and email are given at hold time, not at join.
+func (b *buyer) buyerBlock() map[string]any {
+	return map[string]any{"nik": b.nik, "email": b.email, "emailConfirmation": b.email, "consent": true}
+}
+
+// admit takes a buyer through the queue: anonymous join (no body, ADR-030) -> admitted -> claim -> admission token.
+// X-Client-Type: mobile makes Queue return visitorToken in the body (web gets the HttpOnly rb_visitor cookie instead).
 func admit(t *testing.T, eventID string, b *buyer) {
 	t.Helper()
-	j := call(t, "POST", queueURL+"/api/v1/events/"+eventID+"/queue-entries", map[string]string{"X-Client-Type": "mobile"}, map[string]any{
-		"buyerNik": b.nik, "email": b.email, "emailConfirmation": b.email, "consentNik": true,
-	})
+	j := call(t, "POST", queueURL+"/api/v1/events/"+eventID+"/queue-entries", map[string]string{"X-Client-Type": "mobile"}, nil)
 	mustStatus(t, 201, j, "join queue")
 	entryID := j.str("entryId")
 	b.visitorToken = j.str("visitorToken")
@@ -127,8 +131,8 @@ func TestJourney_LoginToPaidTicketAndEmail(t *testing.T) {
 	require.NotEmpty(t, sessionID, s.Raw)
 
 	hold := call(t, "POST", bookingURL+"/api/v1/bookings", map[string]string{"X-Visitor-Token": b.visitorToken, "Idempotency-Key": "e2e-hold-" + sessionID[:20]}, map[string]any{
-		"sessionId": sessionID,
-		"items":     []map[string]any{{"categoryId": categoryID, "attendee": map[string]string{"nik": nikFor(7001), "fullName": "Budi Santoso"}}},
+		"sessionId": sessionID, "buyer": b.buyerBlock(),
+		"items": []map[string]any{{"categoryId": categoryID, "attendee": map[string]string{"nik": nikFor(7001), "fullName": "Budi Santoso"}}},
 	})
 	mustStatus(t, 201, hold, "hold")
 	bookingID, publicRef := hold.str("bookingId"), hold.str("publicRef")
@@ -249,7 +253,10 @@ func adminToken(t *testing.T) string {
 	return adminTok
 }
 
-func adminEmail() string { return fmt.Sprintf("admin-%d@admin.e2e.test", time.Now().UnixNano()) }
+// E2E_ADMIN_DOMAIN must match the ADMIN_EMAILS suffix the running Booking/Queue allow-list (tools/e2e.sh: admin.e2e.test).
+func adminEmail() string {
+	return fmt.Sprintf("admin-%d@%s", time.Now().UnixNano(), env("E2E_ADMIN_DOMAIN", "admin.e2e.test"))
+}
 
 func TestAdmin_OnlyAllowListedAccountsCanCreateEvents(t *testing.T) {
 	body := map[string]any{
@@ -334,10 +341,7 @@ func TestQueueSettings_StrictJoinAndAdminEndpoint(t *testing.T) {
 	path := queueURL + "/internal/v1/admin/events/" + eventID + "/queue-settings"
 	adminH := map[string]string{"Authorization": "Bearer " + admin}
 	join := func() resp {
-		email := fmt.Sprintf("strict-%d@contoh.id", time.Now().UnixNano())
-		return call(t, "POST", queueURL+"/api/v1/events/"+eventID+"/queue-entries", map[string]string{"X-Client-Type": "mobile"}, map[string]any{
-			"buyerNik": nikFor(nextSerial()), "email": email, "emailConfirmation": email, "consentNik": true,
-		})
+		return call(t, "POST", queueURL+"/api/v1/events/"+eventID+"/queue-entries", map[string]string{"X-Client-Type": "mobile"}, nil)
 	}
 
 	r := join()
