@@ -133,13 +133,17 @@ const (
 // Validate checks WorkerTuning against the booking client timeout (the lease must outlive two Booking calls).
 func (w WorkerTuning) Validate(bookingTimeout time.Duration) error {
 	var errs []error
-	for name, d := range map[string]time.Duration{
-		"QUEUE_PROMOTOR_INTERVAL_MS": w.PromotorInterval,
-		"QUEUE_SWEEPER_INTERVAL_MS":  w.SweeperInterval,
-		"QUEUE_STATUS_INTERVAL_MS":   w.StatusInterval,
+	// Ordered slice (not a map) so the error order is deterministic.
+	for _, iv := range []struct {
+		name string
+		d    time.Duration
+	}{
+		{"QUEUE_PROMOTOR_INTERVAL_MS", w.PromotorInterval},
+		{"QUEUE_SWEEPER_INTERVAL_MS", w.SweeperInterval},
+		{"QUEUE_STATUS_INTERVAL_MS", w.StatusInterval},
 	} {
-		if d <= 0 {
-			errs = append(errs, fmt.Errorf("%s %s harus > 0", name, d))
+		if iv.d <= 0 {
+			errs = append(errs, fmt.Errorf("%s %s harus > 0", iv.name, iv.d))
 		}
 	}
 	switch {

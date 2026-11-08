@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -125,4 +126,18 @@ func TestLoad_SeparateIntervalMessages(t *testing.T) {
 func TestValidatePageBaseURL_RejectsSurroundingWhitespace(t *testing.T) {
 	assert.ErrorContains(t, validatePageBaseURL(" https://x.test/book", "local"), "spasi")
 	assert.ErrorContains(t, validatePageBaseURL("https://x.test/book\n", "local"), "spasi")
+}
+
+// Regression: interval errors are reported in a fixed order (promotor, sweeper, status), not map order.
+func TestWorkerTuningValidate_IntervalErrorOrderIsDeterministic(t *testing.T) {
+	w := WorkerTuning{PromotorInterval: -1, SweeperInterval: -1, StatusInterval: -1}
+	for i := 0; i < 50; i++ {
+		msg := w.Validate(time.Second).Error()
+		p := strings.Index(msg, "QUEUE_PROMOTOR_INTERVAL_MS")
+		s := strings.Index(msg, "QUEUE_SWEEPER_INTERVAL_MS")
+		st := strings.Index(msg, "QUEUE_STATUS_INTERVAL_MS")
+		if !(p >= 0 && p < s && s < st) {
+			t.Fatalf("unordered interval errors: %q", msg)
+		}
+	}
 }

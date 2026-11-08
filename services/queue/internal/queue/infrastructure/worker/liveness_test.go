@@ -112,3 +112,22 @@ func TestPromoter_NoFreeSlotMakesNoReserveBatch(t *testing.T) {
 		require.NoError(t, p.Run(context.Background()))
 	}
 }
+
+// Regression: counters of events that left the settings list are evicted, so a re-added event restarts at zero.
+func TestLiveness_EvictsCounterOfRemovedEvent(t *testing.T) {
+	m := newWorkerMocks(t)
+	l, buf := newLivenessForTest(m)
+	ctx := context.Background()
+	gomock.InOrder(
+		m.settings.EXPECT().ListEventIDs(gomock.Any()).Return([]string{"ev1"}, nil).Times(5),
+		m.settings.EXPECT().ListEventIDs(gomock.Any()).Return([]string{}, nil).Times(1),
+		m.settings.EXPECT().ListEventIDs(gomock.Any()).Return([]string{"ev1"}, nil).Times(1),
+	)
+	m.store.EXPECT().SweepLivenessTick(gomock.Any(), "ev1", gomock.Any(), gomock.Any(), 10, gomock.Any(), 10*time.Second, 0).
+		Return(outbound.LivenessResult{LeaseLost: true}, nil, nil).AnyTimes()
+
+	for i := 0; i < 7; i++ {
+		require.NoError(t, l.Run(ctx))
+	}
+	assert.Zero(t, warnCount(buf), "6th lost pass overall, but the counter was evicted while ev1 was absent")
+}

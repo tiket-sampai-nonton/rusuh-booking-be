@@ -62,6 +62,7 @@ func (l *Liveness) Run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	l.evictRemoved(ids)
 	var errs []error
 	for _, eventID := range ids {
 		if err := l.runEvent(ctx, eventID); err != nil {
@@ -69,6 +70,22 @@ func (l *Liveness) Run(ctx context.Context) error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// evictRemoved drops starvation counters of events no longer configured, so the map stays bounded.
+func (l *Liveness) evictRemoved(ids []string) {
+	if len(l.leaseHeld) == 0 {
+		return
+	}
+	keep := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		keep[id] = struct{}{}
+	}
+	for id := range l.leaseHeld {
+		if _, ok := keep[id]; !ok {
+			delete(l.leaseHeld, id)
+		}
+	}
 }
 
 func (l *Liveness) runEvent(ctx context.Context, eventID string) error {
