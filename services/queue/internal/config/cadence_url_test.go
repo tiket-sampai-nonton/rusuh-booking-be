@@ -136,7 +136,7 @@ func TestWorkerTuningValidate_IntervalErrorOrderIsDeterministic(t *testing.T) {
 		p := strings.Index(msg, "QUEUE_PROMOTOR_INTERVAL_MS")
 		s := strings.Index(msg, "QUEUE_SWEEPER_INTERVAL_MS")
 		st := strings.Index(msg, "QUEUE_STATUS_INTERVAL_MS")
-		if !(p >= 0 && p < s && s < st) {
+		if p < 0 || p >= s || s >= st {
 			t.Fatalf("unordered interval errors: %q", msg)
 		}
 	}
