@@ -67,20 +67,23 @@ resource "aws_s3_bucket_policy" "backup" {
 output "backup_bucket" { value = aws_s3_bucket.backup.bucket }
 output "backup_bucket_arn" { value = aws_s3_bucket.backup.arn }
 
-# Gambar event hasil upload admin (IMAGE_STORAGE=s3). Bucket privat: akses publik lewat CloudFront (OAC) di INF-2,
-# sehingga IMAGE_PUBLIC_BASE_URL menunjuk ke CloudFront, bukan ke bucket.
+# Gambar event hasil upload admin (IMAGE_STORAGE=s3). Gambar memang konten publik: hanya events/* yang bisa dibaca,
+# listing bucket tetap tertutup, dan IMAGE_PUBLIC_BASE_URL menunjuk ke bucket. shortcut: tanpa CDN, tambah CDN bila trafik gambar besar.
 #trivy:ignore:AVD-AWS-0089
 resource "aws_s3_bucket" "images" {
   bucket        = "${var.name}-images-${data.aws_caller_identity.this.account_id}"
   force_destroy = false
 }
 
+# Sengaja: bucket gambar punya kebijakan baca publik untuk events/* saja.
+#trivy:ignore:AVD-AWS-0087
+#trivy:ignore:AVD-AWS-0093
 resource "aws_s3_bucket_public_access_block" "images" {
   bucket                  = aws_s3_bucket.images.id
   block_public_acls       = true
-  block_public_policy     = true
+  block_public_policy     = false # kebijakan publicRead di bawah
   ignore_public_acls      = true
-  restrict_public_buckets = true
+  restrict_public_buckets = false
 }
 
 #trivy:ignore:AVD-AWS-0132
@@ -118,11 +121,21 @@ data "aws_iam_policy_document" "images_tls_only" {
       values   = ["false"]
     }
   }
+  statement {
+    sid       = "PublicReadEventImages"
+    actions   = ["s3:GetObject"]
+    resources = ["${aws_s3_bucket.images.arn}/events/*"]
+    principals {
+      type        = "*"
+      identifiers = ["*"]
+    }
+  }
 }
 
 resource "aws_s3_bucket_policy" "images" {
-  bucket = aws_s3_bucket.images.id
-  policy = data.aws_iam_policy_document.images_tls_only.json
+  bucket     = aws_s3_bucket.images.id
+  policy     = data.aws_iam_policy_document.images_tls_only.json
+  depends_on = [aws_s3_bucket_public_access_block.images]
 }
 
 output "images_bucket" { value = aws_s3_bucket.images.bucket }

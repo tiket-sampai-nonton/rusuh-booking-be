@@ -1,20 +1,34 @@
 #!/bin/bash
 # Instance aplikasi stateless. Satu verb per container (api/worker); migrasi dulu (dikunci advisory lock).
 set -euo pipefail
-dnf install -y docker awscli >/dev/null
+dnf install -y docker >/dev/null # AWS CLI v2 sudah ada di AMI AL2023 standar
 systemctl enable --now docker
-mkdir -p /etc/rusuh
+mkdir -p /etc/rusuh/keys
+docker network create rusuh 2>/dev/null || true # booking-api dan payment-api saling panggil lewat nama container
 
 param() { aws ssm get-parameter --region "${region}" --with-decryption --name "/${name}/$1" --query Parameter.Value --output text; }
-aws ecr get-login-password --region "${region}" | docker login --username AWS --password-stdin "${registry}"
+# Host stateful bisa belum siap saat ASG boot bersamaan.
+retry() { for _ in $(seq 1 60); do "$@" && return 0; sleep 10; done; return 1; }
+retry aws ecr get-login-password --region "${region}" | docker login --username AWS --password-stdin "${registry}"
+IMAGE_TAG="$(param image_tag)"
 LOG="--log-driver awslogs --log-opt awslogs-region=${region} --log-opt awslogs-group=${log_group}"
 
+# Kunci token: publik semua service, privat hanya milik service di instance ini. Image berjalan sebagai nonroot (65532).
+for k in user queue payment booking; do param "keys/$k-token.pub.pem" > "/etc/rusuh/keys/$k-token.pub.pem"; done
 %{ for svc in services ~}
-param ${svc}.env | sed "s/__DATA_HOST__/${data_host_ip}/g" > /etc/rusuh/${svc}.env
+param keys/${svc}-token.pem > /etc/rusuh/keys/${svc}-token.pem
+%{ endfor ~}
+chown -R 65532:65532 /etc/rusuh/keys
+chmod 500 /etc/rusuh/keys
+chmod 400 /etc/rusuh/keys/*
+KEYS="-v /etc/rusuh/keys:/run/keys:ro"
+
+%{ for svc in services ~}
+param ${svc}.env | sed -e "s/__DATA_HOST__/${data_host_ip}/g" -e "s/__BOOKING_INTERNAL__/${booking_internal}/g" > /etc/rusuh/${svc}.env
 chmod 600 /etc/rusuh/${svc}.env
-docker run --rm --env-file /etc/rusuh/${svc}.env "${registry}/${name}/${svc}:${image_tag}" migrate up
-docker run -d --restart unless-stopped $LOG --env-file /etc/rusuh/${svc}.env -p ${ports[svc]}:${ports[svc]} --name ${svc}-api "${registry}/${name}/${svc}:${image_tag}" api
+retry docker run --rm --network rusuh $KEYS --env-file /etc/rusuh/${svc}.env "${registry}/${name}/${svc}:$IMAGE_TAG" migrate up
+docker run -d --restart unless-stopped --network rusuh $KEYS $LOG --env-file /etc/rusuh/${svc}.env -p ${ports[svc]}:${ports[svc]} --name ${svc}-api "${registry}/${name}/${svc}:$IMAGE_TAG" api
 %{ if has_worker[svc] ~}
-docker run -d --restart unless-stopped $LOG --env-file /etc/rusuh/${svc}.env -e APP_PORT=${ports[svc] + 10} --name ${svc}-worker "${registry}/${name}/${svc}:${image_tag}" worker
+docker run -d --restart unless-stopped --network rusuh $KEYS $LOG --env-file /etc/rusuh/${svc}.env -e APP_PORT=${ports[svc] + 10} --name ${svc}-worker "${registry}/${name}/${svc}:$IMAGE_TAG" worker
 %{ endif ~}
 %{ endfor ~}

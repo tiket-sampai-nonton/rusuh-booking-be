@@ -31,7 +31,7 @@ for f in compose postgres rabbitmq valkey grafana queue booking payment notifica
 done
 
 echo "4. Format kunci dari luar"
-mk="$(val payment MIDTRANS_SERVER_KEY)"; case "$mk" in SB-Mid-server-*) ok "MIDTRANS_SERVER_KEY berformat Sandbox";; "") bad "MIDTRANS_SERVER_KEY kosong";; *) info "MIDTRANS_SERVER_KEY tidak berawalan SB-Mid-server- (bukan kunci Sandbox? pastikan MIDTRANS_ENVIRONMENT sesuai)";; esac
+mk="$(val payment MIDTRANS_SERVER_KEY)"; case "$mk" in SB-Mid-server-*|Mid-server-*) ok "MIDTRANS_SERVER_KEY berformat Midtrans";; "") bad "MIDTRANS_SERVER_KEY kosong";; *) info "MIDTRANS_SERVER_KEY tidak berawalan SB-Mid-server- (bukan kunci Sandbox? pastikan MIDTRANS_ENVIRONMENT sesuai)";; esac
 rk="$(val notification RESEND_API_KEY)"; case "$rk" in re_*) ok "RESEND_API_KEY berformat re_...";; "") bad "RESEND_API_KEY kosong";; *) info "RESEND_API_KEY tidak berawalan re_";; esac
 ae="$(val booking ADMIN_EMAILS)"; [ -n "$ae" ] && ok "ADMIN_EMAILS terisi" || info "ADMIN_EMAILS kosong: tidak ada yang bisa memakai endpoint admin"
 allow="$(val compose ADMIN_ALLOW_IPS)"; [ "$allow" = "127.0.0.1" ] && info "ADMIN_ALLOW_IPS=127.0.0.1: endpoint admin tertutup dari internet (ubah bila perlu, lihat panduan)"

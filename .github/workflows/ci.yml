@@ -18,10 +18,6 @@ on:
         type: choice
         options: [none, dev, prod]
         default: none
-      run_migration:
-        description: "Dev: diabaikan (migrasi selalu jalan otomatis, idempoten). Prod: belum dikonfigurasi"
-        type: boolean
-        default: false
 
 permissions:
   contents: read
@@ -486,27 +482,46 @@ jobs:
     environment: prod
     permissions:
       contents: read
-      id-token: write
+      packages: read
+    env:
+      ENV_NAME: prod
+      IMAGE_TAG: git-${{ github.sha }}
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      API_DOMAIN: ${{ vars.PROD_API_DOMAIN }}
     steps:
       - uses: actions/checkout@v4
-      # GANTI: isi repo variables AWS_ROLE_ARN_PROD dan AWS_REGION.
-      - name: Kredensial AWS (OIDC)
-        if: vars.AWS_ROLE_ARN_PROD != ''
+      - name: Periksa konfigurasi
+        env:
+          KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          KEY_SECRET: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: |
+          # Tidak dilewati diam-diam: permintaan deploy prod tanpa konfigurasi harus gagal.
+          [ -n "$KEY_ID" ] && [ -n "$KEY_SECRET" ] && [ -n "$AWS_REGION" ] && [ -n "$API_DOMAIN" ] || {
+            echo "::error::isi secrets AWS_ACCESS_KEY_ID dan AWS_SECRET_ACCESS_KEY (environment prod) serta variables AWS_REGION dan PROD_API_DOMAIN. Langkahnya di panduan infra 8.10"; exit 1; }
+      # Akun AWS Free plan memblokir OIDC provider, jadi memakai access key IAM user khusus CI (policy sempit dari Terraform).
+      - name: Kredensial AWS (IAM user CI)
         uses: aws-actions/configure-aws-credentials@v6
         with:
-          role-to-assume: ${{ vars.AWS_ROLE_ARN_PROD }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ vars.AWS_REGION }}
-      - name: Migrasi DB (opsional)
-        if: inputs.run_migration
+      - name: Salin image yang sudah lolos scan dari GHCR ke ECR
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # GANTI: sama seperti dev, dengan DATABASE_URL prod.
-          echo "::warning::PLACEHOLDER migrasi DB prod belum dikonfigurasi, tidak ada yang dijalankan."
-          echo "- migrasi prod: PLACEHOLDER (tidak dijalankan)" >> "$GITHUB_STEP_SUMMARY"
+          echo "$TOKEN" | docker login "$REGISTRY" -u "${{ github.actor }}" --password-stdin
+          ecr="$(aws sts get-caller-identity --query Account --output text).dkr.ecr.$AWS_REGION.amazonaws.com"
+          aws ecr get-login-password | docker login "$ecr" -u AWS --password-stdin
+          for s in queue booking payment notification user; do
+            # Tag ECR immutable: run ulang commit yang sama tidak boleh gagal di sini.
+            if ! aws ecr describe-images --repository-name "rusuh-$ENV_NAME/$s" --image-ids imageTag="$IMAGE_TAG" >/dev/null 2>&1; then
+              docker buildx imagetools create -t "$ecr/rusuh-$ENV_NAME/$s:$IMAGE_TAG" "$REGISTRY/${GITHUB_REPOSITORY,,}/$s:${{ github.sha }}"
+            fi
+          done
       - name: Deploy ke prod
         run: |
-          # GANTI: deploy image ${{ github.sha }} ke environment prod.
-          echo "::warning::PLACEHOLDER deploy prod belum dikonfigurasi, tidak ada yang dideploy."
-          echo "- deployment-prod: PLACEHOLDER (tidak ada deploy nyata), image ${{ github.sha }}" >> "$GITHUB_STEP_SUMMARY"
+          bash deployments/terraform/deploy-aws.sh
+          echo "- deployment-prod: $IMAGE_TAG ke $API_DOMAIN" >> "$GITHUB_STEP_SUMMARY"
 
   # ------------------------------------------------------------------ gerbang tunggal untuk ruleset
   ci-ok:

@@ -2,8 +2,8 @@
 terraform {
   backend "s3" {
     bucket       = "rusuh-tfstate-<account-id>"
-    key          = "rusuh/staging/terraform.tfstate"
-    region       = "ap-southeast-3"
+    key          = "rusuh/prod/terraform.tfstate" # ganti prod/staging sesuai environment
+    region       = "ap-southeast-2"
     encrypt      = true
     use_lockfile = true
   }

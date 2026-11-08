@@ -5,8 +5,8 @@ variable "security_group_id" { type = string }
 variable "instance_profile_name" { type = string }
 variable "instance_type" { type = string }
 variable "data_volume_gb" { type = number }
+variable "enable_daily_snapshot" { type = bool }
 variable "registry" { type = string }
-variable "image_tag" { type = string }
 variable "log_group" { type = string }
 
 data "aws_ssm_parameter" "ami" {
@@ -32,7 +32,10 @@ resource "aws_instance" "this" {
     encrypted   = true
   }
   user_data = templatefile("${path.module}/user_data.sh.tftpl", {
-    name = var.name, region = var.region, registry = var.registry, image_tag = var.image_tag, log_group = var.log_group,
+    name = var.name, region = var.region, registry = var.registry, log_group = var.log_group,
+    # Skrip yang sama dengan dev, supaya role, schema, dan password dibuat dengan cara yang sama.
+    postgres_init_b64      = filebase64("${path.module}/../../../compose/postgres-init.sql"),
+    postgres_passwords_b64 = filebase64("${path.module}/../../../dev/postgres-passwords.sh"),
   })
   user_data_replace_on_change = false # mengganti user_data tidak boleh me-recreate host yang memegang data
   tags                        = { Name = "${var.name}-data", Backup = "daily" }
@@ -67,18 +70,21 @@ data "aws_iam_policy_document" "dlm_assume" {
 }
 
 resource "aws_iam_role" "dlm" {
+  count              = var.enable_daily_snapshot ? 1 : 0
   name_prefix        = "${var.name}-dlm-"
   assume_role_policy = data.aws_iam_policy_document.dlm_assume.json
 }
 
 resource "aws_iam_role_policy_attachment" "dlm" {
-  role       = aws_iam_role.dlm.name
+  count      = var.enable_daily_snapshot ? 1 : 0
+  role       = aws_iam_role.dlm[0].name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSDataLifecycleManagerServiceRole"
 }
 
 resource "aws_dlm_lifecycle_policy" "daily" {
+  count              = var.enable_daily_snapshot ? 1 : 0
   description        = "${var.name} snapshot harian"
-  execution_role_arn = aws_iam_role.dlm.arn
+  execution_role_arn = aws_iam_role.dlm[0].arn
   state              = "ENABLED"
   policy_details {
     resource_types = ["VOLUME"]
@@ -94,6 +100,21 @@ resource "aws_dlm_lifecycle_policy" "daily" {
       copy_tags = true
     }
   }
+}
+
+# Dokumen tetap: role CI hanya boleh menjalankan ini di host stateful, bukan shell bebas (AWS-RunShellScript).
+resource "aws_ssm_document" "deploy_notification" {
+  name          = "${var.name}-deploy-notification"
+  document_type = "Command"
+  content = jsonencode({
+    schemaVersion = "2.2"
+    description   = "Tarik image notification sesuai parameter image_tag lalu jalankan ulang."
+    mainSteps = [{
+      action = "aws:runShellScript"
+      name   = "deploy"
+      inputs = { timeoutSeconds = "900", runCommand = ["/usr/local/bin/rusuh-deploy-notification"] }
+    }]
+  })
 }
 
 output "instance_id" { value = aws_instance.this.id }

@@ -6,6 +6,7 @@ variable "data_alb_ports" {
   description = "Port service di host stateful yang diakses ALB (Notification)."
   type        = list(number)
 }
+variable "booking_port" { type = number }
 
 data "aws_availability_zones" "this" {
   state = "available"
@@ -100,6 +101,46 @@ resource "aws_vpc_security_group_egress_rule" "alb_to_data" {
   ip_protocol                  = "tcp"
 }
 
+# ALB internal: satu-satunya jalur Queue (ASG queue) ke /internal Booking (ASG core); IP instance ASG berubah-ubah.
+resource "aws_security_group" "internal_alb" {
+  name_prefix = "${var.name}-internal-alb-"
+  description = "ALB internal Booking: hanya dari instance aplikasi"
+  vpc_id      = aws_vpc.this.id
+  lifecycle { create_before_destroy = true }
+}
+
+resource "aws_vpc_security_group_ingress_rule" "internal_alb_from_app" {
+  security_group_id            = aws_security_group.internal_alb.id
+  referenced_security_group_id = aws_security_group.app.id
+  from_port                    = var.booking_port
+  to_port                      = var.booking_port
+  ip_protocol                  = "tcp"
+}
+
+resource "aws_vpc_security_group_egress_rule" "internal_alb_to_app" {
+  security_group_id            = aws_security_group.internal_alb.id
+  referenced_security_group_id = aws_security_group.app.id
+  from_port                    = var.booking_port
+  to_port                      = var.booking_port
+  ip_protocol                  = "tcp"
+}
+
+resource "aws_vpc_security_group_ingress_rule" "app_from_internal_alb" {
+  security_group_id            = aws_security_group.app.id
+  referenced_security_group_id = aws_security_group.internal_alb.id
+  from_port                    = var.booking_port
+  to_port                      = var.booking_port
+  ip_protocol                  = "tcp"
+}
+
+resource "aws_vpc_security_group_egress_rule" "app_to_internal_alb" {
+  security_group_id            = aws_security_group.app.id
+  referenced_security_group_id = aws_security_group.internal_alb.id
+  from_port                    = var.booking_port
+  to_port                      = var.booking_port
+  ip_protocol                  = "tcp"
+}
+
 # Tanpa NAT: instance menjangkau ECR, SSM, Midtrans, Resend, FCM lewat HTTPS publik. Hanya 443 keluar; port data hanya ke host stateful.
 #trivy:ignore:AVD-AWS-0104
 resource "aws_vpc_security_group_egress_rule" "app_https" {
@@ -156,5 +197,6 @@ resource "aws_vpc_security_group_egress_rule" "data_https" {
 output "vpc_id" { value = aws_vpc.this.id }
 output "public_subnet_ids" { value = aws_subnet.public[*].id }
 output "alb_sg_id" { value = aws_security_group.alb.id }
+output "internal_alb_sg_id" { value = aws_security_group.internal_alb.id }
 output "app_sg_id" { value = aws_security_group.app.id }
 output "data_sg_id" { value = aws_security_group.data.id }

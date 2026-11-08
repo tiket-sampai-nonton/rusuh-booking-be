@@ -53,6 +53,10 @@ resource "aws_budgets_budget" "monthly" {
   limit_amount = each.value
   limit_unit   = "USD"
   time_unit    = "MONTHLY"
+  # Tanpa ini kredit AWS dikurangkan dari biaya, sehingga selama masih ada kredit angkanya 0 dan alert tidak pernah terkirim.
+  cost_types {
+    include_credit = false
+  }
   notification {
     comparison_operator        = "GREATER_THAN"
     threshold                  = 100

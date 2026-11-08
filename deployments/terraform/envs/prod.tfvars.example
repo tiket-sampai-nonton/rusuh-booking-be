@@ -1,0 +1,10 @@
+env               = "prod"
+owner             = "tim-rusuh"
+expires_on        = "2026-12-31"
+behind_cloudflare = true # ALB hanya menerima IP Cloudflare; webhook Midtrans masuk lewat Cloudflare
+alert_email       = "alerts@example.com"
+image_tag         = "git-<sha>" # tag immutable untuk boot pertama
+github_repo       = ""  # akun Free plan: SCP menolak OIDC provider, rilis dari laptop (panduan 8.10)
+create_github_oidc_provider = false
+create_ci_user    = true # IAM user untuk GitHub Actions (kredensial statis), pengganti OIDC
+certificate_arn   = "arn:aws:acm:ap-southeast-2:<account>:certificate/<id>"

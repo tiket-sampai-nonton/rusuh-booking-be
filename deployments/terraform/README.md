@@ -1,23 +1,26 @@
 # Terraform — AWS (staging/PoC)
 
-Topologi mengikuti HLD §4.5 (`docs/analisa/03-HLD-AD-RBT-001.md`): ALB di depan dua ASG stateless dan satu host stateful, tanpa NAT Gateway, tanpa SSH (akses admin lewat SSM). Region default `ap-southeast-3`.
+Topologi mengikuti HLD §4.5 (`docs/analisa/03-HLD-AD-RBT-001.md`): ALB di depan dua ASG stateless dan satu host stateful, tanpa NAT Gateway, tanpa SSH (akses admin lewat SSM). Region default `ap-southeast-2` (Sydney), mengikuti akun AWS Free plan.
 
 **Status:** `terraform fmt -check`, `terraform validate` (Terraform 1.17.1, provider aws ~> 6.0), dan scan statis Trivy (HIGH/CRITICAL) lolos. `terraform plan` dan `apply` **belum dijalankan** (tidak ada akses AWS). Tidak ada resource yang dibuat.
 
+**Runbook deploy lengkap (prod di balik Cloudflare):** `panduan-testing/PANDUAN-INFRA-DEV-VPS-DAN-AWS.md` bagian 8.
+
 ```mermaid
 flowchart TB
-  NET[Internet - CIDR yang diizinkan] -->|443| ALB[ALB internet-facing, TLS ACM]
+  NET[Cloudflare proxy atau CIDR yang diizinkan] -->|443| ALB[ALB internet-facing, TLS ACM]
   subgraph VPC[VPC - 2 subnet publik, tanpa NAT]
     ALB -->|queue*| Q[ASG queue: Queue api+worker]
     ALB -->|events, bookings, payments, webhooks, auth| C[ASG core: Booking, Payment, User]
     ALB -->|push-subscriptions| D
-    Q --> D[Host stateful t4g.medium: PostgreSQL, Valkey, RabbitMQ, Notification]
+    Q -->|8082 /internal| IALB[ALB internal Booking] --> C
+    Q --> D[Host stateful t4g.small: PostgreSQL, Valkey, RabbitMQ, Notification]
     C --> D
-    D --- EBS[(EBS gp3 terenkripsi + snapshot harian x7)]
+    D --- EBS[(EBS gp3 terenkripsi + snapshot saat dimatikan)]
   end
   C -.443.-> MID[Midtrans Snap/Core API]
   D -.443.-> RES[Resend, FCM]
-  GH[GitHub Actions OIDC] -->|push image| ECR[(ECR per service, immutable)]
+  GH[Laptop atau CI OIDC] -->|push image| ECR[(ECR per service, immutable)]
   Q & C & D -.pull + SSM params.-> ECR
 ```
 
@@ -25,20 +28,20 @@ flowchart TB
 
 | Modul | Isi |
 |---|---|
-| `network` | VPC, 2 subnet publik, SG berlapis (ALB ← CIDR; app ← ALB; data ← app; egress hanya 443 + port data) |
+| `network` | VPC, 2 subnet publik, SG berlapis (ALB ← IP Cloudflare atau CIDR; app ← ALB; ALB internal ← app; data ← app; egress hanya 443 + port data) |
 | `ecr` | satu repo per service, tag immutable, scan on push, simpan 20 image |
-| `iam` | instance profile (SSM, pull ECR, baca `/rusuh-<env>/*`, backup S3, log), role OIDC GitHub (push ECR dari `main` saja) |
-| `storage` | bucket backup (versioned, SSE-S3, tanpa akses publik, TLS saja, lifecycle 90 hari) |
-| `data_host` | EC2 arm64, IMDSv2, volume data terpisah (`prevent_destroy`) + DLM snapshot harian x7 |
-| `compute` | ALB (80→443), target group per service (`/health`), rule path per HLD, launch template + ASG `queue` (1–3) dan `core` (1–2), target tracking CPU 60%, health check tipe EC2 |
+| `iam` | instance profile (SSM, pull ECR, baca `/rusuh-<env>/*`, backup S3, log), role OIDC GitHub (`main` atau environment `<env>`: push ECR, set `image_tag`, dokumen deploy notification, instance refresh ASG proyek) |
+| `storage` | bucket backup (versioned, SSE-S3, tanpa akses publik, TLS saja, lifecycle 90 hari); bucket gambar (baca publik hanya `events/*`) |
+| `data_host` | EC2 arm64, IMDSv2, volume data terpisah (`prevent_destroy`); snapshot harian DLM (simpan 7, `enable_daily_snapshot`) dan snapshot tiap `aws-power.sh off` (simpan 3) |
+| `compute` | ALB (80→443), ALB internal Queue → Booking, target group per service (`/health`), rule path per HLD (queue pertama), launch template + ASG `queue` (1–3) dan `core` (1–2), target tracking CPU 60%, health check tipe EC2 |
 | `observability` | alarm ALB 5xx dan unhealthy host per service, SNS email, AWS Budgets 50/100/150 USD |
 
-**Tidak termasuk (follow-up INF-2):** CloudFront + WAF, Route 53, ACM (ARN sertifikat dipasok dari luar), Next.js web, Prometheus/Grafana di host stateful, scheduled scaling sebelum jam penjualan, RDS/ElastiCache/Amazon MQ (tier produksi di HLD §17).
-Biaya perkiraan HLD ±US$100–125/bulan bila 24/7; teardown setelah assessment (`expires_on`).
+**Tidak termasuk (follow-up INF-2):** edge dan DNS dikelola di Cloudflare (`behind_cloudflare = true`), ACM (ARN sertifikat dipasok dari luar), Next.js web, Prometheus/Grafana (AWS memakai CloudWatch), X-Ray (ADR-023), scheduled scaling sebelum jam penjualan, RDS/ElastiCache/Amazon MQ (tier produksi di HLD §17).
+Biaya perkiraan ±US$120–150/bulan bila 24/7, termasuk ALB internal; teardown setelah assessment (`expires_on`).
 
 ## Prasyarat
 
-- Terraform >= 1.10, AWS CLI, kredensial dengan hak membuat resource di atas (SSO/role; jangan taruh access key di repo).
+- Terraform >= 1.10, AWS CLI, kredensial dengan hak membuat resource di atas (IAM user di `~/.aws/credentials`; jangan taruh access key di repo).
 - Sertifikat ACM di region yang sama dengan ALB (validasi DNS) → `certificate_arn`.
 - Image sudah di-push ke ECR (lihat "Build dan push"), tag immutable → `image_tag`.
 
@@ -46,8 +49,8 @@ Biaya perkiraan HLD ±US$100–125/bulan bila 24/7; teardown setelah assessment 
 
 ```bash
 ACCT=$(aws sts get-caller-identity --query Account --output text)
-aws s3api create-bucket --bucket rusuh-tfstate-$ACCT --region ap-southeast-3 \
-  --create-bucket-configuration LocationConstraint=ap-southeast-3
+aws s3api create-bucket --bucket rusuh-tfstate-$ACCT --region ap-southeast-2 \
+  --create-bucket-configuration LocationConstraint=ap-southeast-2
 aws s3api put-bucket-versioning --bucket rusuh-tfstate-$ACCT --versioning-configuration Status=Enabled
 aws s3api put-bucket-encryption --bucket rusuh-tfstate-$ACCT \
   --server-side-encryption-configuration '{"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]}'
@@ -58,37 +61,31 @@ cp backend.tf.example backend.tf   # isi nama bucket
 
 State memuat ID resource, bukan rahasia aplikasi (rahasia ada di SSM, dibuat di luar Terraform).
 
-## Rahasia (SSM Parameter Store, SecureString, dibuat manual)
+## Rahasia (SSM Parameter Store, SecureString, dibuat di luar Terraform)
 
-Satu parameter per service berisi isi file env (lihat `services/<svc>/.env.example`), di bawah `/rusuh-<env>/`: `queue.env`, `booking.env`, `payment.env`, `user.env`, `notification.env`, dan `data.env` (`POSTGRES_PASSWORD`, `RABBITMQ_DEFAULT_USER`, `RABBITMQ_DEFAULT_PASS`). Tulis `__DATA_HOST__` sebagai host PostgreSQL/Valkey/RabbitMQ; diganti IP privat host stateful saat boot. `payment.env` memuat `MIDTRANS_SERVER_KEY` (sandbox), `PAYMENT_SUCCESS_RETURN_URL`, `PAYMENT_FAILED_RETURN_URL`, `MIDTRANS_NOTIFICATION_URL` kosong (URL webhook diatur di dashboard Midtrans ke `https://<domain>/api/v1/webhooks/midtrans`).
+`seed-ssm.sh` membuat semuanya sekali jalan di `/rusuh-<env>/`: `queue.env`, `booking.env`, `payment.env`, `user.env`, `notification.env`, `data.env`, dan `keys/<svc>-token.pem` + `.pub.pem`. Skrip menolak jalan bila rahasia sudah ada. `__DATA_HOST__` dan `__BOOKING_INTERNAL__` diganti saat boot.
 
-```bash
-aws ssm put-parameter --type SecureString --name /rusuh-staging/payment.env --value file://payment.env --overwrite
-```
-
-`user.env` wajib memuat `APP_TRUSTED_PROXY_HOPS` (jumlah proxy tepercaya yang menambah entri `X-Forwarded-For`): `1` untuk topologi sekarang (ALB saja). Ubah ke `2` hanya setelah CloudFront dipasang (INF-2) **dan** smoke test staging membuktikan alamat yang terbaca sama dengan IP klien (panggil API lewat CloudFront dengan `X-Forwarded-For: 1.2.3.4` palsu, bandingkan `client_ip` pada baris `login_audit` terbaru di DB staging dengan IP penelepon). Nilai `1` di belakang CloudFront salah: yang terbaca adalah alamat edge. Terraform tidak memiliki env aplikasi, jadi tidak ada perubahan `.tf`.
-
-Kunci token Ed25519 (`make keys` lokal) dipasok sebagai file lewat parameter yang sama atau mount; prosedur lengkapnya mengikuti `.env.example` tiap service.
+Rantai `X-Forwarded-For`: di balik Cloudflare, ALB memakai mode `preserve`, sehingga entri terakhir adalah IP klien yang ditulis Cloudflare. Karena itu `APP_TRUSTED_PROXY_HOPS` tetap `1` dan rate limit per IP di Queue, Booking, dan Payment benar. Mode ini hanya aman selama ALB tidak bisa dijangkau selain lewat Cloudflare; `behind_cloudflare = true` mengatur keduanya bersamaan.
 
 ## Deploy
 
 ```bash
 cd deployments/terraform
-cp envs/staging.tfvars.example envs/staging.tfvars   # isi nilai nyata; file ini tidak di-commit
+cp envs/prod.tfvars.example envs/prod.tfvars         # isi nilai nyata; file ini tidak di-commit
 terraform init
-terraform plan  -var-file=envs/staging.tfvars -out=tfplan
+terraform plan  -var-file=envs/prod.tfvars -out=tfplan
 terraform apply tfplan                                # hanya setelah plan ditinjau dan disetujui
 ```
 
-Urutan pertama kali: apply `module.ecr` (`-target`) → push image → apply penuh. Host stateful memakai `ignore_changes = [ami, user_data]` agar perubahan template tidak mengganti host.
+Urutan pertama kali: apply `module.ecr`, `module.storage`, `module.iam` (`-target`) → salin image → `seed-ssm.sh` → apply penuh. Host stateful memakai `ignore_changes = [ami, user_data]` agar perubahan template tidak mengganti host.
 
-### Build dan push image
+### Rilis
 
-CI (role `github_ci_role_arn`) atau manual: `docker buildx build --platform linux/arm64 -f services/<svc>/deployments/Dockerfile -t <registry>/rusuh-<env>/<svc>:<tag> --push .` (tag immutable, mis. `git-<sha>`).
+Job CI `deployment-prod` menyalin image yang lolos scan dari GHCR ke ECR (tag `git-<sha>`), lalu menjalankan `deploy-aws.sh`. Terraform hanya memakai `image_tag` untuk boot pertama; setelah itu parameter SSM `/rusuh-<env>/image_tag` yang menentukan versi.
 
 ### Migrasi database
 
-Setiap instance menjalankan `<svc> migrate up` sebelum `api`; migrasi dikunci advisory lock sehingga aman bila beberapa instance start bersamaan. Role/schema awal (`deployments/compose/postgres-init.sql`) dijalankan sekali oleh operator di host stateful dengan password dari SSM (jangan memakai `postgres-local-passwords.sql`). Migrasi destruktif (DROP) harus ditinjau manual sebelum rilis.
+Setiap container menjalankan `<svc> migrate up` sebelum `api`; migrasi dikunci advisory lock sehingga aman bila beberapa instance start bersamaan. Role dan schema dibuat otomatis saat volume Postgres pertama kali kosong, memakai skrip yang sama dengan dev. Migrasi destruktif (DROP) harus ditinjau manual sebelum rilis.
 
 ## Validasi pasca-deploy
 
@@ -102,10 +99,14 @@ docker ps; docker logs notification-api --tail 50
 
 Alur Midtrans Sandbox: buat booking → `POST /payments/{id}/attempts` → buka `redirectUrl`, bayar di simulator → pastikan webhook diterima dan `GET /payments/{id}/status` menjadi `SUCCEEDED`/`PAID`, tiket terbit, dan email e-tiket masuk.
 
+## Nyala dan mati
+
+`ENV_NAME=prod AWS_REGION=... API_DOMAIN=... bash aws-power.sh on|off`. Volume data dan ALB tetap ada saat mati. Rincian di panduan bagian 8.11.
+
 ## Rollback
 
-- **Aplikasi:** set `image_tag` ke tag sebelumnya, `terraform apply` (instance refresh bertahap 50%). Image immutable, jadi rollback = mengganti tag. Host stateful: `docker run` ulang dengan tag lama lewat SSM.
-- **Migrasi:** rilis kompatibel mundur (expand/contract). Bila migrasi baru bermasalah, pulihkan dari snapshot EBS (DLM, 7 hari) — **langkah destruktif, butuh persetujuan** — atau `<svc> migrate down --steps 1` hanya bila migrasi down aman untuk data.
+- **Aplikasi:** `ENV_NAME=prod IMAGE_TAG=git-<sha-lama> AWS_REGION=... API_DOMAIN=... bash deploy-aws.sh` (ganti notification lalu instance refresh, instance baru dulu). Image immutable, jadi rollback = mengganti tag.
+- **Migrasi:** rilis kompatibel mundur (expand/contract). Bila migrasi baru bermasalah, pulihkan dari snapshot EBS — **langkah destruktif, butuh persetujuan** — atau `<svc> migrate down --steps 1` hanya bila migrasi down aman untuk data.
 - **Infrastruktur:** `terraform apply` revisi sebelumnya; volume data `prevent_destroy`, jadi `terraform destroy` akan berhenti di volume. Teardown PoC: hapus volume secara sadar setelah snapshot terakhir.
 
 ## Troubleshooting

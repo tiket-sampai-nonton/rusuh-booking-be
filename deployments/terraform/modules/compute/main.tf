@@ -3,10 +3,14 @@ variable "region" { type = string }
 variable "vpc_id" { type = string }
 variable "subnet_ids" { type = list(string) }
 variable "alb_sg_id" { type = string }
+variable "internal_alb_sg_id" { type = string }
+variable "preserve_xff" {
+  description = "true di balik Cloudflare: ALB tidak menambah IP edge ke X-Forwarded-For, sehingga entri terakhir tetap IP klien."
+  type        = bool
+}
 variable "app_sg_id" { type = string }
 variable "instance_profile_name" { type = string }
 variable "registry" { type = string }
-variable "image_tag" { type = string }
 variable "log_group" { type = string }
 variable "certificate_arn" { type = string }
 variable "data_host_instance_id" { type = string }
@@ -24,7 +28,8 @@ variable "asgs" {
 }
 
 locals {
-  priorities = { for i, k in sort(keys(var.services)) : k => 100 + i * 10 }
+  # Queue harus pertama: /api/v1/events/*/queue-entries juga cocok dengan /api/v1/events/* milik Booking.
+  priorities = { for i, k in concat(["queue"], sort(tolist(setsubtract(keys(var.services), ["queue"])))) : k => 100 + i * 10 }
   # Worker berjalan di instance yang sama dengan api-nya (HLD: satu verb per container).
   has_worker = { for k, _ in var.services : k => contains(["queue", "booking", "payment"], k) }
   ports      = { for k, s in var.services : k => s.port }
@@ -44,6 +49,47 @@ resource "aws_lb" "this" {
   security_groups            = [var.alb_sg_id]
   drop_invalid_header_fields = true
   idle_timeout               = 60
+  xff_header_processing_mode = var.preserve_xff ? "preserve" : "append"
+}
+
+# Plain HTTP di dalam VPC, hanya dari SG aplikasi; panggilan /internal tetap wajib token service.
+#trivy:ignore:AVD-AWS-0054
+resource "aws_lb" "internal" {
+  name_prefix                = "rbi-"
+  internal                   = true
+  load_balancer_type         = "application"
+  subnets                    = var.subnet_ids
+  security_groups            = [var.internal_alb_sg_id]
+  drop_invalid_header_fields = true
+}
+
+resource "aws_lb_target_group" "booking_internal" {
+  name_prefix = "bki-"
+  vpc_id      = var.vpc_id
+  port        = var.services["booking"].port
+  protocol    = "HTTP"
+  target_type = "instance"
+  health_check {
+    path                = "/health"
+    matcher             = "200"
+    interval            = 15
+    healthy_threshold   = 2
+    unhealthy_threshold = 3
+    timeout             = 5
+  }
+  deregistration_delay = 30
+  lifecycle { create_before_destroy = true }
+}
+
+#trivy:ignore:AVD-AWS-0054
+resource "aws_lb_listener" "booking_internal" {
+  load_balancer_arn = aws_lb.internal.arn
+  port              = var.services["booking"].port
+  protocol          = "HTTP"
+  default_action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.booking_internal.arn
+  }
 }
 
 resource "aws_lb_target_group" "svc" {
@@ -137,8 +183,8 @@ resource "aws_launch_template" "tier" {
     }
   }
   user_data = base64encode(templatefile("${path.module}/user_data.sh.tftpl", {
-    name         = var.name, region = var.region, registry = var.registry, image_tag = var.image_tag, log_group = var.log_group,
-    data_host_ip = var.data_host_ip,
+    name         = var.name, region = var.region, registry = var.registry, log_group = var.log_group,
+    data_host_ip = var.data_host_ip, booking_internal = aws_lb.internal.dns_name,
     services     = sort([for k, s in var.services : k if s.tier == each.key]),
     ports        = local.ports, has_worker = local.has_worker,
   }))
@@ -156,15 +202,23 @@ resource "aws_autoscaling_group" "tier" {
   max_size            = each.value.max
   desired_capacity    = each.value.desired
   vpc_zone_identifier = var.subnet_ids
-  target_group_arns   = [for k, s in var.services : aws_lb_target_group.svc[k].arn if s.tier == each.key]
-  health_check_type   = "EC2" # HLD: dependency yang mati tidak boleh memicu penggantian instance beruntun
+  target_group_arns = concat(
+    [for k, s in var.services : aws_lb_target_group.svc[k].arn if s.tier == each.key],
+    each.key == var.services["booking"].tier ? [aws_lb_target_group.booking_internal.arn] : [],
+  )
+  health_check_type = "EC2" # HLD: dependency yang mati tidak boleh memicu penggantian instance beruntun
   launch_template {
     id      = aws_launch_template.tier[each.key].id
     version = aws_launch_template.tier[each.key].latest_version
   }
   instance_refresh {
     strategy = "Rolling"
-    preferences { min_healthy_percentage = 50 }
+    # Instance baru dulu baru yang lama diganti: desired = 1, jadi 50% berarti sempat tanpa instance.
+    preferences {
+      min_healthy_percentage = 100
+      max_healthy_percentage = 200
+      instance_warmup        = 180
+    }
   }
   lifecycle { create_before_destroy = true }
 }

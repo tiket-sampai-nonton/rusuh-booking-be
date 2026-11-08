@@ -1,32 +1,62 @@
 #!/bin/bash
 # Host stateful: PostgreSQL, Valkey, RabbitMQ, Notification. Rahasia dibaca dari SSM Parameter Store saat boot.
 set -euo pipefail
-dnf install -y docker awscli >/dev/null
+dnf install -y docker >/dev/null # AWS CLI v2 sudah ada di AMI AL2023 standar
 systemctl enable --now docker
 
+# Volume dipasang Terraform setelah instance hidup, jadi bisa belum ada saat skrip ini mulai.
 DEV=/dev/nvme1n1
+for _ in $(seq 1 60); do [ -b "$DEV" ] && break; sleep 5; done
+[ -b "$DEV" ] || { echo "volume data tidak terpasang" >&2; exit 1; }
 if ! blkid "$DEV" >/dev/null 2>&1; then mkfs.xfs "$DEV"; fi
 mkdir -p /data
 grep -q ' /data ' /etc/fstab || echo "UUID=$(blkid -s UUID -o value "$DEV") /data xfs defaults,nofail 0 2" >> /etc/fstab
 mount -a
-mkdir -p /data/postgres /data/valkey /data/rabbitmq /etc/rusuh
+# nofail membuat mount tidak diurutkan sebelum boot selesai; tanpa ini Postgres bisa start di disk root setelah host dinyalakan ulang.
+mkdir -p /etc/systemd/system/docker.service.d
+printf '[Unit]\nRequiresMountsFor=/data\n' > /etc/systemd/system/docker.service.d/rusuh-data.conf
+systemctl daemon-reload
+mkdir -p /data/postgres /data/valkey /data/rabbitmq /etc/rusuh/keys /etc/rusuh/pg-init
 
 param() { aws ssm get-parameter --region "${region}" --with-decryption --name "/${name}/$1" --query Parameter.Value --output text; }
-param data.env > /etc/rusuh/data.env      # POSTGRES_PASSWORD=..., RABBITMQ_DEFAULT_USER/PASS=...
+param data.env > /etc/rusuh/data.env # POSTGRES_*, *_DB_PASSWORD, RABBITMQ_DEFAULT_*, VALKEY_PASSWORD
 chmod 600 /etc/rusuh/data.env
+
+# Dijalankan image postgres hanya saat /data/postgres masih kosong: role, schema, dan password per service.
+echo '${postgres_init_b64}' | base64 -d > /etc/rusuh/pg-init/00-init.sql
+echo '${postgres_passwords_b64}' | base64 -d > /etc/rusuh/pg-init/01-passwords.sh
 
 docker network create rusuh 2>/dev/null || true
 run() { docker rm -f "$1" 2>/dev/null || true; docker run -d --restart unless-stopped --network rusuh --name "$@"; }
-run postgres --env-file /etc/rusuh/data.env -v /data/postgres:/var/lib/postgresql/data -p 5432:5432 postgres:16-alpine
-run valkey -v /data/valkey:/data -p 6379:6379 valkey/valkey:8.1-alpine valkey-server --appendonly yes --appendfsync everysec
-run rabbitmq --env-file /etc/rusuh/data.env -v /data/rabbitmq:/var/lib/rabbitmq -p 5672:5672 rabbitmq:3.13-alpine
+run postgres --env-file /etc/rusuh/data.env -v /etc/rusuh/pg-init:/docker-entrypoint-initdb.d:ro -v /data/postgres:/var/lib/postgresql/data -p 5432:5432 postgres:16-alpine
+# noeviction: Valkey memegang state antrean; lebih baik menolak tulis daripada membuang data.
+run valkey --env-file /etc/rusuh/data.env -v /data/valkey:/data -p 6379:6379 valkey/valkey:8.1-alpine sh -c 'exec valkey-server --requirepass "$VALKEY_PASSWORD" --maxmemory 400mb --maxmemory-policy noeviction --appendonly yes --appendfsync everysec'
+# --hostname tetap: data RabbitMQ per nama node, jadi harus sama setelah host diganti.
+run rabbitmq --hostname rabbitmq --env-file /etc/rusuh/data.env -v /data/rabbitmq:/var/lib/rabbitmq -p 5672:5672 rabbitmq:3.13-alpine
 
+cat > /usr/local/bin/rusuh-deploy-notification <<'SCRIPT'
+#!/bin/bash
+# Dijalankan saat boot dan oleh dokumen SSM <name>-deploy-notification saat rilis.
+set -euo pipefail
+param() { aws ssm get-parameter --region "${region}" --with-decryption --name "/${name}/$1" --query Parameter.Value --output text; }
 aws ecr get-login-password --region "${region}" | docker login --username AWS --password-stdin "${registry}"
 param notification.env | sed "s/__DATA_HOST__/$(hostname -I | awk '{print $1}')/g" > /etc/rusuh/notification.env
 chmod 600 /etc/rusuh/notification.env
+param keys/queue-token.pub.pem > /etc/rusuh/keys/queue-token.pub.pem
+chown -R 65532:65532 /etc/rusuh/keys
+chmod 500 /etc/rusuh/keys
+chmod 400 /etc/rusuh/keys/*
 LOG="--log-driver awslogs --log-opt awslogs-region=${region} --log-opt awslogs-group=${log_group}"
-IMG="${registry}/${name}/notification:${image_tag}"
-docker run --rm --network host --env-file /etc/rusuh/notification.env "$IMG" migrate up
+KEYS="-v /etc/rusuh/keys:/run/keys:ro"
+IMG="${registry}/${name}/notification:$(aws ssm get-parameter --region "${region}" --name "/${name}/image_tag" --query Parameter.Value --output text)"
+docker pull "$IMG"
+# Postgres butuh waktu saat boot pertama.
+migrated=0
+for _ in $(seq 1 60); do docker run --rm --network host $KEYS --env-file /etc/rusuh/notification.env "$IMG" migrate up && { migrated=1; break; }; sleep 10; done
+[ "$migrated" = 1 ] || { echo "migrasi notification gagal" >&2; exit 1; }
 docker rm -f notification-api notification-worker 2>/dev/null || true
-docker run -d --restart unless-stopped --network host $LOG --env-file /etc/rusuh/notification.env --name notification-api "$IMG" api
-docker run -d --restart unless-stopped --network host $LOG --env-file /etc/rusuh/notification.env -e APP_PORT=8094 --name notification-worker "$IMG" worker
+docker run -d --restart unless-stopped --network host $KEYS $LOG --env-file /etc/rusuh/notification.env --name notification-api "$IMG" api
+docker run -d --restart unless-stopped --network host $KEYS $LOG --env-file /etc/rusuh/notification.env -e APP_PORT=8094 --name notification-worker "$IMG" worker
+SCRIPT
+chmod 700 /usr/local/bin/rusuh-deploy-notification
+/usr/local/bin/rusuh-deploy-notification

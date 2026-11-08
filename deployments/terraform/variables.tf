@@ -10,7 +10,7 @@ variable "env" {
 
 variable "region" {
   type    = string
-  default = "ap-southeast-3"
+  default = "ap-southeast-2"
 }
 
 variable "owner" {
@@ -28,9 +28,16 @@ variable "vpc_cidr" {
   default = "10.20.0.0/16"
 }
 
+variable "behind_cloudflare" {
+  description = "true = API lewat proxy Cloudflare: ALB hanya menerima IP Cloudflare dan X-Forwarded-For dari Cloudflare dipertahankan."
+  type        = bool
+  default     = false
+}
+
 variable "allowed_ingress_cidrs" {
-  description = "CIDR yang boleh mengakses ALB. Tanpa CloudFront/WAF, batasi ke CIDR demo; 0.0.0.0/0 hanya sadar risiko."
+  description = "CIDR yang boleh mengakses ALB bila behind_cloudflare=false. Webhook Midtrans juga butuh akses ini."
   type        = list(string)
+  default     = []
 }
 
 variable "certificate_arn" {
@@ -43,7 +50,7 @@ variable "certificate_arn" {
 }
 
 variable "services" {
-  description = "Service backend: port dan path ALB (urutan prioritas rule = urutan key)."
+  description = "Service backend: port dan path ALB. Rule queue selalu dievaluasi pertama (lihat compute)."
   type = map(object({
     port  = number
     paths = list(string)
@@ -70,18 +77,30 @@ variable "core_asg" {
 
 variable "data_host" {
   type    = object({ instance_type = string, data_volume_gb = number })
-  default = { instance_type = "t4g.medium", data_volume_gb = 50 }
+  default = { instance_type = "t4g.small", data_volume_gb = 50 } # t4g.small: tipe tertinggi t4g yang eligible Free plan
+}
+
+variable "enable_daily_snapshot" {
+  description = "Snapshot harian lewat DLM (simpan 7). SCP Free plan mengizinkan dlm:*; bila apply menolaknya, set false (aws-power.sh off tetap membuat snapshot)."
+  type        = bool
+  default     = true
 }
 
 variable "image_tag" {
-  description = "Tag image (immutable) yang dijalankan. Gunakan digest/sha commit, bukan latest."
+  description = "Tag image (immutable) untuk boot pertama, mis. git-<sha>. Setelah itu rilis lewat deploy-aws.sh, bukan terraform apply."
   type        = string
 }
 
 variable "github_repo" {
-  description = "owner/repo GitHub yang boleh push ke ECR lewat OIDC. Kosong = tanpa role CI."
+  description = "owner/repo GitHub yang boleh push ke ECR lewat OIDC. Kosong = tanpa role CI. Harus kosong di akun AWS Free plan: SCP-nya menolak iam:*Provider*, jadi provider OIDC tidak bisa dibuat."
   type        = string
   default     = ""
+}
+
+variable "create_ci_user" {
+  description = "Buat IAM user khusus CI (kredensial statis) untuk akun yang tidak bisa memakai OIDC, mis. AWS Free plan."
+  type        = bool
+  default     = false
 }
 
 variable "create_github_oidc_provider" {
