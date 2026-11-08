@@ -98,3 +98,48 @@ func TestPromoterCadenceAndLivenessContendForLease(t *testing.T) {
 	assert.LessOrEqual(t, active, capacity)
 	assert.Equal(t, capacity, active, "promoter filled the free slots")
 }
+
+// TC-QUE-33 timing: with the promoter on its own 100 ms cadence (not WORKER_INTERVAL = 5 s), a one-slot event admits
+// the next waiter within 1.5 s after the slot frees. The measured value is logged for the evidence note.
+func TestPromoterCadenceAdmitsNextWaiterQuickly(t *testing.T) {
+	a, _ := twoStores(t)
+	ctx := context.Background()
+	clk := &clock.Fixed{T: time.Now()}
+	stub := newBookingStub(clk, 3*time.Minute, 1000)
+	metrics := newFakeMetrics()
+	settings := settingsFor(1)
+	promoter := newIntegrationPromoter(a, stub, settings, metrics, clk)
+	seedWaiting(t, a, "first", 0)
+	seedWaiting(t, a, "second", 1)
+
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		tk := time.NewTicker(100 * time.Millisecond)
+		defer tk.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-tk.C:
+				_ = promoter.Run(ctx)
+			}
+		}
+	}()
+	defer func() { close(stop); <-done }()
+
+	require.Eventually(t, func() bool { return realStatus(t, a, "first") == "ADMITTED" }, 3*time.Second, 20*time.Millisecond)
+	assert.NotEqual(t, "ADMITTED", realStatus(t, a, "second"), "one slot: second must wait")
+
+	freed := time.Now()
+	_, err := a.Leave(ctx, "ev", "first", "v-first", freed.UnixMilli())
+	require.NoError(t, err)
+	require.Eventually(t, func() bool { return realStatus(t, a, "second") == "ADMITTED" }, 3*time.Second, 10*time.Millisecond)
+	took := time.Since(freed)
+	t.Logf("MEASURED admit-after-free: %s", took)
+	assert.LessOrEqual(t, took, 1500*time.Millisecond)
+	n, err := a.ActiveCount(ctx, "ev")
+	require.NoError(t, err)
+	assert.Equal(t, 1, n)
+}

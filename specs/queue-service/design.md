@@ -40,7 +40,7 @@ services/queue/
 
 **Composition root saat ini** (`server.go`, *implemented*): `NewHandler` memasang hanya `NewHealthHandler(health).Register(mux)` lalu membungkus `httpx.Chain(mux, RequestID(), Recover(logger))`. Handler domain baru (`JoinHandler`, `StatusHandler`, `MyEntryHandler`, `ClaimHandler`, `LeaveHandler`) ditambahkan dengan pola `Register(mux)` yang sama.
 
-**Worker** (`worker.go`, *implemented*): `RunWorker` menjalankan `loop(ctx, cfg.Worker.Interval, jobs(clients), logger)`; `jobs()` kini `nil`. Promotor/StatusPublisher/Sweeper didaftarkan sebagai `[]Job{{Name, Run}}` di `jobs(clients)`. Catatan: `loop` memakai satu `WORKER_INTERVAL` global; worker dengan interval berbeda (Promotor ~100ms vs Sweeper ~10s) di-implement dengan ticker internal per-job atau beberapa goroutine, bukan satu ticker (lihat §7).
+**Worker** (`worker.go`, *implemented*): `RunWorker` menjalankan `runJobs(ctx, mod.jobs, cfg.Worker.Interval, logger)` (satu goroutine + ticker per job); `jobs()` kini `nil`. Promotor/StatusPublisher/Sweeper didaftarkan sebagai `[]Job{{Name, Run}}` di `jobs(clients)`. Setiap `Job` punya `Every` sendiri (promotor `QUEUE_PROMOTOR_INTERVAL_MS`, sweeper `QUEUE_SWEEPER_INTERVAL_MS`, status publisher `QUEUE_STATUS_INTERVAL_MS`, liveness `WORKER_INTERVAL`); `Every <= 0` memakai `WORKER_INTERVAL` sebagai fallback (lihat §7).
 
 ---
 
@@ -180,7 +180,7 @@ Required: `eventId, saleState, soldOut, updatedAt`.
 
 **Response 200 (`ClaimResponse`):**
 ```json
-{ "admissionToken": "jwt-eddsa one-time (TTL 60s)", "bookingUrl": "https://.../book/{entryId}" }
+{ "admissionToken": "jwt-eddsa one-time (TTL 60s)", "bookingUrl": "{BOOKING_PAGE_BASE_URL}/{eventId}" }
 ```
 Required: `admissionToken, bookingUrl`.
 
@@ -556,7 +556,7 @@ Set `q:{e}:sale` `saleState=CLOSED, soldOut=true`; waiting berikutnya → `SOLD_
 
 ## 7. Worker Jobs
 
-Ketiga worker berjalan di proses `queue worker`. Karena `loop()` memakai satu `WORKER_INTERVAL`, tiap worker didaftarkan sebagai `Job` yang mengelola jadwalnya sendiri (goroutine + ticker internal) atau `jobs()` mengembalikan beberapa `Job` yang masing-masing idempoten per tick. Interval efektif di bawah bersumber dari `event_settings` (per-event) dengan fallback env.
+Ketiga worker berjalan di proses `queue worker`. Tiap worker didaftarkan sebagai `Job` dengan interval sendiri; `runJobs` menjalankan satu goroutine + ticker per job (tanpa tumpang tindih, tick terlewat dibuang, error/panic satu job tidak menghentikan job lain), dan setiap job idempoten per tick. Interval efektif di bawah bersumber dari `event_settings` (per-event) dengan fallback env.
 
 ### 7.1 Promotor
 

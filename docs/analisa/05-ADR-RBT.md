@@ -633,6 +633,9 @@ Pola yang diadopsi dari usulan BE-2: **satu image banyak verb** (`api`, `worker`
 
 **Confirmation.** CI stage `code-quality` memeriksa `go.mod`/`go.sum` rapi dan `_mock/` sesuai port; `case-coverage` menjalankan integration test; evidence `docs/evidence/2026-10-19-boilerplate-v1.5.md`.
 
+
+**Amandemen (2026-11-09): `BOOKING_PAGE_BASE_URL` dan jadwal per-job Queue worker.** (1) Queue worker menjalankan tiap job pada interval sendiri (`QUEUE_PROMOTOR_INTERVAL_MS` 100ms, `QUEUE_SWEEPER_INTERVAL_MS` 10s, `QUEUE_STATUS_INTERVAL_MS` 1s; liveness `WORKER_INTERVAL`), satu goroutine per job; sebelumnya satu `WORKER_INTERVAL` untuk semua job sehingga promotor tidak pernah berjalan pada ~100 ms seperti SDD §8.1. Ketiga interval divalidasi `> 0` saat start (D-24) dan TTL dokumen status kini pengali x `QUEUE_STATUS_INTERVAL_MS`. (2) Env baru `BOOKING_PAGE_BASE_URL` (wajib; https di luar `APP_ENV=local`; tanpa query/fragment/userinfo) menjadi dasar `bookingUrl` pada respons claim: `{BOOKING_PAGE_BASE_URL}/{eventId}`, tanpa token (NFR-07); `BOOKING_SERVICE_URL` tetap alamat internal. Konsekuensi untuk frontend: `bookingUrl` adalah rute halaman per event, bukan per entry; token dikirim ke `POST /api/v1/booking-sessions`. Risiko yang diterima: R-1 promotor memanggil Booking ~50x lebih sering saat Booking down (dibatasi circuit breaker), R-2 TTL status turun dari ~20 s ke 4 s (pengali dapat naik ke 5), R-3 job yang mengabaikan ctx menunda shutdown (sama seperti sebelumnya), R-4 `ListEventIDs`/`settings.Get` tanpa cache pada 100 ms (tindak lanjut). Bukti: `docs/evidence/2026-11-09-queue-worker-cadence-booking-url.md`.
+
 ---
 
 ## ADR-023: Observability — log JSON ke stdout, metrik Prometheus, Grafana + Loki, korelasi `trace_id`

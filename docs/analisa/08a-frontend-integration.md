@@ -169,7 +169,7 @@ Ketika entry berstatus `ADMITTED` (ditentukan server):
   "meta": { ... },
   "data": {
     "admissionToken": "jwt-one-time-use",
-    "expiresAt": "2026-10-19T10:01:00Z"
+    "bookingUrl": "https://app.example.com/book/{eventId}"
   }
 }
 ```
@@ -184,15 +184,18 @@ Ketika entry berstatus `ADMITTED` (ditentukan server):
 **Admission token:**
 - TTL: 60 detik
 - Sekali pakai
-- Digunakan untuk `POST /booking-sessions`
+- Digunakan untuk `POST /booking-sessions` (dikirim di body `{"admissionToken": "..."}`)
+
+**`bookingUrl`:** halaman booking publik `{BOOKING_PAGE_BASE_URL}/{eventId}`. URL tidak memuat token, entryId, atau data pembeli; klien membuka halaman itu lalu mengirim `admissionToken` (dari respons claim) ke `POST /api/v1/booking-sessions`. Tidak ada route baru.
 
 ### 2.5 Step 4: Create Booking Session
 
 **Endpoint:** `POST /api/v1/booking-sessions`
 
 **Headers:**
-- `Authorization: Bearer <admissionToken>`
 - `X-Visitor-Token: <visitorToken>`
+
+**Body:** `{"admissionToken": "<dari respons claim>"}` (bukan `Authorization: Bearer`).
 
 **Response (201):**
 ```json

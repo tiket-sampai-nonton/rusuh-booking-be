@@ -850,6 +850,8 @@ components:
           description: Sekali pakai, TTL 60 detik
         bookingUrl:
           type: string
+          description: URL publik halaman booking, `{BOOKING_PAGE_BASE_URL}/{eventId}`. Tidak memuat token; klien mengirim `admissionToken` ke `POST /api/v1/booking-sessions`.
+          example: https://app.example.com/book/5b1f2c9e-0000-4000-8000-000000000001
       required:
       - admissionToken
       - bookingUrl

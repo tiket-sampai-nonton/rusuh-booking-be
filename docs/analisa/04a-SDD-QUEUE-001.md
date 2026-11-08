@@ -415,7 +415,11 @@ TOKEN_PUBLIC_KEY_PATH=/keys/queue.pub
 QUEUE_MAX_ACTIVE_SLOTS=50
 QUEUE_CLAIM_WINDOW_SECONDS=180
 QUEUE_POLLING_INTERVAL_MS=3000
-QUEUE_PROMOTOR_INTERVAL_MS=100
+QUEUE_PROMOTOR_INTERVAL_MS=100       # jadwal promotor sendiri (default 100ms)
+QUEUE_SWEEPER_INTERVAL_MS=10000      # jadwal sweeper sendiri (default 10s)
+QUEUE_STATUS_INTERVAL_MS=1000        # jadwal status publisher; TTL status doc = QUEUE_STATUS_TTL_MULTIPLIER x nilai ini
+WORKER_INTERVAL=5s                   # jadwal liveness, dan fallback untuk job tanpa interval sendiri
+BOOKING_PAGE_BASE_URL=https://app.example.com/book   # URL publik halaman booking; claim -> {nilai}/{eventId}; https di luar APP_ENV=local
 QUEUE_STATUS_PUBLISH_INTERVAL_MS=500
 ```
 
