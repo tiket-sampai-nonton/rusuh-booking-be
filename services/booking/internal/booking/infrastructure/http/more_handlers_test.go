@@ -60,12 +60,18 @@ type fakeAdminUC struct {
 	id     string
 	err    error
 	gotCfg dto.UpdateEventConfigRequest
+
+	gotCreate dto.CreateEventRequest
+	calls     int // total Create + Update invocations
 }
 
-func (f *fakeAdminUC) Create(context.Context, dto.CreateEventRequest) (string, error) {
+func (f *fakeAdminUC) Create(_ context.Context, r dto.CreateEventRequest) (string, error) {
+	f.calls++
+	f.gotCreate = r
 	return f.id, f.err
 }
 func (f *fakeAdminUC) Update(_ context.Context, _ string, r dto.UpdateEventConfigRequest) error {
+	f.calls++
 	f.gotCfg = r
 	return f.err
 }
@@ -168,6 +174,54 @@ func TestAdminHandler_CreateAndUpdate(t *testing.T) {
 	hb := bookinghttp.NewAdminHandler(bad, bad, allowAll{})
 	assert.Equal(t, http.StatusConflict, do(t, hb, http.MethodPatch, "/internal/v1/admin/events/ev-1", `{"maxEdits":1}`, auth).Code)
 	assert.Equal(t, http.StatusConflict, do(t, hb, http.MethodPost, "/internal/v1/admin/events", `{"name":"x"}`, auth).Code)
+}
+
+// City/genres on create and PATCH: well-typed bodies reach the usecase, wrongly typed bodies are a 400
+// VALIDATION_ERROR (never 500) and never reach it, and unauthenticated requests never reach it either.
+func TestAdminHandler_CityGenres(t *testing.T) {
+	auth := map[string]string{"Authorization": "Bearer t"}
+	const create, patch = "/internal/v1/admin/events", "/internal/v1/admin/events/ev-1"
+
+	t.Run("well-typed bodies are passed through", func(t *testing.T) {
+		uc := &fakeAdminUC{id: "ev-1"}
+		h := bookinghttp.NewAdminHandler(uc, uc, allowAll{})
+		assert.Equal(t, http.StatusCreated, do(t, h, http.MethodPost, create, `{"city":"Jakarta","genres":["pop"]}`, auth).Code)
+		assert.Equal(t, "Jakarta", uc.gotCreate.City)
+		assert.Equal(t, []string{"pop"}, uc.gotCreate.Genres)
+
+		assert.Equal(t, http.StatusOK, do(t, h, http.MethodPatch, patch, `{"city":"","genres":[]}`, auth).Code)
+		require.NotNil(t, uc.gotCfg.City)
+		assert.Equal(t, "", *uc.gotCfg.City)
+		require.NotNil(t, uc.gotCfg.Genres)
+		assert.Empty(t, *uc.gotCfg.Genres)
+
+		assert.Equal(t, http.StatusOK, do(t, h, http.MethodPatch, patch, `{"city":null,"genres":null}`, auth).Code)
+		assert.Nil(t, uc.gotCfg.City)
+		assert.Nil(t, uc.gotCfg.Genres)
+	})
+
+	for name, c := range map[string]struct{ method, path, body string }{
+		"create city number":   {http.MethodPost, create, `{"city":5}`},
+		"create genres string": {http.MethodPost, create, `{"genres":"pop"}`},
+		"patch city number":    {http.MethodPatch, patch, `{"city":5}`},
+		"patch genres string":  {http.MethodPatch, patch, `{"genres":"pop"}`},
+	} {
+		t.Run("wrong type: "+name, func(t *testing.T) {
+			uc := &fakeAdminUC{id: "ev-1"}
+			w := do(t, bookinghttp.NewAdminHandler(uc, uc, allowAll{}), c.method, c.path, c.body, auth)
+			assert.Equal(t, http.StatusBadRequest, w.Code)
+			assert.Contains(t, w.Body.String(), "VALIDATION_ERROR")
+			assert.Equal(t, 0, uc.calls)
+		})
+	}
+
+	t.Run("unauthenticated never reaches the usecase", func(t *testing.T) {
+		uc := &fakeAdminUC{id: "ev-1"}
+		h := bookinghttp.NewAdminHandler(uc, uc, allowAll{})
+		assert.Equal(t, http.StatusUnauthorized, do(t, h, http.MethodPost, create, `{"city":"Jakarta"}`, nil).Code)
+		assert.Equal(t, http.StatusUnauthorized, do(t, h, http.MethodPatch, patch, `{"city":"Jakarta"}`, nil).Code)
+		assert.Equal(t, 0, uc.calls)
+	})
 }
 
 func TestAdminHandler_FailsClosedWithoutAVerifier(t *testing.T) {

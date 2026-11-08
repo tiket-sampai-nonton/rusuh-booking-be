@@ -98,6 +98,8 @@ type CreateEventRequest struct {
 	MaxTicketsPerBuyerNIK int                     `json:"maxTicketsPerBuyerNik"`
 	AllowMixedCategories  bool                    `json:"allowMixedCategories"`
 	Description           json.RawMessage         `json:"description,omitempty"` // Slate: array node JSON
+	City                  string                  `json:"city,omitempty"`        // trimmed by the usecase; "" = no city
+	Genres                []string                `json:"genres,omitempty"`      // canonicalised by the usecase
 	Categories            []CreateCategoryRequest `json:"categories"`
 }
 
@@ -109,4 +111,8 @@ type UpdateEventConfigRequest struct {
 	MaxEdits            *int  `json:"maxEdits,omitempty"`
 	// Description replaces the Slate document; JSON null clears it, absent leaves it unchanged.
 	Description json.RawMessage `json:"description,omitempty"`
+	// City replaces the city: nil (absent or JSON null) leaves it unchanged, "" clears it.
+	City *string `json:"city,omitempty"`
+	// Genres replaces the genre set: nil (absent or JSON null) leaves it unchanged, [] clears it.
+	Genres *[]string `json:"genres,omitempty"`
 }

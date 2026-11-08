@@ -2,10 +2,17 @@ package usecase_test
 
 import (
 	"context"
+	"net/http"
+	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/apperror"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/domain/dto"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/domain/entity"
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/port/inbound"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/port/outbound"
 )
 
@@ -343,6 +350,12 @@ type fakeEventWriteRepo struct {
 	imageErr  error
 	imageKind string
 	imageURL  string
+
+	// recorded calls (CreateEvent / UpdateConfig)
+	createCalls int
+	createdReq  dto.CreateEventRequest
+	updateCalls int
+	updatedReq  dto.UpdateEventConfigRequest
 }
 
 func (f *fakeEventWriteRepo) SetImageURL(_ context.Context, _, kind, url string) error {
@@ -350,9 +363,23 @@ func (f *fakeEventWriteRepo) SetImageURL(_ context.Context, _, kind, url string)
 	return f.imageErr
 }
 
-func (f *fakeEventWriteRepo) CreateEvent(_ context.Context, _ string, _ dto.CreateEventRequest) error {
+func (f *fakeEventWriteRepo) CreateEvent(_ context.Context, _ string, req dto.CreateEventRequest) error {
+	f.createCalls++
+	f.createdReq = req
 	return f.createErr
 }
-func (f *fakeEventWriteRepo) UpdateConfig(_ context.Context, _ string, _ dto.UpdateEventConfigRequest) error {
+func (f *fakeEventWriteRepo) UpdateConfig(_ context.Context, _ string, req dto.UpdateEventConfigRequest) error {
+	f.updateCalls++
+	f.updatedReq = req
 	return f.updateErr
+}
+
+// assertValidationField asserts err is a typed VALIDATION_ERROR (400) naming the given field.
+func assertValidationField(t *testing.T, err error, field string) {
+	t.Helper()
+	var ae *apperror.Error
+	require.ErrorAs(t, err, &ae)
+	assert.Equal(t, inbound.CodeValidation, ae.Code)
+	assert.Equal(t, http.StatusBadRequest, ae.HTTPStatus)
+	assert.Contains(t, ae.Details, field)
 }

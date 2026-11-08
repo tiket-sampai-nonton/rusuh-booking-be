@@ -243,6 +243,13 @@ func (r *EventRepo) GetDetail(ctx context.Context, eventID string) (entity.Event
 	if err := rows.Err(); err != nil {
 		return entity.EventDetail{}, err
 	}
+	// Same definition as the list (COALESCE(MIN(price),0), sold-out categories included), taken from the one
+	// categories snapshot read above so the listed categories and the minimum cannot disagree.
+	for i, c := range cats {
+		if i == 0 || c.Category.PriceMinor < event.MinPriceMinor {
+			event.MinPriceMinor = c.Category.PriceMinor
+		}
+	}
 	return entity.EventDetail{Event: event, Categories: cats}, nil
 }
 

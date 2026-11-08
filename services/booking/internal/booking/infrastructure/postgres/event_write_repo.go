@@ -31,11 +31,12 @@ func (r *EventWriteRepo) CreateEvent(ctx context.Context, id string, req dto.Cre
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO booking.events (
 				id, slug, name, venue, starts_at, sales_starts_at, sales_ends_at, status,
-				max_tickets_per_order, max_tickets_per_buyer_nik, allow_mixed_categories, description)
-			VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, 'DRAFT', $8, $9, $10, $11::jsonb)`,
+				max_tickets_per_order, max_tickets_per_buyer_nik, allow_mixed_categories, description,
+				city, genre)
+			VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, 'DRAFT', $8, $9, $10, $11::jsonb, $12, $13)`,
 			id, req.Slug, req.Name, req.Venue, req.StartsAt, req.SalesStartsAt, req.SalesEndsAt,
 			req.MaxTicketsPerOrder, req.MaxTicketsPerBuyerNIK, req.AllowMixedCategories,
-			descriptionArg(req.Description)); err != nil {
+			descriptionArg(req.Description), req.City, genresParam(req.Genres)); err != nil {
 			return err
 		}
 
@@ -104,7 +105,7 @@ func (r *EventWriteRepo) UpdateConfig(ctx context.Context, eventID string, req d
 // buildUpdateConfig returns the UPDATE statement and its args ($1 is the event id) for the fields set in req.
 // An empty statement means nothing to change.
 func buildUpdateConfig(eventID string, req dto.UpdateEventConfigRequest) (string, []any) {
-	sets := make([]string, 0, 5)
+	sets := make([]string, 0, 7)
 	args := []any{eventID}
 	add := func(col string, v any) {
 		args = append(args, v)
@@ -121,6 +122,12 @@ func buildUpdateConfig(eventID string, req dto.UpdateEventConfigRequest) (string
 	}
 	if req.MaxEdits != nil {
 		add("max_selection_edits", *req.MaxEdits)
+	}
+	if req.City != nil { // "" clears the city
+		add("city", *req.City)
+	}
+	if req.Genres != nil { // [] clears the genres; genresParam keeps the bound array non-NULL (column is NOT NULL)
+		add("genre", genresParam(*req.Genres))
 	}
 	if len(req.Description) > 0 { // JSON null is present: it clears the column
 		args = append(args, descriptionArg(req.Description))
