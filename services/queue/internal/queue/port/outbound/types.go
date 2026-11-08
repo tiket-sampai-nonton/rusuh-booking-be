@@ -133,6 +133,10 @@ type PromoteResult struct {
 type SaleState struct {
 	SaleState string // NOT_STARTED | OPEN | CLOSED
 	SoldOut   bool
+	// SalesStartsMs/SalesEndsMs are the cached sale window (epoch ms), fed from Booking's supply read.
+	// 0 means unknown: the join gate then reads Booking once and caches the answer.
+	SalesStartsMs int64
+	SalesEndsMs   int64
 }
 
 // AuditRecord is one entry_audit row.

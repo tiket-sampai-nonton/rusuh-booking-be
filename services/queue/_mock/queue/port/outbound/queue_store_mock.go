@@ -315,6 +315,20 @@ func (mr *MockIQueueStoreMockRecorder) SetSale(ctx, eventID, saleState, soldOut 
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetSale", reflect.TypeOf((*MockIQueueStore)(nil).SetSale), ctx, eventID, saleState, soldOut)
 }
 
+// SetSaleWindow mocks base method.
+func (m *MockIQueueStore) SetSaleWindow(ctx context.Context, eventID string, startsMs, endsMs int64) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "SetSaleWindow", ctx, eventID, startsMs, endsMs)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// SetSaleWindow indicates an expected call of SetSaleWindow.
+func (mr *MockIQueueStoreMockRecorder) SetSaleWindow(ctx, eventID, startsMs, endsMs any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetSaleWindow", reflect.TypeOf((*MockIQueueStore)(nil).SetSaleWindow), ctx, eventID, startsMs, endsMs)
+}
+
 // SetStatusDoc mocks base method.
 func (m *MockIQueueStore) SetStatusDoc(ctx context.Context, eventID string, doc []byte, ttl time.Duration) error {
 	m.ctrl.T.Helper()

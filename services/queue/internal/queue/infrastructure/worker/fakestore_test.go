@@ -34,6 +34,15 @@ type fakeStore struct {
 	promoteErr   error
 	forcedFull   bool
 	leaseLostNow bool
+
+	windowCalls []saleWindowCall // SetSaleWindow calls, in order
+	windowErr   error            // injected SetSaleWindow failure
+}
+
+// saleWindowCall records one SetSaleWindow invocation.
+type saleWindowCall struct {
+	eventID          string
+	startsMs, endsMs int64
 }
 
 func newFakeStore() *fakeStore {
@@ -316,6 +325,12 @@ func (s *fakeStore) ExpiredActive(_ context.Context, _ string, nowMs int64, limi
 }
 
 func (s *fakeStore) SetSale(context.Context, string, string, bool) error { return nil }
+func (s *fakeStore) SetSaleWindow(_ context.Context, ev string, startsMs, endsMs int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.windowCalls = append(s.windowCalls, saleWindowCall{eventID: ev, startsMs: startsMs, endsMs: endsMs})
+	return s.windowErr
+}
 func (s *fakeStore) GetSale(context.Context, string) (outbound.SaleState, error) {
 	return outbound.SaleState{}, nil
 }

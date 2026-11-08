@@ -300,3 +300,44 @@ func TestJoinLua_ConcurrencyProofs(t *testing.T) {
 		}
 	})
 }
+
+// TC-QUE-40 (P15): the sale window and the sold-out flag share one hash but neither writer clobbers the other.
+func TestQueueStore_SaleWindow(t *testing.T) {
+	ctx := context.Background()
+	const starts, ends = int64(1_700_000_000_000), int64(1_700_003_600_000)
+
+	t.Run("missing hash gives unknown window", func(t *testing.T) {
+		s := newTestStore(t)
+		got, err := s.GetSale(ctx, evID(t))
+		require.NoError(t, err)
+		assert.Equal(t, outbound.SaleState{}, got)
+	})
+	t.Run("window then SetSale: both survive", func(t *testing.T) {
+		s := newTestStore(t)
+		ev := evID(t)
+		require.NoError(t, s.SetSaleWindow(ctx, ev, starts, ends))
+		require.NoError(t, s.SetSale(ctx, ev, "CLOSED", true))
+		got, err := s.GetSale(ctx, ev)
+		require.NoError(t, err)
+		assert.Equal(t, outbound.SaleState{SaleState: "CLOSED", SoldOut: true, SalesStartsMs: starts, SalesEndsMs: ends}, got)
+	})
+	t.Run("SetSale then window: both survive", func(t *testing.T) {
+		s := newTestStore(t)
+		ev := evID(t)
+		require.NoError(t, s.SetSale(ctx, ev, "CLOSED", true))
+		require.NoError(t, s.SetSaleWindow(ctx, ev, starts, ends))
+		got, err := s.GetSale(ctx, ev)
+		require.NoError(t, err)
+		assert.Equal(t, outbound.SaleState{SaleState: "CLOSED", SoldOut: true, SalesStartsMs: starts, SalesEndsMs: ends}, got)
+	})
+	t.Run("window rewrite replaces only the window", func(t *testing.T) {
+		s := newTestStore(t)
+		ev := evID(t)
+		require.NoError(t, s.SetSale(ctx, ev, "OPEN", false))
+		require.NoError(t, s.SetSaleWindow(ctx, ev, starts, ends))
+		require.NoError(t, s.SetSaleWindow(ctx, ev, starts+1, ends+1))
+		got, err := s.GetSale(ctx, ev)
+		require.NoError(t, err)
+		assert.Equal(t, outbound.SaleState{SaleState: "OPEN", SalesStartsMs: starts + 1, SalesEndsMs: ends + 1}, got)
+	})
+}

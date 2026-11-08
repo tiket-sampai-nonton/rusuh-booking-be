@@ -23,6 +23,8 @@ type IQueueStore interface {
 	ExpiredActive(ctx context.Context, eventID string, nowMs int64, limit int) ([]string, error)
 	SetSale(ctx context.Context, eventID, saleState string, soldOut bool) error
 	GetSale(ctx context.Context, eventID string) (SaleState, error)
+	// SetSaleWindow caches the event's sale window (epoch ms) in the sale hash without touching saleState/soldOut.
+	SetSaleWindow(ctx context.Context, eventID string, startsMs, endsMs int64) error
 	SetStatusDoc(ctx context.Context, eventID string, doc []byte, ttl time.Duration) error
 	GetStatusDoc(ctx context.Context, eventID string) ([]byte, bool, error)
 	// WasNotifiedSoon reports whether a pre-turn notification was already sent for this entry.

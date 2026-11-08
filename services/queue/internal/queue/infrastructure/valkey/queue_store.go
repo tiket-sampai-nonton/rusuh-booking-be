@@ -441,7 +441,17 @@ func (s *QueueStore) GetSale(ctx context.Context, eventID string) (outbound.Sale
 		return outbound.SaleState{}, fmt.Errorf("valkey: hgetall sale: %w", err)
 	}
 	st := outbound.SaleState{SaleState: m["saleState"], SoldOut: m["soldOut"] == "1"}
+	st.SalesStartsMs = parseMs(m["salesStartsMs"])
+	st.SalesEndsMs = parseMs(m["salesEndsMs"])
 	return st, nil
+}
+
+// SetSaleWindow caches the sale window in the same hash as SetSale. It writes only its own two fields, so neither
+// writer can clobber the other.
+func (s *QueueStore) SetSaleWindow(ctx context.Context, eventID string, startsMs, endsMs int64) error {
+	return s.c.Do(ctx, s.c.B().Hset().Key(s.kSale(eventID)).FieldValue().
+		FieldValue("salesStartsMs", strconv.FormatInt(startsMs, 10)).
+		FieldValue("salesEndsMs", strconv.FormatInt(endsMs, 10)).Build()).Error()
 }
 
 // SetStatusDoc writes the Status Document JSON with a short TTL (design §3.1: 1s).
