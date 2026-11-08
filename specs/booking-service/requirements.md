@@ -451,12 +451,14 @@ entry-nya sudah hilang, agar Status Document akurat dan tidak ada alokasi mengga
 **User story:** Sebagai tim penyelenggara (tanpa back-office), saya ingin membuat dan mengubah event
 lewat endpoint internal atau seed, agar event dapat disiapkan untuk penjualan.
 
-**Tertelusur ke:** SRS-F-26-01, SRS-F-26-03, SRS-F-26-04, SRS-F-26-08 · TC-CFG-02..04 · SDD-BOOKING App. C
+**Tertelusur ke:** SRS-F-26-01, SRS-F-26-03, SRS-F-26-04, SRS-F-26-08, SRS-F-28-07, SRS-F-28-08 · TC-CFG-02..04, TC-CAT-12..15, TC-EVT-06 · SDD-BOOKING App. C
 
 ### Kriteria Penerimaan (EARS)
 
 1. WHEN `POST /internal/v1/admin/events` dengan `adminBearer` dan `AdminEventCreateRequest{ name, venue, city, eventDate, saleStart, saleEnd, imageUrl?, bannerUrl?, categories[]{code,name,price,capacity}, config }`, sistem SHALL membuat `events`, `ticket_categories`, `category_inventories`, dan `event_supply (total_capacity = Σ capacity)` dalam satu transaksi dan membalas `201 { eventId }`.
 2. WHEN `PATCH /internal/v1/admin/events/{eventId}`, sistem SHALL mengubah konfigurasi; aturan pembentuk jaminan setelah `rules_locked_at` → `409 EVENT_RULES_LOCKED` (R4.4); setiap perubahan tercatat di `config_audit` dengan `app.actor` = admin (R4.5).
+2a. WHEN `POST`/`PATCH /internal/v1/admin/events` membawa `city` (string, ≤ 100 karakter) dan/atau `genres` (string[], ≤ 20 token, tiap token ≤ 64 byte), sistem SHALL menyimpannya kanonik (city di-trim, huruf asli dipertahankan; genres uppercase, `-`/spasi → `_`, dedupe, urut) dan menolak input melampaui batas dengan `400 VALIDATION_ERROR` sebelum penulisan apa pun. Pada PATCH, field tanpa/`null` tidak berubah; `""`/`[]` mengosongkan. Perubahan tetap diizinkan setelah penjualan dibuka (bukan aturan pembentuk jaminan; tidak menyentuh stok/kuota/timer) (TC-CAT-12..15, SRS-F-28-07).
+2b. WHEN klien `GET /api/v1/events/{eventId}`, `event.minPriceMinor` SHALL sama dengan harga kategori termurah (kategori habis dihitung; 0 bila tanpa kategori), identik dengan nilai pada daftar (TC-EVT-06, SRS-F-28-08).
 3. WHEN `POST /internal/v1/admin/events/{eventId}/images` (`multipart/form-data`, `image` ≤ 5 MB JPEG/PNG/WebP, `type ∈ {poster, banner, thumbnail}`), sistem SHALL menyimpan gambar dan membalas `201 { imageUrl, type }`; file lain → `400 VALIDATION_ERROR`. *(Penyimpanan cloud = S3 + CloudFront (SDD-BOOKING C.4); penyimpanan lokal/compose belum dirancang — OQ-16.)*
 4. Endpoint admin SHALL tidak lewat ALB publik dan mensyaratkan token `role = admin`.
 5. Default `EventConfig` SHALL: `maxTicketsPerOrder = 3`, `maxTicketsPerBuyerNik = 3`, `selectionTtlSeconds = 300`, `paymentTtlSeconds = 600`, `claimWindowSeconds = 180`, `allowMixedCategories = true` (PRD §8.2, kontrak).

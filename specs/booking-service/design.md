@@ -236,6 +236,7 @@ kondisi ini di request; Booking menegakkan "sekali").
 - `POST /internal/v1/admin/events` (`adminBearer`) → `201 { eventId }`; membuat event + kategori +
   inventori + supply dalam satu transaksi (`SET LOCAL app.actor`). `status` awal `DRAFT`/`NOT_STARTED`.
 - `PATCH /internal/v1/admin/events/{eventId}` — ubah config; `EVENT_RULES_LOCKED` → 409.
+- `city`/`genres` pada create dan PATCH: divalidasi + dikanonikkan di usecase (`normalizeCity`, `normalizeGenres` — fungsi yang sama dengan filter katalog), ditulis di INSERT/UPDATE yang sama (satu transaksi/statement); PATCH memakai pointer (`nil` = tidak berubah, `""`/`[]` = kosongkan). Tanpa migrasi; tetap boleh diubah setelah `rules_locked_at`. `GetDetail` menghitung `minPriceMinor` dari kategori yang sama dengan yang dimuatnya (sama dengan daftar).
 - `POST /internal/v1/admin/events/{eventId}/images` → `201 { imageUrl, type }` via `IImageStore` (OQ-16).
 - `EventConfig{ maxTicketsPerOrder=3, maxTicketsPerBuyerNik=3, selectionTtlSeconds=300,
   paymentTtlSeconds=600, claimWindowSeconds=180, allowMixedCategories=true }`.

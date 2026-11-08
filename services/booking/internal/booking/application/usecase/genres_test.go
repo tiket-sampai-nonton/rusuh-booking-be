@@ -1,7 +1,6 @@
 package usecase
 
 import (
-	"net/http"
 	"strings"
 	"testing"
 
@@ -10,7 +9,6 @@ import (
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/apperror"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/port/inbound"
-
 )
 
 func TestNormalizeGenres(t *testing.T) {
@@ -62,6 +60,6 @@ func assertValidationField(t *testing.T, err error, field string) {
 	var ae *apperror.Error
 	require.ErrorAs(t, err, &ae)
 	assert.Equal(t, inbound.CodeValidation, ae.Code)
-	assert.Equal(t, http.StatusBadRequest, ae.HTTPStatus)
+	assert.Equal(t, 400, ae.HTTPStatus)
 	assert.Contains(t, ae.Details, field)
 }

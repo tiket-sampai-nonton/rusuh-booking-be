@@ -52,7 +52,7 @@ func listedIDs(t *testing.T, repo *EventRepo, q dto.EventListQuery) map[string]b
 }
 
 // TC-CAT-12: an admin-created event with city + genres is stored canonicalised and is found by the public
-// city/genres filters and facets once published; an event created without them stores '' / '{}' (never NULL).
+// city/genres filters and facets once published; an event created without them stores ” / '{}' (never NULL).
 func TestCityGenres_CreateThenFilterAndFacets(t *testing.T) {
 	f := seed(t)
 	ctx := context.Background()

@@ -969,6 +969,8 @@ PATCH /internal/v1/admin/events/{eventId}
 **Rules:**
 - Cannot change `config` after `rulesLockedAt` (sale started)
 - Changes logged to `config_audit` table
+- `city` (string, max 100 chars) and `genres` (string[], max 20 tokens of max 64 chars) are accepted on create and PATCH. Stored canonical (city trimmed, casing kept; genres uppercase, `-`/space to `_`, deduplicated, sorted); invalid input is `400 VALIDATION_ERROR` before any write. PATCH: absent or `null` leaves the value unchanged, `""` / `[]` clears it. They are catalog data, not guarantee-forming, so they stay editable after sales open (SRS-F-28-07).
+- Event detail `minPriceMinor` is the cheapest category price, equal to the list value (SRS-F-28-08).
 
 ### C.3 Seed Data Structure
 

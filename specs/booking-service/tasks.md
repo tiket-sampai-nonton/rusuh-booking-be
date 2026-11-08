@@ -156,6 +156,8 @@ dan Payment) → sisanya.
     - _Requirements: 10.2, 10.3, 10.5, 10.6, 10.7_
   - [x] 14.3 Batal pesanan (resolve dulu, SHOULD)
     - _Requirements: 15.2, 15.3, 15.4, 15.5_
+  - [x] 14.5 `city`/`genres` pada admin create/PATCH + `minPriceMinor` detail = daftar (2026-11-09, SRS-F-28-07/08)
+    - _Requirements: 18.2a, 18.2b_ · TC-CAT-12..15, TC-EVT-06
   - [ ] 14.4 Metrik (setelah OQ-5) dan log tanpa NIK/email/token
     - **Property 12: Monotonic status**
     - _Requirements: 13.3, 13.4, 13.5_

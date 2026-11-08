@@ -886,6 +886,20 @@ components:
           description: Optional Slate document (array of object nodes), max 200 KB.
           items:
             type: object
+        city:
+          type: string
+          maxLength: 100
+          description: Optional city shown in the catalog and used by the city filter/facets. Trimmed,
+            casing kept; blank means no city. More than 100 characters is rejected (400).
+        genres:
+          type: array
+          maxItems: 20
+          description: Optional genre tokens. Stored canonical (trimmed, blanks dropped, uppercase,
+            hyphen/space to underscore, deduplicated, sorted). More than 20 tokens or a token longer
+            than 64 characters is rejected (400).
+          items:
+            type: string
+            maxLength: 64
         categories:
           type: array
           items:
@@ -939,6 +953,19 @@ components:
             JSON null clears it; absent leaves it unchanged.
           items:
             type: object
+        city:
+          type: string
+          maxLength: 100
+          description: Replaces the city (trimmed, casing kept). Empty string clears it; absent or JSON
+            null leaves it unchanged (unlike `description`, null does not clear). Allowed after sales open.
+        genres:
+          type: array
+          maxItems: 20
+          description: Replaces the whole genre set, stored canonical (see AdminEventCreateRequest.genres).
+            Empty array clears it; absent or JSON null leaves it unchanged. Allowed after sales open.
+          items:
+            type: string
+            maxLength: 64
   securitySchemes:
     serviceBearer:
       type: http

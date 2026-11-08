@@ -2,7 +2,6 @@ package usecase_test
 
 import (
 	"context"
-	"net/http"
 	"testing"
 	"time"
 
@@ -380,6 +379,6 @@ func assertValidationField(t *testing.T, err error, field string) {
 	var ae *apperror.Error
 	require.ErrorAs(t, err, &ae)
 	assert.Equal(t, inbound.CodeValidation, ae.Code)
-	assert.Equal(t, http.StatusBadRequest, ae.HTTPStatus)
+	assert.Equal(t, 400, ae.HTTPStatus)
 	assert.Contains(t, ae.Details, field)
 }
