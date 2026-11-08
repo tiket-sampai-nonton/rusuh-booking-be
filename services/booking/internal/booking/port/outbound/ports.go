@@ -9,6 +9,7 @@ import (
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/domain/dto"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/domain/entity"
+	vo "github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/domain/valueobject"
 )
 
 //go:generate go tool mockgen -source=ports.go -destination=../../../../_mock/booking/port/outbound/ports_mock.go -package=mock_outbound
@@ -56,8 +57,11 @@ type IAdmissionRepo interface {
 	// ReserveBatch reserves one admission per entry in a single transaction (config snapshot copied
 	// from the event); it returns one outcome per entry. Idempotent per queue_entry_id.
 	ReserveBatch(ctx context.Context, eventID string, entries []ReserveEntry, at time.Time) ([]ReserveOutcome, error)
-	// Release compensates a saga: RELEASED + allocated_units -= units.
-	Release(ctx context.Context, allocationID string) (bool, error)
+	// Release ends an admission that was never converted: RELEASED + allocated_units -= outstanding units, and
+	// one booking.journey.ended outbox row in the same transaction. reason selects the end reason / event outcome
+	// (UNCLAIMED or LEFT_WITHOUT_BUYING). Terminal admissions return (false, nil); an EDITABLE admission (a hold
+	// exists) returns ErrBookingLocked and changes nothing.
+	Release(ctx context.Context, allocationID string, reason vo.EndReason) (bool, error)
 	// DueSessions scans admissions whose expiry has lapsed (session sweeper).
 	DueSessions(ctx context.Context, now time.Time, limit int) ([]entity.Admission, error)
 	// ExpireSession releases one admission's allocation/held stock in its own transaction.

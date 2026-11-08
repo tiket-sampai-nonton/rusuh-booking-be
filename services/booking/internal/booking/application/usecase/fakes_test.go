@@ -11,6 +11,7 @@ import (
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/apperror"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/domain/dto"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/domain/entity"
+	vo "github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/domain/valueobject"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/port/inbound"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/port/outbound"
 )
@@ -104,17 +105,19 @@ func boolPtr(b bool) *bool { return &b }
 
 // fakeAdmissionRepo returns a fixed admission and records calls.
 type fakeAdmissionRepo struct {
-	admission     entity.Admission
-	getErr        error
-	getCalls      int // number of GetByID calls (REQ-4: assert malformed ids never reach the repo)
-	activated     entity.Admission
-	activErr      error
-	reserve       []outbound.ReserveOutcome
-	reserveErr    error
-	due           []entity.Admission
-	expired       []string
-	released      []string
-	releaseResult *bool // nil = default true
+	admission      entity.Admission
+	getErr         error
+	getCalls       int // number of GetByID calls (REQ-4: assert malformed ids never reach the repo)
+	activated      entity.Admission
+	activErr       error
+	reserve        []outbound.ReserveOutcome
+	reserveErr     error
+	due            []entity.Admission
+	expired        []string
+	released       []string
+	releaseResult  *bool // nil = default true
+	releaseErr     error // returned by Release (e.g. ErrBookingLocked)
+	releaseReasons []vo.EndReason
 }
 
 func (f *fakeAdmissionRepo) FindByJTI(context.Context, string) (entity.Admission, error) {
@@ -136,11 +139,15 @@ func (f *fakeAdmissionRepo) Activate(context.Context, string, time.Time) (entity
 func (f *fakeAdmissionRepo) ReserveBatch(context.Context, string, []outbound.ReserveEntry, time.Time) ([]outbound.ReserveOutcome, error) {
 	return f.reserve, f.reserveErr
 }
-func (f *fakeAdmissionRepo) Release(_ context.Context, id string) (bool, error) {
+func (f *fakeAdmissionRepo) Release(_ context.Context, id string, reason vo.EndReason) (bool, error) {
 	if f.getErr != nil {
 		return false, f.getErr
 	}
+	if f.releaseErr != nil {
+		return false, f.releaseErr
+	}
 	f.released = append(f.released, id)
+	f.releaseReasons = append(f.releaseReasons, reason)
 	if f.releaseResult != nil {
 		return *f.releaseResult, nil
 	}

@@ -33,6 +33,6 @@ func (uc *CancelSession) CancelSession(ctx context.Context, sessionID, visitorID
 		adm.Status == vo.AdmissionConverted {
 		return nil
 	}
-	_, err = uc.admissions.Release(ctx, adm.ID)
+	_, err = uc.admissions.Release(ctx, adm.ID, vo.EndLeftWithoutBuying)
 	return err
 }

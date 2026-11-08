@@ -2,8 +2,10 @@ package usecase
 
 import (
 	"context"
+	"errors"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/domain/dto"
+	vo "github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/domain/valueobject"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/port/inbound"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/port/outbound"
 )
@@ -23,7 +25,11 @@ func (uc *ReleaseAllocation) Release(ctx context.Context, allocationID string) (
 	if !isUUID(allocationID) {
 		return dto.ReleaseResponse{}, inbound.Validation("allocationId", "allocationId harus UUID")
 	}
-	released, err := uc.admissions.Release(ctx, allocationID)
+	released, err := uc.admissions.Release(ctx, allocationID, vo.EndUnclaimed)
+	if errors.Is(err, inbound.ErrBookingLocked) {
+		// A hold exists: the admission is not releasable. Best-effort internal caller just learns "not released".
+		return dto.ReleaseResponse{Released: false}, nil
+	}
 	if err != nil {
 		return dto.ReleaseResponse{}, err
 	}
