@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/clock"
@@ -58,6 +59,9 @@ func (p *StatusPublisher) runEvent(ctx context.Context, eventID string) error {
 		return err
 	}
 	supply, serr := p.booking.Supply(ctx, eventID) // best-effort; on error the previous boundaries are kept
+	if serr == nil {
+		p.cacheSaleWindow(ctx, eventID, supply)
+	}
 
 	doc := p.build(eventID, settings, sale, supply, serr == nil)
 	if err := p.ranks(ctx, eventID, settings, supply, serr == nil, &doc); err != nil {
@@ -68,6 +72,17 @@ func (p *StatusPublisher) runEvent(ctx context.Context, eventID string) error {
 		return fmt.Errorf("status publisher: marshal: %w", err)
 	}
 	return p.store.SetStatusDoc(ctx, eventID, raw, p.ttl)
+}
+
+// cacheSaleWindow stores Booking's sale window for the join gate. Best-effort: a failed write is logged and the
+// document is still published (the gate falls back to one Booking read when the window is unknown).
+func (p *StatusPublisher) cacheSaleWindow(ctx context.Context, eventID string, supply outbound.SupplySnapshot) {
+	if supply.SalesStartsAt.IsZero() || supply.SalesEndsAt.IsZero() {
+		return
+	}
+	if err := p.store.SetSaleWindow(ctx, eventID, supply.SalesStartsAt.UnixMilli(), supply.SalesEndsAt.UnixMilli()); err != nil {
+		slog.Warn("status publisher: cache sale window failed", "eventId", eventID, "error", err)
+	}
 }
 
 func (p *StatusPublisher) build(eventID string, s entity.EventSettings, sale outbound.SaleState, supply outbound.SupplySnapshot, haveSupply bool) dto.StatusDocument {
