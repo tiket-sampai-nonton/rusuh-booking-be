@@ -70,12 +70,15 @@ func (r *AdmissionRepo) FindActiveByEvent(ctx context.Context, eventID, visitorI
 	return r.FindActiveByVisitor(ctx, eventID, visitorID)
 }
 
-// Activate flips a RESERVED admission to ACTIVE by its one-time jti.
+// Activate flips a RESERVED admission to ACTIVE by its one-time jti and starts the selection clock:
+// the session deadline becomes activation time + the snapshotted selection TTL. The guard still reads the old
+// (claim-window) deadline, so the claim window keeps bounding RESERVED -> ACTIVE.
 func (r *AdmissionRepo) Activate(ctx context.Context, jti string, at time.Time) (entity.Admission, error) {
 	// jti in the admission token is the admission's primary key (id), which Queue knows as allocationId.
 	a, err := scanAdmission(r.pool.QueryRow(ctx, `
 		UPDATE booking.admissions
-		   SET status = 'ACTIVE', claimed_at = $2
+		   SET status = 'ACTIVE', claimed_at = $2,
+		       expires_at = $2 + make_interval(secs => cfg_selection_ttl_seconds)
 		 WHERE id = $1::uuid AND status = 'RESERVED' AND expires_at > $2
 		 RETURNING `+admissionCols, jti, at))
 	if errors.Is(err, pgx.ErrNoRows) || pkgpg.IsCode(err, "22P02") {

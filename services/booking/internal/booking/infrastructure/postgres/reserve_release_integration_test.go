@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	inbound "github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/port/inbound"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/port/outbound"
 )
 
@@ -233,4 +234,80 @@ func TestLockOrder_HoldEditExpire(t *testing.T) {
 			assert.NotContains(t, err.Error(), "deadlock")
 		}
 	}
+}
+
+// reserveAt reserves one anonymous admission at t0 for an event whose selection TTL is 90 s and claim window 180 s.
+func reserveAt(t *testing.T, f acctFixture, t0 time.Time) (allocID string) {
+	t.Helper()
+	ctx := context.Background()
+	_, err := f.pool.Exec(ctx, `UPDATE booking.events SET selection_ttl_seconds=90, claim_window_seconds=180 WHERE id=$1::uuid`, f.eventID)
+	require.NoError(t, err)
+	out, err := NewAdmissionRepo(f.pool).ReserveBatch(ctx, f.eventID, []outbound.ReserveEntry{anonEntry(1, 2)}, t0)
+	require.NoError(t, err)
+	require.Equal(t, "GRANTED", out[0].Outcome)
+	return out[0].AllocationID
+}
+
+func expiresOf(t *testing.T, f acctFixture, id string) time.Time {
+	t.Helper()
+	var e time.Time
+	require.NoError(t, f.pool.QueryRow(context.Background(), `SELECT expires_at FROM booking.admissions WHERE id=$1::uuid`, id).Scan(&e))
+	return e
+}
+
+// TC-SES-09 (P7, P9, 3.7): the session deadline is activation time + selection TTL, set once.
+func TestActivate_DeadlineIsActivationPlusSelectionTTL(t *testing.T) {
+	t0 := time.Now().UTC().Truncate(time.Millisecond)
+
+	t.Run("P7 deadline = activation + selection ttl, stable on read", func(t *testing.T) {
+		f := newAcctFixture(t, suffixFor(t), 6)
+		repo := NewAdmissionRepo(f.pool)
+		id := reserveAt(t, f, t0)
+		at := t0.Add(60 * time.Second)
+		a, err := repo.Activate(context.Background(), id, at)
+		require.NoError(t, err)
+		want := t0.Add(150 * time.Second)
+		assert.WithinDuration(t, want, a.ExpiresAt, time.Millisecond, "returned deadline")
+		assert.WithinDuration(t, want, expiresOf(t, f, id), time.Millisecond, "stored deadline")
+		for i := 0; i < 3; i++ {
+			g, err := repo.GetByID(context.Background(), id)
+			require.NoError(t, err)
+			assert.WithinDuration(t, want, g.ExpiresAt, time.Millisecond, "read never moves the deadline")
+		}
+	})
+
+	t.Run("P9 activation after the claim window is refused and leaves the row unchanged", func(t *testing.T) {
+		f := newAcctFixture(t, suffixFor(t), 6)
+		repo := NewAdmissionRepo(f.pool)
+		id := reserveAt(t, f, t0)
+		before := expiresOf(t, f, id)
+		_, err := repo.Activate(context.Background(), id, t0.Add(181*time.Second))
+		require.ErrorIs(t, err, inbound.ErrAdmissionToken)
+		assert.True(t, before.Equal(expiresOf(t, f, id)))
+		var status string
+		require.NoError(t, f.pool.QueryRow(context.Background(), `SELECT status FROM booking.admissions WHERE id=$1::uuid`, id).Scan(&status))
+		assert.Equal(t, "RESERVED", status)
+	})
+
+	t.Run("3.7 in-flight ACTIVE row keeps its stored deadline", func(t *testing.T) {
+		f := newAcctFixture(t, suffixFor(t), 6)
+		repo := NewAdmissionRepo(f.pool)
+		id, _ := f.reserve(t, 1, 2, true) // ACTIVE, expires_at = now()+10 min (pre-deploy shape)
+		stored := expiresOf(t, f, id)
+		g, err := repo.GetByID(context.Background(), id)
+		require.NoError(t, err)
+		assert.True(t, stored.Equal(g.ExpiresAt), "no recompute")
+		due, err := repo.DueSessions(context.Background(), stored.Add(4*time.Second), 10)
+		require.NoError(t, err)
+		for _, d := range due {
+			assert.NotEqual(t, id, d.ID, "not due before expires_at + grace (5 s)")
+		}
+		due, err = repo.DueSessions(context.Background(), stored.Add(6*time.Second), 10)
+		require.NoError(t, err)
+		var found bool
+		for _, d := range due {
+			found = found || d.ID == id
+		}
+		assert.True(t, found, "due after expires_at + grace")
+	})
 }

@@ -99,3 +99,54 @@ func TestReplaceItems_SwapsTheHeldLinesAndKeepsStockConsistent(t *testing.T) {
 	})
 	assert.ErrorIs(t, err, inbound.ErrBookingLocked)
 }
+
+// TC-SES-09 (P8): hold after expires_at + grace is refused with no hold row and no stock change;
+// a hold inside the grace window succeeds. expires_at is backdated because Hold reads time.Now().
+func TestHold_DeadlineGraceEdges(t *testing.T) {
+	cases := []struct {
+		name       string
+		expiredAgo time.Duration // how long ago expires_at passed; grace is 5 s
+		wantErr    bool
+	}{
+		{"1s inside grace", 4 * time.Second, false},
+		{"1s past grace", 6 * time.Second, true},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			f := newAcctFixture(t, suffixFor(t), 6)
+			adm, vis := f.reserve(t, 1, 3, true)
+			_, err := f.pool.Exec(context.Background(),
+				`UPDATE booking.admissions SET reserved_at = now() - interval '1 hour', expires_at = now() - make_interval(secs => $2) WHERE id=$1::uuid`,
+				adm, tc.expiredAgo.Seconds())
+			require.NoError(t, err)
+			before := f.ledger(t)
+			_, err = f.uow.Hold(context.Background(), f.spec(1, 1, adm, vis, true))
+			if tc.wantErr {
+				require.ErrorIs(t, err, inbound.ErrSessionExpired)
+				assert.Equal(t, before, f.ledger(t), "no stock change")
+				var n int
+				require.NoError(t, f.pool.QueryRow(context.Background(),
+					`SELECT count(*) FROM booking.bookings WHERE event_id=$1::uuid`, f.eventID).Scan(&n))
+				assert.Equal(t, 0, n, "no hold row")
+				return
+			}
+			require.NoError(t, err)
+		})
+	}
+}
+
+// TC-SES-09 (P10): the sweeper expires an ACTIVE session once; units return once, one journey.ended row.
+func TestExpireSession_DoubleRunEmitsOnce(t *testing.T) {
+	f := newAcctFixture(t, suffixFor(t), 6)
+	repo := NewAdmissionRepo(f.pool)
+	adm, _ := f.reserve(t, 1, 3, true)
+	ctx := context.Background()
+	require.NoError(t, repo.ExpireSession(ctx, adm, time.Now()))
+	require.NoError(t, repo.ExpireSession(ctx, adm, time.Now()))
+	assert.Equal(t, 0, f.ledger(t).alloc)
+	var n int
+	require.NoError(t, f.pool.QueryRow(ctx,
+		`SELECT count(*) FROM booking.outbox_events WHERE routing_key='booking.journey.ended' AND aggregate_id=$1::uuid`, adm).Scan(&n))
+	assert.Equal(t, 1, n)
+}
