@@ -3,7 +3,7 @@
 Workflow `booking-event-city-genres`. Perubahan hanya di Booking Service (+ kontrak/dokumen). Tanpa migrasi, tanpa dependensi baru, tanpa rute baru.
 
 ## Keputusan
-- D1 (ASUMSI, menunggu konfirmasi pemilik): `city`/`genres` boleh diubah setelah penjualan dibuka. `guard_event_rules` hanya mengunci `max_tickets_per_order`, `max_tickets_per_buyer_nik`, `allow_mixed_categories`, `rules_locked_at`; invarian 1–6 tidak tersentuh (diuji TC-CAT-15: `event_supply`, `category_inventories`, `rules_locked_at` identik). Jika pemilik menolak: migrasi baru `0NNN` (file baru saja) memperluas guard, lalu TC-CAT-15 dibalik.
+- D1 (DIKONFIRMASI pemilik 2026-11-09 di human gate): `city`/`genres` boleh diubah setelah penjualan dibuka. `guard_event_rules` hanya mengunci `max_tickets_per_order`, `max_tickets_per_buyer_nik`, `allow_mixed_categories`, `rules_locked_at`; invarian 1–6 tidak tersentuh (diuji TC-CAT-15: `event_supply`, `category_inventories`, `rules_locked_at` identik). Jika pemilik menolak: migrasi baru `0NNN` (file baru saja) memperluas guard, lalu TC-CAT-15 dibalik.
 - D2: city di-trim, huruf asli dipertahankan, maks 100 rune; hanya spasi → `''`.
 - D3: genres ditolak (400 `VALIDATION_ERROR`) bila melebihi batas filter yang sama (20 token, 64 byte); token kosong dibuang. `normalizeGenres` dipindah ke `genres.go` tanpa perubahan perilaku (dipakai filter dan jalur tulis admin).
 - D4: PATCH memakai pointer: tanpa/`null` = tidak berubah, `""`/`[]` = kosongkan. Berbeda dengan `description` (null = hapus); dicatat di OpenAPI.
@@ -18,3 +18,7 @@ Workflow `booking-event-city-genres`. Perubahan hanya di Booking Service (+ kont
 
 ## Lingkungan
 Hanya infrastruktur QA yang berjalan: `qa-pg` (localhost:55433, DB sementara `rbt_it_booking` dibuat/dihapus oleh `setup(t)`), `qa-vk` (56380), RabbitMQ (5672). `telkomsel_db_postgresql` tidak disentuh. Hasil gate lengkap ada di `.agents/tasks/fix/booking-event-city-genres/verification.md`.
+
+## Keputusan pemilik (2026-11-09, human gate)
+- D1 dikonfirmasi: `city`/`genres` tetap boleh diubah setelah penjualan dibuka; tidak dikunci `guard_event_rules`.
+- Facet city tanpa pelipatan huruf besar-kecil diterima apa adanya untuk saat ini (tindak lanjut opsional).
