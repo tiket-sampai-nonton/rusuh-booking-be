@@ -2,11 +2,12 @@
 # Dijalankan di LAPTOP (folder rusuh-booking-be). Mengirim file konfigurasi deploy ke server TANPA lewat GitHub Actions,
 # supaya server bisa disiapkan dan diperiksa (gen-secrets.sh, preflight.sh) sebelum deploy pertama. Isinya sama persis
 # dengan yang dikirim job deployment-dev.
-#   bash deployments/dev/push-config.sh                                   # bawaan: deploy@dev.rusuhbooking.my.id port 20130
+#   bash deployments/dev/push-config.sh                                   # bawaan: deploy@103.119.237.53 port 20130
 #   SSH_TARGET=deploy@103.119.237.53 SSH_PORT=20130 bash deployments/dev/push-config.sh
 set -euo pipefail
 cd "$(dirname "$0")/../.."
-SSH_TARGET="${SSH_TARGET:-deploy@dev.rusuhbooking.my.id}"
+# IP langsung, bukan nama domain: dev.rusuhbooking.my.id di Cloudflare berstatus Proxied dan tidak meneruskan SSH.
+SSH_TARGET="${SSH_TARGET:-deploy@103.119.237.53}"
 SSH_PORT="${SSH_PORT:-20130}"
 SSH_KEY_OPT=()
 [ -n "${SSH_KEY:-}" ] && SSH_KEY_OPT=(-i "$SSH_KEY")
