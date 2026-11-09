@@ -167,9 +167,11 @@ POST /api/v1/queue-entries/{entryId}/claim
 ```json
 {
   "admissionToken": "jwt-one-time-use",
-  "expiresAt": "2026-10-19T10:01:00Z"
+  "bookingUrl": "https://app.example.com/book/{eventId}"
 }
 ```
+
+`admissionToken` sekali pakai, TTL 60 detik (tanpa `expiresAt` pada respons). `bookingUrl` deprecated. Error claim mengikuti `queue.yaml`: `401 VISITOR_TOKEN_INVALID`, `404 NOT_FOUND`, `409 NOT_ADMITTED`, `410 TURN_MISSED` / `EVENT_SOLD_OUT`, `429`; bukan `403 CLAIM_DEADLINE_PASSED` / `403 ENTRY_NOT_ADMITTED` dari SDD lama.
 
 ### 3.5 Leave Queue
 

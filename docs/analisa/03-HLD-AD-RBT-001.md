@@ -477,12 +477,12 @@ sequenceDiagram
       QS->>BS: POST /internal/v1/allocations:batch
       BS-->>QS: Alokasi N unit, claim deadline
       QS->>R: Status ADMITTED, headSeq maju
-      QS-->>FE: 201 ADMITTED dengan queue token dan visitor token
+      QS-->>FE: 201 ADMITTED dengan visitor token (queueToken deprecated, masih diterbitkan satu rilis)
       FE->>QS: POST /queue-entries/id/claim
       QS-->>FE: Admission token sekali pakai
       FE->>FE: Langsung ke Detail Ticket Page
     else Harus menunggu
-      QS-->>FE: 201 WAITING dengan queue token dan visitor token
+      QS-->>FE: 201 WAITING dengan visitor token (queueToken deprecated, masih diterbitkan satu rilis)
       FE->>FE: Tampilkan Waiting Room
     end
   end
@@ -564,7 +564,7 @@ sequenceDiagram
   QS->>R: Entry ADMITTED dengan claim deadline 3 menit, headSeq maju
   FE->>CF: GET status document
   CF-->>FE: headSeq sudah melewati seq saya
-  FE->>QS: POST /queue-entries/id/claim dengan queue token
+  FE->>QS: POST /queue-entries/id/claim dengan visitor token dan eventId
   QS->>R: Validasi ADMITTED dan belum lewat deadline
   QS-->>FE: Admission token sekali pakai, TTL 60 detik
   FE->>FE: Redirect ke Detail Ticket Page
@@ -1104,7 +1104,7 @@ Detail di Lampiran O [v4.6 → HLD Appendix B].
 | Token | Penerbit | Verifikator | Isi | TTL |
 |---|---|---|---|---|
 | Visitor token | Queue | Queue, Booking, Payment | visitorId, buyerNikHash, email | Hingga penjualan berakhir |
-| Queue token | Queue | Queue | eventId, entryId, seq, visitorId | Hingga penjualan berakhir |
+| Queue token (deprecated, keputusan pemilik Q6; tidak diterima endpoint mana pun) | Queue | - | eventId, entryId, seq, visitorId | Masih diterbitkan satu rilis, lalu dihapus |
 | Admission token | Queue | Booking | jti, eventId, entryId, allocationId, visitorId | 60 detik, sekali pakai |
 | Payment page token | Payment | Payment | bookingId, visitorId | 60 detik, sekali pakai |
 | Ticket link token | Booking | Booking | bookingId | Hingga tanggal event + 7 hari |

@@ -21,7 +21,7 @@ Task `fix/queue-deprecations-docs` (Batch 3b). Hanya dokumen, anotasi OpenAPI, d
 ## Pertanyaan terbuka
 - OQ-A: frasa FR-10 "entry server-side per NIK pembeli" usang terhadap ADR-030 (NIK tidak lagi di Queue); tidak diubah.
 - OQ-B: rilis penghapusan `queueToken`, `bookingUrl`, CORS `X-Queue-Token`, `BOOKING_PAGE_BASE_URL` belum ditanggalkan ("satu rilis").
-- OQ-C: SDD 04a §3.4 contoh respons claim masih `expiresAt` (bukan `bookingUrl`); selisih dirujuk ke tabel delta spec, bentuk contoh tidak ditulis ulang. Selisih kode 403 vs 410 juga di sana.
+- OQ-C (ditutup iterasi 2): contoh respons claim di SDD 04a §3.4 diperbaiki ke `{admissionToken, bookingUrl}` dan daftar error claim ditulis di bagian itu; HLD 03 (baris 480, 485, 567, 1107) tidak lagi menyebut queue token sebagai kredensial claim.
 
 ## Exit code
 Lihat `.agents/tasks/fix/queue-deprecations-docs/verification.md` (perintah, exit code, commit hash).
