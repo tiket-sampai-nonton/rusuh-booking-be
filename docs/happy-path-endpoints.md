@@ -126,8 +126,8 @@ POST :8082/api/v1/bookings/{bookingId}/cancel         batal sebelum bayar -> 200
 ```
 
 `items` 1 sampai 3, satu item per tiket, maksimal 3 tiket per NIK pembeli per event, dan tidak boleh melebihi unit
-cadangan sesi (`reservedUnits`). Uji: ✅ semua; varian `{"keepFromItemId":"<uuid>"}` untuk mempertahankan pemegang
-lama ❌ (T7) — kirim ulang `nik` + `fullName`.
+cadangan sesi (`reservedUnits`). Uji: ✅ semua; varian `{"keepFromItemId":"<uuid>"}` untuk mempertahankan pemegang lama ✅ (T7 diperbaiki 2026-11-09;
+uji unit + integrasi, belum dijalankan ulang lewat curl). Kirim `keepFromItemId` saja (tanpa `nik`/`fullName`).
 
 ### A5. Payment
 
@@ -146,10 +146,12 @@ Uji: ✅ semua.
 
 ### A6. Gateway menyelesaikan pembayaran
 
-Endpoint simulator di kontrak belum ada di kode (❌ T8):
+Simulator lokal (✅ T8 diperbaiki 2026-11-09; uji unit + integrasi, belum dijalankan ulang lewat curl), hanya `APP_ENV=local|ci`:
 ```
-POST :8083/api/v1/local-simulator/payments/{attemptId}/scenario   -> 404 di APP_ENV=local
+POST :8083/api/v1/local-simulator/payments/{attemptId}/scenario   (visitor token pemilik attempt)
+     {"scenario":"SETTLE|SETTLE_LATE|EXPIRE|DENY|TIMEOUT|DUPLICATE_WEBHOOK|OUT_OF_ORDER"}  -> 202 {"simulated":true,"scenario":"..."}
 ```
+Menyuntikkan notifikasi Midtrans bertanda tangan ke webhook asli; di `dev|staging|prod` rute tidak ada (404 sama dengan path tak dikenal).
 Yang dipakai saat uji: notifikasi HTTP bertanda tangan persis seperti Midtrans ke webhook Payment (lihat E1), dikirim
 oleh gateway tiruan:
 ```
@@ -396,7 +398,7 @@ sementara dan menjawab 204 dengan `X-Device-Id` pada `Access-Control-Allow-Heade
 
 ## Temuan (perilaku tidak sesuai kontrak)
 
-Semua direproduksi dengan curl dan dicek ke kode. T1, T2, T5, T6 diperbaiki 2026-11-09 (`docs/evidence/2026-11-09-queue-booking-flow-fixes.md`); T3, T4 diperbaiki 2026-11-09 (`docs/evidence/2026-11-09-queue-visitor-token.md`); T7, T8 belum.
+Semua direproduksi dengan curl dan dicek ke kode. T1, T2, T5, T6 diperbaiki 2026-11-09 (`docs/evidence/2026-11-09-queue-booking-flow-fixes.md`); T3, T4 diperbaiki 2026-11-09 (`docs/evidence/2026-11-09-queue-visitor-token.md`); T7, T8 diperbaiki 2026-11-09 (`docs/evidence/2026-11-09-booking-payment-contract.md`).
 
 | # | Temuan | Bukti | Dampak |
 |---|---|---|---|
@@ -406,8 +408,8 @@ Semua direproduksi dengan curl dan dicek ke kode. T1, T2, T5, T6 diperbaiki 2026
 | T4 | `me` untuk event yang tidak pernah di-join menjawab 401, kontrak 404 | `checkTokenGen` per event | Kode error berbeda dari kontrak **Diperbaiki 2026-11-09.** |
 | T5 | Slot antrean bocor setelah sesi booking dibatalkan | `booking-sessions/{id}/cancel` melepas unit tetapi tidak menerbitkan `booking.journey.ended`; entri tetap `CLAIMED`, pembeli berikutnya tetap WAITING > 390 dtk; `DELETE` entri CLAIMED menjawab 204 tetapi diabaikan (`leave.lua`, QSH-OQ-3) | Kapasitas antrean berkurang permanen per pembatalan **Diperbaiki 2026-11-09.** |
 | T6 | TTL Booking (`selection_ttl_seconds`) tidak diterapkan | Saat sesi aktif, `expires_at` tetap = reservasi + jendela klaim (180 dtk); hold setelah TTL 90 dtk tetap 201 | Lama sesi = jendela klaim, bukan TTL Booking 5 menit **Diperbaiki 2026-11-09.** |
-| T7 | `keepFromItemId` pada `PUT /bookings/{id}/items` tidak didukung | 400 "fullName harus 2..100"; field tidak dibaca di kode | Klien harus mengirim ulang NIK pemegang |
-| T8 | Endpoint `local-simulator` di kontrak tidak ada di kode | 404 di `APP_ENV=local` | Uji lokal butuh gateway tiruan |
+| T7 | `keepFromItemId` pada `PUT /bookings/{id}/items` tidak didukung | 400 "fullName harus 2..100"; field tidak dibaca di kode | Klien harus mengirim ulang NIK pemegang **Diperbaiki 2026-11-09.** |
+| T8 | Endpoint `local-simulator` di kontrak tidak ada di kode | 404 di `APP_ENV=local` | Uji lokal butuh gateway tiruan **Diperbaiki 2026-11-09.** |
 
 Catatan kecil: rentang `selection_ttl_seconds` 60–1800 di SDD §6 praktis mulai 61 karena peringatan bawaan 60 dtk
 harus lebih kecil dari TTL.

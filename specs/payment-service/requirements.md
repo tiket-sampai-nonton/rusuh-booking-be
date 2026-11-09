@@ -200,10 +200,10 @@ Trace: SRS-IF-24, SRS-C-03 · TC-PAY-03..11 (CI)
 
 ### Acceptance Criteria (EARS)
 
-1. WHERE `PAYMENT_PROVIDER = simulator`, THE service SHALL memakai adapter `IPaymentGateway` simulator dengan kontrak perilaku sama seperti Midtrans (charge, status, cancel, webhook bertanda tangan).
+1. WHERE `APP_ENV` adalah `local` atau `ci`, THE service SHALL mendaftarkan simulator sebagai penyuntik notifikasi Midtrans bertanda tangan ke jalur webhook asli (bukan provider alternatif; Payment tetap selalu Midtrans, lihat Handbook baris `PAYMENT_PROVIDER` dihapus). Skenario `TIMEOUT` membuat Status/Cancel ke provider untuk order itu ambigu selama 2 menit.
 2. WHEN `POST /api/v1/local-simulator/payments/{attemptId}/scenario` dengan `scenario ∈ {SETTLE, SETTLE_LATE, EXPIRE, DENY, TIMEOUT, DUPLICATE_WEBHOOK, OUT_OF_ORDER}`, THE simulator SHALL mendorong webhook sintetis dan membalas `202`.
-3. THE simulator SHALL hanya aktif pada lingkungan yang diizinkan; di lingkungan lain endpoint membalas `404 NOT_FOUND`. *(Kontrak: `APP_ENV=local|ci`; SRS-IF-24: `ci|local-offline` — OQ-20.)*
-4. THE hasil dari simulator SHALL berlabel `SIMULATED` (mis. `provider = SIMULATOR` di attempt) dan tidak pernah dipakai di demo Midtrans (SRS-C-03).
+3. THE simulator SHALL hanya aktif pada lingkungan yang diizinkan; di `dev`, `staging`, dan `prod` rute tidak terdaftar sehingga jawabannya sama dengan path tak dikenal mana pun (404 bawaan server). *(Diselesaikan 2026-11-09: `APP_ENV=local|ci` di kontrak dan SRS-IF-24; OQ-20 tertutup. Start ditolak bila simulator aktif bersama `MIDTRANS_ENVIRONMENT=production`.)*
+4. THE hasil dari simulator SHALL berlabel `SIMULATED`: respons 202 membawa `simulated: true`, log memuat `simulated=true`, dan `provider_tx_id` berawalan `SIM-`; kolom `provider` attempt tidak diubah (tetap MIDTRANS). Simulator tidak dipakai di demo Midtrans (SRS-C-03).
 
 ## Requirement 11 — Health, Konfigurasi & Observability
 

@@ -512,7 +512,7 @@ BEGIN
        beda → 409 BOOKING_VERSION_CONFLICT
   4 supply, quota, categories ASC FOR UPDATE
   5 SAVEPOINT replace_items
-       item lama → REPLACED, kembalikan held per kategori; resolve keepFromItemId (hash/enc/masked lama)
+       item lama → REPLACED, kembalikan held per kategori; resolve keepFromItemId (hash/enc/masked lama; diselesaikan di usecase `Edit` dari item HELD pesanan itu, divalidasi lewat `version` di bawah kunci baris booking)
        INSERT item baru HELD (23505 → ROLLBACK TO SAVEPOINT → 409, pesanan lama utuh, edit_count tidak naik)
        tambah held per kategori (CHECK)
   6 supply: allocated += n_lama − n_baru, held += n_baru − n_lama

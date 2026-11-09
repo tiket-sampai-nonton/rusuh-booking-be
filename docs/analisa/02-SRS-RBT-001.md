@@ -201,7 +201,7 @@ Tidak ada antarmuka hardware khusus. Scan tiket di gerbang berada di luar scope.
 | SRS-IF-21 | Midtrans Sandbox | Expiry transaksi | The transaction expiry sent to the gateway shall equal the booking's `paymentExpiresAt`. | M | T | TC-PAY-02 |
 | SRS-IF-22 | Penyedia email (Mailpit / Resend) | E-tiket, expired, pembayaran terlambat, OTP | The Notification Service shall send email through SMTP to Mailpit locally and in CI, and through the Resend HTTP API on demo, selected by `EMAIL_PROVIDER` (v1.6, 2026-10-22; replaces SES sandbox). | M | T | TC-TKT-02 |
 | SRS-IF-23 | Penyedia push (FCM; iOS via APNs) | Notifikasi giliran | The Notification Service shall send turn notifications through the push provider and shall use a log adapter in local and CI environments. | M | D | TC-QUE-13 |
-| SRS-IF-24 | Payment simulator | Uji offline | A payment simulator shall be available only when `APP_ENV` is `ci` or `local-offline`, and results produced by it shall be labelled SIMULATED. | M | I | [TP] |
+| SRS-IF-24 | Payment simulator | Uji offline | A payment simulator shall be available only when `APP_ENV` is `local` or `ci`, and results produced by it shall be labelled SIMULATED. | M | I | [TP] |
 
 #### 3.1.4 Communications Interfaces
 
@@ -276,7 +276,7 @@ Semua di bawah `/api/v1`. Kontrak normatif: satu file OpenAPI per service di `do
 | Payment | POST | `/webhooks/midtrans` | Callback gateway | Signature |
 | Notification | POST | `/push-subscriptions` | Daftarkan token push perangkat untuk event | Visitor token, mobile |
 | Notification | DELETE | `/push-subscriptions/{eventId}` | Hapus token push | Visitor token |
-| Payment | POST | `/local-simulator/payments/{id}/scenario` | Simulasi | Hanya `APP_ENV=ci` atau `local-offline` |
+| Payment | POST | `/local-simulator/payments/{id}/scenario` | Simulasi | Hanya `APP_ENV=local` atau `ci` |
 
 Contoh request/response dan error code lengkap di Lampiran A [v4.6 → SDD §4.6.1].
 

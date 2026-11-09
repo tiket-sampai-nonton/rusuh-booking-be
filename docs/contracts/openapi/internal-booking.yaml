@@ -142,6 +142,13 @@ paths:
             application/json:
               schema:
                 "$ref": "#/components/schemas/ErrorEnvelope"
+        '404':
+          description: 'Event tidak ada atau belum dipublikasikan (draf tidak dijual)
+            — errorCode: `NOT_FOUND`'
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ErrorEnvelope"
   "/internal/v1/bookings/{bookingId}/payable":
     get:
       tags:

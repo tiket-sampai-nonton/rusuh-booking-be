@@ -34,6 +34,22 @@ paths:
       responses:
         '204':
           description: Tersimpan terenkripsi; dihapus saat penjualan berakhir
+        '400':
+          description: 'Body bukan JSON yang valid, memuat field tak dikenal, atau
+            isinya tidak lolos validasi (detail per field di `meta`) — errorCode:
+            `VALIDATION_ERROR`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '401':
+          description: 'Token visitor tidak ada atau tidak valid. Catatan: saat ini
+            errorCode di body adalah `VALIDATION_ERROR` (bukan `UNAUTHORIZED` seperti
+            service lain); status 401 yang menentukan'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
   /api/v1/push-subscriptions/{eventId}:
     delete:
       tags:
