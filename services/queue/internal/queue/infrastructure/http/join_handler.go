@@ -74,7 +74,7 @@ func (h *JoinHandler) join(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	if resp.VisitorToken != "" && !in.IsMobile {
 		stdhttp.SetCookie(w, &stdhttp.Cookie{
 			Name: cookieVisitor, Value: resp.VisitorToken, Path: "/",
-			HttpOnly: true, Secure: true, SameSite: stdhttp.SameSiteLaxMode,
+			HttpOnly: true, Secure: true, SameSite: httpx.CookieSameSite(),
 		})
 		resp.VisitorToken = ""
 	}

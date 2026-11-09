@@ -7,7 +7,10 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
 	"regexp"
+	"slices"
+	"strings"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/logger"
 )
@@ -72,15 +75,33 @@ func Recover(logger *slog.Logger) Middleware {
 	}
 }
 
-// CORS adds permissive CORS headers for local development (APP_ENV=local).
-// In production this is handled by CloudFront/ALB — never enable in prod.
+// CORS answers cross-origin browser calls. CORS_ALLOWED_ORIGINS (comma separated, exact match) is an allowlist: a
+// matching Origin is echoed back with credentials enabled (cookie rb_visitor needs it), any other Origin gets no CORS
+// headers. shortcut: empty list keeps the old wildcard (no credentials) so local dev works unconfigured; set the list on
+// every deployed environment, and never put localhost in prod.
 func CORS() Middleware {
+	var allowed []string
+	for _, o := range strings.Split(os.Getenv("CORS_ALLOWED_ORIGINS"), ",") {
+		if o = strings.TrimSpace(o); o != "" {
+			allowed = append(allowed, o)
+		}
+	}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Access-Control-Allow-Origin", "*")
-			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Visitor-Token, X-Visitor-ID, X-Queue-Token, X-Client-Type, Idempotency-Key, X-Request-ID")
-			w.Header().Set("Access-Control-Expose-Headers", "X-Request-ID, Set-Cookie")
+			h := w.Header()
+			switch origin := r.Header.Get("Origin"); {
+			case len(allowed) == 0:
+				h.Set("Access-Control-Allow-Origin", "*")
+			case slices.Contains(allowed, origin):
+				h.Set("Access-Control-Allow-Origin", origin)
+				h.Set("Access-Control-Allow-Credentials", "true")
+				h.Add("Vary", "Origin")
+			default:
+				h.Add("Vary", "Origin")
+			}
+			h.Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+			h.Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Visitor-Token, X-Visitor-ID, X-Queue-Token, X-Client-Type, Idempotency-Key, X-Request-ID")
+			h.Set("Access-Control-Expose-Headers", "X-Request-ID, Set-Cookie")
 			if r.Method == http.MethodOptions {
 				w.WriteHeader(http.StatusNoContent)
 				return
@@ -89,6 +110,17 @@ func CORS() Middleware {
 		})
 	}
 }
+
+// CookieSameSite is the SameSite mode for session cookies: Lax, or None when COOKIE_SAMESITE=none (the FE runs on
+// another site than the API, e.g. localhost or pages.dev). None drops the cookie CSRF barrier, so CORS_ALLOWED_ORIGINS
+// must be set when it is used.
+func CookieSameSite() http.SameSite {
+	if strings.EqualFold(os.Getenv("COOKIE_SAMESITE"), "none") {
+		return http.SameSiteNoneMode
+	}
+	return http.SameSiteLaxMode
+}
+
 func newID() string {
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {

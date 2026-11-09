@@ -94,3 +94,45 @@ func TestRequestID_RejectsUnsafeIncomingValue(t *testing.T) {
 		}
 	}
 }
+
+func corsReq(t *testing.T, origin string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, "/x", nil)
+	if origin != "" {
+		req.Header.Set("Origin", origin)
+	}
+	rec := httptest.NewRecorder()
+	CORS()(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})).ServeHTTP(rec, req)
+	return rec
+}
+
+func TestCORS_Allowlist(t *testing.T) {
+	t.Setenv("CORS_ALLOWED_ORIGINS", "http://localhost:3000, https://rusuh-booking.pages.dev")
+
+	ok := corsReq(t, "http://localhost:3000")
+	if ok.Header().Get("Access-Control-Allow-Origin") != "http://localhost:3000" || ok.Header().Get("Access-Control-Allow-Credentials") != "true" {
+		t.Fatalf("allowed origin must be echoed with credentials: %v", ok.Header())
+	}
+	bad := corsReq(t, "https://evil.pages.dev")
+	if bad.Header().Get("Access-Control-Allow-Origin") != "" || bad.Header().Get("Access-Control-Allow-Credentials") != "" {
+		t.Fatalf("unlisted origin must get no CORS grant: %v", bad.Header())
+	}
+}
+
+func TestCORS_EmptyListKeepsWildcardWithoutCredentials(t *testing.T) {
+	t.Setenv("CORS_ALLOWED_ORIGINS", "")
+	rec := corsReq(t, "http://localhost:3000")
+	if rec.Header().Get("Access-Control-Allow-Origin") != "*" || rec.Header().Get("Access-Control-Allow-Credentials") != "" {
+		t.Fatalf("unexpected headers: %v", rec.Header())
+	}
+}
+
+func TestCookieSameSite(t *testing.T) {
+	if CookieSameSite() != http.SameSiteLaxMode {
+		t.Fatal("default must be Lax")
+	}
+	t.Setenv("COOKIE_SAMESITE", "None")
+	if CookieSameSite() != http.SameSiteNoneMode {
+		t.Fatal("COOKIE_SAMESITE=none must give None")
+	}
+}

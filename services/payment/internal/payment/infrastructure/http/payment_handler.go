@@ -102,7 +102,7 @@ func (h *PaymentHandler) exchangePageToken(w stdhttp.ResponseWriter, r *stdhttp.
 	}
 	stdhttp.SetCookie(w, &stdhttp.Cookie{
 		Name: CookiePay, Value: s.Cookie, Path: "/", Expires: s.ExpiresAt,
-		HttpOnly: true, Secure: true, SameSite: stdhttp.SameSiteLaxMode,
+		HttpOnly: true, Secure: true, SameSite: httpx.CookieSameSite(),
 	})
 	noStore(w)
 	w.WriteHeader(stdhttp.StatusNoContent)
