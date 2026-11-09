@@ -379,6 +379,10 @@ Invarian yang teramati terjaga: tidak ada oversell (kontensi VIP, `held+sold ≤
 pembeli, pembayaran idempoten (webhook ganda), timer pembayaran server-authoritative, stok ditahan saat Payment tidak
 terjangkau.
 
+Rerun 2026-11-09 pada cabang perbaikan (build worktree, `run_all.sh`): admin 35/0, edge hold 30/0, edge payment 29/1 (T8),
+edge queue 36/3 (T3, T4; termasuk 5 cek baru sold-out → `SOLD_OUT`), guest 45/1 (T7), misc 20/0, slow 9/0, ratelimit 3/0,
+user 31/0, dependency 5/0 (dijalankan ulang terpisah: di `run_all` ia berbagi jendela join per IP yang baru dihabiskan ratelimit).
+
 ## Temuan (perilaku tidak sesuai kontrak)
 
 Semua direproduksi dengan curl dan dicek ke kode. T1, T2, T5, T6 diperbaiki 2026-11-09 (`docs/evidence/2026-11-09-queue-booking-flow-fixes.md`); T3, T4, T7, T8 belum.
