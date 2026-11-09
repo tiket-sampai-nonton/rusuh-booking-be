@@ -193,6 +193,8 @@ type fakeUoW struct {
 	heldSpec         outbound.HoldSpec
 	replaceVer       int
 	replaceErr       error
+	replaceSpec      outbound.ReplaceSpec
+	replaceCalls     int
 	settled          bool
 	settleErr        error
 	settleSpec       outbound.SettleSpec
@@ -212,7 +214,9 @@ func (f *fakeUoW) Hold(_ context.Context, spec outbound.HoldSpec) (outbound.Hold
 	f.heldSpec = spec
 	return f.holdRes, f.holdErr
 }
-func (f *fakeUoW) ReplaceItems(context.Context, outbound.ReplaceSpec) (int, error) {
+func (f *fakeUoW) ReplaceItems(_ context.Context, spec outbound.ReplaceSpec) (int, error) {
+	f.replaceSpec = spec
+	f.replaceCalls++
 	return f.replaceVer, f.replaceErr
 }
 func (f *fakeUoW) Settle(_ context.Context, spec outbound.SettleSpec) (bool, error) {

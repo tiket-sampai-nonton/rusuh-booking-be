@@ -218,6 +218,9 @@ func (uc *Hold) validate(req dto.HoldRequest) (validated, error) {
 	holders := make([]outbound.HoldLine, 0, len(req.Items))
 	canon := make([]map[string]string, 0, len(req.Items))
 	for _, it := range req.Items {
+		if it.Attendee.KeepFromItemID != "" {
+			return validated{}, inbound.Validation("keepFromItemId", "keepFromItemId hanya berlaku saat mengubah pesanan")
+		}
 		name := it.Attendee.FullName
 		if len(name) < 2 || len(name) > 100 {
 			return validated{}, inbound.Validation("fullName", "fullName harus 2..100 karakter")

@@ -4,7 +4,6 @@ import (
 	"context"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/clock"
-	pkgnik "github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/nik"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/domain/dto"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/domain/entity"
@@ -69,7 +68,7 @@ func (uc *Edit) ReplaceItems(ctx context.Context, cmd inbound.EditCommand) (dto.
 	if err != nil {
 		return dto.Booking{}, err
 	}
-	lines, amount, err := uc.buildLines(cmd.Request, detail)
+	lines, amount, err := uc.buildLines(cmd.Request, detail, booking.Items)
 	if err != nil {
 		return dto.Booking{}, err
 	}
@@ -96,10 +95,11 @@ func (uc *Edit) ReplaceItems(ctx context.Context, cmd inbound.EditCommand) (dto.
 	return mapper.ToBooking(updated, admission.EditsRemaining()-1, uc.clock.Now()), nil
 }
 
-func (uc *Edit) buildLines(req dto.ReplaceItemsRequest, detail entity.EventDetail) ([]outbound.HoldLine, int64, error) {
+func (uc *Edit) buildLines(req dto.ReplaceItemsRequest, detail entity.EventDetail, items []entity.BookingItem) ([]outbound.HoldLine, int64, error) {
 	if len(req.Items) > detail.Event.MaxTicketsPerOrder {
 		return nil, 0, inbound.ErrQuantityExceeds
 	}
+	live := liveItems(items)
 	prices := make(map[string]int64, len(detail.Categories))
 	for _, c := range detail.Categories {
 		prices[c.Category.ID] = c.Category.PriceMinor
@@ -114,17 +114,11 @@ func (uc *Edit) buildLines(req dto.ReplaceItemsRequest, detail entity.EventDetai
 			return nil, 0, inbound.ErrCategoryUnavailable
 		}
 		seenCat[it.CategoryID] = true
-		if len(it.Attendee.FullName) < 2 || len(it.Attendee.FullName) > 100 {
-			return nil, 0, inbound.Validation("fullName", "fullName harus 2..100 karakter")
-		}
-		if err := pkgnik.Validate(it.Attendee.NIK, uc.clock.Now()); err != nil {
-			return nil, 0, inbound.ErrNIKInvalid
-		}
-		nik, err := vo.ParseNIK(it.Attendee.NIK, uc.nik)
+		h, err := uc.resolveHolder(it.Attendee, live)
 		if err != nil {
-			return nil, 0, inbound.ErrNIKInvalid
+			return nil, 0, err
 		}
-		key := string(nik.Hash())
+		key := string(h.hash)
 		if seenNIK[key] {
 			return nil, 0, inbound.ErrNikDuplicate
 		}
@@ -132,10 +126,10 @@ func (uc *Edit) buildLines(req dto.ReplaceItemsRequest, detail entity.EventDetai
 		lines = append(lines, outbound.HoldLine{
 			CategoryID:        it.CategoryID,
 			UnitPriceMinor:    price,
-			AttendeeNIKHash:   nik.Hash(),
-			AttendeeNIKEnc:    nik.Enc(),
-			AttendeeNIKMasked: nik.Masked(),
-			AttendeeName:      it.Attendee.FullName,
+			AttendeeNIKHash:   h.hash,
+			AttendeeNIKEnc:    h.enc,
+			AttendeeNIKMasked: h.masked,
+			AttendeeName:      h.name,
 		})
 		amount += price
 	}
