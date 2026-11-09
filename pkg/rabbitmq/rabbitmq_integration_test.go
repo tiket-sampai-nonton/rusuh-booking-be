@@ -45,6 +45,17 @@ func cleanupQueues(t *testing.T, c *Connection, queue string) {
 	})
 }
 
+// declareTopology declares the subscription's queues and bindings synchronously (idempotent, same as Consume does),
+// so a publish right after cannot race the consumer goroutine's declaration and be dropped as unroutable.
+func declareTopology(t *testing.T, c *Connection, sub Subscription) {
+	t.Helper()
+	ch, err := c.conn.Channel()
+	require.NoError(t, err)
+	defer func() { _ = ch.Close() }()
+	require.NoError(t, ch.ExchangeDeclare(c.cfg.Exchange, c.cfg.ExchangeType, true, false, false, false, nil))
+	require.NoError(t, DeclareTopology(ch, c.cfg, sub))
+}
+
 func publish(t *testing.T, c *Connection, key string) Envelope {
 	t.Helper()
 	pub, err := c.NewPublisher()
@@ -73,7 +84,7 @@ func TestConsume_TransientFailureIsRetriedThenAcked(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go func() { _ = c.Consume(ctx, sub, slog.New(slog.NewTextHandler(io.Discard, nil))) }()
-	time.Sleep(300 * time.Millisecond) // topologi terpasang sebelum publish
+	declareTopology(t, c, sub) // topologi terpasang sebelum publish (bukan sleep: publish sebelum bind = pesan hilang)
 
 	env := publish(t, c, queue+".v1")
 	select {
@@ -96,7 +107,7 @@ func TestConsume_PermanentFailureGoesToDLQ(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go func() { _ = c.Consume(ctx, sub, slog.New(slog.NewTextHandler(io.Discard, nil))) }()
-	time.Sleep(300 * time.Millisecond)
+	declareTopology(t, c, sub)
 
 	env := publish(t, c, queue+".v1")
 	ch, err := c.conn.Channel()
