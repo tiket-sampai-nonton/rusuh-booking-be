@@ -14,7 +14,7 @@ type JoinInput struct {
 	Body      dto.JoinRequest
 	Bearer    string // User Service access token; "" for guest
 	VisitorID string // existing visitor id (cookie/header); "" to mint a new one
-	IsMobile  bool   // true → return visitorToken in body, false → handler sets cookie
+	IsMobile  bool   // transport hint (X-Client-Type: mobile); the body-vs-cookie decision is made in the HTTP handler
 	ClientIP  string
 	// IdempotencyKey is the optional Idempotency-Key header (16..64 chars); a replay returns the same entry.
 	IdempotencyKey string

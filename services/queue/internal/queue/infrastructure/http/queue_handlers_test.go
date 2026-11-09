@@ -75,7 +75,7 @@ func TestJoinHandler_MobileReturnsTokenInBody(t *testing.T) {
 	mux.ServeHTTP(rec, req)
 
 	assert.Equal(t, http.StatusCreated, rec.Code)
-	assert.Empty(t, rec.Header().Get("Set-Cookie"))
+	assert.Contains(t, rec.Header().Get("Set-Cookie"), "rb_visitor=vt", "the cookie is always set (QVT-01)")
 	assert.Contains(t, rec.Body.String(), `"visitorToken":"vt"`)
 }
 
