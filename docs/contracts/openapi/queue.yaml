@@ -67,13 +67,9 @@ paths:
         required: false
         schema:
           type: string
-        description: Visitor token (app). Web memakai cookie HttpOnly `rb_visitor`.
-      - name: X-Device-Id
-        in: header
-        required: false
-        schema:
-          type: string
-        description: Id acak per instalasi/profil browser. Hanya HMAC-nya yang masuk ke token; bukan kontrol bot.
+        description: Visitor token (app). Web memakai cookie HttpOnly `rb_visitor`. Cookie yang tidak kosong dipakai lebih dulu; bila cookie tidak valid, header ini diabaikan.
+      - $ref: '#/components/parameters/XDeviceId'
+      - $ref: '#/components/parameters/XClientType'
       requestBody:
         required: false
         content:
@@ -178,6 +174,7 @@ paths:
         schema:
           type: string
           format: uuid
+      - $ref: '#/components/parameters/XDeviceId'
       responses:
         '200':
           description: OK
@@ -200,7 +197,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
         '404':
-          description: 'Visitor tidak pernah punya entri untuk event ini — errorCode: `NOT_FOUND`. Entri yang sudah berakhir dijawab 200 dengan state ENDED dan reason.'
+          description: 'Visitor belum pernah bergabung ke event ini (tidak ada catatan generasi token untuk event ini) atau tidak pernah punya entri — errorCode: `NOT_FOUND`. Entri yang sudah berakhir dijawab 200 dengan state ENDED dan reason.'
           content:
             application/json:
               schema:
@@ -232,12 +229,7 @@ paths:
         schema:
           type: string
           format: uuid
-      - name: X-Device-Id
-        in: header
-        required: false
-        schema:
-          type: string
-        description: Wajib bila token diterbitkan dengan X-Device-Id
+      - $ref: '#/components/parameters/XDeviceId'
       responses:
         '200':
           description: OK
@@ -294,6 +286,7 @@ paths:
           type: string
           format: uuid
         description: Event dari entri antrean; entri dicari per event.
+      - $ref: '#/components/parameters/XDeviceId'
       responses:
         '200':
           description: OK
@@ -310,13 +303,13 @@ paths:
                 - meta
                 - data
         '401':
-          description: 'Token visitor dirotasi (generasi lama) — errorCode: `VISITOR_TOKEN_INVALID`'
+          description: 'Token visitor tidak ada, tidak valid, kedaluwarsa, dirotasi (generasi lama), atau perangkat tidak cocok; dijawab sebelum entri dicari sehingga sama untuk entri milik sendiri, milik orang lain, atau tidak ada — errorCode: `VISITOR_TOKEN_INVALID`'
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
         '404':
-          description: 'Entry tidak ditemukan, bukan milik visitor ini, atau sudah selesai (LEFT/ENDED/COMPLETED) — errorCode: `NOT_FOUND`'
+          description: 'Token valid tetapi entri tidak ditemukan, bukan milik visitor ini, atau sudah selesai (LEFT/ENDED/COMPLETED), atau visitor belum pernah bergabung ke event ini; respons identik untuk entri orang lain dan entri yang tidak ada — errorCode: `NOT_FOUND`'
           content:
             application/json:
               schema:
@@ -362,17 +355,18 @@ paths:
           type: string
           format: uuid
         description: Event dari entri antrean; entri dicari per event.
+      - $ref: '#/components/parameters/XDeviceId'
       responses:
         '204':
           description: Keluar; slot tidak dipakai lagi
         '401':
-          description: 'Token visitor dirotasi (generasi lama) — errorCode: `VISITOR_TOKEN_INVALID`'
+          description: 'Token visitor tidak ada, tidak valid, kedaluwarsa, dirotasi (generasi lama), atau perangkat tidak cocok; dijawab sebelum entri dicari sehingga sama untuk entri milik sendiri, milik orang lain, atau tidak ada — errorCode: `VISITOR_TOKEN_INVALID`'
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
         '404':
-          description: 'Tidak ada entry — errorCode: `NOT_FOUND`'
+          description: 'Token valid tetapi entri tidak ada atau bukan milik visitor ini (respons identik), atau visitor belum pernah bergabung ke event ini — errorCode: `NOT_FOUND`'
           content:
             application/json:
               schema:
@@ -523,6 +517,27 @@ components:
       schema:
         type: string
         format: uuid
+    XDeviceId:
+      name: X-Device-Id
+      in: header
+      required: false
+      schema:
+        type: string
+      description: |
+        Id acak per instalasi/profil browser. Hanya HMAC-nya yang masuk ke token (tidak pernah disimpan, dicatat, atau
+        dikembalikan); bukan kontrol bot. Opsional, tetapi token yang terbit bersama header ini hanya berlaku dengan
+        header yang sama: tanpa header atau dengan nilai lain -> `401 VISITOR_TOKEN_INVALID` (join: dianggap visitor baru).
+        Browser yang mengirimnya perlu `X-Device-Id` pada `Access-Control-Allow-Headers` (CORS lokal sudah memuatnya).
+    XClientType:
+      name: X-Client-Type
+      in: header
+      required: false
+      schema:
+        type: string
+        enum: [mobile]
+      description: |
+        Aplikasi native mengirim `mobile` pada join agar visitor token juga dikembalikan di body. Web tidak mengirimnya.
+        Pemegang cookie `rb_visitor` yang valid tidak pernah menerima token di body, walau header ini dikirim.
   schemas:
     Meta:
       type: object
@@ -744,7 +759,9 @@ components:
         visitorToken:
           type: string
           description: |
-            Hanya untuk mobile (web: cookie HttpOnly). Selalu untuk generasi token TERKINI; rotasi (re-attach akun,
+            Hanya untuk aplikasi native yang mengirim `X-Client-Type: mobile` DAN tidak membawa cookie `rb_visitor`
+            yang valid; selain itu field ini kosong/tidak ada dan token hanya dikirim sebagai cookie HttpOnly
+            (cookie selalu di-set bila token terbit). Selalu untuk generasi token TERKINI; rotasi (re-attach akun,
             join ulang setelah entri berakhir) mencabut token lama (heartbeat/me lama -> 401 VISITOR_TOKEN_INVALID).
             Bila request membawa X-Device-Id, token terikat ke HMAC-nya.
         statusUrl:
