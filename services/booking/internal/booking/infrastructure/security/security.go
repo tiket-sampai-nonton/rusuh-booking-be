@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/crypto"
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/httpx"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/revocation"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/token"
 
@@ -146,6 +147,9 @@ func (v *BearerVerifier) VerifyAccess(tok string) (string, error) {
 	}
 	if claims.Scope != v.scope {
 		return "", errors.New("security: scope token tidak sesuai")
+	}
+	if v.scope == ScopeService && !httpx.ServiceTokenLifetimeOK(claims) {
+		return "", token.ErrClaims
 	}
 	if err := revocation.Check(v.deny, claims); err != nil {
 		return "", err

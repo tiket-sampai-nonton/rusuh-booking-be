@@ -61,10 +61,10 @@ func TestSubscribe_Unauthorized(t *testing.T) {
 func TestUnsubscribe_204(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	uc := mock_inbound.NewMockISubscriptionUsecase(ctrl)
-	uc.EXPECT().Unsubscribe(gomock.Any(), "v1", "e1").Return(nil)
+	uc.EXPECT().Unsubscribe(gomock.Any(), "v1", "0b9a3f0e-6b1c-4c1e-9d55-2f1d7a8e4c10").Return(nil)
 
 	srv := newServer(t, uc, fakeAuth{visitorID: "v1", ok: true})
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/push-subscriptions/e1", nil)
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/push-subscriptions/0b9a3f0e-6b1c-4c1e-9d55-2f1d7a8e4c10", nil)
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, req)
 
@@ -76,7 +76,7 @@ func TestUnsubscribe_Unauthorized(t *testing.T) {
 	uc := mock_inbound.NewMockISubscriptionUsecase(ctrl)
 
 	srv := newServer(t, uc, fakeAuth{ok: false})
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/push-subscriptions/e1", nil)
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/push-subscriptions/0b9a3f0e-6b1c-4c1e-9d55-2f1d7a8e4c10", nil)
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, req)
 

@@ -82,6 +82,12 @@ func VisitorAuth(v TokenVerifier, now func() time.Time) Middleware {
 	}
 }
 
+// ServiceTokenLifetimeOK reports whether a service token lives at most ServiceTokenMaxTTL. It is the single
+// lifetime rule for service tokens, shared by ServiceAuth and every other verifier of service-scope tokens.
+func ServiceTokenLifetimeOK(c token.Claims) bool {
+	return c.ExpiresAt-c.IssuedAt <= int64(ServiceTokenMaxTTL/time.Second)
+}
+
 // ServiceAuth guards /internal/v1/*. The Authorization bearer must verify against one of the verifiers
 // (one per allowed calling service: its issuer and public key, audience = this service) and must live
 // at most ServiceTokenMaxTTL, so a leaked token expires quickly. It fails closed: with no verifiers
@@ -101,7 +107,7 @@ func ServiceAuth(now func() time.Time, verifiers ...TokenVerifier) Middleware {
 					lastErr = err
 					continue
 				}
-				if claims.ExpiresAt-claims.IssuedAt > int64(ServiceTokenMaxTTL/time.Second) {
+				if !ServiceTokenLifetimeOK(claims) {
 					lastErr = token.ErrClaims
 					continue
 				}

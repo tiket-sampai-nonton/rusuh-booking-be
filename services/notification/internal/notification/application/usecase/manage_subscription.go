@@ -43,5 +43,8 @@ func (u *ManageSubscription) Subscribe(ctx context.Context, visitorID string, re
 
 // Unsubscribe removes the visitor's subscription for eventID (idempotent no-op when absent).
 func (u *ManageSubscription) Unsubscribe(ctx context.Context, visitorID, eventID string) error {
+	if details := dto.ValidateEventID(eventID); details != nil {
+		return inbound.ValidationError(details)
+	}
 	return u.subs.Delete(ctx, visitorID, eventID)
 }
