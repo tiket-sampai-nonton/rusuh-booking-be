@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
-	"net/http"
 	"testing"
 	"time"
 
@@ -73,7 +72,7 @@ func TestSimulate_RejectsBeforeAnyLookup(t *testing.T) {
 			_, err := e.uc.Simulate(ctx(), payer, attemptID, sc)
 			var ae *apperror.Error
 			require.ErrorAs(t, err, &ae)
-			assert.Equal(t, http.StatusBadRequest, ae.HTTPStatus)
+			assert.Equal(t, 400, ae.HTTPStatus)
 			assert.Empty(t, e.hook.got)
 		})
 	}

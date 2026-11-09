@@ -3,7 +3,6 @@ package usecase_test
 import (
 	"context"
 	"errors"
-	"net/http"
 	"testing"
 	"time"
 
@@ -180,7 +179,7 @@ func TestHold_RejectsKeepFromItemID(t *testing.T) {
 
 func isValidation(err error) bool {
 	var ae *apperror.Error
-	return errors.As(err, &ae) && ae.Code == inbound.CodeValidation && ae.HTTPStatus == http.StatusBadRequest
+	return errors.As(err, &ae) && ae.Code == inbound.CodeValidation && ae.HTTPStatus == 400
 }
 
 func isDup(err error) bool { return errors.Is(err, inbound.ErrNikDuplicate) }
