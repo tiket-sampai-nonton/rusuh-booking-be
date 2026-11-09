@@ -3,7 +3,9 @@ name: ci
 # Pipeline bertahap (satu file, matrix per modul/service):
 #   code-quality -> verify-code-quality -> case-coverage -> code-rank -> build -> package
 #   -> scan-package -> publish (multi-arch amd64+arm64) -> deployment-dev (SSH ke VPS) -> deployment-prod
-# Deployment hanya jalan manual (Actions > ci > Run workflow > deploy_env).
+# Deployment dev dan prod selalu menunggu persetujuan reviewer (environment dev/prod > Required reviewers). Push ke main
+# menjalankan pipeline dan menyiapkan deployment-dev di run yang sama: klik "Review deployments" untuk deploy, atau Reject bila
+# tidak ingin deploy. Run workflow (deploy_env) dan label PR `deploy-dev` juga lewat persetujuan yang sama. Prod hanya dari Run workflow.
 # Cara mengatur nilai yang ditandai GANTI: lihat README bagian "CI/CD".
 
 on:
@@ -22,8 +24,10 @@ on:
 permissions:
   contents: read
 
+# Run yang menunggu persetujuan masih "in progress", jadi push/dispatch memakai grup per run agar tidak menahan pipeline berikutnya.
+# Hanya PR yang berbagi grup per ref (push baru membatalkan run PR lama). Deploy dev diserialkan oleh grup job deploy-dev.
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
@@ -405,11 +409,12 @@ jobs:
           digest="$(docker buildx imagetools inspect "$repo:${{ github.sha }}" --format '{{.Manifest.Digest}}')"
           echo "- publish (amd64+arm64): $repo@$digest" >> "$GITHUB_STEP_SUMMARY"
 
-  # ------------------------------------------------------------------ stage: deployment-dev (manual)
+  # ------------------------------------------------------------------ stage: deployment-dev (menunggu persetujuan)
   deployment-dev:
     needs: [changes, publish]
-    # Run workflow dengan deploy_env=dev atau prod (prod ikut men-deploy dev), atau PR member berlabel `deploy-dev` (syarat sama dengan publish). Prod tidak pernah dari PR.
-    if: (github.event_name == 'workflow_dispatch' && (inputs.deploy_env == 'dev' || inputs.deploy_env == 'prod')) || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login != 'dependabot[bot]' && contains(github.event.pull_request.labels.*.name, 'deploy-dev'))
+    # Push ke main, Run workflow dengan deploy_env=dev atau prod (prod ikut men-deploy dev), atau PR member berlabel `deploy-dev` (syarat sama dengan publish).
+    # Semuanya menunggu persetujuan reviewer environment dev. Prod tidak pernah dari PR.
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && (inputs.deploy_env == 'dev' || inputs.deploy_env == 'prod')) || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login != 'dependabot[bot]' && contains(github.event.pull_request.labels.*.name, 'deploy-dev'))
     runs-on: ubuntu-latest
     concurrency:
       group: deploy-dev

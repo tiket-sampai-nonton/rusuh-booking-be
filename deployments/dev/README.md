@@ -26,7 +26,7 @@ Rincian perintah demi perintah ada di `PANDUAN-INFRA-DEV-VPS-DAN-AWS.md` bagian 
 3. Di server sebagai `deploy`: `gen-secrets.sh` (isi `DEV_DOMAIN`, `ACME_EMAIL`, `ADMIN_EMAILS`, `MIDTRANS_SERVER_KEY`, `RESEND_API_KEY`; dua kunci terakhir lewat `read -s`).
 4. Di server sebagai `root`: `bash /opt/rusuh/repo/deployments/dev/install-timers.sh`.
 5. Di server sebagai `deploy`: `bash /opt/rusuh/repo/deployments/dev/preflight.sh` sampai `SIAP DEPLOY`.
-6. GitHub Actions: Run workflow `ci`, `deploy_env=dev` (boleh dari cabang fitur). Job `login GHCR` memakai token run, jadi tidak perlu PAT.
+6. GitHub Actions: buka run `ci` (push ke `main`, atau Run workflow `deploy_env=dev` dari cabang mana pun), lalu klik Review deployments > Approve pada `deployment-dev`; Reject bila tidak ingin deploy. Job `login GHCR` memakai token run, jadi tidak perlu PAT.
 7. Operasi harian di server: `./compose.sh ps | logs | restart | up -d --force-recreate <service>`.
 
 ## Batasan di dev (VPS dengan gateway bersama)

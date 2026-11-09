@@ -99,7 +99,7 @@ Satu pipeline `.github/workflows/ci.yml` dengan stage berurutan (matrix per modu
 | `package` | docker build per service dan per arsitektur, native tanpa emulasi: **linux/amd64** (runner `ubuntu-latest`, VPS dev) dan **linux/arm64** (runner ARM GitHub; ganti lewat variable `ARM_RUNNER`; AWS Graviton) |
 | `scan-package` | Trivy scan image + **SBOM CycloneDX** (artifact `sbom-<service>`), lalu `scan-package-verify` (gagal bila severity `IMAGE_FAIL_SEVERITY`, default CRITICAL) |
 | `publish` | push image per arsitektur ke GHCR lalu gabung jadi manifest multi-arch (`<sha>` dan `main`), hanya dari `main`; digest dicatat di ringkasan run |
-| `deployment-dev` | **manual** (Run workflow, `deploy_env=dev`): SSH ke VPS dev, kirim `deployments/dev`, lalu `deploy.sh` (pull image, migrasi, `up -d`, smoke test). Dilewati dengan peringatan bila environment `dev` belum lengkap. Lihat `deployments/dev/README.md` |
+| `deployment-dev` | **menunggu persetujuan reviewer** (environment `dev`). Muncul di run push ke `main`, Run workflow `deploy_env=dev`/`prod`, dan PR berlabel `deploy-dev`; klik Review deployments > Approve, atau Reject bila tidak ingin deploy (approve hanya run terbaru). SSH ke VPS dev, kirim `deployments/dev`, lalu `deploy.sh` (pull image, migrasi, `up -d`, smoke test). Dilewati dengan peringatan bila environment `dev` belum lengkap. Lihat `deployments/dev/README.md` |
 | `deployment-prod` | **manual**; masih placeholder (menunggu Terraform/AWS) |
 
 `ci-ok` adalah satu-satunya check yang perlu diwajibkan di ruleset `main`; ia lulus bila semua stage lulus atau dilewati.
@@ -117,7 +117,7 @@ Coverage dihitung atas kode logika. `cmd/`, `internal/delivery/`, `internal/conf
 | `DEV_HOST`, `DEV_USER` | variables environment `dev` | `deployment-dev` |
 | `DEV_SSH_KEY`, `DEV_SSH_KNOWN_HOSTS` | secrets environment `dev` | `deployment-dev` |
 | `AWS_REGION`, `AWS_ROLE_ARN_PROD` | repo variables (OIDC) | `deployment-prod` |
-| Environment `dev` dan `prod` (prod: Required reviewers) | Settings > Environments | `deployment-*` |
+| Environment `dev` dan `prod` (keduanya Required reviewers) | Settings > Environments | `deployment-*` |
 | Perintah migrasi dan deploy | langkah bertanda `GANTI` di `ci.yml` | `deployment-*` |
 
 `deployment-dev` melakukan deploy nyata ke VPS begitu environment `dev` terisi. `deployment-prod` belum melakukan deploy nyata: langkahnya hanya mencetak peringatan `PLACEHOLDER` sampai Terraform dan role AWS siap.
