@@ -44,12 +44,14 @@ Antrean anonim untuk semua pembeli (ADR-030). NIK dan email diisi di Booking saa
 | NIK dan email di hold | diisi manual | boleh diprefill di klien; server tetap validasi |
 
 Identitas visitor:
-- Web: cookie HttpOnly `rb_visitor` (diset oleh join).
-- App: header `X-Visitor-Token`. Token hanya dikirim di body join bila request membawa **`X-Client-Type: mobile`**;
-  tanpa header itu token hanya dikirim sebagai cookie.
+- Web: cookie HttpOnly `rb_visitor` (selalu diset oleh join bila token terbit). Body tidak pernah berisi token untuk
+  pemegang cookie valid, walau header `X-Client-Type: mobile` dikirim (diperbaiki 2026-11-09).
+- App: header `X-Visitor-Token`. Token dikirim di body join hanya bila request membawa **`X-Client-Type: mobile`** DAN
+  tidak membawa cookie `rb_visitor` valid; app native wajib mengirim header itu pada join.
 - `X-Device-Id` (opsional, id acak per instalasi): bila dikirim saat join, token terikat ke perangkat itu dan **wajib**
-  dikirim lagi di setiap panggilan visitor (me, heartbeat, claim, leave). Visitor token sebagai
-  `Authorization: Bearer` tidak diterima (401).
+  dikirim lagi di setiap panggilan visitor (join, me, heartbeat, claim, leave); CORS lokal mengizinkannya. Visitor token
+  sebagai `Authorization: Bearer` tidak diterima (401). Klien menangani 401 menurut `errorCode`:
+  `VISITOR_TOKEN_INVALID` = join ulang (bukan refresh access token).
 
 ---
 
@@ -287,8 +289,9 @@ Uji: ✅ semua 9 proses.
 | Jendela penjualan belum diketahui dan Booking tidak terjangkau | 503 `DEPENDENCY_UNAVAILABLE` | ➖ (unit test) |
 | Batas lunak per IP terlampaui | 429 `RATE_LIMITED` + `Retry-After` | ✅ |
 | Visitor token salah, kedaluwarsa, atau perangkat tidak cocok (me, heartbeat) | 401 `VISITOR_TOKEN_INVALID` | ✅ |
-| Sama, pada claim dan leave | 401 `VISITOR_TOKEN_INVALID` | ❌ T3 (404 `NOT_FOUND`) |
-| Visitor tidak pernah punya entri untuk event itu | 404 `NOT_FOUND` | ❌ T4 (401) |
+| Sama, pada claim dan leave (sebelum entri dicari; sama untuk entri sendiri, orang lain, atau tidak ada) | 401 `VISITOR_TOKEN_INVALID` | ✅ T3 (diperbaiki 2026-11-09) |
+| Visitor belum pernah bergabung ke event itu (me, claim, leave) | 404 `NOT_FOUND` | ✅ T4 (diperbaiki 2026-11-09) |
+| Token valid, entri milik orang lain vs tidak ada (claim, leave) | 404 `NOT_FOUND`, respons identik | ✅ |
 | Claim saat masih WAITING | 409 `NOT_ADMITTED` | ✅ |
 | Claim setelah jendela klaim (180 dtk) lewat | 410 `TURN_MISSED` | ✅ |
 | Admission token salah, dipakai ulang, atau dipakai visitor lain | 403 `ADMISSION_TOKEN_INVALID` | ✅ |
@@ -383,16 +386,24 @@ Rerun 2026-11-09 pada cabang perbaikan (build worktree, `run_all.sh`): admin 35/
 edge queue 36/3 (T3, T4; termasuk 5 cek baru sold-out → `SOLD_OUT`), guest 45/1 (T7), misc 20/0, slow 9/0, ratelimit 3/0,
 user 31/0, dependency 5/0 (dijalankan ulang terpisah: di `run_all` ia berbagi jendela join per IP yang baru dihabiskan ratelimit).
 
+Rerun 2026-11-09 pada cabang `fix/queue-visitor-token` (hanya Queue api dari worktree; sisanya biner lama): edge queue
+58 lulus / 4 gagal. T3 dan T4 kini lulus. Cek baru: web join tanpa token di body + cookie HttpOnly, mobile palsu + cookie
+tetap tanpa token di body, native mendapat token di body, claim entri orang lain vs tidak ada identik 404, claim token
+sampah 401, dan preflight `X-Device-Id` 204 di Queue. 4 kegagalan = preflight di Booking/Payment/Notification/User
+yang masih biner lama (belum dibangun ulang); instans worktree keempat service itu dijalankan terpisah di port
+sementara dan menjawab 204 dengan `X-Device-Id` pada `Access-Control-Allow-Headers`. Stack milik pemilik dipulihkan
+(Queue api biner semula).
+
 ## Temuan (perilaku tidak sesuai kontrak)
 
-Semua direproduksi dengan curl dan dicek ke kode. T1, T2, T5, T6 diperbaiki 2026-11-09 (`docs/evidence/2026-11-09-queue-booking-flow-fixes.md`); T3, T4, T7, T8 belum.
+Semua direproduksi dengan curl dan dicek ke kode. T1, T2, T5, T6 diperbaiki 2026-11-09 (`docs/evidence/2026-11-09-queue-booking-flow-fixes.md`); T3, T4 diperbaiki 2026-11-09 (`docs/evidence/2026-11-09-queue-visitor-token.md`); T7, T8 belum.
 
 | # | Temuan | Bukti | Dampak |
 |---|---|---|---|
 | T1 | Join diterima sebelum `salesStartsAt` | 201 pada event `NOT_STARTED`; `ErrNotOnSale` tidak pernah dikembalikan | Melanggar SRS-F-04-01 **Diperbaiki 2026-11-09.** |
 | T2 | Join diterima setelah tiket habis | 201 `WAITING` (tetap WAITING), padahal sale hash Queue `soldOut=1`; `join.lua` tidak memeriksa sale | Pembeli menunggu event yang sudah habis **Diperbaiki 2026-11-09**; lanjutan: saat Queue memproses `booking.sold_out`, semua entri WAITING/STALE event itu diakhiri aktif dengan status `SOLD_OUT` (`me`: state `ENDED`, status `SOLD_OUT`, reason `SOLD_OUT`; dokumen status `soldOut=true`), ADMITTED/CLAIMED tidak disentuh, batch 500 dan idempoten. |
-| T3 | Claim dan leave menjawab 404 untuk token salah/perangkat lain | me/heartbeat 401, claim/leave 404 | Klien tidak bisa membedakan "join ulang" dari "entri hilang" |
-| T4 | `me` untuk event yang tidak pernah di-join menjawab 401, kontrak 404 | `checkTokenGen` per event | Kode error berbeda dari kontrak |
+| T3 | Claim dan leave menjawab 404 untuk token salah/perangkat lain | me/heartbeat 401, claim/leave 404 | Klien tidak bisa membedakan "join ulang" dari "entri hilang" **Diperbaiki 2026-11-09.** |
+| T4 | `me` untuk event yang tidak pernah di-join menjawab 401, kontrak 404 | `checkTokenGen` per event | Kode error berbeda dari kontrak **Diperbaiki 2026-11-09.** |
 | T5 | Slot antrean bocor setelah sesi booking dibatalkan | `booking-sessions/{id}/cancel` melepas unit tetapi tidak menerbitkan `booking.journey.ended`; entri tetap `CLAIMED`, pembeli berikutnya tetap WAITING > 390 dtk; `DELETE` entri CLAIMED menjawab 204 tetapi diabaikan (`leave.lua`, QSH-OQ-3) | Kapasitas antrean berkurang permanen per pembatalan **Diperbaiki 2026-11-09.** |
 | T6 | TTL Booking (`selection_ttl_seconds`) tidak diterapkan | Saat sesi aktif, `expires_at` tetap = reservasi + jendela klaim (180 dtk); hold setelah TTL 90 dtk tetap 201 | Lama sesi = jendela klaim, bukan TTL Booking 5 menit **Diperbaiki 2026-11-09.** |
 | T7 | `keepFromItemId` pada `PUT /bookings/{id}/items` tidak didukung | 400 "fullName harus 2..100"; field tidak dibaca di kode | Klien harus mengirim ulang NIK pemegang |
