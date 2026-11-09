@@ -12,3 +12,12 @@ ad2d5f938b3ed2cc2d1f0fce60b3ce80c25123be:services/booking/internal/booking/appli
 4b0c540b9e8dba460e342a07fc8110b6999b1371:services/queue/internal/queue/application/usecase/join_test.go:generic-api-key:105
 4b0c540b9e8dba460e342a07fc8110b6999b1371:services/queue/internal/queue/infrastructure/valkey/queue_store_integration_test.go:generic-api-key:207
 4b0c540b9e8dba460e342a07fc8110b6999b1371:services/queue/internal/queue/infrastructure/valkey/queue_store_integration_test.go:generic-api-key:208
+# Fixture Idempotency-Key di test queue (nilai 'idem-*') dan request-id hex di laporan .agents (contract-matrix). Bukan kredensial.
+ecddb58cd09dac1bdabd254ea092878bba916aa2:services/queue/internal/queue/infrastructure/valkey/visitor_token_integration_test.go:generic-api-key:153
+ecddb58cd09dac1bdabd254ea092878bba916aa2:services/queue/internal/queue/infrastructure/valkey/visitor_token_integration_test.go:generic-api-key:155
+ecddb58cd09dac1bdabd254ea092878bba916aa2:services/queue/internal/queue/infrastructure/valkey/visitor_token_integration_test.go:generic-api-key:169
+ecddb58cd09dac1bdabd254ea092878bba916aa2:services/queue/internal/queue/infrastructure/valkey/visitor_token_integration_test.go:generic-api-key:171
+1fed480273debc5447432e10698e05b9922350d8:services/queue/internal/queue/application/usecase/join_sale_gate_test.go:generic-api-key:78
+63f6d598bbad08ddb12db6894b180940f7c8e385:.agents/tasks/fix/contract-matrix/report.md:generic-api-key:115
+63f6d598bbad08ddb12db6894b180940f7c8e385:.agents/tasks/fix/contract-matrix/report.md:generic-api-key:119
+63f6d598bbad08ddb12db6894b180940f7c8e385:.agents/tasks/fix/contract-matrix/matrix.tsv:generic-api-key:13
