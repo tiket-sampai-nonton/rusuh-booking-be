@@ -10,14 +10,16 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 
-	mock_outbound "github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/_mock/queue/port/outbound"
-	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/application/usecase"
+	mock_inbound "github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/_mock/queue/port/inbound"
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/domain/dto"
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/domain/entity"
 	queuehttp "github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/infrastructure/http"
 )
 
 // P7 (REQ-QVT-03.7): the boundary between "generation record gone while the token is still valid" (404 NOT_FOUND) and
 // "the token itself is past its lifetime" (rejected by the authenticator: 401 VISITOR_TOKEN_INVALID), through the real
-// authenticator and the real `me` usecase with a controlled clock.
+// authenticator with a controlled clock. The "record gone" decision itself is the usecase's (TestTokenGenCheck_ThreeWay,
+// real Valkey in visitor_token_integration_test.go); here the usecase is a stub answering that decision.
 func TestTokenLifetimeBoundary_RecordGoneVersusTokenExpired(t *testing.T) {
 	g := newDeviceRig(t) // token issued at g.now with a 24h lifetime, no device claim
 	tests := []struct {
@@ -33,13 +35,13 @@ func TestTokenLifetimeBoundary_RecordGoneVersusTokenExpired(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctrl := gomock.NewController(t)
-			store := mock_outbound.NewMockIQueueStore(ctrl) // strict: only TokenGen may be called, and only when the token is accepted
+			uc := mock_inbound.NewMockIMyEntryUsecase(ctrl) // strict: reached only when the token is accepted
 			if tt.storeHit {
-				store.EXPECT().TokenGen(gomock.Any(), "ev1", "v1").Return(int64(0), false, nil)
+				uc.EXPECT().GetMyEntry(gomock.Any(), gomock.Any()).Return(dto.EntryStatus{}, entity.ErrNotFound)
 			}
 			auth := g.authAt(g.now.Add(tt.at))
 			mux := stdhttp.NewServeMux()
-			queuehttp.NewMyEntryHandler(usecase.NewGetMyEntry(store), auth).Register(mux)
+			queuehttp.NewMyEntryHandler(uc, auth).Register(mux)
 			req := httptest.NewRequest(stdhttp.MethodGet, "/api/v1/queue-entries/me?eventId=ev1", nil)
 			req.Header.Set("X-Visitor-Token", g.unbound)
 			rec := httptest.NewRecorder()
