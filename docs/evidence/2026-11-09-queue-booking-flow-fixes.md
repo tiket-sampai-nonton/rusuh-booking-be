@@ -36,10 +36,10 @@ Cabang `fix/queue-booking-flow-t5-t6-t1-t2` (basis `feature/rework@5d2f7b6`). Te
   baru terlihat di gate dalam satu interval publisher (default 1 s). Cache dingin = satu `Supply` baca saja.
 - **Replay `Idempotency-Key` setelah habis** menjawab 410 (gate berjalan sebelum `Store.Join`); entry yang sudah ada tidak terpengaruh, `queue-entries/me` tetap bekerja.
 - **Baris in-flight (3.7):** admission ACTIVE saat deploy mempertahankan `expires_at` tersimpan (tanpa backfill); dijaga test.
-- **Requirement 5.5 (jendela balapan sold-out):** kode yang ada tidak mengakhiri entry WAITING saat `booking.sold_out`; konsumer hanya menutup sale hash dan
-  Status Document menerbitkan `soldOut=true` agar waiter diberi tahu dan diarahkan ke home (SRS-F-10-02). Test (TC-QUE-40) mengunci perilaku itu
-  (waiter yang masuk sebelum event dikonsumsi melihat `soldOut=true` pada dokumen). Entry itu sendiri baru berakhir lewat liveness bila klien berhenti heartbeat.
-  Bila pemilik menghendaki pengakhiran aktif entry WAITING, itu perubahan perilaku terpisah.
+- **Requirement 5.5 (jendela balapan sold-out), keputusan pemilik pada gerbang:** konsumer `booking.sold_out` kini menutup sale hash lalu
+  mengakhiri aktif setiap entry WAITING dan STALE event itu dengan status `SOLD_OUT` (`end_sold_out.lua`, enum `queue.yaml`; `me` = state `ENDED`,
+  status `SOLD_OUT`, reason `SOLD_OUT`). ADMITTED/CLAIMED tidak disentuh (Jangan PHP). Idempoten (kirim ganda tidak mengubah apa pun), dibatasi
+  batch 500 dan 20 batch per delivery; sisanya dilanjutkan lewat error retryable (bukan Permanent). Status Document tetap `soldOut=true`.
 - **`docs/happy-path-endpoints.md`** untracked di checkout utama; cabang ini melacaknya (salinan di sini). Salinan di checkout utama akan konflik hanya bila diubah terpisah; ambil versi cabang saat merge.
 
 ## Bukti

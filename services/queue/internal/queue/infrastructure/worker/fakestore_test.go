@@ -394,3 +394,22 @@ func (s *fakeStore) WaitingCount(context.Context, string) (int64, error) {
 	return int64(len(s.waiting)), nil
 }
 func (s *fakeStore) LivePosition(context.Context, string, int64) (int64, error) { return 1, nil }
+
+// EndWaitingSoldOut mirrors end_sold_out.lua: WAITING/STALE become SOLD_OUT, ADMITTED/CLAIMED are untouched.
+func (s *fakeStore) EndWaitingSoldOut(_ context.Context, _ string, _ int64, batch int) (outbound.SoldOutBatch, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ids := append([]string(nil), s.waiting...)
+	if len(ids) > batch {
+		ids = ids[:batch]
+	}
+	res := outbound.SoldOutBatch{Scanned: len(ids)}
+	for _, id := range ids {
+		s.removeWaitingLocked(id)
+		if e, ok := s.entries[id]; ok && (e.Status == valueobject.StatusWaiting || e.Status == valueobject.StatusStale) {
+			e.Status = valueobject.StatusSoldOut
+			res.Ended++
+		}
+	}
+	return res, nil
+}

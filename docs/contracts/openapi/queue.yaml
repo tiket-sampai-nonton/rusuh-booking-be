@@ -816,7 +816,8 @@ components:
           - CLAIM_WINDOW_EXPIRED
           - PAGE_TIMER_EXPIRED
           - JOURNEY_ENDED
-          description: Hanya untuk state ENDED (adendum 2)
+          - SOLD_OUT
+          description: Hanya untuk state ENDED (adendum 2). SOLD_OUT = tiket event habis; entri WAITING/STALE diakhiri aktif saat Queue memproses `booking.sold_out` (status entri `SOLD_OUT`). ADMITTED/CLAIMED tidak disentuh.
         redirect:
           type: string
       required:

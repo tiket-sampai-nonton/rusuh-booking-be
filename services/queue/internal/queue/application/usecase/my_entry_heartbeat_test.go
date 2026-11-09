@@ -74,6 +74,7 @@ func TestGetMyEntry_EndedReasons(t *testing.T) {
 		{valueobject.StatusEnded, "SESSION_EXPIRED", "PAGE_TIMER_EXPIRED"},
 		{valueobject.StatusCompleted, "PAID", "JOURNEY_ENDED"},
 		{valueobject.StatusEnded, "ALREADY_ACTIVE", "JOURNEY_ENDED"},
+		{valueobject.StatusSoldOut, "SOLD_OUT", "SOLD_OUT"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.endReason, func(t *testing.T) {

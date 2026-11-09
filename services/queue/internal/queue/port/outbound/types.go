@@ -101,6 +101,12 @@ type EndResult struct {
 // Changed reports whether the script mutated the entry.
 func (r EndResult) Changed() bool { return r.Tag == "OK" || r.Tag == "OK_CLEANUP" }
 
+// SoldOutBatch is the result of one EndWaitingSoldOut batch.
+type SoldOutBatch struct {
+	Scanned int // ids examined in this batch
+	Ended   int // entries moved to SOLD_OUT
+}
+
 // LeaveResult is the typed reply of leave.lua (NOT_FOUND is reported as entity.ErrNotFound).
 type LeaveResult struct {
 	Tag          string // OK | IGNORED

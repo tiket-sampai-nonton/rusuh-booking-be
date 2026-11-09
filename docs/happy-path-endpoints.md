@@ -386,7 +386,7 @@ Semua direproduksi dengan curl dan dicek ke kode. T1, T2, T5, T6 diperbaiki 2026
 | # | Temuan | Bukti | Dampak |
 |---|---|---|---|
 | T1 | Join diterima sebelum `salesStartsAt` | 201 pada event `NOT_STARTED`; `ErrNotOnSale` tidak pernah dikembalikan | Melanggar SRS-F-04-01 **Diperbaiki 2026-11-09.** |
-| T2 | Join diterima setelah tiket habis | 201 `WAITING` (tetap WAITING), padahal sale hash Queue `soldOut=1`; `join.lua` tidak memeriksa sale | Pembeli menunggu event yang sudah habis **Diperbaiki 2026-11-09.** |
+| T2 | Join diterima setelah tiket habis | 201 `WAITING` (tetap WAITING), padahal sale hash Queue `soldOut=1`; `join.lua` tidak memeriksa sale | Pembeli menunggu event yang sudah habis **Diperbaiki 2026-11-09**; lanjutan: saat Queue memproses `booking.sold_out`, semua entri WAITING/STALE event itu diakhiri aktif dengan status `SOLD_OUT` (`me`: state `ENDED`, status `SOLD_OUT`, reason `SOLD_OUT`; dokumen status `soldOut=true`), ADMITTED/CLAIMED tidak disentuh, batch 500 dan idempoten. |
 | T3 | Claim dan leave menjawab 404 untuk token salah/perangkat lain | me/heartbeat 401, claim/leave 404 | Klien tidak bisa membedakan "join ulang" dari "entri hilang" |
 | T4 | `me` untuk event yang tidak pernah di-join menjawab 401, kontrak 404 | `checkTokenGen` per event | Kode error berbeda dari kontrak |
 | T5 | Slot antrean bocor setelah sesi booking dibatalkan | `booking-sessions/{id}/cancel` melepas unit tetapi tidak menerbitkan `booking.journey.ended`; entri tetap `CLAIMED`, pembeli berikutnya tetap WAITING > 390 dtk; `DELETE` entri CLAIMED menjawab 204 tetapi diabaikan (`leave.lua`, QSH-OQ-3) | Kapasitas antrean berkurang permanen per pembatalan **Diperbaiki 2026-11-09.** |

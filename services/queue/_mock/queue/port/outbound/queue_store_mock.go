@@ -104,6 +104,21 @@ func (mr *MockIQueueStoreMockRecorder) EndEntry(ctx, eventID, entryID, outcome, 
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "EndEntry", reflect.TypeOf((*MockIQueueStore)(nil).EndEntry), ctx, eventID, entryID, outcome, nowMs)
 }
 
+// EndWaitingSoldOut mocks base method.
+func (m *MockIQueueStore) EndWaitingSoldOut(ctx context.Context, eventID string, nowMs int64, batch int) (outbound.SoldOutBatch, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "EndWaitingSoldOut", ctx, eventID, nowMs, batch)
+	ret0, _ := ret[0].(outbound.SoldOutBatch)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// EndWaitingSoldOut indicates an expected call of EndWaitingSoldOut.
+func (mr *MockIQueueStoreMockRecorder) EndWaitingSoldOut(ctx, eventID, nowMs, batch any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "EndWaitingSoldOut", reflect.TypeOf((*MockIQueueStore)(nil).EndWaitingSoldOut), ctx, eventID, nowMs, batch)
+}
+
 // ExpiredActive mocks base method.
 func (m *MockIQueueStore) ExpiredActive(ctx context.Context, eventID string, nowMs int64, limit int) ([]string, error) {
 	m.ctrl.T.Helper()

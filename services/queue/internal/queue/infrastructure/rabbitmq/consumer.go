@@ -19,6 +19,12 @@ const (
 	queueName                  = "queue.booking-events"
 )
 
+// SoldOutBatchSize bounds the entries ended per store call; SoldOutMaxBatches bounds the calls per delivery.
+const (
+	SoldOutBatchSize  = 500
+	SoldOutMaxBatches = 20
+)
+
 // Consumer handles Booking events. Idempotency comes from guard state + SADD + Lua (no inbox table).
 type Consumer struct {
 	store outbound.IQueueStore
@@ -81,7 +87,7 @@ type soldOutIn struct {
 	EventID string `json:"eventId"`
 }
 
-// handleBookingSoldOut closes the queue (idempotent HSET).
+// handleSoldOut closes the sale (idempotent HSET) and ends the waiting set with SOLD_OUT (idempotent, batched).
 func (c *Consumer) handleSoldOut(ctx context.Context, raw json.RawMessage) error {
 	var in soldOutIn
 	if err := json.Unmarshal(raw, &in); err != nil {
@@ -90,5 +96,20 @@ func (c *Consumer) handleSoldOut(ctx context.Context, raw json.RawMessage) error
 	if in.EventID == "" {
 		return pkgrabbitmq.Permanent(fmt.Errorf("consumer: sold_out field wajib kosong"))
 	}
-	return c.store.SetSale(ctx, in.EventID, "CLOSED", true)
+	if err := c.store.SetSale(ctx, in.EventID, "CLOSED", true); err != nil {
+		return err
+	}
+	// Req 5.5 / SRS-F-10-02: actively end every WAITING/STALE entry with SOLD_OUT so clients stop waiting.
+	// ADMITTED/CLAIMED are untouched (Jangan PHP). Batched and capped so one huge waiting set cannot hold the
+	// consumer; past the cap a retryable error redelivers and the idempotent drain continues.
+	for i := 0; i < SoldOutMaxBatches; i++ {
+		res, err := c.store.EndWaitingSoldOut(ctx, in.EventID, c.clock.Now().UnixMilli(), SoldOutBatchSize)
+		if err != nil {
+			return err
+		}
+		if res.Scanned < SoldOutBatchSize {
+			return nil
+		}
+	}
+	return fmt.Errorf("consumer: sold_out masih menyisakan antrean setelah %d batch, ulangi", SoldOutMaxBatches)
 }

@@ -64,10 +64,68 @@ func TestConsumer_QuotaExhaustedIsNoOpAck(t *testing.T) {
 
 func TestConsumer_SoldOut(t *testing.T) {
 	c, store := newConsumer(t)
-	store.EXPECT().SetSale(gomock.Any(), "ev1", "CLOSED", true).Return(nil)
+	gomock.InOrder(
+		store.EXPECT().SetSale(gomock.Any(), "ev1", "CLOSED", true).Return(nil),
+		store.EXPECT().EndWaitingSoldOut(gomock.Any(), "ev1", gomock.Any(), queuerabbitmq.SoldOutBatchSize).
+			Return(outbound.SoldOutBatch{Scanned: 3, Ended: 3}, nil),
+	)
 	err := c.Subscription().Handler(context.Background(), delivery(t, "booking.sold_out",
 		map[string]string{"eventId": "ev1"}))
 	assert.NoError(t, err)
+}
+
+// A waiting set larger than one batch is drained batch by batch until a short batch comes back.
+func TestConsumer_SoldOut_DrainsInBatches(t *testing.T) {
+	c, store := newConsumer(t)
+	store.EXPECT().SetSale(gomock.Any(), "ev1", "CLOSED", true).Return(nil)
+	gomock.InOrder(
+		store.EXPECT().EndWaitingSoldOut(gomock.Any(), "ev1", gomock.Any(), queuerabbitmq.SoldOutBatchSize).
+			Return(outbound.SoldOutBatch{Scanned: queuerabbitmq.SoldOutBatchSize, Ended: queuerabbitmq.SoldOutBatchSize}, nil),
+		store.EXPECT().EndWaitingSoldOut(gomock.Any(), "ev1", gomock.Any(), queuerabbitmq.SoldOutBatchSize).
+			Return(outbound.SoldOutBatch{Scanned: 7, Ended: 7}, nil),
+	)
+	require.NoError(t, c.Subscription().Handler(context.Background(), delivery(t, "booking.sold_out",
+		map[string]string{"eventId": "ev1"})))
+}
+
+// Duplicate delivery: the second run finds nothing left; it is a clean ack (idempotent).
+func TestConsumer_SoldOut_DoubleDeliveryIdempotent(t *testing.T) {
+	c, store := newConsumer(t)
+	store.EXPECT().SetSale(gomock.Any(), "ev1", "CLOSED", true).Return(nil).Times(2)
+	gomock.InOrder(
+		store.EXPECT().EndWaitingSoldOut(gomock.Any(), "ev1", gomock.Any(), queuerabbitmq.SoldOutBatchSize).
+			Return(outbound.SoldOutBatch{Scanned: 5, Ended: 5}, nil),
+		store.EXPECT().EndWaitingSoldOut(gomock.Any(), "ev1", gomock.Any(), queuerabbitmq.SoldOutBatchSize).
+			Return(outbound.SoldOutBatch{}, nil),
+	)
+	d := delivery(t, "booking.sold_out", map[string]string{"eventId": "ev1"})
+	require.NoError(t, c.Subscription().Handler(context.Background(), d))
+	require.NoError(t, c.Subscription().Handler(context.Background(), d))
+}
+
+// A very large set must not hold the consumer: after the per-delivery cap it returns a RETRYABLE error (redelivery
+// continues the drain; the work is idempotent), never a Permanent one.
+func TestConsumer_SoldOut_CapReturnsRetryable(t *testing.T) {
+	c, store := newConsumer(t)
+	store.EXPECT().SetSale(gomock.Any(), "ev1", "CLOSED", true).Return(nil)
+	store.EXPECT().EndWaitingSoldOut(gomock.Any(), "ev1", gomock.Any(), queuerabbitmq.SoldOutBatchSize).
+		Return(outbound.SoldOutBatch{Scanned: queuerabbitmq.SoldOutBatchSize, Ended: queuerabbitmq.SoldOutBatchSize}, nil).
+		Times(queuerabbitmq.SoldOutMaxBatches)
+	err := c.Subscription().Handler(context.Background(), delivery(t, "booking.sold_out",
+		map[string]string{"eventId": "ev1"}))
+	require.Error(t, err)
+	assert.False(t, pkgrabbitmq.IsPermanent(err))
+}
+
+func TestConsumer_SoldOut_StoreErrorIsRetryable(t *testing.T) {
+	c, store := newConsumer(t)
+	store.EXPECT().SetSale(gomock.Any(), "ev1", "CLOSED", true).Return(nil)
+	store.EXPECT().EndWaitingSoldOut(gomock.Any(), "ev1", gomock.Any(), gomock.Any()).
+		Return(outbound.SoldOutBatch{}, assert.AnError)
+	err := c.Subscription().Handler(context.Background(), delivery(t, "booking.sold_out",
+		map[string]string{"eventId": "ev1"}))
+	require.Error(t, err)
+	assert.False(t, pkgrabbitmq.IsPermanent(err))
 }
 
 func TestConsumer_CorruptPayloadPermanent(t *testing.T) {

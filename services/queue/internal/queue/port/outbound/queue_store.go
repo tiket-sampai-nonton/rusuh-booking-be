@@ -16,6 +16,9 @@ type IQueueStore interface {
 	Claim(ctx context.Context, eventID, entryID, visitorID string, nowMs int64) (ClaimResult, error)
 	Leave(ctx context.Context, eventID, entryID, visitorID string, nowMs int64) (LeaveResult, error)
 	EndEntry(ctx context.Context, eventID, entryID, outcome string, nowMs int64) (EndResult, error)
+	// EndWaitingSoldOut ends up to batch WAITING/STALE entries with status SOLD_OUT (booking.sold_out, SRS-F-10-02).
+	// ADMITTED/CLAIMED are never touched. Idempotent; Scanned == batch means more may remain.
+	EndWaitingSoldOut(ctx context.Context, eventID string, nowMs int64, batch int) (SoldOutBatch, error)
 	GetEntry(ctx context.Context, eventID, entryID string) (entity.Entry, bool, error)
 	FindByVisitor(ctx context.Context, eventID, visitorID string) (entity.Entry, bool, error)
 	ActiveCount(ctx context.Context, eventID string) (int, error)

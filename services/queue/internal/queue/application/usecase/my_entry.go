@@ -132,6 +132,8 @@ func endedReason(e entity.Entry) string {
 	switch {
 	case e.Status == valueobject.StatusLeft:
 		return "LEFT"
+	case e.Status == valueobject.StatusSoldOut:
+		return "SOLD_OUT"
 	case e.EndReason == "STALE_TIMEOUT":
 		return "STALE_TIMEOUT"
 	case e.Status == valueobject.StatusMissed, e.EndReason == "UNCLAIMED", e.EndReason == "SWEEP_MISSED":
