@@ -1252,7 +1252,7 @@ Response `201` (menunggu):
 }
 ```
 
-Response `201` dengan `status: "ADMITTED"` dan `claimDeadline` bila admission instan (FR-05). Cookie `rb_visitor` (HttpOnly) diset untuk web; mobile menerima `visitorToken` di body.
+Response `201` dengan `status: "ADMITTED"` dan `claimDeadline` bila admission instan (FR-05). Cookie `rb_visitor` (HttpOnly) selalu diset bila token terbit; `visitorToken` di body hanya untuk klien dengan `X-Client-Type: mobile` yang tidak membawa cookie `rb_visitor` valid (pemegang cookie tidak pernah menerimanya di body). Token dikirim kembali lewat header `X-Visitor-Token`, bukan `Authorization: Bearer`.
 
 ###### Posisi eksak
 

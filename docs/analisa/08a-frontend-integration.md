@@ -552,11 +552,17 @@ Halaman Booking (urutan seperti tiket pesawat):
    ketersediaan, biarkan pembeli memilih kategori lain; unit cadangan tetap ada.
 
 Antrean, liveness dan posisi (ADR-030):
-1. Kirim `X-Device-Id` (id acak per instalasi/profil browser, dibuat sekali) di join dan heartbeat (kontrak), dan
-   konsisten di `me` (lihat Catatan kontrak vs kode). Token yang terbit bersama
-   header ini hanya berlaku dengan header yang sama.
+1. Kirim `X-Device-Id` (id acak per instalasi/profil browser, dibuat sekali) di join, me, heartbeat, claim dan leave.
+   Token yang terbit bersama header ini hanya berlaku dengan header yang sama (tanpa header atau nilai lain:
+   `401 VISITOR_TOKEN_INVALID`; pada join dianggap visitor baru).
+   Pengiriman token: web memakai cookie HttpOnly `rb_visitor` saja (body tidak pernah berisi token, walau header
+   `X-Client-Type: mobile` dikirim); app native wajib mengirim `X-Client-Type: mobile` pada join untuk menerima
+   `visitorToken` di body, lalu mengirimnya sebagai header `X-Visitor-Token` (bukan `Authorization: Bearer`).
 2. Selalu simpan visitor token terbaru dari setiap respons join (generasi token dirotasi saat re-attach akun atau join
-   ulang); `401 VISITOR_TOKEN_INVALID` di heartbeat/me berarti token lama: join ulang (dengan bearer bila login).
+   ulang); `401 VISITOR_TOKEN_INVALID` di heartbeat/me/claim/leave berarti token tidak valid atau lama: join ulang
+   (dengan bearer bila login). Kunci penanganan pada `errorCode` `VISITOR_TOKEN_INVALID`, bukan pada status 401
+   saja (401 access token User = `UNAUTHORIZED`, ditangani lewat refresh). `404 NOT_FOUND` di me/claim/leave berarti
+   visitor belum pernah bergabung ke event itu atau entri bukan miliknya/tidak ada: jangan refresh token, bergabunglah.
 3. Kirim `POST /api/v1/queue-entries/me/heartbeat?eventId=` tiap `nextHeartbeatMs` (dari heartbeat/me) selama
    WAITING/STALE. `404 ENTRY_NOT_FOUND` = entri berakhir: panggil me untuk `reason` dan tawarkan gabung ulang.
 4. Posisi: bandingkan `seq` milik sendiri dengan `guaranteedUntilSeq`/`possibleUntilSeq`/`headSeq` di status
@@ -567,17 +573,14 @@ Antrean, liveness dan posisi (ADR-030):
    PAGE_TIMER_EXPIRED, JOURNEY_ENDED); tampilkan pesan sesuai reason.
 7. Deteksi "giliran sebentar lagi" dari status document yang di-cache CDN (`seq` sendiri vs `headSeq`); push hanya bonus.
 
-## Catatan kontrak vs kode (belum diselaraskan; dokumen ini mengikuti kontrak)
+## Catatan kontrak vs kode (butir 1-2 selesai; butir 3-4 belum diselaraskan)
 
 Kedua sisi tidak dipilih di sini; keputusan ada pada pemilik kontrak.
 
-1. Mobile vs web pada join: kontrak hanya menyebut `visitorToken` "hanya untuk mobile (web: cookie)". Kode
-   (`join_handler.go`) menganggap klien sebagai mobile bila header `X-Client-Type: mobile` ada; tanpa header itu token
-   hanya dikirim sebagai cookie `Secure` dan dibuang dari body (klien http polos tidak melihat token). Header ini
-   belum tercantum di `queue.yaml`.
-2. `X-Device-Id`: kontrak mendaftarkannya hanya di join dan heartbeat, tetapi `helpers.go` Queue menyatakan klaim
-   perangkat juga dibandingkan di `me` (token terikat perangkat ditolak bila header tidak cocok). Perilaku pada claim dan
-   leave tidak diverifikasi.
+1. (Selesai) Mobile vs web pada join: `X-Client-Type: mobile` kini tercantum di `queue.yaml`; body berisi token hanya untuk
+   klien mobile tanpa cookie `rb_visitor` valid, cookie selalu di-set (ADR-030 addendum, Batch 2).
+2. (Selesai) `X-Device-Id` berlaku di join, me, heartbeat, claim dan leave (diverifikasi oleh `VisitorAuthenticator`),
+   tercantum di `queue.yaml` untuk kelimanya, dan diizinkan di CORS lokal.
 3. `queueToken`: ada di skema `QueueEntry` dan dikembalikan join, tetapi tidak ada endpoint yang menerimanya (claim dan
    leave memakai visitor token).
 4. Kode error `ENTRY_MOVED` (409) terdaftar dan dipetakan di Queue tetapi tidak dihasilkan jalur mana pun dan tidak ada

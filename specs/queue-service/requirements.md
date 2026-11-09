@@ -108,7 +108,7 @@ Status kode per 2026-10-20: **boilerplate standar organisasi berfungsi**; logika
 ### Acceptance Criteria (EARS)
 
 1. WHEN join berhasil untuk guest (web), THE Queue Service SHALL menerbitkan visitor token dan menyetelnya sebagai cookie `rb_visitor` (HttpOnly, Secure, SameSite=Lax).
-2. WHEN join berhasil untuk klien mobile, THE Queue Service SHALL mengembalikan `visitorToken` di body (`QueueEntry.visitorToken`) untuk disimpan di secure storage.
+2. WHEN join berhasil untuk klien mobile (header `X-Client-Type: mobile`) yang tidak membawa cookie `rb_visitor` valid, THE Queue Service SHALL mengembalikan `visitorToken` di body (`QueueEntry.visitorToken`) untuk disimpan di secure storage dan mengirimnya kembali lewat header `X-Visitor-Token`; pemegang cookie valid tidak pernah menerima token di body.
 3. IF request membawa `Authorization: Bearer <userToken>` EdDSA valid dengan NIK tersimpan (`token.has_nik == true`), THEN THE Queue Service SHALL memakai `token.nik_hash` dan **mengabaikan** `body.buyerNik`, serta membawa `accountId` ke audit dan ke Booking.
 4. IF request login tanpa NIK tersimpan (`token.has_nik == false`), THEN THE Queue Service SHALL mewajibkan `body.buyerNik` sama seperti guest.
 5. WHILE visitor sudah punya entry aktif di event yang sama DAN `event_settings.one_active_per_visitor == true`, THE Queue Service SHALL menolak join baru dengan `409 VISITOR_ALREADY_IN_QUEUE`.

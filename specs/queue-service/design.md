@@ -92,7 +92,7 @@ Semua respons sukses dibungkus `{ meta, data }`; semua error `{ meta, data: null
   "seq": 12345,
   "status": "WAITING",
   "queueToken": "jwt-eddsa",
-  "visitorToken": "jwt-eddsa (mobile only)",
+  "visitorToken": "jwt-eddsa (hanya X-Client-Type: mobile tanpa cookie rb_visitor valid)",
   "statusUrl": "/api/v1/queue-status/{eventId}",
   "claimDeadline": "2026-10-20T10:03:00Z (ADMITTED only)",
   "joinedAt": "2026-10-20T10:00:00Z",

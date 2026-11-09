@@ -655,7 +655,7 @@ Kontrak per endpoint (contoh request/response) ada di SDD-RBT-001 Interface view
 | ID | Requirement | Source | Pri | Ver | Test |
 |----|-------------|--------|-----|-----|------|
 | SRS-F-22-01 | Web and mobile shall use the same public API contract (§3.1.4). | FR-24, NFR-08 | M | T | TC-API-01 |
-| SRS-F-22-02 | Web shall authenticate with the HttpOnly cookie and mobile with `Authorization: Bearer <visitorToken>`; both shall be verified by the same middleware. | FR-24 | M | T | TC-API-01 |
+| SRS-F-22-02 | Web shall authenticate with the HttpOnly cookie and mobile with the `X-Visitor-Token` header (a native client sends `X-Client-Type: mobile` on join to receive the token in the body; the `Authorization: Bearer` header is reserved for the User access token); both shall be verified by the same middleware. | FR-24 | M | T | TC-API-01 |
 | SRS-F-22-03 | Contract changes within `v1` shall be additive; breaking changes shall require `v2`. | NFR-08 | M | I | TC-API-02 |
 
 #### 3.2.23 Edit Order Before Payment (BKG-04)
@@ -1409,7 +1409,7 @@ Dari (1) dan (2): stok fisik bebas di semua kategori = `total − held − sold 
 ### API-01 Shared API (Web + Mobile)
 
 - Seluruh endpoint publik REST/JSON di bawah `/api/v1`, satu kontrak OpenAPI untuk web dan mobile (FR-24, NFR-08).
-- Web memakai cookie HttpOnly; mobile memakai header `Authorization: Bearer <visitorToken>`; keduanya diverifikasi oleh middleware yang sama.
+- Web memakai cookie HttpOnly; mobile memakai header `X-Visitor-Token` (app native mengirim `X-Client-Type: mobile` pada join agar token ikut di body; `Authorization: Bearer` hanya untuk access token User); keduanya diverifikasi oleh middleware yang sama.
 - Perubahan kontrak bersifat additive dalam versi `v1`; perubahan breaking membutuhkan `v2`.
 
 ### BKG-04 Ubah Pesanan Sebelum Bayar
