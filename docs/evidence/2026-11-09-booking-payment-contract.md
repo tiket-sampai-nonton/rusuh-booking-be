@@ -17,3 +17,7 @@ Diskusi dan keputusan yang mengubah planning/spec, dicatat sesuai aturan `testin
 - `notification.yaml`: 401 dari `POST /push-subscriptions` membawa errorCode `VALIDATION_ERROR` (`inbound.ErrUnauthorized`), bukan `UNAUTHORIZED` seperti service lain. Didokumentasikan apa adanya; mengubahnya mengubah kontrak respons dan menunggu keputusan pemilik.
 
 Hasil gate dan perintah: `.agents/tasks/fix/booking-payment-contract/verification.md`.
+
+## Keputusan pemilik (2026-11-09, human gate, didelegasikan ke orkestrator)
+- DEV-1 dikonfirmasi: booking yang sudah EXPIRED (stok dilepas) ke REVIEW saat settlement terlambat, tidak pernah PAID (invarian 1, ADR-007); PAID hanya selama booking belum EXPIRED.
+- DEV-2 diterima: rute simulator di luar local/ci menjawab 404 bawaan tanpa envelope.
