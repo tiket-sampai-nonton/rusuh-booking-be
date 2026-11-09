@@ -26,7 +26,7 @@ func (h *LeaveHandler) Register(mux *stdhttp.ServeMux) {
 func (h *LeaveHandler) leave(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	c, ok := h.auth.ResolveToken(r)
 	if !ok {
-		writeDomainError(w, r, entity.ErrNotFound)
+		writeDomainError(w, r, entity.ErrVisitorTokenInvalid)
 		return
 	}
 	err := h.uc.Leave(r.Context(), inbound.LeaveInput{
