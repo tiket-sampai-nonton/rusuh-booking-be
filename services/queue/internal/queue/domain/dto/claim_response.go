@@ -5,5 +5,6 @@ type ClaimResponse struct {
 	AdmissionToken string `json:"admissionToken"`
 	// BookingURL is the public booking page, {BOOKING_PAGE_BASE_URL}/{eventId}. It contains no token; the client
 	// sends AdmissionToken to POST /api/v1/booking-sessions.
+	// DEPRECATED (owner Q4 ii): kept for one release; clients navigate from AdmissionToken via POST /api/v1/booking-sessions.
 	BookingURL string `json:"bookingUrl"`
 }

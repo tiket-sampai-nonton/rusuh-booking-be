@@ -634,7 +634,7 @@ Pola yang diadopsi dari usulan BE-2: **satu image banyak verb** (`api`, `worker`
 **Confirmation.** CI stage `code-quality` memeriksa `go.mod`/`go.sum` rapi dan `_mock/` sesuai port; `case-coverage` menjalankan integration test; evidence `docs/evidence/2026-10-19-boilerplate-v1.5.md`.
 
 
-**Amandemen (2026-11-09): `BOOKING_PAGE_BASE_URL` dan jadwal per-job Queue worker.** (1) Queue worker menjalankan tiap job pada interval sendiri (`QUEUE_PROMOTOR_INTERVAL_MS` 100ms, `QUEUE_SWEEPER_INTERVAL_MS` 10s, `QUEUE_STATUS_INTERVAL_MS` 1s; liveness `WORKER_INTERVAL`), satu goroutine per job; sebelumnya satu `WORKER_INTERVAL` untuk semua job sehingga promotor tidak pernah berjalan pada ~100 ms seperti SDD §8.1. Ketiga interval divalidasi `> 0` saat start (D-24) dan TTL dokumen status kini pengali x `QUEUE_STATUS_INTERVAL_MS`. (2) Env baru `BOOKING_PAGE_BASE_URL` (wajib; https di luar `APP_ENV=local`; tanpa query/fragment/userinfo) menjadi dasar `bookingUrl` pada respons claim: `{BOOKING_PAGE_BASE_URL}/{eventId}`, tanpa token (NFR-07); `BOOKING_SERVICE_URL` tetap alamat internal. Konsekuensi untuk frontend: `bookingUrl` adalah rute halaman per event, bukan per entry; token dikirim ke `POST /api/v1/booking-sessions`. Risiko yang diterima: R-1 promotor memanggil Booking ~50x lebih sering saat Booking down (dibatasi circuit breaker), R-2 TTL status turun dari ~20 s ke 4 s (pengali dapat naik ke 5), R-3 job yang mengabaikan ctx menunda shutdown (sama seperti sebelumnya), R-4 `ListEventIDs`/`settings.Get` tanpa cache pada 100 ms (tindak lanjut). Bukti: `docs/evidence/2026-11-09-queue-worker-cadence-booking-url.md`.
+**Amandemen (2026-11-09): `BOOKING_PAGE_BASE_URL` dan jadwal per-job Queue worker.** (1) Queue worker menjalankan tiap job pada interval sendiri (`QUEUE_PROMOTOR_INTERVAL_MS` 100ms, `QUEUE_SWEEPER_INTERVAL_MS` 10s, `QUEUE_STATUS_INTERVAL_MS` 1s; liveness `WORKER_INTERVAL`), satu goroutine per job; sebelumnya satu `WORKER_INTERVAL` untuk semua job sehingga promotor tidak pernah berjalan pada ~100 ms seperti SDD §8.1. Ketiga interval divalidasi `> 0` saat start (D-24) dan TTL dokumen status kini pengali x `QUEUE_STATUS_INTERVAL_MS`. (2) Env baru `BOOKING_PAGE_BASE_URL` (wajib; https di luar `APP_ENV=local`; tanpa query/fragment/userinfo) menjadi dasar `bookingUrl` pada respons claim: `{BOOKING_PAGE_BASE_URL}/{eventId}`, tanpa token (NFR-07); `BOOKING_SERVICE_URL` tetap alamat internal. Konsekuensi untuk frontend: `bookingUrl` adalah rute halaman per event, bukan per entry; token dikirim ke `POST /api/v1/booking-sessions`. `bookingUrl` dideprekasi; lihat Adendum ADR-030 2026-11-09 (deprecasi). Risiko yang diterima: R-1 promotor memanggil Booking ~50x lebih sering saat Booking down (dibatasi circuit breaker), R-2 TTL status turun dari ~20 s ke 4 s (pengali dapat naik ke 5), R-3 job yang mengabaikan ctx menunda shutdown (sama seperti sebelumnya), R-4 `ListEventIDs`/`settings.Get` tanpa cache pada 100 ms (tindak lanjut). Bukti: `docs/evidence/2026-11-09-queue-worker-cadence-booking-url.md`.
 
 ---
 
@@ -906,6 +906,23 @@ Pola yang diadopsi dari usulan BE-2: **satu image banyak verb** (`api`, `worker`
   harus menangani 401 berdasarkan `errorCode` (`VISITOR_TOKEN_INVALID` bukan kedaluwarsa access token). Risiko
   diterima: TOCTOU antara cek generasi dan skrip Lua (pra-ada; claim/leave Lua memakai pemilik visitor). Tindak lanjut:
   field `JoinInput.IsMobile` kini hanya petunjuk transport (kandidat dihapus).
+
+### Adendum Amandemen ADR-030 — 2026-11-09 (deprecasi queueToken dan bookingUrl, ENTRY_MOVED dicadangkan)
+
+- **Status:** Accepted (keputusan pemilik Q4 ii, Q5, Q6).
+- **Konteks:** `queueToken` diterbitkan join tetapi tidak diterima endpoint mana pun (claim, leave, me, heartbeat memakai
+  visitor token); `bookingUrl` pada respons claim tidak lagi dibutuhkan klien (web dan app menavigasi dari
+  `admissionToken`); kode `ENTRY_MOVED` (409) terdaftar di Queue tetapi tidak dihasilkan jalur mana pun.
+- **Keputusan:** (a) `queueToken` dan `bookingUrl` ditandai deprecated di kontrak, dokumen, dan komentar kode; keduanya
+  tetap dikembalikan selama satu rilis, lalu dihapus (tanggal rilis belum ditetapkan). `admissionToken` tetap wajib dan
+  satu-satunya jalur akses (invarian 2, NFR-07). (b) `ENTRY_MOVED` dan SRS-F-01-10 / spec Requirement 7.4 / task 14.2 /
+  TC-QUE-16 dipertahankan sebagai desain masa depan; kode dicadangkan, TC tetap NOT_RUN, task tetap belum dicentang.
+  (c) `BOOKING_PAGE_BASE_URL` tetap wajib divalidasi (D-24) karena `bookingUrl` masih dibangun darinya; penghapusan env
+  ditunda ke rilis yang menghapus `bookingUrl`. (d) Entri CORS `X-Queue-Token` dipertahankan selama rilis yang sama.
+- **Alternatif ditolak:** ADR baru (tidak ada alternatif arsitektur untuk dicatat); menghapus field sekarang (mengubah
+  kontrak respons); penanda `// Deprecated:` Go (memicu SA1019 di `make lint` untuk pemakaian lintas paket, jadi dipakai
+  komentar `DEPRECATED (...)`).
+- **Konsekuensi:** Tidak ada perubahan perilaku runtime; hanya anotasi. Klien tidak boleh bergantung pada kedua field.
 
 ---
 

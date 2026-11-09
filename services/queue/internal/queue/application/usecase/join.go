@@ -366,6 +366,7 @@ func (u *JoinQueue) audit(ctx context.Context, eventID string, ent entity.Entry,
 func (u *JoinQueue) buildResponse(in inbound.JoinInput, ent entity.Entry, claim outbound.VisitorClaim, now time.Time) dto.QueueEntry {
 	resp := mapper.ToQueueEntry(ent, now)
 	resp.StatusURL = u.s.StatusURLTemplate + in.EventID
+	// DEPRECATED (owner Q6): queueToken is still issued for one release; no endpoint reads it.
 	if qt, err := u.d.Tokens.IssueQueue(ent.ID, claim.VisitorID, now); err == nil {
 		resp.QueueToken = qt
 	}

@@ -163,6 +163,10 @@ paths:
       tags:
       - queue
       summary: Posisi eksak (saat dekat giliran)
+      description: |
+        `ENTRY_MOVED` (kode terdaftar di Queue, HTTP 409) dicadangkan: belum ada jalur yang menghasilkannya.
+        Desain masa depan: SRS-F-01-10 (dipertahankan, keputusan pemilik Q5), spec queue-service Requirement 7.4
+        dan task 14.2, TC-QUE-16 (NOT_RUN). Klien tidak boleh membangun alur di atasnya.
       operationId: getMyEntry
       security:
       - visitorCookie: []
@@ -268,6 +272,12 @@ paths:
       tags:
       - queue
       summary: Ambil admission token saat giliran tiba
+      description: |
+        `ENTRY_MOVED` (kode terdaftar di Queue, HTTP 409) dicadangkan: belum ada jalur yang menghasilkannya.
+        Desain masa depan: SRS-F-01-10 (dipertahankan, keputusan pemilik Q5), spec queue-service Requirement 7.4
+        dan task 14.2, TC-QUE-16 (NOT_RUN). Klien tidak boleh membangun alur di atasnya.
+        Claim memakai token visitor (cookie `rb_visitor` atau header `X-Visitor-Token`) dan query `eventId`;
+        `queueToken` tidak diterima. Entri `X-Queue-Token` pada daftar CORS dipertahankan satu rilis yang sama.
       operationId: claimTurn
       security:
       - visitorCookie: []
@@ -756,6 +766,10 @@ components:
           description: Urutan admisi (FIFO ketat atas seq; ADR-030 Amandemen 2026-11-05). null saat ENDED.
         queueToken:
           type: string
+          deprecated: true
+          description: |
+            Deprecated (keputusan pemilik Q6). Tidak diterima endpoint mana pun (claim dan leave memakai token
+            visitor). Masih diterbitkan selama satu rilis, lalu dihapus. Jangan dipakai sebagai kredensial.
         visitorToken:
           type: string
           description: |
@@ -874,7 +888,11 @@ components:
           description: Sekali pakai, TTL 60 detik
         bookingUrl:
           type: string
-          description: URL publik halaman booking, `{BOOKING_PAGE_BASE_URL}/{eventId}`. Tidak memuat token; klien mengirim `admissionToken` ke `POST /api/v1/booking-sessions`.
+          deprecated: true
+          description: |
+            Deprecated (keputusan pemilik Q4 ii). URL publik halaman booking, `{BOOKING_PAGE_BASE_URL}/{eventId}`.
+            Tidak memuat token. Dipertahankan satu rilis; klien tidak boleh bergantung padanya dan menavigasi dari
+            `admissionToken` lewat `POST /api/v1/booking-sessions`.
           example: https://app.example.com/book/5b1f2c9e-0000-4000-8000-000000000001
       required:
       - admissionToken

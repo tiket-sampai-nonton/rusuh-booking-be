@@ -102,7 +102,7 @@ service lain (9.R1, 13.R1, 14.R1 diblokir) dan 16.1 (menunggu pemilihan library 
     - `ReleaseAllocation` ditambahkan ke `IBookingClient` + `client.go`; `leave.go` memanggil release bila status `ADMITTED`; wiring diperbarui; test ditambahkan
     - _Depends on: booking 4.R1 (runtime; Queue-side code selesai)_
     - _Requirements: 7.2_
-  - [ ] 14.2 Pindah entry via email — ditunda (OQ-3)
+  - [ ] 14.2 Pindah entry via email — ditunda (OQ-3); desain masa depan dipertahankan (keputusan pemilik Q5), `ENTRY_MOVED` dicadangkan
     - _Requirements: 7.4_
   - _Requirements: 7.1, 7.3, 7.5_
 

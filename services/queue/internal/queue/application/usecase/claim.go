@@ -50,6 +50,7 @@ func (u *ClaimTurn) Claim(ctx context.Context, in inbound.ClaimInput) (dto.Claim
 	if err != nil {
 		return dto.ClaimResponse{}, err
 	}
+	// DEPRECATED (owner Q4 ii): bookingUrl kept for one release; the client navigates from AdmissionToken.
 	return dto.ClaimResponse{
 		AdmissionToken: token,
 		BookingURL:     u.bookingPageURL + "/" + url.PathEscape(in.EventID),

@@ -24,6 +24,7 @@
 |---------|------|--------|-------------------|----------|
 | 1.4 | 2026-10-20 | Tim PT. Tiket Sampai Nonton Sentosa | SRS-F-27-12 direvisi: OTP boleh lewat broker dengan enkripsi; CMP-NOTIF ditambahkan ke §3.2.27 | Keputusan arsitektur: OTP email via Notification Service |
 | 1.5 | 2026-11-09 | Tim PT. Tiket Sampai Nonton Sentosa | §3.2.28: SRS-F-28-07 (admin menetapkan/mengubah `city` dan `genres` event) dan SRS-F-28-08 (`minPriceMinor` detail = daftar) ditambahkan; ID diusulkan, pemilik dokumen mengonfirmasi | Keputusan pemilik: workflow booking-event-city-genres |
+| 1.6 | 2026-11-09 | Tim PT. Tiket Sampai Nonton Sentosa | SRS-F-04-10 dan FR-10: "queue token" menjadi "token visitor" (cookie `rb_visitor` / secure storage); auth claim (§ tabel endpoint) dan glosarium diselaraskan; Queue token deprecated | Keputusan pemilik: workflow queue-deprecations-docs (Q6) |
 | 1.3 | 2026-10-19 | Tim PT. Tiket Sampai Nonton Sentosa | Memperjelas **logged-in user NIK handling**: SRS-F-27-10 direvisi (NIK dari token.nikHash, body optional/ignored), SRS-F-27-10a ditambahkan (logged-in tanpa NIK → body required), SRS-F-01-01 direvisi (guest vs logged-in). Desain menghindari PII di API untuk logged-in user | PRD v5.4, US-092, US-094 |
 | 1.2 | 2026-10-19 | Tim PT. Tiket Sampai Nonton Sentosa | Katalog event dengan filter: §3.2.28 Event Catalog Filter (CAT-01, SRS-F-28-01..06) untuk filter waktu, lokasi, status; field `city` ditambahkan ke skema event; cache key CDN mencakup filter params | PRD v5.3 |
 | 1.1 | 2026-10-19 | Tim PT. Tiket Sampai Nonton Sentosa | Keputusan bersama BE-2: akun opsional dengan login OTP (§3.2.27, SRS-F-01-08 direvisi), event sourcing Booking dan Payment (SRS-C-09, SRS-D-10..12), circuit breaker menjadi MUST (§3.2.19), keamanan akun (SRS-Q-SEC-10..12), alert email (SRS-F-90-06), kontrak OpenAPI satu file per service | PRD v4.6 + D-03, D-04, D-19, D-21, D-40, D-41 |
@@ -95,7 +96,7 @@ Guest session dan data pembeli (§3.2.1); daftar dan detail event (§3.2.2–3.2
 | should | Disarankan (SHOULD pada sumber) |
 | PROPOSED | Nilai awal yang dapat dituning lewat konfigurasi |
 | Idempotency-Key | Kunci unik per penekanan tombol yang membuat request ulang tidak menghasilkan efek ganda |
-| Visitor token / Queue token / Admission token | Token bertanda tangan untuk identitas pengunjung, nomor antrean, dan izin masuk halaman beli (lihat HLD Security view) |
+| Visitor token / Queue token / Admission token | Token bertanda tangan untuk identitas pengunjung, nomor antrean, dan izin masuk halaman beli (lihat HLD Security view). Queue token deprecated (keputusan pemilik Q6) |
 
 #### Key Terms
 
@@ -253,7 +254,7 @@ Semua di bawah `/api/v1`. Kontrak normatif: satu file OpenAPI per service di `do
 | Queue | POST | `/events/{eventId}/queue-entries` | Join (NIK pembeli, email) | WAF challenge, rate limit, idempoten |
 | Queue | GET | `/queue-status/{eventId}` | Status Document | Publik, cache CDN 1 detik |
 | Queue | GET | `/queue-entries/me?eventId=` | Posisi eksak dan status entry | Visitor token, rate limit |
-| Queue | POST | `/queue-entries/{entryId}/claim` | Ambil admission token | Queue token + visitor token |
+| Queue | POST | `/queue-entries/{entryId}/claim` | Ambil admission token | Token visitor (+ `?eventId=`) |
 | Queue | DELETE | `/queue-entries/{entryId}` | Keluar antrean (SHOULD) | Pemilik |
 | Booking | GET | `/events` | Daftar event | Publik, cache 2 detik |
 | Booking | GET | `/events/{eventId}` | Detail event dan kategori | Publik, cache 2 detik |
@@ -437,7 +438,7 @@ Kontrak per endpoint (contoh request/response) ada di SDD-RBT-001 Interface view
 | SRS-F-04-07 | When there is no earlier waiter, an active slot is free, and the allocation succeeds, the customer shall be admitted directly in the join response. *(Amended by Queue hardening design rev 5: applies while the per-event admission lease is obtained, with one jittered 15-35 ms retry; otherwise the join returns `WAITING` with no Booking call and the promoter admits the entry within `PromotorInterval`. See ADR-029, TC-QUE-20b.)* | FR-05 | M | T | TC-QUE-02 |
 | SRS-F-04-08 | When an earlier waiter exists or the active slots are full, the entry shall be `WAITING` and the customer shall be directed to the waiting room. | FR-04 | M | T | TC-QUE-01 |
 | SRS-F-04-09 | The join endpoint shall be protected by an edge challenge, a rate-based rule, and a per-IP rate limit in the Queue Service. | NFR-01 | M | I | [TP] |
-| SRS-F-04-10 | The queue position shall persist across refresh and multiple tabs: the queue token shall be kept in cookie/secure storage and the entry shall be held server-side per buyer NIK. | FR-10 | M | T | TC-QUE-07 |
+| SRS-F-04-10 | The queue position shall persist across refresh and multiple tabs: the visitor token shall be kept in cookie `rb_visitor`/secure storage and the entry shall be held server-side per buyer NIK. | FR-10 | M | T | TC-QUE-07 |
 
 #### 3.2.5 Queue Status and Honest Indicator (QUE-02)
 
@@ -1059,7 +1060,7 @@ Source requirement → SRS requirement. Alokasi ke komponen ada di HLD §6; test
 | FR-07 | MUST | Posisi diperbarui otomatis setiap antrian di depannya berkurang. | Antrean maju saat transaksi di depan selesai/expired/batal (grooming D-9); near-real-time ≤ 5 detik untuk pengantre dekat (§5.25 [v4.6 → SRS §3.2.25]) | QUE-02, QUE-05 |
 | FR-08 | MUST | Customer otomatis dipindahkan ke Detail Ticket Page saat gilirannya tiba. | Klaim otomatis oleh klien saat entry berstatus `ADMITTED` (ditentukan server) | QUE-03 |
 | FR-09 | COULD | Estimasi waktu tunggu berdasarkan laju antrian. | Disediakan dari laju admission; disembunyikan bila tidak stabil | QUE-02 |
-| FR-10 | MUST | Posisi konsisten saat refresh. | Queue token di cookie/secure storage; entry server-side per NIK pembeli | QUE-01 |
+| FR-10 | MUST | Posisi konsisten saat refresh. | Token visitor di cookie `rb_visitor`/secure storage; entry server-side per NIK pembeli | QUE-01 |
 | FR-11 | MUST | Detail event beserta kategori tempat. | Info event publik; aksi beli hanya setelah admission | EVT-02 |
 | FR-12 | MUST | Setiap kategori menampilkan jumlah tiket available dan harga. | Available per kategori = kapasitas − hold − sold, diperbarui live. Reservasi tingkat event belum terikat kategori sehingga tidak mengurangi angka kategori; jaminan customer berlaku atas total unit (§5.9 [v4.6 → SRS §3.2.9]) | EVT-02 |
 | FR-13 | MUST | Maks 3 tiket (gabungan kategori) dibatasi NIK; tanpa NIK tidak dapat melanjutkan. | NIK pembeli wajib saat join; NIK pemegang wajib per tiket | BKG-01 |

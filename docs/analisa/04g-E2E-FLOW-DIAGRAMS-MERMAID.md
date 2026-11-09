@@ -698,7 +698,7 @@ sequenceDiagram
     
     Q->>B: POST /internal/allocations:batch<br/>{nikHash, email, accountId}
     B-->>Q: allocationId
-    Q-->>C: 201 ADMITTED + queueToken
+    Q-->>C: 201 ADMITTED + queueToken (deprecated)
     
     Note over C,P: BOOKING (same as guest)
     C->>B: POST /booking-sessions

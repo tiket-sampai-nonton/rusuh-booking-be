@@ -68,7 +68,7 @@ Status kode per 2026-10-20: **boilerplate standar organisasi berfungsi**; logika
 | JoinRequest body | `{ buyerNik?, email }` | `{ buyerNik?, email, emailConfirmation(req), consentNik(req=true) }` (`queue.yaml`) |
 | Join 422 | `NIK_REQUIRED` | `NIK_INVALID`, `EMAIL_MISMATCH`, `NIK_REQUIRED` |
 | Join 503 | tidak eksplisit | `DEPENDENCY_UNAVAILABLE` (fail-closed, retry dengan Idempotency-Key) |
-| Claim auth | `Authorization: Bearer <queueToken>` | visitor cookie `rb_visitor` **atau** header `X-Visitor-Token` |
+| Claim auth | `Authorization: Bearer <queueToken>` (historis, SDD lama; sudah dikoreksi) | visitor cookie `rb_visitor` **atau** header `X-Visitor-Token` |
 | Claim gagal | `403 CLAIM_DEADLINE_PASSED`, `403 ENTRY_NOT_ADMITTED` | `410 TURN_MISSED`, `410 EVENT_SOLD_OUT` |
 | ClaimResponse | `{ admissionToken, expiresAt }` | `{ admissionToken, bookingUrl }` (TTL 60s didokumentasikan pada field) |
 | Leave sukses | `200` | `204 No Content` |
@@ -130,7 +130,7 @@ Status kode per 2026-10-20: **boilerplate standar organisasi berfungsi**; logika
 2. IF `consentNik != true`, THEN THE Queue Service SHALL menolak dengan `400 VALIDATION_ERROR`.
 3. IF `buyerNik` wajib (guest atau login tanpa NIK) tetapi kosong, THEN THE Queue Service SHALL menolak dengan `422 NIK_REQUIRED`.
 4. IF `buyerNik` gagal validasi struktur `pkg/nik` (16 digit, provinsi, kab/kec, tanggal lahir, nomor urut — platform R1), THEN THE Queue Service SHALL menolak dengan `422 NIK_INVALID` (SRS-F-11-01, TC-GST-02).
-5. WHEN join valid, tidak ada pengantre lebih awal, slot aktif tersedia, DAN Booking membalas `GRANTED` untuk entry itu lewat `allocations:batch`, THE Queue Service SHALL langsung memberi `201` dengan `status = ADMITTED`, `claimDeadline`, dan `queueToken`; bila Booking membalas selain `GRANTED` atau tidak terjangkau, entry tetap `WAITING` (SRS-F-04-07, invarian #2).
+5. WHEN join valid, tidak ada pengantre lebih awal, slot aktif tersedia, DAN Booking membalas `GRANTED` untuk entry itu lewat `allocations:batch`, THE Queue Service SHALL langsung memberi `201` dengan `status = ADMITTED`, `claimDeadline`, dan `queueToken` (deprecated, masih diterbitkan satu rilis; keputusan pemilik Q6); bila Booking membalas selain `GRANTED` atau tidak terjangkau, entry tetap `WAITING` (SRS-F-04-07, invarian #2).
 6. WHEN join valid tetapi harus menunggu, THE Queue Service SHALL memberi `201` dengan `status = WAITING` dan `seq` monotonik tanpa celah.
 7. THE Queue Service SHALL menjalankan seluruh pengecekan constraint join (quota_exhausted, NIK, visitor, email) dan `INCR seq` secara **atomik** lewat satu skrip Lua (`join.lua`) dengan semua KEYS pada hash tag `{e:<eventId>}` yang sama.
 8. IF NIK sudah punya entry aktif di event, THEN THE Queue Service SHALL menolak dengan `409 NIK_ALREADY_IN_QUEUE`.
@@ -216,7 +216,7 @@ Status kode per 2026-10-20: **boilerplate standar organisasi berfungsi**; logika
 4. WHEN Booking membalas `BUYER_QUOTA_EXHAUSTED`, THE Queue Service SHALL menambah `buyerNikHash` ke `q:{e}:quota_exhausted`, mengakhiri entry (`status = ENDED`, `reason = BUYER_QUOTA_EXHAUSTED`, audit `REJECTED`), dan membersihkan constraint key.
 5. WHEN Booking membalas `SOLD_OUT`, THE Queue Service SHALL menutup antrean (`saleState = CLOSED`, `soldOut = true`) dan menyetel entry `WAITING` menjadi `SOLD_OUT`.
 6. THE Queue Service SHALL menjaga FIFO lintas promosi: tidak ada entry ber-seq lebih besar yang di-admit sebelum entry ber-seq lebih kecil yang masih eligible (SRS-Q-FUN-03; TC-QUE-08, TC-QUE-14).
-7. WHEN `POST .../claim` dipanggil dengan visitor valid DAN status entry `ADMITTED` DAN `now < claimDeadline`, THE Queue Service SHALL menerbitkan `admissionToken` EdDSA sekali-pakai (TTL `ADMISSION_TOKEN_TTL_SECONDS`, default 60, < claim window; klaim `jti, eventId, entryId, allocationId, visitorId`) + `bookingUrl`, dan menyetel status `CLAIMED` secara atomik (`claim.lua`).
+7. WHEN `POST .../claim` dipanggil dengan visitor valid DAN status entry `ADMITTED` DAN `now < claimDeadline`, THE Queue Service SHALL menerbitkan `admissionToken` EdDSA sekali-pakai (TTL `ADMISSION_TOKEN_TTL_SECONDS`, default 60, < claim window; klaim `jti, eventId, entryId, allocationId, visitorId`) + `bookingUrl` (deprecated, dipertahankan satu rilis; klien menavigasi dari `admissionToken`, keputusan pemilik Q4 ii), dan menyetel status `CLAIMED` secara atomik (`claim.lua`).
 8. IF `now >= entry.claimDeadline` atau status sudah `MISSED`, THEN THE Queue Service SHALL menolak claim dengan `410 TURN_MISSED`.
 9. IF event sudah sold out saat claim, THEN THE Queue Service SHALL menolak dengan `410 EVENT_SOLD_OUT`.
 10. WHEN deadline claim lewat tanpa claim, THE worker Claim Sweeper SHALL menyetel status `MISSED`, menghapus dari `active`, dan merilis slot Queue; **tidak** mem-publish event `booking.*` — Booking melepas alokasinya sendiri dan menerbitkan `booking.journey.ended.v1 (UNCLAIMED)` (K7, SRS-F-06-06).
@@ -234,14 +234,14 @@ Status kode per 2026-10-20: **boilerplate standar organisasi berfungsi**; logika
 - **SRS trace:** SRS-F-13-03 (leave), SRS-F-01-10 (move)
 - **TC trace:** TC-QUE-17 (leave), TC-QUE-16 (move)
 - **Endpoint:** `DELETE /api/v1/queue-entries/{entryId}` (auth: visitor cookie/header)
-- **Error codes:** `NOT_FOUND` (404), `ENTRY_MOVED` (perangkat lama)
+- **Error codes:** `NOT_FOUND` (404), `ENTRY_MOVED` (perangkat lama; dicadangkan, belum diproduksi, Q5)
 
 ### Acceptance Criteria (EARS)
 
 1. WHEN `DELETE /api/v1/queue-entries/{entryId}` dipanggil pada entry `WAITING`/`ADMITTED` milik visitor itu, THE Queue Service SHALL menyetel status `LEFT`, menghapus constraint keys (nik/visitor/email), merilis slot bila sedang `ADMITTED`, dan menjawab `204 No Content`.
 2. WHEN entry `ADMITTED` ditinggalkan, THE Queue Service SHALL memanggil `POST /internal/v1/allocations/{allocationId}:release` (`reason = QUEUE_ENTRY_GONE`) sebagai kompensasi saga (ADR-018); kegagalan panggilan SHALL dicoba ulang oleh worker sampai `released` diterima atau Booking sweeper mengakhiri admission pada claim deadline.
 3. WHEN pembeli yang sudah `LEFT` join kembali, THE Queue Service SHALL memberinya `seq` baru (dari belakang antrean).
-4. WHEN entry dipindahkan ke perangkat baru lewat tautan email, THE Queue Service SHALL memindahkan kepemilikan ke visitor baru dengan **posisi/seq sama**, menonaktifkan tautan lama, dan perangkat lama SHALL melihat `ENTRY_MOVED` (TC-QUE-16). *(SHOULD; tidak ada endpoint di `queue.yaml` — **OQ-3, blocked**.)*
+4. WHEN entry dipindahkan ke perangkat baru lewat tautan email, THE Queue Service SHALL memindahkan kepemilikan ke visitor baru dengan **posisi/seq sama**, menonaktifkan tautan lama, dan perangkat lama SHALL melihat `ENTRY_MOVED` (TC-QUE-16). *(Desain masa depan, dipertahankan per keputusan pemilik Q5; `ENTRY_MOVED` dicadangkan, belum diproduksi. SHOULD; tidak ada endpoint di `queue.yaml` — **OQ-3, blocked**.)*
 5. IF entry tidak ditemukan, THEN THE Queue Service SHALL menjawab `404 NOT_FOUND`.
 
 ---

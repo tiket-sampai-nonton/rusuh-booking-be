@@ -1244,7 +1244,7 @@ Response `201` (menunggu):
     "entryId": "6f1c…",
     "seq": 183245,
     "status": "WAITING",
-    "queueToken": "eyJhbGciOiJFZERTQSIs…",
+    "queueToken": "eyJhbGciOiJFZERTQSIs…",   // deprecated (Q6): tidak diterima endpoint mana pun
     "statusUrl": "/api/v1/queue-status/8f0c…",
     "joinedAt": "2026-12-25T03:00:00.412Z",
     "serverTime": "2026-12-25T03:00:00.415Z"
@@ -1260,7 +1260,7 @@ Response `201` dengan `status: "ADMITTED"` dan `claimDeadline` bila admission in
 
 ###### Klaim
 
-`POST /api/v1/queue-entries/{entryId}/claim` → `{ admissionToken, bookingUrl }` (TTL 60 detik).
+`POST /api/v1/queue-entries/{entryId}/claim` → `{ admissionToken, bookingUrl }` (TTL 60 detik; `bookingUrl` deprecated, klien menavigasi dari `admissionToken`).
 
 Status entry yang mungkin di respons: `WAITING`, `ADMITTED`, `CLAIMED`, `MISSED`, `LEFT`, `SOLD_OUT`, `CLOSED`, `COMPLETED`, `ENDED`. Untuk status akhir, respons memuat `reason` dan `redirect: "/"`.
 

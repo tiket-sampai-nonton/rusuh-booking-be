@@ -22,9 +22,10 @@ const (
 	CodeEventSoldOut        apperror.Code = "EVENT_SOLD_OUT"
 	CodeTurnMissed          apperror.Code = "TURN_MISSED"
 	CodeNotAdmitted         apperror.Code = "NOT_ADMITTED"
-	CodeEntryMoved          apperror.Code = "ENTRY_MOVED"
-	CodeQueueNotConfigured  apperror.Code = "QUEUE_NOT_CONFIGURED"
-	CodeEventRulesLocked    apperror.Code = "EVENT_RULES_LOCKED"
+	// RESERVED (owner Q5): no path produces it yet; future design SRS-F-01-10, spec Req 7.4, task 14.2.
+	CodeEntryMoved         apperror.Code = "ENTRY_MOVED"
+	CodeQueueNotConfigured apperror.Code = "QUEUE_NOT_CONFIGURED"
+	CodeEventRulesLocked   apperror.Code = "EVENT_RULES_LOCKED"
 )
 
 // ErrUnauthorized is returned by the admin guard for any authentication failure (401, never 403).

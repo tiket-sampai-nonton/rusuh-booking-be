@@ -161,9 +161,9 @@ GET /api/v1/queue-entries/me?eventId={eventId}
 POST /api/v1/queue-entries/{entryId}/claim
 ```
 
-**Headers:** `Authorization: Bearer <queueToken>`
+**Auth:** token visitor (cookie `rb_visitor` atau header `X-Visitor-Token`) dan query `?eventId=`. `queueToken` tidak diterima (deprecated, keputusan pemilik Q6).
 
-**Response (200):**
+**Response (200):** (`bookingUrl` ada di kontrak `queue.yaml` tetapi deprecated, dipertahankan satu rilis; klien menavigasi dari `admissionToken`. Selisih bentuk respons dan kode error lain dirujuk di `specs/queue-service/requirements.md`, tabel delta baris 71-73.)
 ```json
 {
   "admissionToken": "jwt-one-time-use",

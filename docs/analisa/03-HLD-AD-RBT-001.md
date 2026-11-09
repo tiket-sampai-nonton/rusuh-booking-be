@@ -521,7 +521,7 @@ sequenceDiagram
   R-->>QS: seq dan status
   QS->>BS: POST /internal/v1/allocations:batch<br/>{ accountId, buyerNikHash: token.nikHash, ... }
   BS-->>QS: allocationId
-  QS-->>FE: 201 ADMITTED + queueToken
+  QS-->>FE: 201 ADMITTED + queueToken (deprecated)
 ```
 
 **Perbedaan dengan Guest Join:**

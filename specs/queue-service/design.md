@@ -101,6 +101,8 @@ Semua respons sukses dibungkus `{ meta, data }`; semua error `{ meta, data: null
 ```
 `status ∈ {WAITING,ADMITTED,CLAIMED,MISSED,LEFT,SOLD_OUT,CLOSED,COMPLETED,ENDED}`. Required: `entryId, seq, status, joinedAt, serverTime`.
 
+> **Deprecated (keputusan pemilik Q6):** `queueToken` tidak diterima endpoint mana pun, masih diterbitkan satu rilis, lalu dihapus. Klien memakai visitor token.
+
 ### 2.2 `GET /api/v1/queue-status/{eventId}` — Status Document (CDN)
 
 | Aspek | Detail |
@@ -183,6 +185,8 @@ Required: `eventId, saleState, soldOut, updatedAt`.
 { "admissionToken": "jwt-eddsa one-time (TTL 60s)", "bookingUrl": "{BOOKING_PAGE_BASE_URL}/{eventId}" }
 ```
 Required: `admissionToken, bookingUrl`.
+
+> **Deprecated (keputusan pemilik Q4 ii):** `bookingUrl` dipertahankan satu rilis; klien menavigasi dari `admissionToken`.
 
 | Status | Code | Kondisi |
 |--------|------|---------|
@@ -415,7 +419,7 @@ end
 redis.call('HSET', KEYS[1], 'status','CLAIMED', 'claimedAtMs', ARGV[2])
 return {'OK','CLAIMED'}
 ```
-**Mapping:** `OK,CLAIMED`/`OK,ALREADY`→200 (Go terbitkan `admissionToken` EdDSA TTL 60s + `bookingUrl`); `ERR,TURN_MISSED`→410; `ERR,NOT_FOUND`→404.
+**Mapping:** `OK,CLAIMED`/`OK,ALREADY`→200 (Go terbitkan `admissionToken` EdDSA TTL 60s + `bookingUrl`, deprecated); `ERR,TURN_MISSED`→410; `ERR,NOT_FOUND`→404.
 
 ### 4.4 `leave.lua` — atomic leave dengan cleanup
 
@@ -658,7 +662,7 @@ Promotor(worker)      Valkey        Booking            RabbitMQ        Klien    
   │                     │              │                  │             ├─────────────►│
   │                     │ EVALSHA claim.lua◄──────────────────────────────────────────┤
   │                     │  OK,CLAIMED  │                  │             │  issue token │
-  │                     │              │                  │  200 {admissionToken,bookingUrl}◄─┤
+  │                     │              │                  │  200 {admissionToken,bookingUrl(deprecated)}◄─┤
 Sweeper(~10s): ZRANGEBYSCORE active 0 now → MISSED (tanpa publish; Booking menerbitkan journey.ended UNCLAIMED)
 ```
 
@@ -689,14 +693,14 @@ Status Publisher (worker): tiap status_publish_interval_ms → SET q:{e}:status 
 | `EVENT_SOLD_OUT` | 410 | join, claim | tiket habis |
 | `TURN_MISSED` | 410 | claim | `now >= claimDeadline` atau status `MISSED` |
 | `NOT_FOUND` | 404 | status, me, claim, leave | event/entry tak ada |
-| `ENTRY_MOVED` | 409/410 | me/claim (device lama) | entry dipindahkan ke device lain |
+| `ENTRY_MOVED` | 409/410 | me/claim (device lama) | entry dipindahkan ke device lain. Reserved, not produced yet (keputusan pemilik Q5) |
 | `RATE_LIMITED` | 429 | join, me, claim | rate limit (+ `Retry-After`) |
 | `DEPENDENCY_UNAVAILABLE` | 503 | join, claim | Valkey/Booking down — fail closed, retry idempotent |
 
 Pemetaan error domain → HTTP di `infrastructure/http` memakai `pkg/apperror`. Handler selalu mengembalikan DTO lewat `domain/mapper`, tidak pernah entity. Envelope error tidak pernah memuat SQL, stack trace, secret, atau payload provider.
 
 **Error domain ↔ code (konstruktor di `domain/`):**
-`ErrValidation→VALIDATION_ERROR(400)`, `ErrNikInvalid→NIK_INVALID(422)`, `ErrNikRequired→NIK_REQUIRED(422)`, `ErrEmailMismatch→EMAIL_MISMATCH(422)`, `ErrNikInQueue→NIK_ALREADY_IN_QUEUE(409)`, `ErrVisitorInQueue→VISITOR_ALREADY_IN_QUEUE(409)`, `ErrEmailInQueue→EMAIL_ALREADY_IN_QUEUE(409)`, `ErrQuotaExhausted→BUYER_QUOTA_EXHAUSTED(409)`, `ErrNotOnSale→EVENT_NOT_ON_SALE(409)`, `ErrSoldOut→EVENT_SOLD_OUT(410)`, `ErrTurnMissed→TURN_MISSED(410)`, `ErrEntryNotFound→NOT_FOUND(404)`, `ErrEntryMoved→ENTRY_MOVED`, `ErrRateLimited→RATE_LIMITED(429)`, `ErrDependencyUnavailable→DEPENDENCY_UNAVAILABLE(503)`.
+`ErrValidation→VALIDATION_ERROR(400)`, `ErrNikInvalid→NIK_INVALID(422)`, `ErrNikRequired→NIK_REQUIRED(422)`, `ErrEmailMismatch→EMAIL_MISMATCH(422)`, `ErrNikInQueue→NIK_ALREADY_IN_QUEUE(409)`, `ErrVisitorInQueue→VISITOR_ALREADY_IN_QUEUE(409)`, `ErrEmailInQueue→EMAIL_ALREADY_IN_QUEUE(409)`, `ErrQuotaExhausted→BUYER_QUOTA_EXHAUSTED(409)`, `ErrNotOnSale→EVENT_NOT_ON_SALE(409)`, `ErrSoldOut→EVENT_SOLD_OUT(410)`, `ErrTurnMissed→TURN_MISSED(410)`, `ErrEntryNotFound→NOT_FOUND(404)`, `ErrEntryMoved→ENTRY_MOVED` (reserved), `ErrRateLimited→RATE_LIMITED(429)`, `ErrDependencyUnavailable→DEPENDENCY_UNAVAILABLE(503)`.
 
 ---
 
@@ -722,7 +726,7 @@ Pemetaan error domain → HTTP di `infrastructure/http` memakai `pkg/apperror`. 
 ## 12. Keamanan & Privasi
 
 - NIK divalidasi `pkg/nik` lalu hanya disimpan sebagai `HMAC-SHA256(NIK, PII_HASH_KEY)`; plaintext tidak disimpan/dilog. Email disimpan terenkripsi AES-256-GCM (`emailEnc`), `emailHash` HMAC untuk constraint.
-- `admissionToken`/`queueToken`/`visitorToken` EdDSA via `pkg/token`; `admissionToken` sekali-pakai TTL 60s, terbit **hanya** lewat jalur antrean (NFR-07).
+- `admissionToken`/`queueToken` (deprecated)/`visitorToken` EdDSA via `pkg/token`; `admissionToken` sekali-pakai TTL 60s, terbit **hanya** lewat jalur antrean (NFR-07).
 - Fail closed: Valkey/Booking down → join/claim ditolak (`503 DEPENDENCY_UNAVAILABLE`).
 - Rate limit per email + IP di Valkey; cookie `rb_visitor` HttpOnly/Secure/SameSite=Lax.
 - Payload event tanpa data pribadi (kontrak `additionalProperties:false`).

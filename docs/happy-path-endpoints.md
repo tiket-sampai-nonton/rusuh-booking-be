@@ -52,6 +52,7 @@ Identitas visitor:
   dikirim lagi di setiap panggilan visitor (join, me, heartbeat, claim, leave); CORS lokal mengizinkannya. Visitor token
   sebagai `Authorization: Bearer` tidak diterima (401). Klien menangani 401 menurut `errorCode`:
   `VISITOR_TOKEN_INVALID` = join ulang (bukan refresh access token).
+- Klien native dengan cookie jar: lihat catatan cookie jar vs `X-Visitor-Token` di `docs/analisa/08a-frontend-integration.md` (§ join).
 
 ---
 
@@ -73,12 +74,14 @@ POST :8081/api/v1/events/{eventId}/queue-entries
      Header: X-Client-Type: mobile (app), X-Device-Id (opsional), Idempotency-Key (opsional, 16-64)
      Body: tidak dibaca
      -> 201 WAITING atau langsung ADMITTED; simpan rb_visitor / X-Visitor-Token
+     (`queueToken` di respons deprecated: abaikan, tidak diterima endpoint mana pun)
 
 GET  :8081/api/v1/queue-status/{eventId}                  status publik (dokumen dipublikasikan tiap ~1 dtk)
 GET  :8081/api/v1/queue-entries/me?eventId={eventId}      posisi eksak (butuh visitor token)
 POST :8081/api/v1/queue-entries/me/heartbeat?eventId={eventId}   sinyal hidup
 POST :8081/api/v1/queue-entries/{entryId}/claim?eventId={eventId}
-     -> {admissionToken, bookingUrl} saat giliran tiba
+     -> {admissionToken, bookingUrl (deprecated)} saat giliran tiba; navigasi dari `admissionToken`;
+        auth = visitor token + `?eventId=`
 ```
 Uji: ✅ semua. Event harus sudah dikonfigurasi antreannya oleh admin (lihat C2), kalau tidak join menjawab
 `409 QUEUE_NOT_CONFIGURED`. `queue-status` bisa `404` sesaat sebelum dokumen pertama dipublikasikan.

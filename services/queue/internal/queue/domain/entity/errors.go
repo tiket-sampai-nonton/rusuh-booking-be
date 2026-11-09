@@ -25,7 +25,8 @@ var (
 	ErrEntryNotFound = errors.New("queue: entry sudah berakhir atau tidak ada")
 	ErrEventNotFound = errors.New("queue: event tidak ditemukan")
 	ErrNotOwner      = errors.New("queue: entry bukan milik visitor ini")
-	ErrEntryMoved    = errors.New("queue: entry dipindahkan ke perangkat lain")
+	// RESERVED (owner Q5): no path produces it yet; future design SRS-F-01-10, spec Req 7.4, task 14.2.
+	ErrEntryMoved = errors.New("queue: entry dipindahkan ke perangkat lain")
 
 	ErrDependencyUnavailable = errors.New("queue: dependency tidak tersedia")
 

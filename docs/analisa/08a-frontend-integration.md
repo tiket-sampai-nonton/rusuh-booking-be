@@ -94,7 +94,7 @@ di-join setelah admin mengatur antrean (`QUEUE_NOT_CONFIGURED` bila belum, join 
     "status": "WAITING",
     "state": "WAITING",
     "rank": 12,
-    "queueToken": "jwt-token",
+    "queueToken": "jwt-token",   // deprecated (Q6): jangan dipakai, tidak diterima endpoint mana pun
     "visitorToken": "jwt-token",
     "statusUrl": "/api/v1/queue-status/{eventId}",
     "claimDeadline": null,
@@ -110,6 +110,12 @@ di-join setelah admin mengatur antrean (`QUEUE_NOT_CONFIGURED` bila belum, join 
 - `visitorToken` ada di body **hanya untuk mobile**; web menerimanya sebagai cookie HttpOnly `rb_visitor` (Set-Cookie).
   Selalu simpan token terbaru dari setiap respons join: rotasi (re-attach akun, join ulang setelah entri berakhir)
   mencabut token lama (heartbeat/me lama dijawab `401 VISITOR_TOKEN_INVALID`).
+- Cookie jar vs `X-Visitor-Token`: join yang membawa cookie `rb_visitor` valid dianggap terautentikasi cookie, jadi
+  token baru hanya datang lewat `Set-Cookie` (body kosong). Klien native yang memakai cookie jar bersama header
+  `X-Visitor-Token` harus menonaktifkan jar dan memakai header saja, atau mengandalkan cookie dan membaca `Set-Cookie`.
+- App native wajib mengirim `X-Client-Type: mobile` pada join agar `visitorToken` ada di body (ADR-030 addendum (f)).
+- `queueToken` deprecated (keputusan pemilik Q6): masih diterbitkan satu rilis, tidak diterima endpoint mana pun,
+  bukan kredensial; klien mengabaikannya.
 - Tidak ada field `id`, `eventId`, atau `config` pada respons join; interval polling datang dari status document (§2.3)
   dan `nextHeartbeatMs` (§2.3a).
 
@@ -197,7 +203,7 @@ Ketika entry berstatus `ADMITTED` (ditentukan server):
   "meta": { "code": 200, "requestId": "..." },
   "data": {
     "admissionToken": "jwt-one-time-use",
-    "bookingUrl": "https://app.example.com/book/{eventId}"
+    "bookingUrl": "https://app.example.com/book/{eventId}"   // deprecated (Q4 ii): navigasi dari admissionToken
   }
 }
 ```
@@ -216,7 +222,7 @@ Ketika entry berstatus `ADMITTED` (ditentukan server):
 - TTL: 60 detik, sekali pakai
 - Digunakan untuk `POST /api/v1/booking-sessions` (dikirim di body `{"admissionToken": "..."}`)
 
-**`bookingUrl`:** halaman booking publik `{BOOKING_PAGE_BASE_URL}/{eventId}`. URL tidak memuat token, entryId, atau data
+**`bookingUrl` (deprecated, keputusan pemilik Q4 ii; dipertahankan satu rilis, klien menavigasi dari `admissionToken`):** halaman booking publik `{BOOKING_PAGE_BASE_URL}/{eventId}`. URL tidak memuat token, entryId, atau data
 pembeli; klien membuka halaman itu lalu mengirim `admissionToken` (dari respons claim) ke
 `POST /api/v1/booking-sessions`. Tidak ada route baru.
 
@@ -410,7 +416,7 @@ wajib), `GET /api/v1/bookings/{bookingId}`, `POST /api/v1/bookings/{bookingId}/c
 | Token | Disimpan di | TTL | Kegunaan |
 |-------|-------------|-----|----------|
 | `visitorToken` | Web: cookie HttpOnly `rb_visitor`; app: header `X-Visitor-Token` (secure storage) | 24 jam (`TOKEN_VISITOR_TTL`) | Identitas perangkat untuk antrean, claim, sesi, hold |
-| `queueToken` | — | 1 jam (`TOKEN_QUEUE_TTL`) | Dikembalikan pada join, tetapi tidak dipakai endpoint mana pun (lihat Catatan kontrak vs kode) |
+| `queueToken` (deprecated, Q6) | — | 1 jam (`TOKEN_QUEUE_TTL`) | Dikembalikan pada join satu rilis lagi, tetapi tidak dipakai endpoint mana pun (lihat Catatan kontrak vs kode) |
 | `admissionToken` | Memory (sekali pakai) | 60 detik | Body `POST /booking-sessions` |
 | `accessToken` (login) | Memory | 15 menit | `Authorization: Bearer`; opsional pada join/hold untuk mengidentifikasi akun |
 | `refreshToken` (login) | Body respons `TokenResponse` (disimpan klien) | 30 hari (720 jam) | Rotasi lewat `POST /api/v1/auth/refresh`; token lama yang dipakai ulang mencabut semua sesi |
@@ -561,7 +567,8 @@ Antrean, liveness dan posisi (ADR-030):
 2. Selalu simpan visitor token terbaru dari setiap respons join (generasi token dirotasi saat re-attach akun atau join
    ulang); `401 VISITOR_TOKEN_INVALID` di heartbeat/me/claim/leave berarti token tidak valid atau lama: join ulang
    (dengan bearer bila login). Kunci penanganan pada `errorCode` `VISITOR_TOKEN_INVALID`, bukan pada status 401
-   saja (401 access token User = `UNAUTHORIZED`, ditangani lewat refresh). `404 NOT_FOUND` di me/claim/leave berarti
+   saja (401 access token User = `UNAUTHORIZED`, ditangani lewat refresh; `VISITOR_TOKEN_INVALID` tidak pernah memicu
+   refresh access token). `404 NOT_FOUND` di me/claim/leave berarti
    visitor belum pernah bergabung ke event itu atau entri bukan miliknya/tidak ada: jangan refresh token, bergabunglah.
 3. Kirim `POST /api/v1/queue-entries/me/heartbeat?eventId=` tiap `nextHeartbeatMs` (dari heartbeat/me) selama
    WAITING/STALE. `404 ENTRY_NOT_FOUND` = entri berakhir: panggil me untuk `reason` dan tawarkan gabung ulang.
@@ -573,15 +580,14 @@ Antrean, liveness dan posisi (ADR-030):
    PAGE_TIMER_EXPIRED, JOURNEY_ENDED); tampilkan pesan sesuai reason.
 7. Deteksi "giliran sebentar lagi" dari status document yang di-cache CDN (`seq` sendiri vs `headSeq`); push hanya bonus.
 
-## Catatan kontrak vs kode (butir 1-2 selesai; butir 3-4 belum diselaraskan)
-
-Kedua sisi tidak dipilih di sini; keputusan ada pada pemilik kontrak.
+## Catatan kontrak vs kode (butir 1-2 selesai; butir 3-4 diputuskan pemilik)
 
 1. (Selesai) Mobile vs web pada join: `X-Client-Type: mobile` kini tercantum di `queue.yaml`; body berisi token hanya untuk
    klien mobile tanpa cookie `rb_visitor` valid, cookie selalu di-set (ADR-030 addendum, Batch 2).
 2. (Selesai) `X-Device-Id` berlaku di join, me, heartbeat, claim dan leave (diverifikasi oleh `VisitorAuthenticator`),
    tercantum di `queue.yaml` untuk kelimanya, dan diizinkan di CORS lokal.
-3. `queueToken`: ada di skema `QueueEntry` dan dikembalikan join, tetapi tidak ada endpoint yang menerimanya (claim dan
-   leave memakai visitor token).
-4. Kode error `ENTRY_MOVED` (409) terdaftar dan dipetakan di Queue tetapi tidak dihasilkan jalur mana pun dan tidak ada
-   di kontrak.
+3. (Diputuskan: deprecated, Q6) `queueToken` ada di skema `QueueEntry` dan dikembalikan join, tetapi tidak ada endpoint
+   yang menerimanya (claim dan leave memakai visitor token). Ditandai `deprecated`, dihapus setelah satu rilis.
+4. (Diputuskan: dicadangkan, Q5) Kode error `ENTRY_MOVED` (409) terdaftar dan dipetakan di Queue tetapi belum
+   dihasilkan jalur mana pun; desain masa depan (SRS-F-01-10). Dicatat di deskripsi operasi `queue.yaml`, klien tidak
+   boleh membangun alur di atasnya.
