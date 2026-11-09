@@ -879,6 +879,34 @@ Pola yang diadopsi dari usulan BE-2: **satu image banyak verb** (`api`, `worker`
   `required` yang tak ada di `properties`), sehingga suntingan OpenAPI diverifikasi lewat inspeksi
   (`grep servingSeq queue.yaml ⇒ 0`), bukan lewat exit code gerbang.
 
+### Adendum Amandemen ADR-030 — 2026-11-09 (pengiriman visitor token, 401 vs 404, `X-Device-Id` lintas rute)
+
+- **Status:** Accepted (arah dikonfirmasi pemilik pada triase temuan Batch 2).
+- **Konteks:** Uji curl menemukan empat penyimpangan: (1) join memutuskan "mobile" hanya dari `X-Client-Type`, sehingga
+  pemegang cookie yang menyalin header itu menerima token yang dapat dibaca skrip; (2) claim/leave menjawab 404 untuk
+  token tidak valid sedangkan `me` 401 (kontrak QSH-T10); (3) `checkTokenGen` menjawab 401 untuk "tidak ada catatan
+  generasi" (visitor belum pernah bergabung) sama dengan "token dirotasi"; (4) CORS lokal tidak mengizinkan
+  `X-Device-Id`.
+- **Keputusan:** (a) Cookie `rb_visitor` selalu di-set bila token terbit; `visitorToken` di body hanya bila
+  `X-Client-Type: mobile` DAN request tidak membawa cookie valid (cookie tidak kosong dan lolos verifikasi). Cookie tidak
+  kosong yang tidak valid → visitor baru, header `X-Visitor-Token` diabaikan. (b) Claim/leave menjawab
+  `401 VISITOR_TOKEN_INVALID` untuk token tidak ada/tidak valid/kedaluwarsa/perangkat tidak cocok, sebelum entri dicari
+  (identik untuk entri sendiri, orang lain, atau tidak ada). (c) `checkTokenGen` tiga arah untuk claim, leave, me:
+  `eventId` kosong → 401; catatan generasi tidak ada → 404 `NOT_FOUND` (belum pernah bergabung); catatan ada tetapi
+  generasi beda/0 → 401 (dirotasi). (d) `join.lua` `describe()` memperbarui TTL `vtok` pada setiap join EXISTING/replay
+  agar "catatan tidak ada" benar-benar berarti "belum pernah bergabung" selama token yang baru diterbitkan berlaku.
+  (e) `X-Device-Id` ditambahkan ke `Access-Control-Allow-Headers`; pengikatan perangkat berlaku di join, me, heartbeat,
+  claim, leave. (f) App native WAJIB mengirim `X-Client-Type: mobile` pada join dan mengirim token kembali sebagai
+  `X-Visitor-Token`.
+- **Alternatif ditolak:** menambah `Source` pada `VisitorClaim`/authenticator (churn antarmuka + mock; turunan
+  `ok && cookie tidak kosong` sudah tepat karena `ResolveToken` membaca cookie lebih dulu); melemahkan syarat umur
+  catatan dan menerima 404 di jendela ekor; menyamakan heartbeat ke 404 (ditunda, OQ-3; heartbeat tetap 401).
+- **Konsekuensi:** Perubahan kontrak yang terlihat klien: claim/leave 404→401 untuk token tidak valid; `me` 401→404
+  untuk visitor yang belum pernah bergabung; klien native tanpa `X-Client-Type` tidak menerima token di body; klien
+  harus menangani 401 berdasarkan `errorCode` (`VISITOR_TOKEN_INVALID` bukan kedaluwarsa access token). Risiko
+  diterima: TOCTOU antara cek generasi dan skrip Lua (pra-ada; claim/leave Lua memakai pemilik visitor). Tindak lanjut:
+  field `JoinInput.IsMobile` kini hanya petunjuk transport (kandidat dihapus).
+
 ---
 
 ## ADR-031: Pengaturan antrean per event lewat PUT admin eksplisit, join ketat, audit append-only
