@@ -27,11 +27,13 @@ import (
 const rawDevice = "raw-device-id-SECRET-123"
 
 type deviceRig struct {
-	auth    *security.VisitorAuthenticator
-	bound   string // token bound to rawDevice
-	unbound string // token without a device claim
-	now     time.Time
-	expired string
+	auth     *security.VisitorAuthenticator
+	verifier *token.Verifier
+	hasher   *security.DeviceHasher
+	bound    string // token bound to rawDevice
+	unbound  string // token without a device claim
+	now      time.Time
+	expired  string
 }
 
 func newDeviceRig(t *testing.T) *deviceRig {
@@ -56,12 +58,19 @@ func newDeviceRig(t *testing.T) *deviceRig {
 		return tok
 	}
 	return &deviceRig{
-		auth:    security.NewVisitorAuthenticator(verifier, func() time.Time { return now }).WithDeviceHasher(dh),
-		bound:   mint(outbound.VisitorClaim{VisitorID: "v1", Gen: 1, DeviceHash: dh.Hash(rawDevice)}, now),
-		unbound: mint(outbound.VisitorClaim{VisitorID: "v1", Gen: 1}, now),
-		now:     now,
-		expired: mint(outbound.VisitorClaim{VisitorID: "v1", Gen: 1}, now.Add(-48*time.Hour)),
+		verifier: verifier,
+		hasher:   dh,
+		auth:     security.NewVisitorAuthenticator(verifier, func() time.Time { return now }).WithDeviceHasher(dh),
+		bound:    mint(outbound.VisitorClaim{VisitorID: "v1", Gen: 1, DeviceHash: dh.Hash(rawDevice)}, now),
+		unbound:  mint(outbound.VisitorClaim{VisitorID: "v1", Gen: 1}, now),
+		now:      now,
+		expired:  mint(outbound.VisitorClaim{VisitorID: "v1", Gen: 1}, now.Add(-48*time.Hour)),
 	}
+}
+
+// authAt returns an authenticator for the same keys whose clock is fixed at t.
+func (g *deviceRig) authAt(t time.Time) *security.VisitorAuthenticator {
+	return security.NewVisitorAuthenticator(g.verifier, func() time.Time { return t }).WithDeviceHasher(g.hasher)
 }
 
 type deviceRoute struct {

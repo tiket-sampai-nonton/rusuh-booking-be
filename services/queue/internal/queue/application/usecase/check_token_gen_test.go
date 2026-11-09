@@ -2,22 +2,16 @@ package usecase_test
 
 import (
 	"context"
-	"crypto/ed25519"
 	"errors"
-	"net/http/httptest"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 
-	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/token"
-
 	mock_outbound "github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/_mock/queue/port/outbound"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/application/usecase"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/domain/entity"
-	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/infrastructure/security"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/port/inbound"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/port/outbound"
 )
@@ -150,39 +144,4 @@ func TestClaimAndLeave_ForeignAndAbsentEntryAreIndistinguishable(t *testing.T) {
 	}
 	assert.Equal(t, got[0], got[2])
 	assert.Equal(t, got[1], got[3])
-}
-
-// P7 (REQ-QVT-03.7): the boundary between "record gone while the token is still valid" (404) and "token itself past
-// its lifetime" (rejected by the authenticator before the usecase: the handler answers 401).
-func TestTokenLifetimeBoundary_RecordGoneVersusTokenExpired(t *testing.T) {
-	pub, priv, err := ed25519.GenerateKey(nil)
-	require.NoError(t, err)
-	signer, err := token.NewSigner(priv, "queue-1")
-	require.NoError(t, err)
-	verifier, err := token.NewVerifier(map[string]ed25519.PublicKey{"queue-1": pub}, "rbt-queue", "rbt", time.Second)
-	require.NoError(t, err)
-	issuedAt := time.Date(2026, 10, 20, 10, 0, 0, 0, time.UTC)
-	iss := security.NewTokenIssuer(signer, "rbt-queue", "rbt", time.Minute, 24*time.Hour, time.Hour)
-	tok, err := iss.IssueVisitor(outbound.VisitorClaim{VisitorID: "v1", Gen: 1}, issuedAt)
-	require.NoError(t, err)
-
-	resolveAt := func(now time.Time) (outbound.VisitorClaim, bool) {
-		r := httptest.NewRequest("GET", "/", nil)
-		r.Header.Set("X-Visitor-Token", tok)
-		return security.NewVisitorAuthenticator(verifier, func() time.Time { return now }).ResolveToken(r)
-	}
-
-	t.Run("inside lifetime, record removed -> usecase answers 404", func(t *testing.T) {
-		c, ok := resolveAt(issuedAt.Add(23 * time.Hour))
-		require.True(t, ok)
-		ctrl := gomock.NewController(t)
-		store := mock_outbound.NewMockIQueueStore(ctrl)
-		store.EXPECT().TokenGen(gomock.Any(), "ev1", "v1").Return(int64(0), false, nil)
-		_, err := usecase.NewGetMyEntry(store).GetMyEntry(context.Background(), inbound.MyEntryInput{EventID: "ev1", VisitorID: c.VisitorID, Gen: c.Gen})
-		assert.ErrorIs(t, err, entity.ErrNotFound)
-	})
-	t.Run("past lifetime -> authenticator rejects (401 at the handler)", func(t *testing.T) {
-		_, ok := resolveAt(issuedAt.Add(24*time.Hour + 5*time.Second))
-		assert.False(t, ok)
-	})
 }
