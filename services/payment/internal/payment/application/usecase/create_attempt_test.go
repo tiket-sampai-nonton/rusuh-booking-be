@@ -340,3 +340,33 @@ func TestCreateAttempt_LockErrors(t *testing.T) {
 		})
 	}
 }
+
+// URL balik FE boleh memuat {bookingId} dan {attemptId}: keduanya diisi per attempt untuk Snap (finish) dan untuk respons.
+func TestCreateAttempt_ReturnURLPlaceholdersAreFilledPerAttempt(t *testing.T) {
+	m := newMocks(t)
+	expectFresh(m)
+	m.booking.EXPECT().Lock(gomock.Any(), bookingID, idemKey).Return(lockOK(), nil)
+	m.attempts.EXPECT().FindOpen(gomock.Any(), bookingID).Return(entity.Attempt{}, false, nil)
+	m.attempts.EXPECT().CreateNext(gomock.Any(), gomock.Any()).Return(attempt(vo.AttemptCreated), nil)
+	wantOK := "https://fe/payment-result/" + bookingID + "?attemptId=" + attemptID
+	wantFail := "https://fe/payment-result/" + bookingID + "?attemptId=" + attemptID + "&failed=1"
+	m.gateway.EXPECT().Charge(gomock.Any(), gomock.Any()).DoAndReturn(func(_ any, r outbound.ChargeRequest) (outbound.ChargeResult, error) {
+		assert.Equal(t, wantOK, r.FinishURL)
+		return outbound.ChargeResult{Instruction: entity.Instruction{Type: "SNAP", RedirectURL: "https://snap/r"}}, nil
+	})
+	m.attempts.EXPECT().Transition(gomock.Any(), gomock.Any()).DoAndReturn(func(_ any, s outbound.TransitionSpec) (bool, error) {
+		assert.Equal(t, wantOK, s.Instruction.SuccessReturnURL)
+		assert.Equal(t, wantFail, s.Instruction.FailedReturnURL)
+		return true, nil
+	})
+	m.idem.EXPECT().Complete(gomock.Any(), "create_attempt", visitorID, idemKey, 201, gomock.Any()).Return(nil)
+
+	uc := usecase.NewCreateAttempt(m.booking, m.attempts, m.idem, m.gateway, clk, methods, usecase.ReturnURLs{
+		Success: "https://fe/payment-result/{bookingId}?attemptId={attemptId}",
+		Failed:  "https://fe/payment-result/{bookingId}?attemptId={attemptId}&failed=1",
+	})
+	got, err := uc.CreateAttempt(ctx(), payer, bookingID, idemKey, req("VA_BCA"))
+	require.NoError(t, err)
+	assert.Equal(t, wantOK, got.SuccessReturnURL)
+	assert.Equal(t, wantFail, got.FailedReturnURL)
+}

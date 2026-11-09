@@ -3,10 +3,10 @@
 #   localhost:18082 -> booking-api (API admin: /internal/v1/admin/*, termasuk unggah gambar)
 #   localhost:15432 -> Postgres    localhost:16379 -> Valkey
 # Port lokal sengaja tinggi agar tidak bentrok dengan Postgres/Valkey/booking lokal. Tekan Ctrl+C untuk menutup.
-#   bash deployments/dev/dev-tunnel.sh                          # bawaan: deploy@dev.rusuhbooking.my.id port 20130
+#   bash deployments/dev/dev-tunnel.sh                          # bawaan: deploy@103.119.237.53 port 20130
 #   SSH_TARGET=rusuh-dev-deploy bash deployments/dev/dev-tunnel.sh
 set -euo pipefail
-SSH_TARGET="${SSH_TARGET:-deploy@dev.rusuhbooking.my.id}"
+SSH_TARGET="${SSH_TARGET:-deploy@103.119.237.53}"
 SSH_PORT="${SSH_PORT:-20130}"
 SSH_KEY_OPT=()
 [ -n "${SSH_KEY:-}" ] && SSH_KEY_OPT=(-i "$SSH_KEY")

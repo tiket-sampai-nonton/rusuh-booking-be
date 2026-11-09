@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/clock"
@@ -40,7 +41,13 @@ type CreateAttempt struct {
 }
 
 // ReturnURLs are the FE pages Snap sends the payer back to; both verify the status with the backend before showing a result.
+// They may contain {bookingId} and {attemptId}, filled per attempt by fill (both are UUIDs, so URL-safe).
 type ReturnURLs struct{ Success, Failed string }
+
+func (r ReturnURLs) fill(a entity.Attempt) ReturnURLs {
+	f := strings.NewReplacer("{bookingId}", a.BookingID, "{attemptId}", a.ID).Replace
+	return ReturnURLs{Success: f(r.Success), Failed: f(r.Failed)}
+}
 
 // NewCreateAttempt wires the usecase; methods are the enabled payment methods.
 func NewCreateAttempt(b outbound.IBookingClient, a outbound.IAttemptRepository, idem outbound.IIdempotencyStore,
@@ -157,14 +164,15 @@ func (u *CreateAttempt) run(ctx context.Context, payable outbound.Payable, metho
 	}
 
 	// 4. Charge. The provider transaction expires with the booking (Property 5).
+	returns := u.returns.fill(a)
 	res, cerr := u.gateway.Charge(ctx, outbound.ChargeRequest{
-		OrderID: a.ProviderOrderID, Method: method, AmountMinor: a.AmountMinor, OrderTime: now, Expiry: remaining, FinishURL: u.returns.Success,
+		OrderID: a.ProviderOrderID, Method: method, AmountMinor: a.AmountMinor, OrderTime: now, Expiry: remaining, FinishURL: returns.Success,
 	})
 	cleanup := context.WithoutCancel(ctx)
 	switch {
 	case cerr == nil:
 		ins := res.Instruction
-		ins.SuccessReturnURL, ins.FailedReturnURL = u.returns.Success, u.returns.Failed
+		ins.SuccessReturnURL, ins.FailedReturnURL = returns.Success, returns.Failed
 		if _, err := u.attempts.Transition(cleanup, outbound.TransitionSpec{
 			AttemptID: a.ID, To: vo.AttemptPending, ProviderTxID: res.ProviderTxID, Instruction: &ins, LastProviderStatus: "pending",
 		}); err != nil {

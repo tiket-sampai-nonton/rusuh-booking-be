@@ -172,6 +172,7 @@ func TestLoad_LivenessValidation(t *testing.T) {
 		{"shards zero", map[string]string{"QUEUE_LIVENESS_SHARDS": "0"}, "QUEUE_LIVENESS_SHARDS"},
 		{"shards too many", map[string]string{"QUEUE_LIVENESS_SHARDS": "257"}, "QUEUE_LIVENESS_SHARDS"},
 		{"test-sized values ok", map[string]string{"QUEUE_HEARTBEAT_INTERVAL_SECONDS": "2", "QUEUE_HEARTBEAT_NEAR_INTERVAL_SECONDS": "1", "QUEUE_STALE_AFTER_SECONDS": "5", "QUEUE_END_AFTER_SECONDS": "10"}, ""},
+		{"scale profile ok", map[string]string{"QUEUE_HEARTBEAT_INTERVAL_SECONDS": "120", "QUEUE_HEARTBEAT_NEAR_INTERVAL_SECONDS": "10", "QUEUE_STALE_AFTER_SECONDS": "300", "QUEUE_END_AFTER_SECONDS": "600"}, ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
