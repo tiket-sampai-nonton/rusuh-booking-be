@@ -2,7 +2,7 @@
 
 Panduan uji manual lintas service. Sumber: kontrak di `docs/contracts/openapi/*.yaml` dan route yang terdaftar di kode.
 
-**Status: diuji nyata dengan curl pada 2026-11-09** (`feature/rework` @ `5d2f7b6`) terhadap 5 service (api + worker,
+**Status: diuji nyata dengan curl pada 2026-11-09**, diuji ulang setelah perbaikan T1–T8 pada `feature/rework` @ `c63bbcf` terhadap 5 service (api + worker,
 migrasi `migrate up`) yang berjalan di host. Hasil per skenario ada di bagian [Hasil uji curl](#hasil-uji-curl-2026-11-09);
 temuan yang tidak sesuai kontrak ada di [Temuan](#temuan-perilaku-tidak-sesuai-kontrak). Kolom **Uji** di setiap tabel:
 ✅ lulus, ❌ tidak sesuai kontrak (lihat temuan), ➖ tidak diuji.
@@ -382,6 +382,26 @@ Skenario gateway (lewat gateway tiruan + webhook bertanda tangan):
 | ratelimit | batas join per IP | 3 | 0 |
 | dependency | Payment mati saat cancel | 5 | 0 |
 | **Total** | | **224** | **14** |
+
+**Uji ulang setelah semua perbaikan (2026-11-09, `feature/rework` @ `c63bbcf`):**
+
+| Suite | Lulus | Gagal |
+|---|---|---|
+| guest | 46 | 0 |
+| user | 31 | 0 |
+| admin | 35 | 0 |
+| edge queue | 62 | 0 |
+| edge hold | 30 | 0 |
+| edge payment (termasuk simulator lokal T8) | 33 | 0 |
+| misc | 20 | 0 |
+| slow (timer nyata) | 9 | 0 |
+| ratelimit | 3 | 0 |
+| dependency | 5 | 0 |
+| **Total** | **274** | **0** |
+
+Catatan uji ulang: dua cek `slow` pertama kali gagal karena skrip uji (interval polling 15 dtk; permintaan OTP ke-6
+jatuh di jendela jam baru — limiter OTP memakai jendela jam tetap), lalu lulus setelah skrip diperbaiki. Cakupan ini
+adalah skenario di dokumen ini, bukan seluruh 237 respons kontrak (lihat rencana Batch 4).
 
 Invarian yang teramati terjaga: tidak ada oversell (kontensi VIP, `held+sold ≤ capacity`), kuota 3 tiket per NIK
 pembeli, pembayaran idempoten (webhook ganda), timer pembayaran server-authoritative, stok ditahan saat Payment tidak
