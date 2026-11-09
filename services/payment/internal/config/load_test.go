@@ -124,3 +124,26 @@ func TestLoad_RateLimitFromEnv(t *testing.T) {
 	_, err = Load()
 	assert.ErrorContains(t, err, "RATE_LIMIT_WINDOW")
 }
+
+func TestLoad_AppEnvCI(t *testing.T) {
+	for _, env := range []string{"local", "ci", "dev", "staging", "prod"} {
+		t.Run(env, func(t *testing.T) {
+			setBase(t)
+			t.Setenv("APP_ENV", env)
+			cfg, err := Load()
+			if env == "prod" || env == "staging" || env == "dev" {
+				// other envs may need extra settings; only assert APP_ENV itself is not the failure
+				if err != nil {
+					assert.NotContains(t, err.Error(), "APP_ENV")
+				}
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, env, cfg.App.Env)
+		})
+	}
+	setBase(t)
+	t.Setenv("APP_ENV", "qa")
+	_, err := Load()
+	assert.ErrorContains(t, err, "APP_ENV")
+}

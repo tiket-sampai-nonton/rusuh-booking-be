@@ -49,6 +49,8 @@ type IAttemptRepository interface {
 	FindOpen(ctx context.Context, bookingID string) (entity.Attempt, bool, error)
 	FindLatest(ctx context.Context, bookingID string) (entity.Attempt, bool, error)
 	FindByOrderID(ctx context.Context, orderID string) (entity.Attempt, bool, error)
+	// FindByID returns the attempt with this id; a malformed id is simply not found.
+	FindByID(ctx context.Context, id string) (entity.Attempt, bool, error)
 	// Transition applies spec atomically with its outbox event. applied=false means nothing changed.
 	Transition(ctx context.Context, spec TransitionSpec) (applied bool, err error)
 }

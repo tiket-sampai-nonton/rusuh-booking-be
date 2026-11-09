@@ -44,6 +44,7 @@ type env struct {
 	exchange     *mock_inbound.MockIExchangePageToken
 	webhook      *mock_inbound.MockIHandleWebhook
 	resolve      *mock_inbound.MockIResolvePayment
+	simulate     *mock_inbound.MockISimulatePayment
 	visitorToken func() string
 	pageCookie   func(visitor, booking string) string
 	serviceToken func(issuer string) string
@@ -57,7 +58,7 @@ func newEnv(t *testing.T) env {
 		page: mock_inbound.NewMockIGetPaymentPage(c), status: mock_inbound.NewMockIGetPaymentStatus(c),
 		attempt: mock_inbound.NewMockICreateAttempt(c), createToken: mock_inbound.NewMockICreatePageToken(c),
 		exchange: mock_inbound.NewMockIExchangePageToken(c), webhook: mock_inbound.NewMockIHandleWebhook(c),
-		resolve: mock_inbound.NewMockIResolvePayment(c),
+		resolve: mock_inbound.NewMockIResolvePayment(c), simulate: mock_inbound.NewMockISimulatePayment(c),
 	}
 
 	queuePub, queuePriv, _ := ed25519.GenerateKey(rand.Reader)
@@ -92,6 +93,7 @@ func newEnv(t *testing.T) env {
 	auth := paymenthttp.NewPayerAuth(httpx.VisitorAuth(visitorVerifier, now), session, now)
 	paymenthttp.NewPaymentHandler(e.page, e.status, e.attempt, e.createToken, e.exchange, auth).Register(e.mux)
 	paymenthttp.NewWebhookHandler(e.webhook).Register(e.mux)
+	paymenthttp.NewSimulatorHandler(e.simulate, auth).Register(e.mux)
 	paymenthttp.NewInternalHandler(e.resolve, httpx.ServiceAuth(now, serviceVerifier)).Register(e.mux)
 	return e
 }

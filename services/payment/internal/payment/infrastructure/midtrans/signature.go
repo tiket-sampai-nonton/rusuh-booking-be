@@ -21,7 +21,27 @@ func (v *SignatureVerifier) Verify(orderID, statusCode, grossAmount, signatureKe
 	if v.serverKey == "" || signatureKey == "" {
 		return false
 	}
-	sum := sha512.Sum512([]byte(orderID + statusCode + grossAmount + v.serverKey))
-	want := hex.EncodeToString(sum[:])
+	want := signatureHex(orderID, statusCode, grossAmount, v.serverKey)
 	return subtle.ConstantTimeCompare([]byte(want), []byte(strings.ToLower(signatureKey))) == 1
+}
+
+// signatureHex is the single home of the Midtrans formula SHA512(order_id + status_code + gross_amount + serverKey).
+func signatureHex(orderID, statusCode, grossAmount, serverKey string) string {
+	sum := sha512.Sum512([]byte(orderID + statusCode + grossAmount + serverKey))
+	return hex.EncodeToString(sum[:])
+}
+
+// WebhookSigner implements IWebhookSigner: it signs a notification exactly as Midtrans would, for the local
+// simulator. The server key never leaves the adapter.
+type WebhookSigner struct{ serverKey string }
+
+// NewWebhookSigner returns a signer for serverKey.
+func NewWebhookSigner(serverKey string) *WebhookSigner { return &WebhookSigner{serverKey: serverKey} }
+
+// Sign returns the signature_key; an empty server key signs nothing (the verifier would reject it anyway).
+func (s *WebhookSigner) Sign(orderID, statusCode, grossAmount string) string {
+	if s.serverKey == "" {
+		return ""
+	}
+	return signatureHex(orderID, statusCode, grossAmount, s.serverKey)
 }

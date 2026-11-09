@@ -289,3 +289,42 @@ func (mr *MockIResolvePaymentMockRecorder) ResolvePayment(ctx, bookingID, mode a
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ResolvePayment", reflect.TypeOf((*MockIResolvePayment)(nil).ResolvePayment), ctx, bookingID, mode)
 }
+
+// MockISimulatePayment is a mock of ISimulatePayment interface.
+type MockISimulatePayment struct {
+	ctrl     *gomock.Controller
+	recorder *MockISimulatePaymentMockRecorder
+	isgomock struct{}
+}
+
+// MockISimulatePaymentMockRecorder is the mock recorder for MockISimulatePayment.
+type MockISimulatePaymentMockRecorder struct {
+	mock *MockISimulatePayment
+}
+
+// NewMockISimulatePayment creates a new mock instance.
+func NewMockISimulatePayment(ctrl *gomock.Controller) *MockISimulatePayment {
+	mock := &MockISimulatePayment{ctrl: ctrl}
+	mock.recorder = &MockISimulatePaymentMockRecorder{mock}
+	return mock
+}
+
+// EXPECT returns an object that allows the caller to indicate expected use.
+func (m *MockISimulatePayment) EXPECT() *MockISimulatePaymentMockRecorder {
+	return m.recorder
+}
+
+// Simulate mocks base method.
+func (m *MockISimulatePayment) Simulate(ctx context.Context, payer inbound.Payer, attemptID, scenario string) (dto.SimulatorResult, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Simulate", ctx, payer, attemptID, scenario)
+	ret0, _ := ret[0].(dto.SimulatorResult)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// Simulate indicates an expected call of Simulate.
+func (mr *MockISimulatePaymentMockRecorder) Simulate(ctx, payer, attemptID, scenario any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Simulate", reflect.TypeOf((*MockISimulatePayment)(nil).Simulate), ctx, payer, attemptID, scenario)
+}

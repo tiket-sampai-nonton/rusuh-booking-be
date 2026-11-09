@@ -18,6 +18,8 @@ import (
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/payment/internal/payment/infrastructure/midtrans"
 	paymentpg "github.com/tiket-sampai-nonton/rusuh-booking-be/services/payment/internal/payment/infrastructure/postgres"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/payment/internal/payment/infrastructure/security"
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/payment/internal/payment/infrastructure/simulator"
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/payment/internal/payment/port/outbound"
 )
 
 // leeway is the clock skew tolerated when verifying tokens.
@@ -29,6 +31,9 @@ type registrar interface{ Register(*http.ServeMux) }
 // fast when a secret or key file is missing (config.Payment.ValidateForServe).
 func newPaymentRegistrars(cfg config.Config, clients *Clients) ([]registrar, error) {
 	p := cfg.Payment
+	if err := checkSimulatorEnv(cfg.App.Env, p.Midtrans.Environment); err != nil {
+		return nil, err
+	}
 	if err := p.ValidateForServe(); err != nil {
 		return nil, fmt.Errorf("payment: %w", err)
 	}
@@ -65,12 +70,20 @@ func newPaymentRegistrars(cfg config.Config, clients *Clients) ([]registrar, err
 		return nil, err
 	}
 
-	gateway, err := midtrans.New(midtrans.Config{
+	midtransGateway, err := midtrans.New(midtrans.Config{
 		BaseURL: p.Midtrans.BaseURL, SnapBaseURL: p.Midtrans.SnapBaseURL, ServerKey: p.Midtrans.ServerKey, NotificationURL: p.Midtrans.NotificationURL,
 		Charge: limits(p.Midtrans.Charge), Status: limits(p.Midtrans.Status),
 	}, now)
 	if err != nil {
 		return nil, err
+	}
+	// Local/ci only: the fault wrapper makes Status/Cancel ambiguous for the TIMEOUT scenario. Elsewhere the
+	// real gateway is used unwrapped and nothing of the simulator is built.
+	var gateway outbound.IPaymentGateway = midtransGateway
+	var faults outbound.IGatewayFaults
+	if simulatorEnabled(cfg.App.Env) {
+		fg := simulator.NewFaultGateway(midtransGateway, clk)
+		gateway, faults = fg, fg
 	}
 	bookingClient, err := bookingclient.New(p.BookingURL, httpx.NewServiceTokenSource(signer, p.Token.ServiceIssuer, p.Token.BookingAudience, now), nil, now)
 	if err != nil {
@@ -85,7 +98,9 @@ func newPaymentRegistrars(cfg config.Config, clients *Clients) ([]registrar, err
 
 	auth := paymenthttp.NewPayerAuth(httpx.VisitorAuth(visitorVerifier, now), session, now)
 
-	return []registrar{
+	webhook := usecase.NewHandleWebhook(midtrans.NewSignatureVerifier(p.Midtrans.ServerKey), attempts, callbacks, clk)
+
+	regs := []registrar{
 		paymenthttp.NewPaymentHandler(
 			usecase.NewGetPaymentPage(bookingClient, attempts, p.Methods, clk),
 			usecase.NewGetPaymentStatus(bookingClient, attempts, clk),
@@ -94,9 +109,14 @@ func newPaymentRegistrars(cfg config.Config, clients *Clients) ([]registrar, err
 			usecase.NewExchangePageToken(pageTokens, session, clk),
 			auth,
 		),
-		paymenthttp.NewWebhookHandler(usecase.NewHandleWebhook(midtrans.NewSignatureVerifier(p.Midtrans.ServerKey), attempts, callbacks, clk)),
+		paymenthttp.NewWebhookHandler(webhook),
 		paymenthttp.NewInternalHandler(usecase.NewResolvePayment(attempts, gateway, clk), httpx.ServiceAuth(now, bookingVerifier)),
-	}, nil
+	}
+	if faults != nil {
+		sim := usecase.NewSimulatePayment(attempts, bookingClient, webhook, midtrans.NewWebhookSigner(p.Midtrans.ServerKey), faults, clk)
+		regs = append(regs, paymenthttp.NewSimulatorHandler(sim, auth))
+	}
+	return regs, nil
 }
 
 func limits(b config.Breaker) midtrans.Limits {

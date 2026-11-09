@@ -98,6 +98,11 @@ func (r *Attempts) FindByOrderID(ctx context.Context, orderID string) (entity.At
 	return r.find(ctx, `provider_order_id = $1`, orderID)
 }
 
+// FindByID returns the attempt with this id; a malformed id is not found (no error).
+func (r *Attempts) FindByID(ctx context.Context, id string) (entity.Attempt, bool, error) {
+	return r.find(ctx, `id = $1::uuid`, id)
+}
+
 // Transition applies spec with an UPDATE guarded by the state machine. The event, if any, is written to the
 // outbox in the same transaction, so money changes and their event commit together (invariant I-6).
 func (r *Attempts) Transition(ctx context.Context, spec outbound.TransitionSpec) (bool, error) {

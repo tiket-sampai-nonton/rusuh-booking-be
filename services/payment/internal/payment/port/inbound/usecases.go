@@ -49,3 +49,9 @@ type IHandleWebhook interface {
 type IResolvePayment interface {
 	ResolvePayment(ctx context.Context, bookingID, mode string) (dto.ResolveResponse, error)
 }
+
+// ISimulatePayment serves POST /api/v1/local-simulator/payments/{attemptId}/scenario. It exists only when
+// APP_ENV is local or ci; it injects signed Midtrans-shaped notifications into IHandleWebhook.
+type ISimulatePayment interface {
+	Simulate(ctx context.Context, payer Payer, attemptID, scenario string) (dto.SimulatorResult, error)
+}

@@ -42,3 +42,19 @@ func upper(s string) string {
 	}
 	return string(b)
 }
+
+// Property 3 (simulator side): what the signer produces is exactly what the verifier accepts, and only for the same key.
+func TestWebhookSigner(t *testing.T) {
+	signer := midtrans.NewWebhookSigner(serverKey)
+	v := midtrans.NewSignatureVerifier(serverKey)
+
+	sig := signer.Sign("RB-1-1", "200", "1500000.00")
+	assert.Equal(t, sign("RB-1-1", "200", "1500000.00", serverKey), sig, "formula has one home")
+	assert.True(t, v.Verify("RB-1-1", "200", "1500000.00", sig))
+	assert.False(t, v.Verify("RB-1-1", "200", "1500001.00", sig), "nominal lain")
+
+	other := midtrans.NewWebhookSigner("kunci-lain").Sign("RB-1-1", "200", "1500000.00")
+	assert.False(t, v.Verify("RB-1-1", "200", "1500000.00", other), "server key lain ditolak verifier")
+
+	assert.Empty(t, midtrans.NewWebhookSigner("").Sign("RB-1-1", "200", "1500000.00"), "kunci kosong tidak menandatangani")
+}
