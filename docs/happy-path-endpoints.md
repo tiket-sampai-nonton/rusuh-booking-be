@@ -93,7 +93,7 @@ POST :8082/api/v1/booking-sessions/{sessionId}/attendee-checks
      {"nik":"<16 digit>"}                              -> {result, checksRemaining}
 POST :8082/api/v1/booking-sessions/{sessionId}/cancel  keluar tanpa membeli -> 204
 ```
-Uji: ✅ semua, kecuali dampak cancel ke antrean (❌ T5).
+Uji: ✅ semua, termasuk dampak cancel ke antrean (✅ T5: entri antrean `ENDED`, slot bebas, pembeli berikutnya diadmit). Cancel pada sesi yang sudah punya hold -> 409 `BOOKING_LOCKED`.
 
 ### A4. Hold
 
@@ -282,8 +282,9 @@ Uji: ✅ semua 9 proses.
 | Join dengan Idempotency-Key yang sama | 200, replay entri yang sama | ✅ |
 | Login punya entri aktif, join dari perangkat baru tanpa token | 200 (re-attach), visitor token baru. **Khusus login** | ✅ |
 | Login + token entri anonim lain, akun sudah punya entri aktif | 409 `ACCOUNT_ALREADY_IN_QUEUE`. **Khusus login** | ✅ |
-| Event belum buka penjualan | 409 `EVENT_NOT_ON_SALE` | ❌ T1 (join diterima 201) |
-| Tiket habis | 410 `EVENT_SOLD_OUT` | ❌ T2 (join diterima 201 WAITING) |
+| Event belum buka penjualan (atau sudah lewat `salesEndsAt`) | 409 `EVENT_NOT_ON_SALE` | ✅ T1 (diperbaiki 2026-11-09) |
+| Tiket habis | 410 `EVENT_SOLD_OUT` (setelah `booking.sold_out` sampai ke Queue, ≤ 5 dtk lewat outbox) | ✅ T2 (diperbaiki 2026-11-09) |
+| Jendela penjualan belum diketahui dan Booking tidak terjangkau | 503 `DEPENDENCY_UNAVAILABLE` | ➖ (unit test) |
 | Batas lunak per IP terlampaui | 429 `RATE_LIMITED` + `Retry-After` | ✅ |
 | Visitor token salah, kedaluwarsa, atau perangkat tidak cocok (me, heartbeat) | 401 `VISITOR_TOKEN_INVALID` | ✅ |
 | Sama, pada claim dan leave | 401 `VISITOR_TOKEN_INVALID` | ❌ T3 (404 `NOT_FOUND`) |
@@ -291,11 +292,11 @@ Uji: ✅ semua 9 proses.
 | Claim saat masih WAITING | 409 `NOT_ADMITTED` | ✅ |
 | Claim setelah jendela klaim (180 dtk) lewat | 410 `TURN_MISSED` | ✅ |
 | Admission token salah, dipakai ulang, atau dipakai visitor lain | 403 `ADMISSION_TOKEN_INVALID` | ✅ |
-| Sesi booking habis (TTL Booking) | 410 `SESSION_EXPIRED` | ❌ T6 (TTL Booking tidak diterapkan) |
+| Sesi booking habis (TTL Booking, dihitung dari aktivasi sesi) | 410 `SESSION_EXPIRED` | ✅ T6 (diperbaiki 2026-11-09) |
 | Dependency sementara tidak tersedia (Payment mati saat cancel) | 503 `DEPENDENCY_UNAVAILABLE`, stok tetap ditahan; ulang berhasil | ✅ |
 | Keluar antrean saat WAITING/ADMITTED | `DELETE :8081/api/v1/queue-entries/{entryId}?eventId=` -> 204, `LEFT` | ✅ |
-| Keluar antrean saat CLAIMED | 204 | ❌ T5 (204 tetapi entri tetap CLAIMED) |
-| Keluar sesi tanpa membeli | `POST :8082/api/v1/booking-sessions/{sessionId}/cancel` -> 204, unit dilepas | ✅ unit, ❌ T5 slot antrean |
+| Keluar antrean saat CLAIMED | 409 `ENTRY_CLAIMED`; entri tetap CLAIMED, batalkan lewat `booking-sessions/{id}/cancel` (keputusan pemilik 2026-11-09) | ✅ T5 (diperbaiki 2026-11-09) |
+| Keluar sesi tanpa membeli | `POST :8082/api/v1/booking-sessions/{sessionId}/cancel` -> 204, unit dilepas, entri antrean `ENDED`, slot bebas | ✅ unit, ✅ T5 slot antrean |
 
 ### Hold
 
@@ -380,16 +381,16 @@ terjangkau.
 
 ## Temuan (perilaku tidak sesuai kontrak)
 
-Semua direproduksi dengan curl dan dicek ke kode; belum diperbaiki.
+Semua direproduksi dengan curl dan dicek ke kode. T1, T2, T5, T6 diperbaiki 2026-11-09 (`docs/evidence/2026-11-09-queue-booking-flow-fixes.md`); T3, T4, T7, T8 belum.
 
 | # | Temuan | Bukti | Dampak |
 |---|---|---|---|
-| T1 | Join diterima sebelum `salesStartsAt` | 201 pada event `NOT_STARTED`; `ErrNotOnSale` tidak pernah dikembalikan | Melanggar SRS-F-04-01 |
-| T2 | Join diterima setelah tiket habis | 201 `WAITING` (tetap WAITING), padahal sale hash Queue `soldOut=1`; `join.lua` tidak memeriksa sale | Pembeli menunggu event yang sudah habis |
+| T1 | Join diterima sebelum `salesStartsAt` | 201 pada event `NOT_STARTED`; `ErrNotOnSale` tidak pernah dikembalikan | Melanggar SRS-F-04-01 **Diperbaiki 2026-11-09.** |
+| T2 | Join diterima setelah tiket habis | 201 `WAITING` (tetap WAITING), padahal sale hash Queue `soldOut=1`; `join.lua` tidak memeriksa sale | Pembeli menunggu event yang sudah habis **Diperbaiki 2026-11-09.** |
 | T3 | Claim dan leave menjawab 404 untuk token salah/perangkat lain | me/heartbeat 401, claim/leave 404 | Klien tidak bisa membedakan "join ulang" dari "entri hilang" |
 | T4 | `me` untuk event yang tidak pernah di-join menjawab 401, kontrak 404 | `checkTokenGen` per event | Kode error berbeda dari kontrak |
-| T5 | Slot antrean bocor setelah sesi booking dibatalkan | `booking-sessions/{id}/cancel` melepas unit tetapi tidak menerbitkan `booking.journey.ended`; entri tetap `CLAIMED`, pembeli berikutnya tetap WAITING > 390 dtk; `DELETE` entri CLAIMED menjawab 204 tetapi diabaikan (`leave.lua`, QSH-OQ-3) | Kapasitas antrean berkurang permanen per pembatalan |
-| T6 | TTL Booking (`selection_ttl_seconds`) tidak diterapkan | Saat sesi aktif, `expires_at` tetap = reservasi + jendela klaim (180 dtk); hold setelah TTL 90 dtk tetap 201 | Lama sesi = jendela klaim, bukan TTL Booking 5 menit |
+| T5 | Slot antrean bocor setelah sesi booking dibatalkan | `booking-sessions/{id}/cancel` melepas unit tetapi tidak menerbitkan `booking.journey.ended`; entri tetap `CLAIMED`, pembeli berikutnya tetap WAITING > 390 dtk; `DELETE` entri CLAIMED menjawab 204 tetapi diabaikan (`leave.lua`, QSH-OQ-3) | Kapasitas antrean berkurang permanen per pembatalan **Diperbaiki 2026-11-09.** |
+| T6 | TTL Booking (`selection_ttl_seconds`) tidak diterapkan | Saat sesi aktif, `expires_at` tetap = reservasi + jendela klaim (180 dtk); hold setelah TTL 90 dtk tetap 201 | Lama sesi = jendela klaim, bukan TTL Booking 5 menit **Diperbaiki 2026-11-09.** |
 | T7 | `keepFromItemId` pada `PUT /bookings/{id}/items` tidak didukung | 400 "fullName harus 2..100"; field tidak dibaca di kode | Klien harus mengirim ulang NIK pemegang |
 | T8 | Endpoint `local-simulator` di kontrak tidak ada di kode | 404 di `APP_ENV=local` | Uji lokal butuh gateway tiruan |
 

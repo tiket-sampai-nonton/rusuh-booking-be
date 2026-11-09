@@ -23,6 +23,13 @@ Cabang `fix/queue-booking-flow-t5-t6-t1-t2` (basis `feature/rework@5d2f7b6`). Te
    (`CLOSED` + `soldOut`), `503 DEPENDENCY_UNAVAILABLE` bila jendela belum diketahui dan Booking tidak terjangkau (gagal tertutup).
    Presedensi: belum mulai 409 > habis 410 > berakhir 409. `start <= now < end` terbuka.
 
+5. **`booking.sold_out` hanya bila free + allocated + held = 0** (SRS-F-09-05, requirement 5.6). Ditemukan saat uji curl hidup (T14): `reserveOne`
+   langkah 7 menandai SOLD_OUT dan menerbitkan `booking.sold_out` begitu satu reservasi mengambil unit bebas terakhir (padahal reservasi itu
+   bisa kembali), dan `settle` memakai `allocated + held + sold >= total` (alokasi pembeli lain masih bisa kembali). Sebelumnya tak terlihat
+   karena join tidak membaca flag sold-out; dengan join gate, pembeli berikutnya ditolak 410 walau tiket masih bisa kembali. Diperbaiki ke aturan
+   yang sudah tertulis di SRS; skema event tidak berubah, hanya saat terbitnya. Di luar touch-set rencana (`unit_of_work.go`), dicatat di sini.
+   Test: `TestSoldOut_OnlyWhenNothingCanReturn` (merah 2 dari 4 kasus sebelum perbaikan).
+
 ## Catatan desain dan trade-off
 
 - **Propagasi jendela penjualan:** jendela di-cache di hash `q:{e}:sale` oleh `StatusPublisher` (tiap tick, dari `Booking.Supply`). Perubahan jendela oleh admin
