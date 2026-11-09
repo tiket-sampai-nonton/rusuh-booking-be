@@ -1,0 +1,21 @@
+service	method	route	status	errorCode	count	exampleRequestId	note
+booking	GET	/internal/v1/bookings/{bookingId}/payable	404	NOT_FOUND	2	771128430c753269903d50f445e19d9b	status not documented for this route
+booking	PATCH	/internal/v1/admin/events/{eventId}	404	NOT_FOUND	1	9078d874ac75f6bfd5e92f91d795e002	status not documented for this route
+booking	POST	/api/v1/booking-sessions/{sessionId}/attendee-checks	410	SESSION_EXPIRED	1	a25d9bacaaaa1ff03fc7dad754855d25	status not documented for this route
+booking	POST	/api/v1/bookings	403	VISITOR_MISMATCH	1	e9c558a1933898d707dd327914f5d1db	status not documented for this route
+booking	POST	/api/v1/bookings	500	INTERNAL_ERROR	1	d7cab34708fedb2adff8ae8a0cc2c258	status not documented for this route
+booking	POST	/internal/v1/admin/events	400	VALIDATION_ERROR	1	4e07eadd8d7733f923baa72173aafa8e	status not documented for this route
+booking	POST	/internal/v1/allocations/{allocationId}:release	400	VALIDATION_ERROR	1	6cab58d47eb59ed4460d26c003d2e395	status not documented for this route
+booking	POST	/internal/v1/allocations/{allocationId}:release	404	NOT_FOUND	3	73c9d9fb069a1e4eb5834746bb508e45	status not documented for this route
+booking	POST	/internal/v1/allocations:batch	400	VALIDATION_ERROR	2	685339114780083c99a86c29dfcd3803	status not documented for this route
+booking	POST	/internal/v1/bookings/{bookingId}/deadline-extension	400	VALIDATION_ERROR	1	fed1cc13514b4a6435a435977b836e8a	status not documented for this route
+booking	POST	/internal/v1/bookings/{bookingId}/deadline-extension	409	DEADLINE_ALREADY_EXTENDED	3	7cc7cbcd1ddd95263d9deb27fe365694	status not documented for this route
+booking	POST	/internal/v1/bookings/{bookingId}/payment-lock	400	VALIDATION_ERROR	1	bf3e63d09b079754141287499958c319	status not documented for this route
+booking	POST	/internal/v1/bookings/{bookingId}/payment-lock	404	NOT_FOUND	1	2972943f96b1378fb0b302b0e960e82e	status not documented for this route
+notification	DELETE	/api/v1/push-subscriptions/{eventId}	401	VALIDATION_ERROR	1	6c2d38fd3c7feb928893f4450bde3303	status not documented for this route
+notification	DELETE	/api/v1/push-subscriptions/{eventId}	500	INTERNAL_ERROR	1	04e2550d0bf441f9a3bd46f83e698574	status not documented for this route
+payment	POST	/api/v1/payment-page-sessions	400	VALIDATION_ERROR	1	fba8516b3d3678c01e201d293279db9d	status not documented for this route
+payment	POST	/api/v1/payments/{bookingId}/attempts	400	VALIDATION_ERROR	2	db02f1ee8462fb200dc25723bce4f00d	status not documented for this route
+payment	POST	/api/v1/webhooks/midtrans	400	VALIDATION_ERROR	2	4a4ec4411ba5ff7fd9bcf1c4c79e901c	status not documented for this route
+payment	POST	/internal/v1/payments/{bookingId}/resolve	400	VALIDATION_ERROR	2	f6e822a2f2ed989c33938ef192cc370a	status not documented for this route
+payment	POST	/internal/v1/payments/{bookingId}/resolve	401	UNAUTHORIZED	5	c95ff3aaac9e86a0b0fa8195226a31af	status not documented for this route

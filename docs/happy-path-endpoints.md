@@ -437,6 +437,14 @@ Semua direproduksi dengan curl dan dicek ke kode. T1, T2, T5, T6 diperbaiki 2026
 Catatan kecil: rentang `selection_ttl_seconds` 60–1800 di SDD §6 praktis mulai 61 karena peringatan bawaan 60 dtk
 harus lebih kecil dari TTL.
 
+## Cakupan kontrak
+
+Pass matriks kontrak (2026-11-09): setiap respons yang tertulis di `docs/contracts/openapi/*.yaml` (metode × path × status × errorCode, termasuk `/health`) dipanggil dengan HTTP nyata ke stack lokal dan dibandingkan dengan kontrak. Dari **249 baris**: **234 sesuai** (status + errorCode), **10 dijalankan tetapi berbeda**, **4 tidak bisa dipicu lokal** (alasan tercatat), **1 tidak berlaku** (teks kontrak sendiri menegasikannya). Tidak ada baris yang belum dijalankan.
+
+Temuan terpenting (semua dicek ke kode, belum diperbaiki): permintaan tanpa token visitor lolos di `GET /booking-sessions/{id}`, `PUT /bookings/{id}/items` (booking bisa diubah tanpa autentikasi) dan `POST .../attendee-checks` (tanpa pengecekan pemilik), `POST /bookings` tanpa token menjawab 500, serta `DELETE /push-subscriptions/{id}` dengan id non-UUID menjawab 500. Sisanya baris kontrak yang tidak pernah bisa muncul (mis. 410 pada `POST /booking-sessions`, 409 pada PATCH event, 429 pada claim).
+
+Laporan lengkap, matriks per baris, dan daftar respons tak terdokumentasi: [`.agents/tasks/fix/contract-matrix/report.md`](../.agents/tasks/fix/contract-matrix/report.md), `matrix.tsv`, `undocumented.tsv`. Skrip: `.agents/tasks/local/run/curl/t_matrix.sh` (`matrix/`). Bukti: `docs/evidence/2026-11-09-contract-matrix.md`.
+
 ## Urutan uji yang menutup semua cabang
 
 1. Guest: A1 sampai A7 dengan settlement (happy path).

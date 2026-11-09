@@ -1,0 +1,30 @@
+{
+ "booking.yaml": {
+  "PASS": 90,
+  "MISMATCH": 6,
+  "NOT_TRIGGERABLE": 1
+ },
+ "internal-booking.yaml": {
+  "PASS": 42,
+  "MISMATCH": 1
+ },
+ "internal-payment.yaml": {
+  "PASS": 3
+ },
+ "notification.yaml": {
+  "PASS": 6,
+  "NOT_APPLICABLE": 1
+ },
+ "payment.yaml": {
+  "PASS": 29,
+  "MISMATCH": 1
+ },
+ "queue.yaml": {
+  "PASS": 40,
+  "MISMATCH": 2
+ },
+ "user.yaml": {
+  "PASS": 24,
+  "NOT_TRIGGERABLE": 3
+ }
+}
