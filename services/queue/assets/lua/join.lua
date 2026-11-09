@@ -34,6 +34,9 @@ end
 local function describe(outcome, id, g)
   local h = redis.call('HMGET', ekey(id), 'seq', 'visitorId', 'status')
   local vid = h[2] or ''
+  -- Every token this join hands back is signed with a fresh lifetime, so the generation record must live as long
+  -- (QVT-03.7: "record absent" must mean "never joined"). EXPIRE on a missing key is a no-op: never creates it.
+  if vid ~= '' then redis.call('EXPIRE', P .. 'vtok:' .. vid, tokenTTL) end
   if g == nil then g = gen(vid) end
   return {outcome, id, tostring(h[1] or '0'), vid, h[3] or '', g}
 end
