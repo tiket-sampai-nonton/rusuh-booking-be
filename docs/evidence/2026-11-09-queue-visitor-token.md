@@ -23,7 +23,7 @@ Tidak ada perubahan antarmuka `port/`, event, migrasi, atau dependensi; `make mo
 | Tugas | Test (merah dulu) | Hasil merah | Hijau setelah |
 |---|---|---|---|
 | T1/T2 | `TestJoinHandler_VisitorTokenDeliveryMatrix` (M1–M10), `TestJoinHandler_SpoofedMobileHeaderWithCookieNeverLeaksToken` | 7 baris FAIL (M3, M4, M5, M7, M8 + spoof) | `join_handler.go` |
-| T3/T4 | `TestTokenGenCheck_ThreeWay` (claim/leave/me), `TestTokenLifetimeBoundary_...`, `TestGetMyEntry_TokenStates` | 14 FAIL (never-joined 404, empty eventId tanpa store) | `checkTokenGen` di `my_entry.go` |
+| T3/T4 | `TestTokenGenCheck_ThreeWay` (claim/leave/me), `TestTokenLifetimeBoundary_...`, `TestGetMyEntry_TokenStates` | 15 baris FAIL (never-joined 404, empty eventId tanpa store) | `checkTokenGen` di `my_entry.go` |
 | T5/T6 | `TestLeaveHandler_Unauthorized` (dibalik ke 401), `TestClaimHandler_ErrorMapping`, `TestClaimAndLeaveHandlers_InvalidTokenIs401BeforeAnyLookup` | 5 FAIL | `claim_handler.go`, `leave_handler.go` |
 | T7/T8 | `TestVisitorToken_ExistingJoinRefreshesRecordTTL` (Valkey nyata, qa-vk) | PTTL ≈ 5 dtk, ingin ≈ 24 jam (2 subtest) | `join.lua` |
 | T9/T10 | `TestCORS_PreflightAllowHeaders` | `Allow-Headers must contain X-Device-Id` | `pkg/httpx/middleware.go` |
