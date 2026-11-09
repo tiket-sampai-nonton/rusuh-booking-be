@@ -68,6 +68,9 @@ type validated struct {
 
 // Hold runs the full hold flow and returns the created booking.
 func (uc *Hold) Hold(ctx context.Context, cmd inbound.HoldCommand) (dto.Booking, error) {
+	if cmd.VisitorID == "" {
+		return dto.Booking{}, inbound.ErrUnauthorized // D4: reject before any idempotency/DB access
+	}
 	if err := validateIdempotencyKey(cmd.IdempotencyKey); err != nil {
 		return dto.Booking{}, err
 	}

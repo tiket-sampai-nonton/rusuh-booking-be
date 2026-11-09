@@ -84,7 +84,7 @@ func (h *SessionHandler) checkAttendee(w stdhttp.ResponseWriter, r *stdhttp.Requ
 		httpx.WriteError(w, r, err)
 		return
 	}
-	resp, err := h.attendee.CheckAttendee(r.Context(), r.PathValue("sessionId"), req)
+	resp, err := h.attendee.CheckAttendee(r.Context(), r.PathValue("sessionId"), VisitorID(r), req)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return

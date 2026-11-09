@@ -42,7 +42,7 @@ type fakeAttendee struct {
 	err error
 }
 
-func (f fakeAttendee) CheckAttendee(context.Context, string, dto.AttendeeCheckRequest) (dto.AttendeeCheck, error) {
+func (f fakeAttendee) CheckAttendee(context.Context, string, string, dto.AttendeeCheckRequest) (dto.AttendeeCheck, error) {
 	return f.res, f.err
 }
 

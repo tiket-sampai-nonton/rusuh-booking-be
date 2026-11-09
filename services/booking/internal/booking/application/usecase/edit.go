@@ -36,6 +36,9 @@ func (uc *Edit) ReplaceItems(ctx context.Context, cmd inbound.EditCommand) (dto.
 	if !isUUID(cmd.BookingID) {
 		return dto.Booking{}, inbound.Validation("bookingId", "bookingId harus UUID")
 	}
+	if cmd.VisitorID == "" {
+		return dto.Booking{}, inbound.ErrUnauthorized // fail closed: identity is mandatory
+	}
 	if len(cmd.Request.Items) == 0 {
 		return dto.Booking{}, inbound.Validation("items", "minimal satu item")
 	}
@@ -43,7 +46,7 @@ func (uc *Edit) ReplaceItems(ctx context.Context, cmd inbound.EditCommand) (dto.
 	if err != nil {
 		return dto.Booking{}, err
 	}
-	if cmd.VisitorID != "" && booking.VisitorID != cmd.VisitorID {
+	if booking.VisitorID != cmd.VisitorID {
 		return dto.Booking{}, inbound.ErrVisitorMismatch
 	}
 	if booking.IsLocked() {

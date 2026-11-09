@@ -47,6 +47,9 @@ func (uc *Session) CreateSession(ctx context.Context, req dto.CreateSessionReque
 
 // GetSession returns the session by id for its owner.
 func (uc *Session) GetSession(ctx context.Context, sessionID, visitorID string) (dto.BookingSession, error) {
+	if visitorID == "" {
+		return dto.BookingSession{}, inbound.ErrUnauthorized // fail closed: identity is mandatory
+	}
 	if !isUUID(sessionID) {
 		return dto.BookingSession{}, inbound.Validation("sessionId", "sessionId harus UUID")
 	}
@@ -54,7 +57,7 @@ func (uc *Session) GetSession(ctx context.Context, sessionID, visitorID string) 
 	if err != nil {
 		return dto.BookingSession{}, err
 	}
-	if visitorID != "" && admission.VisitorID != visitorID {
+	if admission.VisitorID != visitorID {
 		return dto.BookingSession{}, inbound.ErrVisitorMismatch
 	}
 	if admission.IsExpired(uc.clock.Now()) {

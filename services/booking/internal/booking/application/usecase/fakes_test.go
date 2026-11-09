@@ -170,10 +170,12 @@ type fakeIdem struct {
 	completeErr error
 	aborted     int
 	gotHash     []byte
+	begins      int
 }
 
 func (f *fakeIdem) Begin(_ context.Context, _, _, _ string, hash []byte, _ time.Duration) (outbound.IdempotencyRecord, bool, error) {
 	f.gotHash = hash
+	f.begins++
 	return f.rec, f.found, f.beginErr
 }
 func (f *fakeIdem) Complete(context.Context, string, string, string, int, []byte) error {
@@ -281,12 +283,15 @@ type fakeAttendeeChecker struct {
 	regErr     error
 	counted    bool
 	recErr     error
+	calls      int
 }
 
 func (f *fakeAttendeeChecker) IsRegistered(context.Context, string, []byte) (bool, error) {
+	f.calls++
 	return f.registered, f.regErr
 }
 func (f *fakeAttendeeChecker) RecordCheck(context.Context, string, []byte) (bool, error) {
+	f.calls++
 	return f.counted, f.recErr
 }
 

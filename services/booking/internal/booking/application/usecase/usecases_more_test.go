@@ -45,7 +45,7 @@ func TestAllocateBatch_BadEventID(t *testing.T) {
 func TestCheckAttendee_InvalidNIKNoQuotaBurn(t *testing.T) {
 	checker := &fakeAttendeeChecker{}
 	uc := usecase.NewCheckAttendee(&fakeAdmissionRepo{admission: activeAdmission(true)}, &fakeEventRepo{event: entity.Event{ID: eventID, MaxAttendeeChecks: 10}}, checker, fakeNIK{}, fixedClock{t: time.Now()})
-	_, err := uc.CheckAttendee(context.Background(), sessionID, dto.AttendeeCheckRequest{NIK: "bad"})
+	_, err := uc.CheckAttendee(context.Background(), sessionID, visitor, dto.AttendeeCheckRequest{NIK: "bad"})
 	assert.ErrorIs(t, err, inbound.ErrNIKInvalid)
 }
 
@@ -55,13 +55,13 @@ func TestCheckAttendee_AvailableAndRegistered(t *testing.T) {
 	ev := &fakeEventRepo{event: entity.Event{ID: eventID, MaxAttendeeChecks: 10}}
 
 	uc := usecase.NewCheckAttendee(&fakeAdmissionRepo{admission: adm}, ev, &fakeAttendeeChecker{counted: true, registered: false}, fakeNIK{}, fixedClock{t: time.Now()})
-	res, err := uc.CheckAttendee(context.Background(), sessionID, dto.AttendeeCheckRequest{NIK: nik1})
+	res, err := uc.CheckAttendee(context.Background(), sessionID, visitor, dto.AttendeeCheckRequest{NIK: nik1})
 	require.NoError(t, err)
 	assert.Equal(t, "AVAILABLE", res.Result)
 	assert.Equal(t, 7, res.ChecksRemaining) // 10 - (2+1)
 
 	uc2 := usecase.NewCheckAttendee(&fakeAdmissionRepo{admission: adm}, ev, &fakeAttendeeChecker{counted: false, registered: true}, fakeNIK{}, fixedClock{t: time.Now()})
-	res2, err := uc2.CheckAttendee(context.Background(), sessionID, dto.AttendeeCheckRequest{NIK: nik1})
+	res2, err := uc2.CheckAttendee(context.Background(), sessionID, visitor, dto.AttendeeCheckRequest{NIK: nik1})
 	require.NoError(t, err)
 	assert.Equal(t, "ALREADY_REGISTERED", res2.Result)
 }
