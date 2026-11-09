@@ -159,7 +159,7 @@ func newTokenRig(t *testing.T) *tokenRig {
 	require.NoError(t, err)
 	now := time.Now()
 	return &tokenRig{
-		iss:  security.NewTokenIssuer(signer, "rbt-queue", "rbt", time.Minute, 6*time.Hour, 24*time.Hour),
+		iss:  security.NewTokenIssuer(signer, "rbt-queue", "rbt", time.Minute, 24*time.Hour, time.Hour),
 		auth: security.NewVisitorAuthenticator(verifier, func() time.Time { return now }),
 		now:  now,
 	}
