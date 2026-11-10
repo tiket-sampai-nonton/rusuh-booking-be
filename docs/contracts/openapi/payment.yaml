@@ -290,83 +290,6 @@ paths:
             application/json:
               schema:
                 "$ref": "#/components/schemas/ErrorEnvelope"
-  "/api/v1/local-simulator/payments/{attemptId}/scenario":
-    post:
-      tags:
-      - simulator
-      summary: Simulasi gateway (hanya APP_ENV=local atau ci)
-      description: 'Menyuntikkan notifikasi berbentuk Midtrans yang ditandatangani
-        dengan server key ke jalur webhook asli (`POST /api/v1/webhooks/midtrans`),
-        sehingga idempotensi, cek nominal, transisi, dan event `payment.succeeded`
-        sama dengan produksi. Tidak menulis status attempt atau Booking langsung.
-        Hanya terdaftar bila `APP_ENV` adalah `local` atau `ci`; di `dev`, `staging`,
-        dan `prod` rute tidak ada dan jawabannya sama dengan path tak dikenal mana
-        pun (404 bawaan server tanpa envelope). Hanya milik pemanggil (token visitor;
-        cookie rb_pay tidak diterima). `TIMEOUT` tidak mengirim webhook: ia membuat
-        Status/Cancel ke provider untuk order itu ambigu selama 2 menit sehingga
-        Booking menutup resolve sebagai UNKNOWN. `SETTLE_LATE` mengirim settlement
-        dengan settlement_time satu detik sebelum batas attempt; Booking menentukan
-        PAID bila booking belum EXPIRED, dan REVIEW bila sudah. Settlement pada
-        attempt berstatus CREATED tidak mengubah apa pun (tetap 202).'
-      operationId: simulatePayment
-      security:
-      - visitorCookie: []
-      - visitorHeader: []
-      parameters:
-      - name: attemptId
-        in: path
-        required: true
-        schema:
-          type: string
-          format: uuid
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              "$ref": "#/components/schemas/SimulatorScenario"
-      responses:
-        '202':
-          description: Skenario dijalankan
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  meta:
-                    "$ref": "#/components/schemas/Meta"
-                  data:
-                    "$ref": "#/components/schemas/SimulatorResult"
-                required:
-                - meta
-                - data
-        '400':
-          description: 'Body bukan JSON yang valid, field tak dikenal, atau scenario
-            tidak dikenal — errorCode: `VALIDATION_ERROR`'
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/ErrorEnvelope"
-        '404':
-          description: 'Attempt tidak ada atau bukan milik pemanggil — errorCode: `NOT_FOUND`.
-            Di lingkungan selain local/ci rute tidak terdaftar: jawabannya 404 bawaan
-            server yang sama dengan path tak dikenal (tanpa envelope)'
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/ErrorEnvelope"
-        '503':
-          description: 'Payment atau Booking tidak terjangkau — errorCode: `DEPENDENCY_UNAVAILABLE`'
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/ErrorEnvelope"
-        '401':
-          description: 'Token visitor tidak valid atau kedaluwarsa — errorCode: `UNAUTHORIZED`'
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/ErrorEnvelope"
   "/health":
     get:
       tags:
@@ -648,32 +571,6 @@ components:
       - gross_amount
       - signature_key
       additionalProperties: true
-    SimulatorScenario:
-      type: object
-      properties:
-        scenario:
-          type: string
-          enum:
-          - SETTLE
-          - SETTLE_LATE
-          - EXPIRE
-          - DENY
-          - TIMEOUT
-          - DUPLICATE_WEBHOOK
-          - OUT_OF_ORDER
-      required:
-      - scenario
-    SimulatorResult:
-      type: object
-      properties:
-        simulated:
-          type: boolean
-          description: Selalu true; hasil simulator diberi label SIMULATED (SRS-IF-24)
-        scenario:
-          type: string
-      required:
-      - simulated
-      - scenario
   securitySchemes:
     visitorCookie:
       type: apiKey

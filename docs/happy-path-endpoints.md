@@ -149,12 +149,7 @@ Uji: ✅ semua.
 
 ### A6. Gateway menyelesaikan pembayaran
 
-Simulator lokal (✅ T8 diperbaiki 2026-11-09; uji unit + integrasi, belum dijalankan ulang lewat curl), hanya `APP_ENV=local|ci`:
-```
-POST :8083/api/v1/local-simulator/payments/{attemptId}/scenario   (visitor token pemilik attempt)
-     {"scenario":"SETTLE|SETTLE_LATE|EXPIRE|DENY|TIMEOUT|DUPLICATE_WEBHOOK|OUT_OF_ORDER"}  -> 202 {"simulated":true,"scenario":"..."}
-```
-Menyuntikkan notifikasi Midtrans bertanda tangan ke webhook asli; di `dev|staging|prod` rute tidak ada (404 sama dengan path tak dikenal).
+Tidak ada endpoint simulator di Payment (T8 ditutup 2026-11-10: `local-simulator` dihapus dari kontrak; Payment hanya Midtrans).
 Yang dipakai saat uji: notifikasi HTTP bertanda tangan persis seperti Midtrans ke webhook Payment (lihat E1), dikirim
 oleh gateway tiruan:
 ```
@@ -392,7 +387,7 @@ Skenario gateway (lewat gateway tiruan + webhook bertanda tangan):
 | admin | 35 | 0 |
 | edge queue | 62 | 0 |
 | edge hold | 30 | 0 |
-| edge payment (termasuk simulator lokal T8) | 33 | 0 |
+| edge payment (saat itu termasuk cek simulator lokal T8, kini dihapus) | 33 | 0 |
 | misc | 20 | 0 |
 | slow (timer nyata) | 9 | 0 |
 | ratelimit | 3 | 0 |
@@ -421,7 +416,7 @@ sementara dan menjawab 204 dengan `X-Device-Id` pada `Access-Control-Allow-Heade
 
 ## Temuan (perilaku tidak sesuai kontrak)
 
-Semua direproduksi dengan curl dan dicek ke kode. T1, T2, T5, T6 diperbaiki 2026-11-09 (`docs/evidence/2026-11-09-queue-booking-flow-fixes.md`); T3, T4 diperbaiki 2026-11-09 (`docs/evidence/2026-11-09-queue-visitor-token.md`); T7, T8 diperbaiki 2026-11-09 (`docs/evidence/2026-11-09-booking-payment-contract.md`).
+Semua direproduksi dengan curl dan dicek ke kode. T1, T2, T5, T6 diperbaiki 2026-11-09 (`docs/evidence/2026-11-09-queue-booking-flow-fixes.md`); T3, T4 diperbaiki 2026-11-09 (`docs/evidence/2026-11-09-queue-visitor-token.md`); T7 diperbaiki 2026-11-09 (`docs/evidence/2026-11-09-booking-payment-contract.md`); T8 ditutup 2026-11-10 dengan menghapus endpoint dari kontrak.
 
 | # | Temuan | Bukti | Dampak |
 |---|---|---|---|
@@ -432,7 +427,7 @@ Semua direproduksi dengan curl dan dicek ke kode. T1, T2, T5, T6 diperbaiki 2026
 | T5 | Slot antrean bocor setelah sesi booking dibatalkan | `booking-sessions/{id}/cancel` melepas unit tetapi tidak menerbitkan `booking.journey.ended`; entri tetap `CLAIMED`, pembeli berikutnya tetap WAITING > 390 dtk; `DELETE` entri CLAIMED menjawab 204 tetapi diabaikan (`leave.lua`, QSH-OQ-3) | Kapasitas antrean berkurang permanen per pembatalan **Diperbaiki 2026-11-09.** |
 | T6 | TTL Booking (`selection_ttl_seconds`) tidak diterapkan | Saat sesi aktif, `expires_at` tetap = reservasi + jendela klaim (180 dtk); hold setelah TTL 90 dtk tetap 201 | Lama sesi = jendela klaim, bukan TTL Booking 5 menit **Diperbaiki 2026-11-09.** |
 | T7 | `keepFromItemId` pada `PUT /bookings/{id}/items` tidak didukung | 400 "fullName harus 2..100"; field tidak dibaca di kode | Klien harus mengirim ulang NIK pemegang **Diperbaiki 2026-11-09.** |
-| T8 | Endpoint `local-simulator` di kontrak tidak ada di kode | 404 di `APP_ENV=local` | Uji lokal butuh gateway tiruan **Diperbaiki 2026-11-09.** |
+| T8 | Endpoint `local-simulator` di kontrak tidak ada di kode | 404 di `APP_ENV=local` | Uji lokal butuh gateway tiruan **Ditutup 2026-11-10: endpoint dihapus dari kontrak (Payment hanya Midtrans).** |
 
 Catatan kecil: rentang `selection_ttl_seconds` 60–1800 di SDD §6 praktis mulai 61 karena peringatan bawaan 60 dtk
 harus lebih kecil dari TTL.

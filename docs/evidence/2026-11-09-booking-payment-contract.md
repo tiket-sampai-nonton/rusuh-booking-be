@@ -2,6 +2,8 @@
 
 Diskusi dan keputusan yang mengubah planning/spec, dicatat sesuai aturan `testing-review`.
 
+> **Pembaruan 2026-11-10:** T8 (simulator lokal) di-revert (commit 84b5c1c, e03a52c, 75e1888) dan endpoint `local-simulator` dihapus dari `payment.yaml`, SRS, TP, ADR (ADR-032 dicabut). DEV-1..DEV-4 di bawah tidak berlaku lagi. T7 dan T9 tetap.
+
 ## Keputusan pemilik (dari sesi workflow)
 - T7: Booking saja, `keepFromItemId` didukung di `PUT /bookings/{id}/items`; `POST /bookings` menolaknya (400).
 - T8: simulator lokal untuk `APP_ENV=local` dan `ci` (bukan `local-offline`); web dan mobile sama; tamu dan login sama.
