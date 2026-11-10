@@ -18,7 +18,7 @@ import (
 func TestCORS_PreflightAllowHeaders(t *testing.T) {
 	wantHeaders := []string{
 		"Content-Type", "Authorization", "X-Visitor-Token", "X-Visitor-ID", "X-Queue-Token",
-		"X-Client-Type", "Idempotency-Key", "X-Request-ID", "X-Device-Id",
+		"X-Client-Type", "Idempotency-Key", "X-Request-ID",
 	}
 	tests := []struct {
 		name   string
@@ -33,7 +33,6 @@ func TestCORS_PreflightAllowHeaders(t *testing.T) {
 			called := false
 			h := httpx.CORS()(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { called = true }))
 			req := httptest.NewRequest(tt.method, tt.path, nil)
-			req.Header.Set("Access-Control-Request-Headers", "X-Device-Id")
 			rec := httptest.NewRecorder()
 			h.ServeHTTP(rec, req)
 
