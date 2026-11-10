@@ -1,0 +1,2 @@
+ts,pg_connections,pg_lock_waits,mq_backlog,valkey_mem_mb,valkey_ops,valkey_clients
+1794308659,12,0,0,11.8,18,17

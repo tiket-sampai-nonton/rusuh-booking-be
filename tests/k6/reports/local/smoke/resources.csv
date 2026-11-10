@@ -1,0 +1,14 @@
+ts,container,cpu_pct,mem
+1794308659,rusuh-booking-be-booking-api-1,0.26,81.27MiB
+1794308659,rusuh-booking-be-notification-worker-1,0.00,17.73MiB
+1794308659,rusuh-booking-be-booking-worker-1,0.00,15.74MiB
+1794308659,rusuh-booking-be-notification-api-1,0.00,13.91MiB
+1794308659,rusuh-booking-be-queue-worker-1,0.06,24.53MiB
+1794308659,rusuh-booking-be-queue-api-1,0.06,145.5MiB
+1794308659,rusuh-booking-be-user-api-1,0.08,22.28MiB
+1794308659,rusuh-booking-be-payment-worker-1,0.00,12.49MiB
+1794308659,rusuh-booking-be-payment-api-1,0.00,14.14MiB
+1794308659,rusuh-booking-be-postgres-1,0.14,112.2MiB
+1794308659,rusuh-booking-be-valkey-1,0.37,33.64MiB
+1794308659,rusuh-booking-be-rabbitmq-1,1.95,238.7MiB
+1794308659,rusuh-booking-be-mailpit-1,0.00,71.77MiB

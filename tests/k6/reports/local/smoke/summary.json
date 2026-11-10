@@ -1,0 +1,1451 @@
+{
+ "context": {
+  "app": "rusuh-booking-be",
+  "type": "smoke",
+  "env": "local",
+  "startedAt": "2026-11-10T11:04:20.020Z",
+  "endedAt": "2026-11-10T11:04:25.087Z",
+  "durationMs": 5067.237,
+  "script": "tests/k6/scenarios/smoke.js",
+  "runId": "180419",
+  "loadFactor": 1,
+  "slo": {
+   "p95": 500,
+   "p99": 1000,
+   "errorRate": 0.01,
+   "checkRate": 0.99
+  },
+  "levels": [],
+  "scenarioStart": null,
+  "executor": "shared-iterations",
+  "vus": 1,
+  "iterations": 1
+ },
+ "metrics": {
+  "http_req_failed{name:payment.status}": {
+   "type": "rate",
+   "contains": "default",
+   "values": {
+    "rate": 0,
+    "passes": 0,
+    "fails": 1
+   },
+   "thresholds": {
+    "rate>=0": {
+     "ok": true
+    }
+   }
+  },
+  "http_req_failed{name:booking.get}": {
+   "contains": "default",
+   "values": {
+    "rate": 0,
+    "passes": 0,
+    "fails": 5
+   },
+   "thresholds": {
+    "rate>=0": {
+     "ok": true
+    }
+   },
+   "type": "rate"
+  },
+  "data_received": {
+   "type": "counter",
+   "contains": "data",
+   "values": {
+    "count": 118176,
+    "rate": 23321.585313653177
+   }
+  },
+  "http_req_duration{name:events.detail}": {
+   "thresholds": {
+    "max>=0": {
+     "ok": true
+    }
+   },
+   "type": "trend",
+   "contains": "time",
+   "values": {
+    "avg": 0.7669999999999999,
+    "min": 0.7,
+    "med": 0.7669999999999999,
+    "p(90)": 0.8206,
+    "p(95)": 0.8272999999999999,
+    "p(99)": 0.83266,
+    "max": 0.834,
+    "count": 2
+   }
+  },
+  "http_req_duration{name:user.otp.verify}": {
+   "type": "trend",
+   "contains": "time",
+   "values": {
+    "avg": 9.618,
+    "min": 6.55,
+    "med": 9.618,
+    "p(90)": 12.0724,
+    "p(95)": 12.379199999999999,
+    "p(99)": 12.62464,
+    "max": 12.686,
+    "count": 2
+   },
+   "thresholds": {
+    "max>=0": {
+     "ok": true
+    }
+   }
+  },
+  "http_req_duration{level:all}": {
+   "type": "trend",
+   "contains": "time",
+   "values": {
+    "p(99)": 177.83667999999986,
+    "max": 320.029,
+    "count": 49,
+    "avg": 10.7605306122449,
+    "min": 0.589,
+    "med": 2.998,
+    "p(90)": 8.6242,
+    "p(95)": 17.332399999999982
+   },
+   "thresholds": {
+    "max>=0": {
+     "ok": true
+    }
+   }
+  },
+  "http_req_blocked": {
+   "values": {
+    "med": 0.005,
+    "p(90)": 0.16190000000000002,
+    "p(95)": 0.2866999999999996,
+    "p(99)": 0.5796799999999999,
+    "max": 0.762,
+    "count": 54,
+    "avg": 0.05429629629629627,
+    "min": 0.001
+   },
+   "type": "trend",
+   "contains": "time"
+  },
+  "http_req_failed{name:queue.claim}": {
+   "contains": "default",
+   "values": {
+    "rate": 0,
+    "passes": 0,
+    "fails": 2
+   },
+   "thresholds": {
+    "rate>=0": {
+     "ok": true
+    }
+   },
+   "type": "rate"
+  },
+  "http_req_receiving": {
+   "type": "trend",
+   "contains": "time",
+   "values": {
+    "count": 54,
+    "avg": 0.07237037037037039,
+    "min": 0.019,
+    "med": 0.0475,
+    "p(90)": 0.1405,
+    "p(95)": 0.20124999999999996,
+    "p(99)": 0.3191299999999999,
+    "max": 0.414
+   }
+  },
+  "responses{class:4xx}": {
+   "type": "counter",
+   "contains": "default",
+   "values": {
+    "count": 2,
+    "rate": 0.39469241324216725
+   },
+   "thresholds": {
+    "count>=0": {
+     "ok": true
+    }
+   }
+  },
+  "http_req_failed{level:all}": {
+   "values": {
+    "rate": 0,
+    "passes": 0,
+    "fails": 49
+   },
+   "thresholds": {
+    "rate>=0": {
+     "ok": true
+    }
+   },
+   "type": "rate",
+   "contains": "default"
+  },
+  "http_req_failed{name:user.otp.verify}": {
+   "type": "rate",
+   "contains": "default",
+   "values": {
+    "rate": 0,
+    "passes": 0,
+    "fails": 2
+   },
+   "thresholds": {
+    "rate>=0": {
+     "ok": true
+    }
+   }
+  },
+  "http_req_duration": {
+   "type": "trend",
+   "contains": "time",
+   "values": {
+    "min": 0.589,
+    "med": 2.6485,
+    "p(90)": 8.4509,
+    "p(95)": 15.396399999999982,
+    "p(99)": 163.02497999999986,
+    "max": 320.029,
+    "count": 54,
+    "avg": 9.87238888888889
+   },
+   "thresholds": {
+    "p(99)<1000": {
+     "ok": true
+    },
+    "p(95)<500": {
+     "ok": true
+    }
+   }
+  },
+  "http_req_duration{name:booking.hold}": {
+   "type": "trend",
+   "contains": "time",
+   "values": {
+    "avg": 6.175000000000001,
+    "min": 4.296,
+    "med": 6.175000000000001,
+    "p(90)": 7.6782,
+    "p(95)": 7.8661,
+    "p(99)": 8.01642,
+    "max": 8.054,
+    "count": 2
+   },
+   "thresholds": {
+    "max>=0": {
+     "ok": true
+    }
+   }
+  },
+  "http_reqs{level:all}": {
+   "type": "counter",
+   "contains": "default",
+   "values": {
+    "count": 49,
+    "rate": 9.669964124433097
+   },
+   "thresholds": {
+    "count>=0": {
+     "ok": true
+    }
+   }
+  },
+  "http_req_failed{name:queue.status}": {
+   "values": {
+    "rate": 0,
+    "passes": 0,
+    "fails": 2
+   },
+   "thresholds": {
+    "rate>=0": {
+     "ok": true
+    }
+   },
+   "type": "rate",
+   "contains": "default"
+  },
+  "http_req_duration{name:user.refresh}": {
+   "type": "trend",
+   "contains": "time",
+   "values": {
+    "p(99)": 6.048,
+    "max": 6.048,
+    "count": 1,
+    "avg": 6.048,
+    "min": 6.048,
+    "med": 6.048,
+    "p(90)": 6.048,
+    "p(95)": 6.048
+   },
+   "thresholds": {
+    "max>=0": {
+     "ok": true
+    }
+   }
+  },
+  "iterations": {
+   "type": "counter",
+   "contains": "default",
+   "values": {
+    "count": 1,
+    "rate": 0.19734620662108363
+   }
+  },
+  "http_req_failed{name:events.detail}": {
+   "thresholds": {
+    "rate>=0": {
+     "ok": true
+    }
+   },
+   "type": "rate",
+   "contains": "default",
+   "values": {
+    "rate": 0,
+    "passes": 0,
+    "fails": 2
+   }
+  },
+  "responses{class:3xx}": {
+   "type": "counter",
+   "contains": "default",
+   "values": {
+    "count": 0,
+    "rate": 0
+   },
+   "thresholds": {
+    "count>=0": {
+     "ok": true
+    }
+   }
+  },
+  "http_req_duration{name:booking.tickets}": {
+   "type": "trend",
+   "contains": "time",
+   "values": {
+    "count": 1,
+    "avg": 4.081,
+    "min": 4.081,
+    "med": 4.081,
+    "p(90)": 4.081,
+    "p(95)": 4.081,
+    "p(99)": 4.081,
+    "max": 4.081
+   },
+   "thresholds": {
+    "max>=0": {
+     "ok": true
+    }
+   }
+  },
+  "http_req_failed{name:queue.join}": {
+   "values": {
+    "rate": 0,
+    "passes": 0,
+    "fails": 3
+   },
+   "thresholds": {
+    "rate>=0": {
+     "ok": true
+    }
+   },
+   "type": "rate",
+   "contains": "default"
+  },
+  "http_req_duration{name:user.otp.request}": {
+   "type": "trend",
+   "contains": "time",
+   "values": {
+    "max": 23.795,
+    "count": 2,
+    "avg": 16.208000000000002,
+    "min": 8.621,
+    "med": 16.208000000000002,
+    "p(90)": 22.277600000000003,
+    "p(95)": 23.0363,
+    "p(99)": 23.64326
+   },
+   "thresholds": {
+    "max>=0": {
+     "ok": true
+    }
+   }
+  },
+  "vus": {
+   "type": "gauge",
+   "contains": "default",
+   "values": {
+    "value": 1,
+    "min": 1,
+    "max": 1
+   }
+  },
+  "iterations{level:all}": {
+   "type": "counter",
+   "contains": "default",
+   "values": {
+    "rate": 0.19734620662108363,
+    "count": 1
+   },
+   "thresholds": {
+    "count>=0": {
+     "ok": true
+    }
+   }
+  },
+  "http_req_duration{name:queue.heartbeat}": {
+   "type": "trend",
+   "contains": "time",
+   "values": {
+    "min": 1.119,
+    "med": 1.119,
+    "p(90)": 1.119,
+    "p(95)": 1.119,
+    "p(99)": 1.119,
+    "max": 1.119,
+    "count": 1,
+    "avg": 1.119
+   },
+   "thresholds": {
+    "max>=0": {
+     "ok": true
+    }
+   }
+  },
+  "http_req_duration{name:session.create}": {
+   "contains": "time",
+   "values": {
+    "count": 2,
+    "avg": 2.0375,
+    "min": 1.352,
+    "med": 2.0375,
+    "p(90)": 2.5859,
+    "p(95)": 2.6544499999999998,
+    "p(99)": 2.7092899999999998,
+    "max": 2.723
+   },
+   "thresholds": {
+    "max>=0": {
+     "ok": true
+    }
+   },
+   "type": "trend"
+  },
+  "http_req_failed{name:events.list}": {
+   "type": "rate",
+   "contains": "default",
+   "values": {
+    "rate": 0,
+    "passes": 0,
+    "fails": 2
+   },
+   "thresholds": {
+    "rate>=0": {
+     "ok": true
+    }
+   }
+  },
+  "http_req_duration{name:events.list}": {
+   "contains": "time",
+   "values": {
+    "count": 2,
+    "avg": 2.09,
+    "min": 1.377,
+    "med": 2.09,
+    "p(90)": 2.6604,
+    "p(95)": 2.7317,
+    "p(99)": 2.7887399999999998,
+    "max": 2.803
+   },
+   "thresholds": {
+    "max>=0": {
+     "ok": true
+    }
+   },
+   "type": "trend"
+  },
+  "http_req_waiting": {
+   "type": "trend",
+   "contains": "time",
+   "values": {
+    "min": 0.554,
+    "med": 2.5229999999999997,
+    "p(90)": 8.310500000000001,
+    "p(95)": 15.333049999999982,
+    "p(99)": 162.56555999999986,
+    "max": 319.842,
+    "count": 54,
+    "avg": 9.766888888888891
+   }
+  },
+  "http_req_connecting": {
+   "contains": "time",
+   "values": {
+    "p(99)": 0.30221,
+    "max": 0.325,
+    "count": 54,
+    "avg": 0.032351851851851854,
+    "min": 0,
+    "med": 0,
+    "p(90)": 0.13570000000000002,
+    "p(95)": 0.18824999999999997
+   },
+   "type": "trend"
+  },
+  "e2e_paid": {
+   "type": "counter",
+   "contains": "default",
+   "values": {
+    "count": 1,
+    "rate": 0.19734620662108363
+   }
+  },
+  "http_req_duration{name:payment.webhook}": {
+   "thresholds": {
+    "max>=0": {
+     "ok": true
+    }
+   },
+   "type": "trend",
+   "contains": "time",
+   "values": {
+    "min": 3.536,
+    "med": 3.536,
+    "p(90)": 3.536,
+    "p(95)": 3.536,
+    "p(99)": 3.536,
+    "max": 3.536,
+    "count": 1,
+    "avg": 3.536
+   }
+  },
+  "responses{class:5xx}": {
+   "type": "counter",
+   "contains": "default",
+   "values": {
+    "count": 0,
+    "rate": 0
+   },
+   "thresholds": {
+    "count>=0": {
+     "ok": true
+    }
+   }
+  },
+  "responses{class:timeout}": {
+   "type": "counter",
+   "contains": "default",
+   "values": {
+    "rate": 0,
+    "count": 0
+   },
+   "thresholds": {
+    "count>=0": {
+     "ok": true
+    }
+   }
+  },
+  "http_req_failed{name:events.facets}": {
+   "thresholds": {
+    "rate>=0": {
+     "ok": true
+    }
+   },
+   "type": "rate",
+   "contains": "default",
+   "values": {
+    "rate": 0,
+    "passes": 0,
+    "fails": 2
+   }
+  },
+  "responses{class:2xx}": {
+   "thresholds": {
+    "count>=0": {
+     "ok": true
+    }
+   },
+   "type": "counter",
+   "contains": "default",
+   "values": {
+    "count": 41,
+    "rate": 8.091194471464428
+   }
+  },
+  "iteration_duration": {
+   "type": "trend",
+   "contains": "time",
+   "values": {
+    "avg": 4998.575625,
+    "min": 4998.575625,
+    "med": 4998.575625,
+    "p(90)": 4998.575625,
+    "p(95)": 4998.575625,
+    "p(99)": 4998.575625,
+    "max": 4998.575625,
+    "count": 1
+   }
+  },
+  "http_req_failed{name:payment.attempt}": {
+   "values": {
+    "rate": 0,
+    "passes": 0,
+    "fails": 1
+   },
+   "thresholds": {
+    "rate>=0": {
+     "ok": true
+    }
+   },
+   "type": "rate",
+   "contains": "default"
+  },
+  "http_req_failed{name:booking.hold}": {
+   "contains": "default",
+   "values": {
+    "passes": 0,
+    "fails": 2,
+    "rate": 0
+   },
+   "thresholds": {
+    "rate>=0": {
+     "ok": true
+    }
+   },
+   "type": "rate"
+  },
+  "http_req_duration{name:queue.status}": {
+   "type": "trend",
+   "contains": "time",
+   "values": {
+    "med": 1.2309999999999999,
+    "p(90)": 1.7174,
+    "p(95)": 1.7782,
+    "p(99)": 1.82684,
+    "max": 1.839,
+    "count": 2,
+    "avg": 1.2309999999999999,
+    "min": 0.623
+   },
+   "thresholds": {
+    "max>=0": {
+     "ok": true
+    }
+   }
+  },
+  "http_req_failed{name:user.refresh}": {
+   "type": "rate",
+   "contains": "default",
+   "values": {
+    "rate": 0,
+    "passes": 0,
+    "fails": 1
+   },
+   "thresholds": {
+    "rate>=0": {
+     "ok": true
+    }
+   }
+  },
+  "http_req_duration{name:user.me}": {
+   "type": "trend",
+   "contains": "time",
+   "values": {
+    "max": 1.74,
+    "count": 1,
+    "avg": 1.74,
+    "min": 1.74,
+    "med": 1.74,
+    "p(90)": 1.74,
+    "p(95)": 1.74,
+    "p(99)": 1.74
+   },
+   "thresholds": {
+    "max>=0": {
+     "ok": true
+    }
+   }
+  },
+  "responses": {
+   "type": "counter",
+   "contains": "default",
+   "values": {
+    "count": 43,
+    "rate": 8.485886884706595
+   }
+  },
+  "http_req_failed{name:queue.me}": {
+   "type": "rate",
+   "contains": "default",
+   "values": {
+    "rate": 0,
+    "passes": 0,
+    "fails": 3
+   },
+   "thresholds": {
+    "rate>=0": {
+     "ok": true
+    }
+   }
+  },
+  "http_req_duration{name:events.facets}": {
+   "values": {
+    "p(95)": 2.01915,
+    "p(99)": 2.06623,
+    "max": 2.078,
+    "count": 2,
+    "avg": 1.4895,
+    "min": 0.901,
+    "med": 1.4895,
+    "p(90)": 1.9603
+   },
+   "thresholds": {
+    "max>=0": {
+     "ok": true
+    }
+   },
+   "type": "trend",
+   "contains": "time"
+  },
+  "http_req_failed{name:user.me}": {
+   "type": "rate",
+   "contains": "default",
+   "values": {
+    "rate": 0,
+    "passes": 0,
+    "fails": 1
+   },
+   "thresholds": {
+    "rate>=0": {
+     "ok": true
+    }
+   }
+  },
+  "checks": {
+   "contains": "default",
+   "values": {
+    "rate": 1,
+    "passes": 59,
+    "fails": 0
+   },
+   "thresholds": {
+    "rate==1": {
+     "ok": true
+    }
+   },
+   "type": "rate"
+  },
+  "vus_max": {
+   "type": "gauge",
+   "contains": "default",
+   "values": {
+    "value": 1,
+    "min": 1,
+    "max": 1
+   }
+  },
+  "http_req_duration{name:booking.cancel}": {
+   "values": {
+    "max": 8.637,
+    "count": 1,
+    "avg": 8.637,
+    "min": 8.637,
+    "med": 8.637,
+    "p(90)": 8.637,
+    "p(95)": 8.637,
+    "p(99)": 8.637
+   },
+   "thresholds": {
+    "max>=0": {
+     "ok": true
+    }
+   },
+   "type": "trend",
+   "contains": "time"
+  },
+  "http_req_duration{name:booking.get}": {
+   "contains": "time",
+   "values": {
+    "avg": 2.8572,
+    "min": 1.613,
+    "med": 2.406,
+    "p(90)": 4.1554,
+    "p(95)": 4.1762,
+    "p(99)": 4.19284,
+    "max": 4.197,
+    "count": 5
+   },
+   "thresholds": {
+    "max>=0": {
+     "ok": true
+    }
+   },
+   "type": "trend"
+  },
+  "http_req_failed{name:user.my-bookings}": {
+   "type": "rate",
+   "contains": "default",
+   "values": {
+    "passes": 0,
+    "fails": 1,
+    "rate": 0
+   },
+   "thresholds": {
+    "rate>=0": {
+     "ok": true
+    }
+   }
+  },
+  "http_req_duration{name:queue.claim}": {
+   "thresholds": {
+    "max>=0": {
+     "ok": true
+    }
+   },
+   "type": "trend",
+   "contains": "time",
+   "values": {
+    "p(95)": 0.6688000000000001,
+    "p(99)": 0.6721600000000001,
+    "max": 0.673,
+    "count": 2,
+    "avg": 0.631,
+    "min": 0.589,
+    "med": 0.631,
+    "p(90)": 0.6646000000000001
+   }
+  },
+  "http_req_failed{name:queue.heartbeat}": {
+   "contains": "default",
+   "values": {
+    "rate": 0,
+    "passes": 0,
+    "fails": 1
+   },
+   "thresholds": {
+    "rate>=0": {
+     "ok": true
+    }
+   },
+   "type": "rate"
+  },
+  "http_req_failed{name:booking.tickets}": {
+   "thresholds": {
+    "rate>=0": {
+     "ok": true
+    }
+   },
+   "type": "rate",
+   "contains": "default",
+   "values": {
+    "rate": 0,
+    "passes": 0,
+    "fails": 1
+   }
+  },
+  "http_req_failed{name:user.otp.request}": {
+   "values": {
+    "fails": 2,
+    "rate": 0,
+    "passes": 0
+   },
+   "thresholds": {
+    "rate>=0": {
+     "ok": true
+    }
+   },
+   "type": "rate",
+   "contains": "default"
+  },
+  "http_req_duration{name:user.logout}": {
+   "contains": "time",
+   "values": {
+    "p(95)": 2.493,
+    "p(99)": 2.493,
+    "max": 2.493,
+    "count": 1,
+    "avg": 2.493,
+    "min": 2.493,
+    "med": 2.493,
+    "p(90)": 2.493
+   },
+   "thresholds": {
+    "max>=0": {
+     "ok": true
+    }
+   },
+   "type": "trend"
+  },
+  "http_req_failed{name:booking.cancel}": {
+   "thresholds": {
+    "rate>=0": {
+     "ok": true
+    }
+   },
+   "type": "rate",
+   "contains": "default",
+   "values": {
+    "rate": 0,
+    "passes": 0,
+    "fails": 1
+   }
+  },
+  "http_req_failed{name:user.logout}": {
+   "type": "rate",
+   "contains": "default",
+   "values": {
+    "rate": 0,
+    "passes": 0,
+    "fails": 1
+   },
+   "thresholds": {
+    "rate>=0": {
+     "ok": true
+    }
+   }
+  },
+  "http_req_sending": {
+   "type": "trend",
+   "contains": "time",
+   "values": {
+    "p(99)": 0.3505799999999998,
+    "max": 0.623,
+    "count": 54,
+    "avg": 0.03312962962962962,
+    "min": 0.006,
+    "med": 0.017,
+    "p(90)": 0.049100000000000005,
+    "p(95)": 0.0547
+   }
+  },
+  "http_req_tls_handshaking": {
+   "type": "trend",
+   "contains": "time",
+   "values": {
+    "p(99)": 0,
+    "max": 0,
+    "count": 54,
+    "avg": 0,
+    "min": 0,
+    "med": 0,
+    "p(90)": 0,
+    "p(95)": 0
+   }
+  },
+  "http_req_duration{name:user.my-bookings}": {
+   "type": "trend",
+   "contains": "time",
+   "values": {
+    "max": 2.998,
+    "count": 1,
+    "avg": 2.998,
+    "min": 2.998,
+    "med": 2.998,
+    "p(90)": 2.998,
+    "p(95)": 2.998,
+    "p(99)": 2.998
+   },
+   "thresholds": {
+    "max>=0": {
+     "ok": true
+    }
+   }
+  },
+  "http_req_failed{name:session.create}": {
+   "type": "rate",
+   "contains": "default",
+   "values": {
+    "rate": 0,
+    "passes": 0,
+    "fails": 2
+   },
+   "thresholds": {
+    "rate>=0": {
+     "ok": true
+    }
+   }
+  },
+  "http_req_duration{name:payment.attempt}": {
+   "contains": "time",
+   "values": {
+    "p(95)": 320.029,
+    "p(99)": 320.029,
+    "max": 320.029,
+    "count": 1,
+    "avg": 320.029,
+    "min": 320.029,
+    "med": 320.029,
+    "p(90)": 320.029
+   },
+   "thresholds": {
+    "max>=0": {
+     "ok": true
+    }
+   },
+   "type": "trend"
+  },
+  "http_req_failed{name:payment.webhook}": {
+   "contains": "default",
+   "values": {
+    "rate": 0,
+    "passes": 0,
+    "fails": 1
+   },
+   "thresholds": {
+    "rate>=0": {
+     "ok": true
+    }
+   },
+   "type": "rate"
+  },
+  "checks{level:all}": {
+   "type": "rate",
+   "contains": "default",
+   "values": {
+    "rate": 1,
+    "passes": 54,
+    "fails": 0
+   },
+   "thresholds": {
+    "rate>=0": {
+     "ok": true
+    }
+   }
+  },
+  "http_req_duration{name:queue.me}": {
+   "type": "trend",
+   "contains": "time",
+   "values": {
+    "med": 0.897,
+    "p(90)": 1.0106,
+    "p(95)": 1.0248,
+    "p(99)": 1.03616,
+    "max": 1.039,
+    "count": 3,
+    "avg": 0.9093333333333332,
+    "min": 0.792
+   },
+   "thresholds": {
+    "max>=0": {
+     "ok": true
+    }
+   }
+  },
+  "http_reqs": {
+   "type": "counter",
+   "contains": "default",
+   "values": {
+    "rate": 10.656695157538516,
+    "count": 54
+   }
+  },
+  "http_req_failed": {
+   "type": "rate",
+   "contains": "default",
+   "values": {
+    "rate": 0,
+    "passes": 0,
+    "fails": 54
+   },
+   "thresholds": {
+    "rate==0": {
+     "ok": true
+    }
+   }
+  },
+  "data_sent": {
+   "values": {
+    "count": 21808,
+    "rate": 4303.726073992591
+   },
+   "type": "counter",
+   "contains": "data"
+  },
+  "http_req_duration{name:payment.status}": {
+   "type": "trend",
+   "contains": "time",
+   "values": {
+    "p(90)": 3.124,
+    "p(95)": 3.124,
+    "p(99)": 3.124,
+    "max": 3.124,
+    "count": 1,
+    "avg": 3.124,
+    "min": 3.124,
+    "med": 3.124
+   },
+   "thresholds": {
+    "max>=0": {
+     "ok": true
+    }
+   }
+  },
+  "http_req_duration{name:queue.join}": {
+   "type": "trend",
+   "contains": "time",
+   "values": {
+    "med": 4.854,
+    "p(90)": 17.3148,
+    "p(95)": 18.8724,
+    "p(99)": 20.11848,
+    "max": 20.43,
+    "count": 3,
+    "avg": 9.867666666666667,
+    "min": 4.319
+   },
+   "thresholds": {
+    "max>=0": {
+     "ok": true
+    }
+   }
+  },
+  "http_req_duration{expected_response:true}": {
+   "type": "trend",
+   "contains": "time",
+   "values": {
+    "p(99)": 163.02497999999986,
+    "max": 320.029,
+    "count": 54,
+    "avg": 9.87238888888889,
+    "min": 0.589,
+    "med": 2.6485,
+    "p(90)": 8.4509,
+    "p(95)": 15.396399999999982
+   }
+  }
+ },
+ "root_group": {
+  "name": "",
+  "path": "",
+  "id": "d41d8cd98f00b204e9800998ecf8427e",
+  "groups": [
+   {
+    "groups": [],
+    "checks": [
+      {
+       "name": "user.otp.request -> 200/202/204",
+       "path": "::setup::user.otp.request -> 200/202/204",
+       "id": "b2b2c1bafea99dc4c1dc1eda2e1b33db",
+       "passes": 1,
+       "fails": 0
+      },
+      {
+       "id": "5f8c905736fea00e1f4ac67f0a7e83f8",
+       "passes": 1,
+       "fails": 0,
+       "name": "user.otp.verify -> 200",
+       "path": "::setup::user.otp.verify -> 200"
+      },
+      {
+       "path": "::setup::admin.create -> 201",
+       "id": "eb69067fa426ff88535b685b322a523c",
+       "passes": 1,
+       "fails": 0,
+       "name": "admin.create -> 201"
+      },
+      {
+       "passes": 1,
+       "fails": 0,
+       "name": "admin.publish -> 200",
+       "path": "::setup::admin.publish -> 200",
+       "id": "6b12dc408b454d2d331aa087ca77e932"
+      }
+     ],
+    "name": "setup",
+    "path": "::setup",
+    "id": "5c0f8025f7e0b6654089e5b00e950f1a"
+   },
+   {
+    "name": "teardown",
+    "path": "::teardown",
+    "id": "a8a9942382e8ffe2e56ef29e664b8229",
+    "groups": [],
+    "checks": [
+      {
+       "id": "af13ba8c0445bc85674409eb11e1d133",
+       "passes": 1,
+       "fails": 0,
+       "name": "admin.cancel -> 200",
+       "path": "::teardown::admin.cancel -> 200"
+      }
+     ]
+   }
+  ],
+  "checks": [
+   {
+    "name": "queue sehat",
+    "path": "::queue sehat",
+    "id": "a6678332d15c2fd3d6942c87eb2c48cd",
+    "passes": 1,
+    "fails": 0
+   },
+   {
+    "path": "::booking sehat",
+    "id": "7e425287ca2dd7e869f540f82d3fb41d",
+    "passes": 1,
+    "fails": 0,
+    "name": "booking sehat"
+   },
+   {
+    "name": "payment sehat",
+    "path": "::payment sehat",
+    "id": "7648acd7058433335441e7a2ccce7a12",
+    "passes": 1,
+    "fails": 0
+   },
+   {
+    "name": "notification sehat",
+    "path": "::notification sehat",
+    "id": "14706eb323764677e9f24ad9f1a1670b",
+    "passes": 1,
+    "fails": 0
+   },
+   {
+    "fails": 0,
+    "name": "user sehat",
+    "path": "::user sehat",
+    "id": "02cf39ac370367e923a18d69003e642d",
+    "passes": 1
+   },
+   {
+    "passes": 2,
+    "fails": 0,
+    "name": "events.list -> 200/201/204",
+    "path": "::events.list -> 200/201/204",
+    "id": "3a56d069576e17c8c1c854a1b42e83d7"
+   },
+   {
+    "name": "events.facets -> 200/201/204",
+    "path": "::events.facets -> 200/201/204",
+    "id": "a4b4757bf2b939f17f9b47592fd26deb",
+    "passes": 2,
+    "fails": 0
+   },
+   {
+    "name": "events.detail -> 200/201/204",
+    "path": "::events.detail -> 200/201/204",
+    "id": "c72460a9a96481008c93ed3bfe69344f",
+    "passes": 2,
+    "fails": 0
+   },
+   {
+    "path": "::queue.status -> 200/404",
+    "id": "8bbe79db02f093400ffcd8d1ed39be19",
+    "passes": 2,
+    "fails": 0,
+    "name": "queue.status -> 200/404"
+   },
+   {
+    "passes": 3,
+    "fails": 0,
+    "name": "queue.join -> 200/201",
+    "path": "::queue.join -> 200/201",
+    "id": "ae166ab505c2c63d46803c2bb8fc719e"
+   },
+   {
+    "name": "join antrean mengembalikan visitor token",
+    "path": "::join antrean mengembalikan visitor token",
+    "id": "bd4f478a63882eecd0e3e742060d8b8d",
+    "passes": 1,
+    "fails": 0
+   },
+   {
+    "name": "queue.me -> 200/201/204",
+    "path": "::queue.me -> 200/201/204",
+    "id": "6d0dc13bb8976d813dd5ab0a7b3e4572",
+    "passes": 3,
+    "fails": 0
+   },
+   {
+    "fails": 0,
+    "name": "queue.heartbeat -> 200/201/204",
+    "path": "::queue.heartbeat -> 200/201/204",
+    "id": "15e8cef67d22cc1089c6a8e32d769644",
+    "passes": 1
+   },
+   {
+    "fails": 0,
+    "name": "queue.leave -> 200/204",
+    "path": "::queue.leave -> 200/204",
+    "id": "0c005181b9ff77a5e65b17460ce3c407",
+    "passes": 1
+   },
+   {
+    "id": "9f534d8c6f5cf9c5babdddfb908462ce",
+    "passes": 2,
+    "fails": 0,
+    "name": "queue.claim -> 200/201/204",
+    "path": "::queue.claim -> 200/201/204"
+   },
+   {
+    "fails": 0,
+    "name": "session.create -> 200/201",
+    "path": "::session.create -> 200/201",
+    "id": "641a12b65579effc68ac72055c05cf3a",
+    "passes": 2
+   },
+   {
+    "name": "booking.hold -> 200/201",
+    "path": "::booking.hold -> 200/201",
+    "id": "3bd9ecbb7d0a2cc066048584d50e5f55",
+    "passes": 2,
+    "fails": 0
+   },
+   {
+    "name": "booking.cancel -> 200/201/204",
+    "path": "::booking.cancel -> 200/201/204",
+    "id": "631e6c99696f9e4990cc987d74bce6e2",
+    "passes": 1,
+    "fails": 0
+   },
+   {
+    "fails": 0,
+    "name": "hold dibatalkan, stok kembali",
+    "path": "::hold dibatalkan, stok kembali",
+    "id": "941dc3d6bcbb4f020d3462fe6a65320a",
+    "passes": 1
+   },
+   {
+    "fails": 0,
+    "name": "hold lalu batal berhasil",
+    "path": "::hold lalu batal berhasil",
+    "id": "80d7bdc70966f3e70c2449f837cc419e",
+    "passes": 1
+   },
+   {
+    "name": "admitted, claim, dan sesi booking terbuka",
+    "path": "::admitted, claim, dan sesi booking terbuka",
+    "id": "7aca447da1b3f4dd869daff7175a5864",
+    "passes": 1,
+    "fails": 0
+   },
+   {
+    "path": "::hold berhasil, status PENDING_PAYMENT",
+    "id": "6eda525b80d3d5aba887a53d69fef497",
+    "passes": 1,
+    "fails": 0,
+    "name": "hold berhasil, status PENDING_PAYMENT"
+   },
+   {
+    "name": "payment.attempt -> 200/201",
+    "path": "::payment.attempt -> 200/201",
+    "id": "e631c9f16d90d717c5e32e72a2a4d6c8",
+    "passes": 1,
+    "fails": 0
+   },
+   {
+    "passes": 1,
+    "fails": 0,
+    "name": "attempt dibuat di Midtrans Sandbox (PENDING)",
+    "path": "::attempt dibuat di Midtrans Sandbox (PENDING)",
+    "id": "1f4fdb25c4925dac5281dc90ff6e3448"
+   },
+   {
+    "passes": 1,
+    "fails": 0,
+    "name": "payment.webhook -> 200/204",
+    "path": "::payment.webhook -> 200/204",
+    "id": "7b7031a8fcecb321cad6be208b4a00b9"
+   },
+   {
+    "id": "d8c6796ae35a14d21dd10b47010b2404",
+    "passes": 1,
+    "fails": 0,
+    "name": "webhook settlement diterima",
+    "path": "::webhook settlement diterima"
+   },
+   {
+    "name": "booking.get -> 200/201/204",
+    "path": "::booking.get -> 200/201/204",
+    "id": "99f5245502d7ec5f248698973dbf0743",
+    "passes": 5,
+    "fails": 0
+   },
+   {
+    "id": "7ad1f8a7ef47f4bbcf1eb51e85935c8e",
+    "passes": 1,
+    "fails": 0,
+    "name": "booking menjadi PAID",
+    "path": "::booking menjadi PAID"
+   },
+   {
+    "id": "e9f97a31bfb716bc8995bbf694110a57",
+    "passes": 1,
+    "fails": 0,
+    "name": "booking.tickets -> 200/201/204",
+    "path": "::booking.tickets -> 200/201/204"
+   },
+   {
+    "name": "satu e-tiket terbit, tidak ganda",
+    "path": "::satu e-tiket terbit, tidak ganda",
+    "id": "9694ed231f126502ce32644e6e48bff9",
+    "passes": 1,
+    "fails": 0
+   },
+   {
+    "id": "4ab8b99ee9e7505807d343c26b10b869",
+    "passes": 1,
+    "fails": 0,
+    "name": "payment.status -> 200/201/204",
+    "path": "::payment.status -> 200/201/204"
+   },
+   {
+    "name": "status pembayaran PAID, attempt SUCCEEDED",
+    "path": "::status pembayaran PAID, attempt SUCCEEDED",
+    "id": "05fecbf716d0d3db5a0677738a395c32",
+    "passes": 1,
+    "fails": 0
+   },
+   {
+    "name": "email e-tiket terkirim ke pembeli",
+    "path": "::email e-tiket terkirim ke pembeli",
+    "id": "bd85da78038d3a3037f8c9cdb3337d76",
+    "passes": 1,
+    "fails": 0
+   },
+   {
+    "name": "user.otp.request -> 200/202/204",
+    "path": "::user.otp.request -> 200/202/204",
+    "id": "552d63d37c569702a0309869baee1744",
+    "passes": 1,
+    "fails": 0
+   },
+   {
+    "fails": 0,
+    "name": "user.otp.verify -> 200",
+    "path": "::user.otp.verify -> 200",
+    "id": "b131eb9c0aafb0c911ba8018a0dd5532",
+    "passes": 1
+   },
+   {
+    "path": "::user.me -> 200/201/204",
+    "id": "8e792e7eb4c9cd483909807f43f2082b",
+    "passes": 1,
+    "fails": 0,
+    "name": "user.me -> 200/201/204"
+   },
+   {
+    "fails": 0,
+    "name": "user.my-bookings -> 200/201/204",
+    "path": "::user.my-bookings -> 200/201/204",
+    "id": "7a9beae2bbfa8ff820533789ccbadb7c",
+    "passes": 1
+   },
+   {
+    "passes": 1,
+    "fails": 0,
+    "name": "user.refresh -> 200/201/204",
+    "path": "::user.refresh -> 200/201/204",
+    "id": "c289cf5ed977fae1d745c07e5650a2b4"
+   },
+   {
+    "id": "7cb4b1189911c63b292108d548cd2a85",
+    "passes": 1,
+    "fails": 0,
+    "name": "user.logout -> 200/204",
+    "path": "::user.logout -> 200/204"
+   }
+  ]
+ }
+}

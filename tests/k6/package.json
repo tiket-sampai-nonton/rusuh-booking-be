@@ -1,0 +1,19 @@
+{
+  "name": "rusuh-booking-k6",
+  "private": true,
+  "description": "Uji beban k6 rusuh-booking-be. Butuh k6 >= 0.49 (web dashboard bawaan) dan Node >= 18. Tanpa dependensi npm.",
+  "scripts": {
+    "stack:up": "bash scripts/stack-local.sh up",
+    "stack:down": "bash scripts/stack-local.sh down",
+    "test:smoke": "bash scripts/run.sh smoke",
+    "test:e2e": "bash scripts/run.sh e2e",
+    "test:concurrency": "bash scripts/run.sh concurrency",
+    "test:load": "bash scripts/run.sh load",
+    "test:stress": "bash scripts/run.sh stress",
+    "test:spike": "bash scripts/run.sh spike",
+    "test:soak": "bash scripts/run.sh soak",
+    "test:waiting": "bash scripts/run.sh waiting",
+    "test:all": "bash scripts/run.sh all",
+    "report": "node scripts/report.mjs"
+  }
+}

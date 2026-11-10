@@ -1,0 +1,18 @@
+{
+ "type": "spike",
+ "env": "local",
+ "startedAt": "2026-11-10T06:53:43.750Z",
+ "commit": "aa2b071be9",
+ "dirty": true,
+ "vusMax": 1124,
+ "requests": 102192,
+ "rpsAvg": 464.2768005636743,
+ "rpsPeak": 1488,
+ "p95": 19.58189999999999,
+ "p99": 84.60480999999999,
+ "errorRate": 0,
+ "checks": 1,
+ "sustainableRps": 194.5,
+ "breaking": null,
+ "status": "PASS"
+}

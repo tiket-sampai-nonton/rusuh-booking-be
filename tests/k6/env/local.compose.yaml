@@ -1,0 +1,18 @@
+# Override khusus uji beban LOKAL (dipakai scripts/stack-local.sh). Semua traffic k6 datang dari satu IP, jadi batas
+# per-IP dilonggarkan agar yang terukur adalah service, bukan rate limiter. Jangan dipakai di dev/prod.
+services:
+  booking-api:
+    environment:
+      RATE_LIMIT_PER_IP: "0" # 0 = limiter per IP mati
+      ADMIN_EMAILS: "@example.test" # akun uji k6 (domain .test tidak bisa dimiliki siapa pun) boleh membuat event uji
+  payment-api:
+    environment:
+      RATE_LIMIT_PER_IP: "0"
+      RATE_LIMIT_WEBHOOK_PER_IP: "100000"
+  queue-api:
+    environment:
+      RATE_LIMIT_JOIN_PER_IP: "100000"
+  user-api:
+    environment:
+      OTP_MAX_PER_IP_HOUR: "1000"
+      OTP_MAX_VERIFY_PER_IP_MIN: "6000"

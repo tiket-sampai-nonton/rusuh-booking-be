@@ -1,0 +1,3 @@
+# Sampel mentah per request (puluhan MB per run) dan log konsol: dibuat ulang tiap run, tidak di-commit.
+reports/**/metrics.json.gz
+reports/**/k6.log

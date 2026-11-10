@@ -1,0 +1,18 @@
+{
+ "type": "smoke",
+ "env": "local",
+ "startedAt": "2026-11-10T11:04:20.020Z",
+ "commit": "aa2b071be9",
+ "dirty": true,
+ "vusMax": 1,
+ "requests": 54,
+ "rpsAvg": 10.656695157538516,
+ "rpsPeak": 37,
+ "p95": 15.396399999999982,
+ "p99": 163.02497999999986,
+ "errorRate": 0,
+ "checks": 1,
+ "sustainableRps": null,
+ "breaking": null,
+ "status": "PASS"
+}

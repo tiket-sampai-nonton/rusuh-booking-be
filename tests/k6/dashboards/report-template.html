@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{TITLE}}</title>
+<style>
+  :root { --fg:#1d2330; --muted:#5b6475; --line:#e3e6ec; --bg:#f7f8fa; --pass:#1a7f37; --warn:#9a6700; --fail:#cf222e; --na:#6e7781;
+          --s1:#2f6fde; --s2:#d4692a; --s3:#7b4fd6; --s4:#2a9d8f; }
+  body { font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: var(--fg); background: var(--bg); margin: 0; }
+  main { max-width: 1120px; margin: 0 auto; padding: 24px 20px 64px; }
+  h1 { font-size: 24px; margin: 0 0 4px; } h2 { font-size: 18px; margin: 32px 0 10px; border-bottom: 1px solid var(--line); padding-bottom: 6px; }
+  h3 { font-size: 15px; margin: 18px 0 6px; } p, li { color: var(--fg); } .muted { color: var(--muted); }
+  .badge { display: inline-block; padding: 2px 10px; border-radius: 12px; color: #fff; font-weight: 600; font-size: 13px; }
+  .PASS { background: var(--pass); } .WARNING { background: var(--warn); } .FAIL { background: var(--fail); } .NA, .NOT-MEASURED { background: var(--na); }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; }
+  .tile { background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
+  .tile b { display: block; font-size: 20px; } .tile span { color: var(--muted); font-size: 12px; }
+  table { border-collapse: collapse; width: 100%; background: #fff; border: 1px solid var(--line); font-size: 13px; }
+  th, td { padding: 6px 8px; border-bottom: 1px solid var(--line); text-align: right; } th { background: #eef1f5; }
+  th:first-child, td:first-child { text-align: left; }
+  .charts { display: grid; grid-template-columns: repeat(auto-fill, minmax(520px, 1fr)); gap: 12px; }
+  figure { margin: 0; background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 8px; }
+  figcaption { font-weight: 600; font-size: 13px; margin: 2px 4px 4px; }
+  pre { background: #fff; border: 1px solid var(--line); padding: 12px; overflow-x: auto; font-size: 13px; }
+  .legend span { margin-right: 12px; font-size: 12px; } .legend i { display: inline-block; width: 10px; height: 10px; margin-right: 4px; border-radius: 2px; }
+  .note { background: #fff8e1; border: 1px solid #f0d58a; padding: 8px 12px; border-radius: 6px; }
+</style>
+</head>
+<body><main>
+{{CONTENT}}
+</main></body>
+</html>

@@ -1,0 +1,2 @@
+name,waiters,browse,buy,count,rps,avg,p50,p90,p95,p99,max,err,checks,status
+all,,,,2524,38.483,2.533,,,7.596,16.19,66.731,0,1,PASS
