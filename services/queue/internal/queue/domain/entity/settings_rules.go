@@ -44,15 +44,15 @@ type int64Bound struct {
 }
 
 var (
-	boundCapacity    = intBound{"activeSlotCapacity", 1, 100000}
-	boundNearFront   = intBound{"nearFrontMultiplier", 1, 10}
-	boundStatus      = intBound{"statusPublishIntervalMs", 250, 5000}
-	boundPollFar     = intBound{"pollFarMs", 5000, 60000}
-	boundPollMid     = intBound{"pollMidMs", 2000, 30000}
-	boundPollNear    = intBound{"pollNearMs", 1000, 5000}
-	boundCategory    = intBound{"categoryLimitedThresholdPct", 1, 50}
-	boundFarAbove    = int64Bound{"pollFarAbove", 1, 1000000}
-	boundMidAbove    = int64Bound{"pollMidAbove", 1, 1000000}
+	boundCapacity  = intBound{"activeSlotCapacity", 1, 100000}
+	boundNearFront = intBound{"nearFrontMultiplier", 1, 10}
+	boundStatus    = intBound{"statusPublishIntervalMs", 250, 5000}
+	boundPollFar   = intBound{"pollFarMs", 5000, 60000}
+	boundPollMid   = intBound{"pollMidMs", 2000, 30000}
+	boundPollNear  = intBound{"pollNearMs", 1000, 5000}
+	boundCategory  = intBound{"categoryLimitedThresholdPct", 1, 50}
+	boundFarAbove  = int64Bound{"pollFarAbove", 1, 1000000}
+	boundMidAbove  = int64Bound{"pollMidAbove", 1, 1000000}
 )
 
 func (b intBound) check(v int) *shared.ValidationError {
