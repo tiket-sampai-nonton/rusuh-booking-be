@@ -77,7 +77,7 @@ func TestCreateSession_ReclaimRecovery(t *testing.T) {
 	a := activeAdmissionForSession("sess-1", "visitor-1", "event-1")
 	// Activate fails: admission is already ACTIVE, not RESERVED
 	admRepo := &fakeAdmissionRepo{
-		activErr: inbound.ErrAdmissionToken,
+		activErr:  inbound.ErrAdmissionToken,
 		admission: a, // FindByJTI returns the live ACTIVE admission
 	}
 	evRepo := &fakeEventRepo{}
