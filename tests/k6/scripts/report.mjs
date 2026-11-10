@@ -8,9 +8,12 @@ import zlib from 'node:zlib';
 import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
 
-const DIR = process.argv[2];
-if (!DIR) throw new Error('pakai: node report.mjs <folder-hasil>');
 const HERE = path.dirname(fileURLToPath(import.meta.url));
+if (!process.argv[2]) throw new Error('pakai: node report.mjs <folder-hasil>');
+// Folder hasil harus berada di bawah tests/k6/reports: skrip ini menulis file, jadi argumen CLI tidak boleh keluar dari sana.
+const REPORTS = path.resolve(HERE, '../reports');
+const DIR = path.resolve(process.argv[2]);
+if (!DIR.startsWith(REPORTS + path.sep)) throw new Error(`folder hasil harus di bawah ${REPORTS}`);
 const read = (f) => (fs.existsSync(path.join(DIR, f)) ? fs.readFileSync(path.join(DIR, f), 'utf8') : null);
 const raw = read('summary.json');
 if (!raw) {
@@ -511,4 +514,7 @@ function recommendations(cap, timeouts, fiveXX, dropped) {
   return r;
 }
 
-main();
+main().catch((e) => {
+  console.error(e);
+  process.exit(1);
+});
