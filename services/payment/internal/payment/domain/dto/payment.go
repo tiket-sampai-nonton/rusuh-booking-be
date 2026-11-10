@@ -110,14 +110,3 @@ type PaymentFailed struct {
 	AttemptID string `json:"attemptId"`
 	Reason    string `json:"reason"`
 }
-
-// SimulatorRequest is payment.yaml SimulatorRequest (local/ci only).
-type SimulatorRequest struct {
-	Scenario string `json:"scenario"`
-}
-
-// SimulatorResult is the data of the 202 answer of the local simulator.
-type SimulatorResult struct {
-	Simulated bool   `json:"simulated"`
-	Scenario  string `json:"scenario"`
-}

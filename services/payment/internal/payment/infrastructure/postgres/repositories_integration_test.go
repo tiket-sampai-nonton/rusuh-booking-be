@@ -288,17 +288,6 @@ func TestFindHelpers(t *testing.T) {
 	assert.Equal(t, 2, latest.AttemptNo)
 	_, found, _ = repo.FindByOrderID(ctx, "RB-NOPE-1")
 	assert.False(t, found)
-
-	byID, found, err := repo.FindByID(ctx, a2.ID)
-	require.NoError(t, err)
-	require.True(t, found)
-	assert.Equal(t, a2.ID, byID.ID)
-	_, found, err = repo.FindByID(ctx, "00000000-0000-0000-0000-000000000000")
-	require.NoError(t, err)
-	assert.False(t, found, "unknown uuid")
-	_, found, err = repo.FindByID(ctx, "bukan-uuid")
-	require.NoError(t, err)
-	assert.False(t, found, "non-UUID id = not found, no error")
 }
 
 func TestCallbacks_RecordKeepsDuplicateOnce(t *testing.T) {

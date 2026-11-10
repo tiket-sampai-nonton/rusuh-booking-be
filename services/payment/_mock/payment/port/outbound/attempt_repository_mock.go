@@ -57,22 +57,6 @@ func (mr *MockIAttemptRepositoryMockRecorder) CreateNext(ctx, n any) *gomock.Cal
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateNext", reflect.TypeOf((*MockIAttemptRepository)(nil).CreateNext), ctx, n)
 }
 
-// FindByID mocks base method.
-func (m *MockIAttemptRepository) FindByID(ctx context.Context, id string) (entity.Attempt, bool, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "FindByID", ctx, id)
-	ret0, _ := ret[0].(entity.Attempt)
-	ret1, _ := ret[1].(bool)
-	ret2, _ := ret[2].(error)
-	return ret0, ret1, ret2
-}
-
-// FindByID indicates an expected call of FindByID.
-func (mr *MockIAttemptRepositoryMockRecorder) FindByID(ctx, id any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FindByID", reflect.TypeOf((*MockIAttemptRepository)(nil).FindByID), ctx, id)
-}
-
 // FindByOrderID mocks base method.
 func (m *MockIAttemptRepository) FindByOrderID(ctx context.Context, orderID string) (entity.Attempt, bool, error) {
 	m.ctrl.T.Helper()

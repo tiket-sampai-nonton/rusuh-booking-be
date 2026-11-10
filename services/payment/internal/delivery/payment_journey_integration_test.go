@@ -223,9 +223,7 @@ func data[T any](t *testing.T, raw []byte) T {
 	return env.Data
 }
 
-func setupJourney(t *testing.T) *journey { return setupJourneyEnv(t, "local") }
-
-func setupJourneyEnv(t *testing.T, appEnv string) *journey {
+func setupJourney(t *testing.T) *journey {
 	t.Helper()
 	dsn := os.Getenv("TEST_POSTGRES_DSN")
 	rmq := os.Getenv("TEST_RABBITMQ_URL")
@@ -251,7 +249,7 @@ func setupJourneyEnv(t *testing.T, appEnv string) *journey {
 	}
 	cfg.RabbitMQ = rabbitmq.Config{URL: rmq, Exchange: "rusuh.it.payment", ExchangeType: "topic", Workers: 1, Prefetch: 5,
 		MaxRetries: 1, RetryDelays: []time.Duration{time.Second}, ConfirmWait: 5 * time.Second}
-	cfg.App.Env = appEnv
+	cfg.App.Env = "local"
 	cfg.Payment.Midtrans.BaseURL, cfg.Payment.Midtrans.SnapBaseURL = fm.srv.URL, fm.srv.URL
 	cfg.Payment.Midtrans.ServerKey = serverKey
 	cfg.Payment.BookingURL = fb.srv.URL

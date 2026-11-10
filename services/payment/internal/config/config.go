@@ -51,9 +51,9 @@ type Config struct {
 func (c Config) Validate() error {
 	var errs []error
 	switch c.App.Env {
-	case "local", "ci", "dev", "staging", "prod":
+	case "local", "dev", "staging", "prod":
 	default:
-		errs = append(errs, fmt.Errorf("APP_ENV %q tidak dikenal (local | ci | dev | staging | prod)", c.App.Env))
+		errs = append(errs, fmt.Errorf("APP_ENV %q tidak dikenal (local | dev | staging | prod)", c.App.Env))
 	}
 	if c.App.Port <= 0 || c.App.Port > 65535 {
 		errs = append(errs, fmt.Errorf("APP_PORT %d di luar rentang", c.App.Port))
