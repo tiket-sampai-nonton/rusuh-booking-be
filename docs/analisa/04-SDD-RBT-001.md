@@ -304,6 +304,7 @@ Penegakan: kode service berada di `internal/` sehingga compiler Go menolak impor
 #### 4.3.2 Aturan Tambahan
 
 - Setiap service punya `go.mod`, migration, image, pipeline, dan CODEOWNERS sendiri; `go.work` di root menyatukan `services/*` dan `pkg` untuk tooling lokal. Setiap `services/<x>` dapat dipindah ke repository sendiri beserta salinan `pkg/`.
+- Duplikasi antar-service disengaja: kerangka yang dimiliki tiap service (health checker `infrastructure/healthcheck`, entity `domain/entity/health.go`, pola `config/load.go`) tidak dipindah ke `pkg/`, agar service tetap mandiri dan bisa dipindah ke repository sendiri (dibuktikan `make isolation`). Yang benar-benar bersama (token, httpx, resilience, outbox, dan seterusnya) ada di `pkg/`. Akibatnya duplikasi keseluruhan sekitar 4% di SonarCloud (2026-11-10: 1.356 baris di 42 berkas). Yang dijaga quality gate adalah duplikasi kode baru ≤ 3%. Tinjau ulang bila salinan mulai berubah serentak di semua service: itu tanda bagian tersebut perlu dipindah ke `pkg/`.
 - Mock di `_mock/` hanya dihasilkan `mockgen` dari interface `port/inbound`, `port/outbound`, dan interface di `pkg/`; tidak diedit manual. Package mock: `mock_inbound`, `mock_outbound`, dan `mock_<pkg>`.
 - Handler HTTP tidak pernah mengembalikan entity; selalu DTO lewat `domain/mapper`.
 

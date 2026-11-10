@@ -37,3 +37,7 @@ var/
 *.tfvars
 !*.tfvars.example
 backend.tf
+
+# Setelan AI pribadi (konfigurasi bersama ada di CLAUDE.md, .claude/, .kiro/)
+.claude/settings.local.json
+CLAUDE.local.md
