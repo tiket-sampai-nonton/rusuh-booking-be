@@ -20,7 +20,8 @@ func TestToQueueSettings(t *testing.T) {
 	got := ToQueueSettings(s)
 	assert.Equal(t, dto.QueueSettings{
 		EventID: "e1", ActiveSlotCapacity: 42, NearFrontMultiplier: 2, StatusPublishIntervalMs: 1000,
-		PollFarMs: 30000, PollMidMs: 10000, PollNearMs: 3000, OneActivePerVisitor: true, OneActivePerEmail: true,
+		PollFarMs: 30000, PollMidMs: 10000, PollNearMs: 3000, PollFarAbove: 500, PollMidAbove: 100,
+		OneActivePerVisitor: true, OneActivePerEmail: true,
 		CategoryLimitedThresholdPct: 5, PreTurnNotifyEnabled: true, UpdatedAt: "2026-11-06T03:00:00Z",
 	}, got)
 }

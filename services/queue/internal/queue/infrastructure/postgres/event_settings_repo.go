@@ -16,7 +16,7 @@ import (
 )
 
 const eventSettingsCols = `event_id::text, active_slot_capacity, near_front_multiplier, status_publish_interval_ms,
-	poll_far_ms, poll_mid_ms, poll_near_ms, one_active_per_visitor, one_active_per_email,
+	poll_far_ms, poll_mid_ms, poll_near_ms, poll_far_above, poll_mid_above, one_active_per_visitor, one_active_per_email,
 	category_limited_threshold_pct, pre_turn_notify_enabled, updated_at`
 
 // EventSettings implements outbound.IEventSettingsRepo.
@@ -29,7 +29,8 @@ func scanEventSettings(row pgx.Row) (entity.EventSettings, error) {
 	var s entity.EventSettings
 	err := row.Scan(
 		&s.EventID, &s.ActiveSlotCapacity, &s.NearFrontMultiplier, &s.StatusPublishIntervalMs,
-		&s.PollFarMs, &s.PollMidMs, &s.PollNearMs, &s.OneActivePerVisitor, &s.OneActivePerEmail,
+		&s.PollFarMs, &s.PollMidMs, &s.PollNearMs, &s.PollFarAbove, &s.PollMidAbove,
+		&s.OneActivePerVisitor, &s.OneActivePerEmail,
 		&s.CategoryLimitedThresholdPct, &s.PreTurnNotifyEnabled, &s.UpdatedAt,
 	)
 	return s, err

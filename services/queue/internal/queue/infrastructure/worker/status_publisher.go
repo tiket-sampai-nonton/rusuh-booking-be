@@ -103,7 +103,7 @@ func (p *StatusPublisher) build(eventID string, s entity.EventSettings, sale out
 		SoldOut:               soldOut,
 		RemainingTickets:      remaining,
 		NextPollAfterMs:       s.PollNearMs,
-		Poll:                  dto.Poll{FarMs: s.PollFarMs, MidMs: s.PollMidMs, NearMs: s.PollNearMs, FarAbove: 500, MidAbove: 100},
+		Poll:                  dto.Poll{FarMs: s.PollFarMs, MidMs: s.PollMidMs, NearMs: s.PollNearMs, FarAbove: s.PollFarAbove, MidAbove: s.PollMidAbove},
 		PreTurnNotifyPosition: s.NearFrontMultiplier * s.ActiveSlotCapacity,
 		Categories:            categoriesFrom(supply, s.CategoryLimitedThresholdPct, haveSupply),
 		UpdatedAt:             now.Format(time.RFC3339),

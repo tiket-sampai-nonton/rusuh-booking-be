@@ -15,6 +15,8 @@ type SettingsPatch struct {
 	PollFarMs                   *int
 	PollMidMs                   *int
 	PollNearMs                  *int
+	PollFarAbove                *int64
+	PollMidAbove                *int64
 	OneActivePerVisitor         *bool
 	OneActivePerEmail           *bool
 	CategoryLimitedThresholdPct *int
@@ -36,14 +38,21 @@ type intBound struct {
 	min, max int
 }
 
+type int64Bound struct {
+	field    string
+	min, max int64
+}
+
 var (
-	boundCapacity  = intBound{"activeSlotCapacity", 1, 100000}
-	boundNearFront = intBound{"nearFrontMultiplier", 1, 10}
-	boundStatus    = intBound{"statusPublishIntervalMs", 250, 5000}
-	boundPollFar   = intBound{"pollFarMs", 5000, 60000}
-	boundPollMid   = intBound{"pollMidMs", 2000, 30000}
-	boundPollNear  = intBound{"pollNearMs", 1000, 5000}
-	boundCategory  = intBound{"categoryLimitedThresholdPct", 1, 50}
+	boundCapacity    = intBound{"activeSlotCapacity", 1, 100000}
+	boundNearFront   = intBound{"nearFrontMultiplier", 1, 10}
+	boundStatus      = intBound{"statusPublishIntervalMs", 250, 5000}
+	boundPollFar     = intBound{"pollFarMs", 5000, 60000}
+	boundPollMid     = intBound{"pollMidMs", 2000, 30000}
+	boundPollNear    = intBound{"pollNearMs", 1000, 5000}
+	boundCategory    = intBound{"categoryLimitedThresholdPct", 1, 50}
+	boundFarAbove    = int64Bound{"pollFarAbove", 1, 1000000}
+	boundMidAbove    = int64Bound{"pollMidAbove", 1, 1000000}
 )
 
 func (b intBound) check(v int) *shared.ValidationError {
@@ -56,7 +65,17 @@ func (b intBound) check(v int) *shared.ValidationError {
 	}
 }
 
-// DefaultSettings mirrors the column defaults of migration 0001_init (parity is asserted by an integration test).
+func (b int64Bound) check(v int64) *shared.ValidationError {
+	if v >= b.min && v <= b.max {
+		return nil
+	}
+	return &shared.ValidationError{
+		Field:   b.field,
+		Message: "harus antara " + strconv.FormatInt(b.min, 10) + " dan " + strconv.FormatInt(b.max, 10),
+	}
+}
+
+// DefaultSettings mirrors the column defaults of migration 0001_init and 0005_poll_thresholds (parity is asserted by an integration test).
 func DefaultSettings(eventID string) EventSettings {
 	return EventSettings{
 		EventID:                     eventID,
@@ -66,6 +85,8 @@ func DefaultSettings(eventID string) EventSettings {
 		PollFarMs:                   30000,
 		PollMidMs:                   10000,
 		PollNearMs:                  3000,
+		PollFarAbove:                500,
+		PollMidAbove:                100,
 		OneActivePerVisitor:         true,
 		OneActivePerEmail:           true,
 		CategoryLimitedThresholdPct: 5,
@@ -88,6 +109,8 @@ func (p SettingsPatch) Apply(base EventSettings) EventSettings {
 	base.PollFarMs = pick(p.PollFarMs, base.PollFarMs)
 	base.PollMidMs = pick(p.PollMidMs, base.PollMidMs)
 	base.PollNearMs = pick(p.PollNearMs, base.PollNearMs)
+	base.PollFarAbove = pick(p.PollFarAbove, base.PollFarAbove)
+	base.PollMidAbove = pick(p.PollMidAbove, base.PollMidAbove)
 	base.OneActivePerVisitor = pick(p.OneActivePerVisitor, base.OneActivePerVisitor)
 	base.OneActivePerEmail = pick(p.OneActivePerEmail, base.OneActivePerEmail)
 	base.CategoryLimitedThresholdPct = pick(p.CategoryLimitedThresholdPct, base.CategoryLimitedThresholdPct)
@@ -105,6 +128,19 @@ func (p SettingsPatch) ValidateSupplied() shared.ValidationErrors {
 		{boundCapacity, p.ActiveSlotCapacity}, {boundNearFront, p.NearFrontMultiplier},
 		{boundStatus, p.StatusPublishIntervalMs}, {boundPollFar, p.PollFarMs}, {boundPollMid, p.PollMidMs},
 		{boundPollNear, p.PollNearMs}, {boundCategory, p.CategoryLimitedThresholdPct},
+	} {
+		if f.v == nil {
+			continue
+		}
+		if e := f.b.check(*f.v); e != nil {
+			errs = append(errs, *e)
+		}
+	}
+	for _, f := range []struct {
+		b int64Bound
+		v *int64
+	}{
+		{boundFarAbove, p.PollFarAbove}, {boundMidAbove, p.PollMidAbove},
 	} {
 		if f.v == nil {
 			continue
@@ -131,6 +167,16 @@ func ValidateSettings(s EventSettings) shared.ValidationErrors {
 			errs = append(errs, *e)
 		}
 	}
+	for _, f := range []struct {
+		b int64Bound
+		v int64
+	}{
+		{boundFarAbove, s.PollFarAbove}, {boundMidAbove, s.PollMidAbove},
+	} {
+		if e := f.b.check(f.v); e != nil {
+			errs = append(errs, *e)
+		}
+	}
 	if s.PollNearMs > s.PollMidMs {
 		errs = append(errs, shared.ValidationError{Field: "pollNearMs", Message: "tidak boleh lebih besar dari pollMidMs"})
 	}
@@ -139,6 +185,9 @@ func ValidateSettings(s EventSettings) shared.ValidationErrors {
 	}
 	if s.StatusPublishIntervalMs > s.PollNearMs {
 		errs = append(errs, shared.ValidationError{Field: "statusPublishIntervalMs", Message: "tidak boleh lebih besar dari pollNearMs"})
+	}
+	if s.PollMidAbove >= s.PollFarAbove {
+		errs = append(errs, shared.ValidationError{Field: "pollMidAbove", Message: "tidak boleh lebih besar dari atau sama dengan pollFarAbove"})
 	}
 	return errs
 }
@@ -161,6 +210,8 @@ func DiffSettings(old EventSettings, exists bool, merged EventSettings) []Settin
 		{"pollFarMs", strconv.Itoa(old.PollFarMs), strconv.Itoa(merged.PollFarMs)},
 		{"pollMidMs", strconv.Itoa(old.PollMidMs), strconv.Itoa(merged.PollMidMs)},
 		{"pollNearMs", strconv.Itoa(old.PollNearMs), strconv.Itoa(merged.PollNearMs)},
+		{"pollFarAbove", strconv.FormatInt(old.PollFarAbove, 10), strconv.FormatInt(merged.PollFarAbove, 10)},
+		{"pollMidAbove", strconv.FormatInt(old.PollMidAbove, 10), strconv.FormatInt(merged.PollMidAbove, 10)},
 		{"oneActivePerVisitor", strconv.FormatBool(old.OneActivePerVisitor), strconv.FormatBool(merged.OneActivePerVisitor)},
 		{"oneActivePerEmail", strconv.FormatBool(old.OneActivePerEmail), strconv.FormatBool(merged.OneActivePerEmail)},
 		{"categoryLimitedThresholdPct", strconv.Itoa(old.CategoryLimitedThresholdPct), strconv.Itoa(merged.CategoryLimitedThresholdPct)},

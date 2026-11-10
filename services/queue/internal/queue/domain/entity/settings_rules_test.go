@@ -20,7 +20,8 @@ func TestDefaultSettings(t *testing.T) {
 	d := DefaultSettings("e1")
 	assert.Equal(t, EventSettings{
 		EventID: "e1", ActiveSlotCapacity: 500, NearFrontMultiplier: 2, StatusPublishIntervalMs: 1000,
-		PollFarMs: 30000, PollMidMs: 10000, PollNearMs: 3000, OneActivePerVisitor: true, OneActivePerEmail: true,
+		PollFarMs: 30000, PollMidMs: 10000, PollNearMs: 3000, PollFarAbove: 500, PollMidAbove: 100,
+		OneActivePerVisitor: true, OneActivePerEmail: true,
 		CategoryLimitedThresholdPct: 5, PreTurnNotifyEnabled: true,
 	}, d)
 }
@@ -180,13 +181,13 @@ func TestDiffSettings(t *testing.T) {
 			{Field: "preTurnNotifyEnabled", Old: &tr, New: "false"},
 		}, got)
 	})
-	t.Run("create emits all 10 with nil old", func(t *testing.T) {
+	t.Run("create emits all 12 with nil old", func(t *testing.T) {
 		got := DiffSettings(EventSettings{}, false, cur)
-		require.Len(t, got, 10)
+		require.Len(t, got, 12)
 		for _, c := range got {
 			assert.Nil(t, c.Old, c.Field)
 		}
 		assert.Equal(t, "activeSlotCapacity", got[0].Field)
-		assert.Equal(t, "preTurnNotifyEnabled", got[9].Field)
+		assert.Equal(t, "preTurnNotifyEnabled", got[11].Field)
 	})
 }

@@ -75,24 +75,26 @@ func lockedGet(ctx context.Context, tx pgx.Tx, eventID string) (entity.EventSett
 func writeSettings(ctx context.Context, tx pgx.Tx, s entity.EventSettings, exists bool) error {
 	if exists {
 		_, err := tx.Exec(ctx, `UPDATE event_settings SET active_slot_capacity=$2, near_front_multiplier=$3,
-			status_publish_interval_ms=$4, poll_far_ms=$5, poll_mid_ms=$6, poll_near_ms=$7, one_active_per_visitor=$8,
-			one_active_per_email=$9, category_limited_threshold_pct=$10, pre_turn_notify_enabled=$11, updated_at=$12
+			status_publish_interval_ms=$4, poll_far_ms=$5, poll_mid_ms=$6, poll_near_ms=$7,
+			poll_far_above=$8, poll_mid_above=$9, one_active_per_visitor=$10,
+			one_active_per_email=$11, category_limited_threshold_pct=$12, pre_turn_notify_enabled=$13, updated_at=$14
 			WHERE event_id=$1::uuid`,
 			s.EventID, s.ActiveSlotCapacity, s.NearFrontMultiplier, s.StatusPublishIntervalMs, s.PollFarMs, s.PollMidMs,
-			s.PollNearMs, s.OneActivePerVisitor, s.OneActivePerEmail, s.CategoryLimitedThresholdPct,
-			s.PreTurnNotifyEnabled, s.UpdatedAt)
+			s.PollNearMs, s.PollFarAbove, s.PollMidAbove, s.OneActivePerVisitor, s.OneActivePerEmail,
+			s.CategoryLimitedThresholdPct, s.PreTurnNotifyEnabled, s.UpdatedAt)
 		if err != nil {
 			return fmt.Errorf("event_settings: update: %w", err)
 		}
 		return nil
 	}
 	_, err := tx.Exec(ctx, `INSERT INTO event_settings (event_id, active_slot_capacity, near_front_multiplier,
-		status_publish_interval_ms, poll_far_ms, poll_mid_ms, poll_near_ms, one_active_per_visitor, one_active_per_email,
+		status_publish_interval_ms, poll_far_ms, poll_mid_ms, poll_near_ms, poll_far_above, poll_mid_above,
+		one_active_per_visitor, one_active_per_email,
 		category_limited_threshold_pct, pre_turn_notify_enabled, updated_at)
-		VALUES ($1::uuid,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+		VALUES ($1::uuid,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
 		s.EventID, s.ActiveSlotCapacity, s.NearFrontMultiplier, s.StatusPublishIntervalMs, s.PollFarMs, s.PollMidMs,
-		s.PollNearMs, s.OneActivePerVisitor, s.OneActivePerEmail, s.CategoryLimitedThresholdPct,
-		s.PreTurnNotifyEnabled, s.UpdatedAt)
+		s.PollNearMs, s.PollFarAbove, s.PollMidAbove, s.OneActivePerVisitor, s.OneActivePerEmail,
+		s.CategoryLimitedThresholdPct, s.PreTurnNotifyEnabled, s.UpdatedAt)
 	if err != nil {
 		return fmt.Errorf("event_settings: insert: %w", err)
 	}

@@ -434,8 +434,8 @@ paths:
       description: |
         Upsert. Hanya `activeSlotCapacity` wajib; field lain opsional (JSON `null` dianggap tidak dikirim). Saat membuat,
         field yang tidak dikirim memakai nilai bawaan kolom (migrasi 0001); saat mengubah, field yang tidak dikirim
-        dipertahankan. Aturan lintas-field dinilai pada nilai hasil gabungan: `pollNearMs ≤ pollMidMs ≤ pollFarMs` dan
-        `statusPublishIntervalMs ≤ pollNearMs`.
+        dipertahankan. Aturan lintas-field dinilai pada nilai hasil gabungan: `pollNearMs ≤ pollMidMs ≤ pollFarMs`,
+        `statusPublishIntervalMs ≤ pollNearMs`, dan `pollMidAbove < pollFarAbove`.
 
         Event harus dikenal Booking (satu panggilan `supply`), jadi event draf belum bisa dikonfigurasi; lakukan PUT
         setelah event terbit dan sebelum penjualan dimulai. Selama penjualan terbuka (waktu server ≥ `salesStartsAt`),
@@ -618,6 +618,18 @@ components:
           minimum: 1000
           maximum: 5000
           description: Bawaan saat membuat 3000; harus ≤ pollMidMs
+        pollFarAbove:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 1000000
+          description: Ambang posisi antrean untuk memilih tier polling jauh. Bawaan saat membuat 500; harus > pollMidAbove
+        pollMidAbove:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 1000000
+          description: Ambang posisi antrean untuk memilih tier polling menengah. Bawaan saat membuat 100; harus < pollFarAbove
         oneActivePerVisitor:
           type: boolean
           description: Terkunci selama penjualan terbuka. Bawaan saat membuat true
@@ -642,6 +654,8 @@ components:
       - pollFarMs
       - pollMidMs
       - pollNearMs
+      - pollFarAbove
+      - pollMidAbove
       - oneActivePerVisitor
       - oneActivePerEmail
       - categoryLimitedThresholdPct
@@ -663,6 +677,12 @@ components:
           type: integer
         pollNearMs:
           type: integer
+        pollFarAbove:
+          type: integer
+          format: int64
+        pollMidAbove:
+          type: integer
+          format: int64
         oneActivePerVisitor:
           type: boolean
         oneActivePerEmail:
