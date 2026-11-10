@@ -58,8 +58,8 @@ func TestEventSettingsAdmin_CreateWritesRowAndAllFieldsAudit(t *testing.T) {
 	require.NoError(t, pool.QueryRow(context.Background(),
 		`SELECT count(*), count(*) FILTER (WHERE old_value IS NULL) FROM event_settings_audit WHERE event_id=$1::uuid AND actor='acct-1' AND changed_at=$2`,
 		adminEv, now).Scan(&n, &nilOld))
-	assert.Equal(t, 10, n)
-	assert.Equal(t, 10, nilOld)
+	assert.Equal(t, 12, n)
+	assert.Equal(t, 12, nilOld)
 }
 
 func TestEventSettingsAdmin_UpdateAuditsOnlyChangedFields(t *testing.T) {
@@ -277,9 +277,9 @@ func TestMigration0004_DownThenUpAgain(t *testing.T) {
 		return n == 1
 	}
 	require.True(t, exists())
-	n, err := runner.Down(ctx, 1)
+	n, err := runner.Down(ctx, 2)
 	require.NoError(t, err)
-	assert.Equal(t, 1, n)
+	assert.Equal(t, 2, n)
 	assert.False(t, exists(), "down menghapus tabel audit")
 	var fn int
 	require.NoError(t, pool.QueryRow(ctx, `SELECT count(*) FROM pg_proc WHERE proname='event_settings_audit_immutable'`).Scan(&fn))
@@ -289,6 +289,6 @@ func TestMigration0004_DownThenUpAgain(t *testing.T) {
 
 	n, err = runner.Up(ctx, 0)
 	require.NoError(t, err)
-	assert.Equal(t, 1, n)
+	assert.Equal(t, 2, n)
 	assert.True(t, exists(), "up kedua membuat ulang tabel audit")
 }
