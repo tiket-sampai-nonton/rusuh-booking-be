@@ -16,6 +16,7 @@ import (
 
 	dto "github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/domain/dto"
 	entity "github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/domain/entity"
+	valueobject "github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/domain/valueobject"
 	outbound "github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/port/outbound"
 	gomock "go.uber.org/mock/gomock"
 )
@@ -406,18 +407,18 @@ func (mr *MockIAdmissionRepoMockRecorder) GetByID(ctx, id any) *gomock.Call {
 }
 
 // Release mocks base method.
-func (m *MockIAdmissionRepo) Release(ctx context.Context, allocationID string) (bool, error) {
+func (m *MockIAdmissionRepo) Release(ctx context.Context, allocationID string, reason valueobject.EndReason) (bool, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Release", ctx, allocationID)
+	ret := m.ctrl.Call(m, "Release", ctx, allocationID, reason)
 	ret0, _ := ret[0].(bool)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // Release indicates an expected call of Release.
-func (mr *MockIAdmissionRepoMockRecorder) Release(ctx, allocationID any) *gomock.Call {
+func (mr *MockIAdmissionRepoMockRecorder) Release(ctx, allocationID, reason any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Release", reflect.TypeOf((*MockIAdmissionRepo)(nil).Release), ctx, allocationID)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Release", reflect.TypeOf((*MockIAdmissionRepo)(nil).Release), ctx, allocationID, reason)
 }
 
 // ReserveBatch mocks base method.

@@ -216,3 +216,22 @@ func TestServiceTokenSource_ConcurrentCallsShareOneToken(t *testing.T) {
 		assert.Equal(t, tokens[0], tok)
 	}
 }
+
+func TestServiceTokenLifetimeOK(t *testing.T) {
+	max := int64(httpx.ServiceTokenMaxTTL / time.Second)
+	tests := []struct {
+		name string
+		ttl  int64
+		want bool
+	}{
+		{"1 detik", 1, true},
+		{"tepat batas", max, true},
+		{"lewat 1 detik", max + 1, false},
+		{"1 jam", 3600, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, httpx.ServiceTokenLifetimeOK(token.Claims{IssuedAt: 1000, ExpiresAt: 1000 + tc.ttl}))
+		})
+	}
+}

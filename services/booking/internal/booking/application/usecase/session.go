@@ -2,6 +2,7 @@ package usecase
 
 import (
 	"context"
+	"errors"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/clock"
 
@@ -39,6 +40,16 @@ func (uc *Session) CreateSession(ctx context.Context, req dto.CreateSessionReque
 		return dto.BookingSession{}, inbound.ErrVisitorMismatch
 	}
 	admission, err := uc.admissions.Activate(ctx, claims.JTI, uc.clock.Now())
+	if errors.Is(err, inbound.ErrAdmissionToken) {
+		// Idempotent re-claim: buyer returned to waiting room and re-claimed an already-ACTIVE session.
+		// claim.lua answers OK/ALREADY with the same allocationID, so a new JWT is issued with the same
+		// JTI. Activate fails because the admission is no longer RESERVED; recover the live session.
+		if existing, ferr := uc.admissions.FindByJTI(ctx, claims.JTI); ferr == nil && existing.IsActive() {
+			if visitorID == "" || existing.VisitorID == visitorID {
+				return uc.view(ctx, existing)
+			}
+		}
+	}
 	if err != nil {
 		return dto.BookingSession{}, err
 	}
@@ -47,6 +58,9 @@ func (uc *Session) CreateSession(ctx context.Context, req dto.CreateSessionReque
 
 // GetSession returns the session by id for its owner.
 func (uc *Session) GetSession(ctx context.Context, sessionID, visitorID string) (dto.BookingSession, error) {
+	if visitorID == "" {
+		return dto.BookingSession{}, inbound.ErrUnauthorized // fail closed: identity is mandatory
+	}
 	if !isUUID(sessionID) {
 		return dto.BookingSession{}, inbound.Validation("sessionId", "sessionId harus UUID")
 	}
@@ -54,7 +68,7 @@ func (uc *Session) GetSession(ctx context.Context, sessionID, visitorID string) 
 	if err != nil {
 		return dto.BookingSession{}, err
 	}
-	if visitorID != "" && admission.VisitorID != visitorID {
+	if admission.VisitorID != visitorID {
 		return dto.BookingSession{}, inbound.ErrVisitorMismatch
 	}
 	if admission.IsExpired(uc.clock.Now()) {

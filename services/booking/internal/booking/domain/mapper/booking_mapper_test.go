@@ -38,6 +38,13 @@ func TestToEventDetail(t *testing.T) {
 	assert.Equal(t, "AVAILABLE", out.Event.Status)
 }
 
+// TC-EVT-06 (mapper part): the detail carries the repo-computed minimum price to the response.
+func TestToEventDetail_MinPriceMinor(t *testing.T) {
+	now := time.Now().UTC()
+	d := entity.EventDetail{Event: entity.Event{ID: "e1", MinPriceMinor: 75000}}
+	assert.Equal(t, int64(75000), mapper.ToEventDetail(d, now).Event.MinPriceMinor)
+}
+
 func TestToEventDetail_Description(t *testing.T) {
 	now := time.Now().UTC()
 	doc := json.RawMessage(`[{"type":"paragraph","children":[{"text":"hi"}]}]`)

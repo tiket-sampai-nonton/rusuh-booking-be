@@ -48,9 +48,12 @@ func (h *JoinHandler) join(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	// rb_visitor cookie impersonate another visitor's queue identity (VISITOR_ALREADY_IN_QUEUE for the attacker,
 	// or an entry keyed to the victim's visitor id). No credential at all simply means a fresh visitor id is minted.
 	vid, gen, device := "", int64(0), ""
+	cookieAuthed := false
 	if h.auth != nil {
 		if c, ok := h.auth.ResolveToken(r); ok {
 			vid, gen = c.VisitorID, c.Gen
+			// ResolveToken reads a non-empty cookie exclusively, so ok + non-empty cookie means the cookie verified.
+			cookieAuthed = cookiePresent(r)
 		}
 		device = h.auth.DeviceHash(r) // only the HMAC reaches the usecase and the token, never the raw id
 	}
@@ -65,18 +68,23 @@ func (h *JoinHandler) join(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		IsMobile:       isMobile(r),
 		ClientIP:       httpx.ClientIP(r, h.trustProxy),
 	}
+	bodyToken := in.IsMobile && !cookieAuthed
 	resp, err := h.uc.Join(r.Context(), in)
 	if err != nil {
 		writeDomainError(w, r, err)
 		return
 	}
-	// Web clients: move the freshly-minted visitor token into an HttpOnly cookie, hide it from the body.
-	if resp.VisitorToken != "" && !in.IsMobile {
+	// The current-generation token is ALWAYS delivered in the HttpOnly cookie. It is echoed in the body only to a
+	// native client (X-Client-Type: mobile) that did not authenticate with a valid cookie: a cookie holder (browser,
+	// WebView) must never get a script-readable copy, even when it spoofs the mobile header.
+	if resp.VisitorToken != "" {
 		stdhttp.SetCookie(w, &stdhttp.Cookie{
 			Name: cookieVisitor, Value: resp.VisitorToken, Path: "/",
 			HttpOnly: true, Secure: true, SameSite: httpx.CookieSameSite(),
 		})
-		resp.VisitorToken = ""
+		if !bodyToken {
+			resp.VisitorToken = ""
+		}
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	status := stdhttp.StatusCreated
@@ -86,7 +94,13 @@ func (h *JoinHandler) join(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	httpx.WriteData(w, r, status, resp)
 }
 
-// isMobile reports whether the client is a native app (returns the visitor token in the body).
+// isMobile reports whether the client declares itself a native app (X-Client-Type: mobile).
 func isMobile(r *stdhttp.Request) bool {
 	return strings.EqualFold(r.Header.Get("X-Client-Type"), "mobile")
+}
+
+// cookiePresent reports whether the request carries a non-empty rb_visitor cookie.
+func cookiePresent(r *stdhttp.Request) bool {
+	c, err := r.Cookie(cookieVisitor)
+	return err == nil && c.Value != ""
 }

@@ -16,6 +16,9 @@ type IQueueStore interface {
 	Claim(ctx context.Context, eventID, entryID, visitorID string, nowMs int64) (ClaimResult, error)
 	Leave(ctx context.Context, eventID, entryID, visitorID string, nowMs int64) (LeaveResult, error)
 	EndEntry(ctx context.Context, eventID, entryID, outcome string, nowMs int64) (EndResult, error)
+	// EndWaitingSoldOut ends up to batch WAITING/STALE entries with status SOLD_OUT (booking.sold_out, SRS-F-10-02).
+	// ADMITTED/CLAIMED are never touched. Idempotent; Scanned == batch means more may remain.
+	EndWaitingSoldOut(ctx context.Context, eventID string, nowMs int64, batch int) (SoldOutBatch, error)
 	GetEntry(ctx context.Context, eventID, entryID string) (entity.Entry, bool, error)
 	FindByVisitor(ctx context.Context, eventID, visitorID string) (entity.Entry, bool, error)
 	ActiveCount(ctx context.Context, eventID string) (int, error)
@@ -23,6 +26,8 @@ type IQueueStore interface {
 	ExpiredActive(ctx context.Context, eventID string, nowMs int64, limit int) ([]string, error)
 	SetSale(ctx context.Context, eventID, saleState string, soldOut bool) error
 	GetSale(ctx context.Context, eventID string) (SaleState, error)
+	// SetSaleWindow caches the event's sale window (epoch ms) in the sale hash without touching saleState/soldOut.
+	SetSaleWindow(ctx context.Context, eventID string, startsMs, endsMs int64) error
 	SetStatusDoc(ctx context.Context, eventID string, doc []byte, ttl time.Duration) error
 	GetStatusDoc(ctx context.Context, eventID string) ([]byte, bool, error)
 	// WasNotifiedSoon reports whether a pre-turn notification was already sent for this entry.

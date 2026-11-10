@@ -40,7 +40,7 @@ services/queue/
 
 **Composition root saat ini** (`server.go`, *implemented*): `NewHandler` memasang hanya `NewHealthHandler(health).Register(mux)` lalu membungkus `httpx.Chain(mux, RequestID(), Recover(logger))`. Handler domain baru (`JoinHandler`, `StatusHandler`, `MyEntryHandler`, `ClaimHandler`, `LeaveHandler`) ditambahkan dengan pola `Register(mux)` yang sama.
 
-**Worker** (`worker.go`, *implemented*): `RunWorker` menjalankan `loop(ctx, cfg.Worker.Interval, jobs(clients), logger)`; `jobs()` kini `nil`. Promotor/StatusPublisher/Sweeper didaftarkan sebagai `[]Job{{Name, Run}}` di `jobs(clients)`. Catatan: `loop` memakai satu `WORKER_INTERVAL` global; worker dengan interval berbeda (Promotor ~100ms vs Sweeper ~10s) di-implement dengan ticker internal per-job atau beberapa goroutine, bukan satu ticker (lihat §7).
+**Worker** (`worker.go`, *implemented*): `RunWorker` menjalankan `runJobs(ctx, mod.jobs, cfg.Worker.Interval, logger)` (satu goroutine + ticker per job); `jobs()` kini `nil`. Promotor/StatusPublisher/Sweeper didaftarkan sebagai `[]Job{{Name, Run}}` di `jobs(clients)`. Setiap `Job` punya `Every` sendiri (promotor `QUEUE_PROMOTOR_INTERVAL_MS`, sweeper `QUEUE_SWEEPER_INTERVAL_MS`, status publisher `QUEUE_STATUS_INTERVAL_MS`, liveness `WORKER_INTERVAL`); `Every <= 0` memakai `WORKER_INTERVAL` sebagai fallback (lihat §7).
 
 ---
 
@@ -92,7 +92,7 @@ Semua respons sukses dibungkus `{ meta, data }`; semua error `{ meta, data: null
   "seq": 12345,
   "status": "WAITING",
   "queueToken": "jwt-eddsa",
-  "visitorToken": "jwt-eddsa (mobile only)",
+  "visitorToken": "jwt-eddsa (hanya X-Client-Type: mobile tanpa cookie rb_visitor valid)",
   "statusUrl": "/api/v1/queue-status/{eventId}",
   "claimDeadline": "2026-10-20T10:03:00Z (ADMITTED only)",
   "joinedAt": "2026-10-20T10:00:00Z",
@@ -100,6 +100,8 @@ Semua respons sukses dibungkus `{ meta, data }`; semua error `{ meta, data: null
 }
 ```
 `status ∈ {WAITING,ADMITTED,CLAIMED,MISSED,LEFT,SOLD_OUT,CLOSED,COMPLETED,ENDED}`. Required: `entryId, seq, status, joinedAt, serverTime`.
+
+> **Deprecated (keputusan pemilik Q6):** `queueToken` tidak diterima endpoint mana pun, masih diterbitkan satu rilis, lalu dihapus. Klien memakai visitor token.
 
 ### 2.2 `GET /api/v1/queue-status/{eventId}` — Status Document (CDN)
 
@@ -180,9 +182,11 @@ Required: `eventId, saleState, soldOut, updatedAt`.
 
 **Response 200 (`ClaimResponse`):**
 ```json
-{ "admissionToken": "jwt-eddsa one-time (TTL 60s)", "bookingUrl": "https://.../book/{entryId}" }
+{ "admissionToken": "jwt-eddsa one-time (TTL 60s)", "bookingUrl": "{BOOKING_PAGE_BASE_URL}/{eventId}" }
 ```
 Required: `admissionToken, bookingUrl`.
+
+> **Deprecated (keputusan pemilik Q4 ii):** `bookingUrl` dipertahankan satu rilis; klien menavigasi dari `admissionToken`.
 
 | Status | Code | Kondisi |
 |--------|------|---------|
@@ -415,7 +419,7 @@ end
 redis.call('HSET', KEYS[1], 'status','CLAIMED', 'claimedAtMs', ARGV[2])
 return {'OK','CLAIMED'}
 ```
-**Mapping:** `OK,CLAIMED`/`OK,ALREADY`→200 (Go terbitkan `admissionToken` EdDSA TTL 60s + `bookingUrl`); `ERR,TURN_MISSED`→410; `ERR,NOT_FOUND`→404.
+**Mapping:** `OK,CLAIMED`/`OK,ALREADY`→200 (Go terbitkan `admissionToken` EdDSA TTL 60s + `bookingUrl`, deprecated); `ERR,TURN_MISSED`→410; `ERR,NOT_FOUND`→404.
 
 ### 4.4 `leave.lua` — atomic leave dengan cleanup
 
@@ -556,7 +560,7 @@ Set `q:{e}:sale` `saleState=CLOSED, soldOut=true`; waiting berikutnya → `SOLD_
 
 ## 7. Worker Jobs
 
-Ketiga worker berjalan di proses `queue worker`. Karena `loop()` memakai satu `WORKER_INTERVAL`, tiap worker didaftarkan sebagai `Job` yang mengelola jadwalnya sendiri (goroutine + ticker internal) atau `jobs()` mengembalikan beberapa `Job` yang masing-masing idempoten per tick. Interval efektif di bawah bersumber dari `event_settings` (per-event) dengan fallback env.
+Ketiga worker berjalan di proses `queue worker`. Tiap worker didaftarkan sebagai `Job` dengan interval sendiri; `runJobs` menjalankan satu goroutine + ticker per job (tanpa tumpang tindih, tick terlewat dibuang, error/panic satu job tidak menghentikan job lain), dan setiap job idempoten per tick. Interval efektif di bawah bersumber dari `event_settings` (per-event) dengan fallback env.
 
 ### 7.1 Promotor
 
@@ -658,7 +662,7 @@ Promotor(worker)      Valkey        Booking            RabbitMQ        Klien    
   │                     │              │                  │             ├─────────────►│
   │                     │ EVALSHA claim.lua◄──────────────────────────────────────────┤
   │                     │  OK,CLAIMED  │                  │             │  issue token │
-  │                     │              │                  │  200 {admissionToken,bookingUrl}◄─┤
+  │                     │              │                  │  200 {admissionToken,bookingUrl(deprecated)}◄─┤
 Sweeper(~10s): ZRANGEBYSCORE active 0 now → MISSED (tanpa publish; Booking menerbitkan journey.ended UNCLAIMED)
 ```
 
@@ -689,14 +693,14 @@ Status Publisher (worker): tiap status_publish_interval_ms → SET q:{e}:status 
 | `EVENT_SOLD_OUT` | 410 | join, claim | tiket habis |
 | `TURN_MISSED` | 410 | claim | `now >= claimDeadline` atau status `MISSED` |
 | `NOT_FOUND` | 404 | status, me, claim, leave | event/entry tak ada |
-| `ENTRY_MOVED` | 409/410 | me/claim (device lama) | entry dipindahkan ke device lain |
+| `ENTRY_MOVED` | 409/410 | me/claim (device lama) | entry dipindahkan ke device lain. Reserved, not produced yet (keputusan pemilik Q5) |
 | `RATE_LIMITED` | 429 | join, me, claim | rate limit (+ `Retry-After`) |
 | `DEPENDENCY_UNAVAILABLE` | 503 | join, claim | Valkey/Booking down — fail closed, retry idempotent |
 
 Pemetaan error domain → HTTP di `infrastructure/http` memakai `pkg/apperror`. Handler selalu mengembalikan DTO lewat `domain/mapper`, tidak pernah entity. Envelope error tidak pernah memuat SQL, stack trace, secret, atau payload provider.
 
 **Error domain ↔ code (konstruktor di `domain/`):**
-`ErrValidation→VALIDATION_ERROR(400)`, `ErrNikInvalid→NIK_INVALID(422)`, `ErrNikRequired→NIK_REQUIRED(422)`, `ErrEmailMismatch→EMAIL_MISMATCH(422)`, `ErrNikInQueue→NIK_ALREADY_IN_QUEUE(409)`, `ErrVisitorInQueue→VISITOR_ALREADY_IN_QUEUE(409)`, `ErrEmailInQueue→EMAIL_ALREADY_IN_QUEUE(409)`, `ErrQuotaExhausted→BUYER_QUOTA_EXHAUSTED(409)`, `ErrNotOnSale→EVENT_NOT_ON_SALE(409)`, `ErrSoldOut→EVENT_SOLD_OUT(410)`, `ErrTurnMissed→TURN_MISSED(410)`, `ErrEntryNotFound→NOT_FOUND(404)`, `ErrEntryMoved→ENTRY_MOVED`, `ErrRateLimited→RATE_LIMITED(429)`, `ErrDependencyUnavailable→DEPENDENCY_UNAVAILABLE(503)`.
+`ErrValidation→VALIDATION_ERROR(400)`, `ErrNikInvalid→NIK_INVALID(422)`, `ErrNikRequired→NIK_REQUIRED(422)`, `ErrEmailMismatch→EMAIL_MISMATCH(422)`, `ErrNikInQueue→NIK_ALREADY_IN_QUEUE(409)`, `ErrVisitorInQueue→VISITOR_ALREADY_IN_QUEUE(409)`, `ErrEmailInQueue→EMAIL_ALREADY_IN_QUEUE(409)`, `ErrQuotaExhausted→BUYER_QUOTA_EXHAUSTED(409)`, `ErrNotOnSale→EVENT_NOT_ON_SALE(409)`, `ErrSoldOut→EVENT_SOLD_OUT(410)`, `ErrTurnMissed→TURN_MISSED(410)`, `ErrEntryNotFound→NOT_FOUND(404)`, `ErrEntryMoved→ENTRY_MOVED` (reserved), `ErrRateLimited→RATE_LIMITED(429)`, `ErrDependencyUnavailable→DEPENDENCY_UNAVAILABLE(503)`.
 
 ---
 
@@ -722,7 +726,7 @@ Pemetaan error domain → HTTP di `infrastructure/http` memakai `pkg/apperror`. 
 ## 12. Keamanan & Privasi
 
 - NIK divalidasi `pkg/nik` lalu hanya disimpan sebagai `HMAC-SHA256(NIK, PII_HASH_KEY)`; plaintext tidak disimpan/dilog. Email disimpan terenkripsi AES-256-GCM (`emailEnc`), `emailHash` HMAC untuk constraint.
-- `admissionToken`/`queueToken`/`visitorToken` EdDSA via `pkg/token`; `admissionToken` sekali-pakai TTL 60s, terbit **hanya** lewat jalur antrean (NFR-07).
+- `admissionToken`/`queueToken` (deprecated)/`visitorToken` EdDSA via `pkg/token`; `admissionToken` sekali-pakai TTL 60s, terbit **hanya** lewat jalur antrean (NFR-07).
 - Fail closed: Valkey/Booking down → join/claim ditolak (`503 DEPENDENCY_UNAVAILABLE`).
 - Rate limit per email + IP di Valkey; cookie `rb_visitor` HttpOnly/Secure/SameSite=Lax.
 - Payload event tanpa data pribadi (kontrak `additionalProperties:false`).
@@ -809,3 +813,15 @@ Untuk setiap Status Document dan payload `queue.turn.*`, tidak ada NIK, email, a
 - Migrasi: `services/queue/deployments/migrations/0001_init.up.sql`, `0002_account_ref.up.sql`.
 - Test Plan: `docs/analisa/06-TP-RBT-001.md` (TC-QUE-*, TC-GST-*, TC-USR-09*, TC-PERF-*).
 - Steering: `.kiro/steering/{structure,code-principles,tech,security-privacy,invariants,testing-review}.md`.
+
+## 15. Pengaturan antrean per event (ADR-031)
+
+- Rute `GET`/`PUT /internal/v1/admin/events/{eventId}/queue-settings` (`infrastructure/http/settings_admin_handler.go`),
+  guard `IAdminTokenVerifier` (adapter `security.AdminVerifier`: scope `buyer` wajib + allow-list `ADMIN_EMAILS`, kunci publik
+  User Service; tanpa `TOKEN_PUBLIC_KEY_FILE` semua permintaan 401, tanpa fallback ke kunci Queue).
+- `SetQueueSettings`: validasi statis -> dry run `entity.Decide` terhadap baris tersimpan -> satu `Booking.Supply`
+  (event ada, `salesStartsAt`) -> `IEventSettingsAdminRepo.Apply`, yang menjalankan `entity.Decide` yang sama di dalam
+  transaksi di bawah `pg_advisory_xact_lock` per event, menulis baris dan satu baris audit per field berubah.
+- `JoinQueue` ketat: `Settings.Get` tidak menemukan baris -> `entity.ErrNotConfigured` (409) sebelum `Supply`.
+  `IEventSettingsRepo` kini hanya `Get` dan `ListEventIDs`.
+- Migrasi `0004_event_settings_audit` (tabel + trigger append-only). Batas race di `salesStartsAt` dan alasan penolakan opsi lain: ADR-031.

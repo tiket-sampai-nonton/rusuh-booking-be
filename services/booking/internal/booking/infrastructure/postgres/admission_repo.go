@@ -70,12 +70,15 @@ func (r *AdmissionRepo) FindActiveByEvent(ctx context.Context, eventID, visitorI
 	return r.FindActiveByVisitor(ctx, eventID, visitorID)
 }
 
-// Activate flips a RESERVED admission to ACTIVE by its one-time jti.
+// Activate flips a RESERVED admission to ACTIVE by its one-time jti and starts the selection clock:
+// the session deadline becomes activation time + the snapshotted selection TTL. The guard still reads the old
+// (claim-window) deadline, so the claim window keeps bounding RESERVED -> ACTIVE.
 func (r *AdmissionRepo) Activate(ctx context.Context, jti string, at time.Time) (entity.Admission, error) {
 	// jti in the admission token is the admission's primary key (id), which Queue knows as allocationId.
 	a, err := scanAdmission(r.pool.QueryRow(ctx, `
 		UPDATE booking.admissions
-		   SET status = 'ACTIVE', claimed_at = $2
+		   SET status = 'ACTIVE', claimed_at = $2,
+		       expires_at = $2 + make_interval(secs => cfg_selection_ttl_seconds)
 		 WHERE id = $1::uuid AND status = 'RESERVED' AND expires_at > $2
 		 RETURNING `+admissionCols, jti, at))
 	if errors.Is(err, pgx.ErrNoRows) || pkgpg.IsCode(err, "22P02") {
@@ -210,14 +213,9 @@ func (r *AdmissionRepo) reserveOne(ctx context.Context, tx pgx.Tx, eventID strin
 		return res
 	}
 
-	// Step 7 (F4): mark SOLD_OUT only when nothing can come back: no other un-held reservation and no hold.
-	// Taking the last free units while other admissions still hold reservations is not a sell-out.
-	if freeUnits-units == 0 && allocUnits+heldUnits == 0 {
-		_, _ = tx.Exec(ctx, `
-			UPDATE booking.events SET status='SOLD_OUT'
-			 WHERE id=$1::uuid AND status='AVAILABLE'`, eventID)
-		_ = enqueueOutboxTx(ctx, tx, "booking.sold_out", eventID, map[string]any{"eventId": eventID})
-	}
+	// Step 7 (F4, SRS-F-09-05): never mark SOLD_OUT here. The units just reserved can still come back (cancel,
+	// unclaimed, expiry), so free + allocated + held > 0 after this step; only step 4 or the settle path, when that
+	// sum is 0, may announce the sell-out.
 
 	// Step 8: insert admission row.
 	var allocationID string
@@ -281,15 +279,50 @@ func supplyOutcome(err error) string {
 	return "NO_SUPPLY_NOW"
 }
 
-// Release compensates a saga: RELEASED + allocated_units -= units.
-func (r *AdmissionRepo) Release(ctx context.Context, allocationID string) (bool, error) {
+// journeyOutcome maps the end reason chosen by a release to the booking.journey.ended outcome.
+func journeyOutcome(reason vo.EndReason) (string, error) {
+	switch reason {
+	case vo.EndUnclaimed:
+		return "UNCLAIMED", nil
+	case vo.EndLeftWithoutBuying:
+		return "LEFT_WITHOUT_BUYING", nil
+	default:
+		return "", fmt.Errorf("admissions: release: unsupported end reason %q", reason)
+	}
+}
+
+// insertJourneyEndedTx writes the booking.journey.ended outbox row inside tx so Queue frees the active slot.
+// The payload is exactly {eventId, queueEntryId, outcome}: no NIK, email or token can leak into it.
+func insertJourneyEndedTx(ctx context.Context, tx pgx.Tx, admissionID, eventID, queueEntryID, outcome string) error {
+	payload, err := json.Marshal(map[string]any{
+		"eventId": eventID, "queueEntryId": queueEntryID, "outcome": outcome,
+	})
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(ctx, `
+		INSERT INTO booking.outbox_events (routing_key, aggregate_id, schema_version, payload)
+		VALUES ('booking.journey.ended', $1::uuid, 1, $2)`, admissionID, payload)
+	return err
+}
+
+// Release ends a RESERVED/ACTIVE admission that never converted: RELEASED, its outstanding units go back to
+// free stock and one booking.journey.ended row is written, all in one transaction under the admission row lock.
+// Terminal admissions are a no-op (false, nil). An EDITABLE admission already moved its units into a hold, so it
+// is left untouched and ErrBookingLocked is returned (invariants 1 and 2).
+func (r *AdmissionRepo) Release(ctx context.Context, allocationID string, reason vo.EndReason) (bool, error) {
+	outcome, err := journeyOutcome(reason)
+	if err != nil {
+		return false, err
+	}
 	var released bool
-	err := pkgpg.WithTx(ctx, r.pool, pgx.TxOptions{IsoLevel: pgx.ReadCommitted}, func(tx pgx.Tx) error {
-		var eventID string
+	err = pkgpg.WithTx(ctx, r.pool, pgx.TxOptions{IsoLevel: pgx.ReadCommitted}, func(tx pgx.Tx) error {
+		var eventID, queueEntryID string
 		var units int
 		var status vo.AdmissionStatus
-		err := tx.QueryRow(ctx, `SELECT event_id::text, outstanding_units, status FROM booking.admissions WHERE id = $1::uuid FOR UPDATE`, allocationID).
-			Scan(&eventID, &units, &status)
+		err := tx.QueryRow(ctx, `SELECT event_id::text, queue_entry_id::text, outstanding_units, status
+			FROM booking.admissions WHERE id = $1::uuid FOR UPDATE`, allocationID).
+			Scan(&eventID, &queueEntryID, &units, &status)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return inbound.ErrNotFound
 		}
@@ -299,9 +332,12 @@ func (r *AdmissionRepo) Release(ctx context.Context, allocationID string) (bool,
 		if !status.IsActive() {
 			return nil // already ended; idempotent
 		}
+		if status == vo.AdmissionEditable {
+			return inbound.ErrBookingLocked
+		}
 		if _, err := tx.Exec(ctx, `
-			UPDATE booking.admissions SET status='RELEASED', outstanding_units=0, ended_at=now(), end_reason='UNCLAIMED'
-			 WHERE id = $1::uuid`, allocationID); err != nil {
+			UPDATE booking.admissions SET status='RELEASED', outstanding_units=0, ended_at=now(), end_reason=$2
+			 WHERE id = $1::uuid`, allocationID, string(reason)); err != nil {
 			return err
 		}
 		if units > 0 {
@@ -311,10 +347,16 @@ func (r *AdmissionRepo) Release(ctx context.Context, allocationID string) (bool,
 				return err
 			}
 		}
+		if err := insertJourneyEndedTx(ctx, tx, allocationID, eventID, queueEntryID, outcome); err != nil {
+			return err
+		}
 		released = true
 		return nil
 	})
-	return released, err
+	if err != nil {
+		return false, err
+	}
+	return released, nil
 }
 
 // DueSessions scans admissions whose expiry lapsed, applying grace for ACTIVE/EDITABLE (design §7.1).
@@ -395,16 +437,7 @@ func (r *AdmissionRepo) ExpireSession(ctx context.Context, admissionID string, n
 		}
 
 		// Publish journey.ended so Queue releases the slot (RESERVED/ACTIVE only).
-		payload, err := json.Marshal(map[string]any{
-			"eventId": eventID, "queueEntryId": queueEntryID, "outcome": outcome,
-		})
-		if err != nil {
-			return err
-		}
-		_, err = tx.Exec(ctx, `
-			INSERT INTO booking.outbox_events (routing_key, aggregate_id, schema_version, payload)
-			VALUES ('booking.journey.ended', $1::uuid, 1, $2)`, admissionID, payload)
-		return err
+		return insertJourneyEndedTx(ctx, tx, admissionID, eventID, queueEntryID, outcome)
 	})
 }
 

@@ -1,8 +1,10 @@
 package http_test
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -74,7 +76,7 @@ func TestJoinHandler_MobileReturnsTokenInBody(t *testing.T) {
 	mux.ServeHTTP(rec, req)
 
 	assert.Equal(t, http.StatusCreated, rec.Code)
-	assert.Empty(t, rec.Header().Get("Set-Cookie"))
+	assert.Contains(t, rec.Header().Get("Set-Cookie"), "rb_visitor=vt", "the cookie is always set (QVT-01)")
 	assert.Contains(t, rec.Body.String(), `"visitorToken":"vt"`)
 }
 
@@ -95,6 +97,39 @@ func TestJoinHandler_DomainError(t *testing.T) {
 
 	assert.Equal(t, http.StatusConflict, rec.Code)
 	assert.Contains(t, rec.Body.String(), "ACCOUNT_ALREADY_IN_QUEUE")
+}
+
+// TC-QUE-39/40: the join gate errors reach the client as 409 EVENT_NOT_ON_SALE, 410 EVENT_SOLD_OUT and
+// 503 DEPENDENCY_UNAVAILABLE, in the standard error envelope.
+func TestJoinHandler_SaleGateErrors(t *testing.T) {
+	tests := []struct {
+		name     string
+		err      error
+		wantCode int
+		wantBody string
+	}{
+		{"not on sale", entity.ErrNotOnSale, http.StatusConflict, "EVENT_NOT_ON_SALE"},
+		{"sold out", entity.ErrSoldOut, http.StatusGone, "EVENT_SOLD_OUT"},
+		{"sale window unavailable", entity.ErrDependencyUnavailable, http.StatusServiceUnavailable, "DEPENDENCY_UNAVAILABLE"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			uc := mock_inbound.NewMockIJoinUsecase(ctrl)
+			uc.EXPECT().Join(gomock.Any(), gomock.Any()).Return(dto.QueueEntry{}, tt.err)
+			mux := http.NewServeMux()
+			queuehttp.NewJoinHandler(uc, false).Register(mux)
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/events/ev1/queue-entries", strings.NewReader(`{}`))
+			req.Header.Set("Content-Type", "application/json")
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
+			assert.Equal(t, tt.wantCode, rec.Code)
+			assert.Contains(t, rec.Body.String(), fmt.Sprintf(`"meta":{"code":%d,"message":"%s:`, tt.wantCode, tt.wantBody))
+			assert.Contains(t, rec.Body.String(), `"data":null`)
+			assert.Empty(t, rec.Header().Get("Set-Cookie"), "a refused join issues no visitor cookie")
+			assert.NotContains(t, rec.Body.String(), "valkey")
+		})
+	}
 }
 
 func TestStatusHandler_OK(t *testing.T) {
@@ -201,6 +236,20 @@ func TestLeaveHandler_NoContent(t *testing.T) {
 	require.Equal(t, http.StatusNoContent, rec.Code)
 }
 
+// TC-QUE-38 (P16): DELETE on a CLAIMED entry is 409 ENTRY_CLAIMED in the standard envelope, never a 204.
+func TestLeaveHandler_ClaimedEntryIsConflict(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	uc := mock_inbound.NewMockILeaveUsecase(ctrl)
+	uc.EXPECT().Leave(gomock.Any(), gomock.Any()).Return(entity.ErrEntryClaimed)
+	mux := http.NewServeMux()
+	queuehttp.NewLeaveHandler(uc, fakeAuth{id: "v1", ok: true}).Register(mux)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodDelete, "/api/v1/queue-entries/e1?eventId=ev1", nil))
+	require.Equal(t, http.StatusConflict, rec.Code)
+	assert.Contains(t, rec.Body.String(), `"meta":{"code":409,"message":"ENTRY_CLAIMED:`)
+	assert.Contains(t, rec.Body.String(), `"data":null`)
+}
+
 func TestLeaveHandler_Unauthorized(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	uc := mock_inbound.NewMockILeaveUsecase(ctrl)
@@ -210,7 +259,8 @@ func TestLeaveHandler_Unauthorized(t *testing.T) {
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/queue-entries/e1?eventId=ev1", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
-	assert.Equal(t, http.StatusNotFound, rec.Code)
+	assert.Equal(t, http.StatusUnauthorized, rec.Code, "REQ-QVT-02: invalid token -> 401 VISITOR_TOKEN_INVALID")
+	assert.Contains(t, rec.Body.String(), "VISITOR_TOKEN_INVALID")
 }
 
 // QSH-T10: claim error mapping. A WAITING entry is "not admitted yet" (409), a wrong visitor is answered exactly like an
@@ -245,7 +295,8 @@ func TestClaimHandler_ErrorMapping(t *testing.T) {
 			}
 		})
 	}
-	// An unauthenticated caller gets the same NOT_FOUND family as a stranger (no existence oracle).
+	// An unauthenticated caller is 401 VISITOR_TOKEN_INVALID before any entry lookup, so it is no existence oracle
+	// (REQ-QVT-02); a stranger with a valid token still gets the 404 above.
 	ctrl := gomock.NewController(t)
 	uc := mock_inbound.NewMockIClaimUsecase(ctrl)
 	h := queuehttp.NewClaimHandler(uc, fakeAuth{ok: false})
@@ -253,7 +304,8 @@ func TestClaimHandler_ErrorMapping(t *testing.T) {
 	h.Register(mux)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/queue-entries/e1/claim?eventId=ev1", nil))
-	assert.Equal(t, http.StatusNotFound, rec.Code)
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+	assert.Contains(t, rec.Body.String(), "VISITOR_TOKEN_INVALID")
 	assert.Contains(t, notFoundBody, "NOT_FOUND")
 }
 
@@ -290,4 +342,44 @@ func TestHeartbeatHandler_States(t *testing.T) {
 		assert.Equal(t, http.StatusNotFound, rec.Code)
 		assert.Contains(t, rec.Body.String(), "ENTRY_NOT_FOUND")
 	})
+}
+
+// TC-QUE-42 (REQ-QVT-02, P3): claim and leave with a missing/invalid token are 401 VISITOR_TOKEN_INVALID, with an
+// identical body for an existing and a nonexistent entry id, and the usecase (store/Booking) is never reached.
+func TestClaimAndLeaveHandlers_InvalidTokenIs401BeforeAnyLookup(t *testing.T) {
+	routes := []struct {
+		name   string
+		method string
+		path   func(id string) string
+		mount  func(ctrl *gomock.Controller, mux *http.ServeMux) // strict mocks: any usecase call fails the test
+	}{
+		{"claim", http.MethodPost, func(id string) string { return "/api/v1/queue-entries/" + id + "/claim?eventId=ev1" },
+			func(ctrl *gomock.Controller, mux *http.ServeMux) {
+				queuehttp.NewClaimHandler(mock_inbound.NewMockIClaimUsecase(ctrl), fakeAuth{ok: false}).Register(mux)
+			}},
+		{"leave", http.MethodDelete, func(id string) string { return "/api/v1/queue-entries/" + id + "?eventId=ev1" },
+			func(ctrl *gomock.Controller, mux *http.ServeMux) {
+				queuehttp.NewLeaveHandler(mock_inbound.NewMockILeaveUsecase(ctrl), fakeAuth{ok: false}).Register(mux)
+			}},
+	}
+	for _, rt := range routes {
+		t.Run(rt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			mux := http.NewServeMux()
+			rt.mount(ctrl, mux)
+			var bodies []string
+			for _, id := range []string{"existing-entry", "nonexistent-entry"} {
+				rec := httptest.NewRecorder()
+				mux.ServeHTTP(rec, httptest.NewRequest(rt.method, rt.path(id), nil))
+				require.Equal(t, http.StatusUnauthorized, rec.Code)
+				assert.Contains(t, rec.Body.String(), "VISITOR_TOKEN_INVALID")
+				bodies = append(bodies, stripRequestID(rec.Body.String()))
+			}
+			assert.Equal(t, bodies[0], bodies[1], "identical for existing and nonexistent entry")
+		})
+	}
+}
+
+func stripRequestID(body string) string {
+	return regexp.MustCompile(`"requestId":"[^"]*"`).ReplaceAllString(body, `"requestId":""`)
 }

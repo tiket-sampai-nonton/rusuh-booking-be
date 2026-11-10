@@ -42,21 +42,6 @@ func (m *MockIEventSettingsRepo) EXPECT() *MockIEventSettingsRepoMockRecorder {
 	return m.recorder
 }
 
-// Ensure mocks base method.
-func (m *MockIEventSettingsRepo) Ensure(ctx context.Context, eventID string) (entity.EventSettings, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Ensure", ctx, eventID)
-	ret0, _ := ret[0].(entity.EventSettings)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// Ensure indicates an expected call of Ensure.
-func (mr *MockIEventSettingsRepoMockRecorder) Ensure(ctx, eventID any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Ensure", reflect.TypeOf((*MockIEventSettingsRepo)(nil).Ensure), ctx, eventID)
-}
-
 // Get mocks base method.
 func (m *MockIEventSettingsRepo) Get(ctx context.Context, eventID string) (entity.EventSettings, bool, error) {
 	m.ctrl.T.Helper()
@@ -124,4 +109,43 @@ func (m *MockIEntryAuditRepo) Append(ctx context.Context, e outbound.AuditRecord
 func (mr *MockIEntryAuditRepoMockRecorder) Append(ctx, e any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Append", reflect.TypeOf((*MockIEntryAuditRepo)(nil).Append), ctx, e)
+}
+
+// MockIEventSettingsAdminRepo is a mock of IEventSettingsAdminRepo interface.
+type MockIEventSettingsAdminRepo struct {
+	ctrl     *gomock.Controller
+	recorder *MockIEventSettingsAdminRepoMockRecorder
+	isgomock struct{}
+}
+
+// MockIEventSettingsAdminRepoMockRecorder is the mock recorder for MockIEventSettingsAdminRepo.
+type MockIEventSettingsAdminRepoMockRecorder struct {
+	mock *MockIEventSettingsAdminRepo
+}
+
+// NewMockIEventSettingsAdminRepo creates a new mock instance.
+func NewMockIEventSettingsAdminRepo(ctrl *gomock.Controller) *MockIEventSettingsAdminRepo {
+	mock := &MockIEventSettingsAdminRepo{ctrl: ctrl}
+	mock.recorder = &MockIEventSettingsAdminRepoMockRecorder{mock}
+	return mock
+}
+
+// EXPECT returns an object that allows the caller to indicate expected use.
+func (m *MockIEventSettingsAdminRepo) EXPECT() *MockIEventSettingsAdminRepoMockRecorder {
+	return m.recorder
+}
+
+// Apply mocks base method.
+func (m *MockIEventSettingsAdminRepo) Apply(ctx context.Context, p outbound.ApplySettingsParams) (outbound.ApplySettingsResult, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Apply", ctx, p)
+	ret0, _ := ret[0].(outbound.ApplySettingsResult)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// Apply indicates an expected call of Apply.
+func (mr *MockIEventSettingsAdminRepoMockRecorder) Apply(ctx, p any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Apply", reflect.TypeOf((*MockIEventSettingsAdminRepo)(nil).Apply), ctx, p)
 }

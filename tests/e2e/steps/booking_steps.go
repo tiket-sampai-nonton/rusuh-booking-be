@@ -15,17 +15,17 @@ import (
 )
 
 type bookingCtx struct {
-	env              *helpers.Env
-	eventID          string
-	catID            string
-	admitA           helpers.AdmitResult
-	admitB           helpers.AdmitResult
-	sessionIDA       string
-	sessionIDB       string
-	resp             *http.Response
-	body             map[string]any
-	bookingID        string
-	firstBookingID   string
+	env            *helpers.Env
+	eventID        string
+	catID          string
+	admitA         helpers.AdmitResult
+	admitB         helpers.AdmitResult
+	sessionIDA     string
+	sessionIDB     string
+	resp           *http.Response
+	body           map[string]any
+	bookingID      string
+	firstBookingID string
 }
 
 // RegisterBooking registers booking and session step definitions.
@@ -96,7 +96,7 @@ func (b *bookingCtx) visitorAHolds(nik string) error {
 	b.admitA = admit
 	sessionID, _ := helpers.CreateSession(b.env, admit.AdmissionToken, admit.VisitorToken)
 	b.sessionIDA = sessionID
-	r := helpers.HoldTickets(b.env, sessionID, admit.VisitorToken,
+	r := helpers.HoldTickets(b.env, sessionID, admit,
 		fmt.Sprintf("a-%d", time.Now().UnixNano()),
 		[]map[string]any{{"categoryId": b.catID, "attendee": map[string]string{"nik": nik, "fullName": "Budi"}}})
 	if r.StatusCode != 201 {
@@ -118,7 +118,7 @@ func (b *bookingCtx) admitSecondVisitor() error {
 }
 
 func (b *bookingCtx) visitorBHolds(nik string) error {
-	r := helpers.HoldTickets(b.env, b.sessionIDB, b.admitB.VisitorToken,
+	r := helpers.HoldTickets(b.env, b.sessionIDB, b.admitB,
 		fmt.Sprintf("b-%d", time.Now().UnixNano()),
 		[]map[string]any{{"categoryId": b.catID, "attendee": map[string]string{"nik": nik, "fullName": "Siti"}}})
 	b.resp = &http.Response{StatusCode: r.StatusCode}
@@ -134,7 +134,7 @@ func (b *bookingCtx) holdWithDiffNIKs(n int) error {
 			"attendee":   map[string]string{"nik": bookingNIKs[i%len(bookingNIKs)], "fullName": fmt.Sprintf("Budi %d", i+1)},
 		}
 	}
-	r := helpers.HoldTickets(b.env, b.sessionIDA, b.admitA.VisitorToken,
+	r := helpers.HoldTickets(b.env, b.sessionIDA, b.admitA,
 		fmt.Sprintf("k-%d", time.Now().UnixNano()), items)
 	b.resp = &http.Response{StatusCode: r.StatusCode}
 	b.body = r.Body
@@ -150,7 +150,7 @@ func (b *bookingCtx) holdWithSameNIK(n int, nik string) error {
 			"attendee":   map[string]string{"nik": nik, "fullName": fmt.Sprintf("Person %d", i+1)},
 		}
 	}
-	r := helpers.HoldTickets(b.env, b.sessionIDA, b.admitA.VisitorToken,
+	r := helpers.HoldTickets(b.env, b.sessionIDA, b.admitA,
 		fmt.Sprintf("k-%d", time.Now().UnixNano()), items)
 	b.resp = &http.Response{StatusCode: r.StatusCode}
 	b.body = r.Body
@@ -158,7 +158,7 @@ func (b *bookingCtx) holdWithSameNIK(n int, nik string) error {
 }
 
 func (b *bookingCtx) holdWithKey(_ int, key string) error {
-	r := helpers.HoldTickets(b.env, b.sessionIDA, b.admitA.VisitorToken, key,
+	r := helpers.HoldTickets(b.env, b.sessionIDA, b.admitA, key,
 		[]map[string]any{{"categoryId": b.catID, "attendee": map[string]string{"nik": "3174010101800001", "fullName": "Budi"}}})
 	b.resp = &http.Response{StatusCode: r.StatusCode}
 	b.body = r.Body
@@ -172,7 +172,7 @@ func (b *bookingCtx) resendHoldWithKey(key string) error {
 }
 
 func (b *bookingCtx) holdWithInvalidNIK(nik string) error {
-	r := helpers.HoldTickets(b.env, b.sessionIDA, b.admitA.VisitorToken,
+	r := helpers.HoldTickets(b.env, b.sessionIDA, b.admitA,
 		fmt.Sprintf("k-%d", time.Now().UnixNano()),
 		[]map[string]any{{"categoryId": b.catID, "attendee": map[string]string{"nik": nik, "fullName": "Budi"}}})
 	b.resp = &http.Response{StatusCode: r.StatusCode}

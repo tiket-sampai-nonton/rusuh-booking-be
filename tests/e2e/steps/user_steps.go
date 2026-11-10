@@ -13,14 +13,14 @@ import (
 )
 
 type userCtx struct {
-	env         *helpers.Env
-	eventID     string
-	catID       string
-	holdResult  helpers.HoldResult
-	otpResp     *http.Response
-	otpBody     map[string]any
-	verifyResp  *http.Response
-	verifyBody  map[string]any
+	env        *helpers.Env
+	eventID    string
+	catID      string
+	holdResult helpers.HoldResult
+	otpResp    *http.Response
+	otpBody    map[string]any
+	verifyResp *http.Response
+	verifyBody map[string]any
 }
 
 // RegisterUser registers User Service and OTP step definitions.
@@ -66,7 +66,7 @@ func (u *userCtx) guestJoinAndHold() error {
 	if err != nil {
 		return err
 	}
-	u.holdResult = helpers.HoldTickets(u.env, sessionID, admit.VisitorToken,
+	u.holdResult = helpers.HoldTickets(u.env, sessionID, admit,
 		"user-guest-key-1",
 		[]map[string]any{{"categoryId": u.catID, "attendee": map[string]string{"nik": "3174010101800001", "fullName": "Budi"}}})
 	return nil

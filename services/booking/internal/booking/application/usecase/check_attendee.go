@@ -37,7 +37,10 @@ func NewCheckAttendee(admissions outbound.IAdmissionRepo, events outbound.IEvent
 
 // CheckAttendee runs the probe. A structurally invalid NIK returns NIK_INVALID (422) WITHOUT consuming
 // the check quota (AC5.2).
-func (uc *CheckAttendee) CheckAttendee(ctx context.Context, sessionID string, req dto.AttendeeCheckRequest) (dto.AttendeeCheck, error) {
+func (uc *CheckAttendee) CheckAttendee(ctx context.Context, sessionID, visitorID string, req dto.AttendeeCheckRequest) (dto.AttendeeCheck, error) {
+	if visitorID == "" {
+		return dto.AttendeeCheck{}, inbound.ErrUnauthorized // fail closed: identity is mandatory
+	}
 	if !isUUID(sessionID) {
 		return dto.AttendeeCheck{}, inbound.Validation("sessionId", "sessionId harus UUID")
 	}
@@ -47,6 +50,9 @@ func (uc *CheckAttendee) CheckAttendee(ctx context.Context, sessionID string, re
 	admission, err := uc.admissions.GetByID(ctx, sessionID)
 	if err != nil {
 		return dto.AttendeeCheck{}, err
+	}
+	if admission.VisitorID != visitorID {
+		return dto.AttendeeCheck{}, inbound.ErrVisitorMismatch
 	}
 	if admission.IsExpired(uc.clock.Now()) || !admission.IsActive() {
 		return dto.AttendeeCheck{}, inbound.ErrSessionExpired

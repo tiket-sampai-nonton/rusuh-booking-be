@@ -30,7 +30,14 @@ type Liveness struct {
 	clock    clock.IClock
 	tuning   LivenessTuning
 	logger   *slog.Logger
+
+	// leaseHeld counts consecutive passes per event that found the promoter lease held. It is touched only from
+	// Run, which the runner calls from a single goroutine (one goroutine per job), so it needs no mutex.
+	leaseHeld map[string]int
 }
+
+// leaseHeldWarnEvery is the number of consecutive skipped passes between starvation warnings (~30 s at 5 s).
+const leaseHeldWarnEvery = 6
 
 // NewLiveness accepts interfaces and returns the concrete worker.
 func NewLiveness(store outbound.IQueueStore, settings outbound.IEventSettingsRepo, clk clock.IClock, t LivenessTuning) *Liveness {
@@ -40,7 +47,13 @@ func NewLiveness(store outbound.IQueueStore, settings outbound.IEventSettingsRep
 	if t.LeaseTTL <= 0 {
 		t.LeaseTTL = 10 * time.Second
 	}
-	return &Liveness{store: store, settings: settings, clock: clk, tuning: t, logger: slog.Default()}
+	return &Liveness{store: store, settings: settings, clock: clk, tuning: t, logger: slog.Default(), leaseHeld: map[string]int{}}
+}
+
+// WithLogger replaces the default logger.
+func (l *Liveness) WithLogger(lg *slog.Logger) *Liveness {
+	l.logger = lg
+	return l
 }
 
 // Run sweeps every configured event once; one event's failure never stops the others.
@@ -49,6 +62,7 @@ func (l *Liveness) Run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	l.evictRemoved(ids)
 	var errs []error
 	for _, eventID := range ids {
 		if err := l.runEvent(ctx, eventID); err != nil {
@@ -56,6 +70,22 @@ func (l *Liveness) Run(ctx context.Context) error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// evictRemoved drops starvation counters of events no longer configured, so the map stays bounded.
+func (l *Liveness) evictRemoved(ids []string) {
+	if len(l.leaseHeld) == 0 {
+		return
+	}
+	keep := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		keep[id] = struct{}{}
+	}
+	for id := range l.leaseHeld {
+		if _, ok := keep[id]; !ok {
+			delete(l.leaseHeld, id)
+		}
+	}
 }
 
 func (l *Liveness) runEvent(ctx context.Context, eventID string) error {
@@ -68,8 +98,15 @@ func (l *Liveness) runEvent(ctx context.Context, eventID string) error {
 		return err
 	}
 	if res.LeaseLost {
-		return nil // another holder owns the lease this tick
+		// Another holder owns the lease this tick: nothing changed. Signal prolonged starvation (e.g. a Booking
+		// outage keeping the promoter inside slow calls) without escalating it to an error.
+		l.leaseHeld[eventID]++
+		if n := l.leaseHeld[eventID]; n%leaseHeldWarnEvery == 0 {
+			l.logger.Warn("liveness lease held, sweep skipped", "eventId", eventID, "consecutive", n)
+		}
+		return nil
 	}
+	delete(l.leaseHeld, eventID)
 	if res.Staled > 0 || res.Ended > 0 {
 		l.logger.Info("liveness", "eventId", eventID, "staled", res.Staled, "ended", res.Ended)
 	}

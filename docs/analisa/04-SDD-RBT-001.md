@@ -1244,7 +1244,7 @@ Response `201` (menunggu):
     "entryId": "6f1c…",
     "seq": 183245,
     "status": "WAITING",
-    "queueToken": "eyJhbGciOiJFZERTQSIs…",
+    "queueToken": "eyJhbGciOiJFZERTQSIs…",   // deprecated (Q6): tidak diterima endpoint mana pun
     "statusUrl": "/api/v1/queue-status/8f0c…",
     "joinedAt": "2026-12-25T03:00:00.412Z",
     "serverTime": "2026-12-25T03:00:00.415Z"
@@ -1252,7 +1252,7 @@ Response `201` (menunggu):
 }
 ```
 
-Response `201` dengan `status: "ADMITTED"` dan `claimDeadline` bila admission instan (FR-05). Cookie `rb_visitor` (HttpOnly) diset untuk web; mobile menerima `visitorToken` di body.
+Response `201` dengan `status: "ADMITTED"` dan `claimDeadline` bila admission instan (FR-05). Cookie `rb_visitor` (HttpOnly) selalu diset bila token terbit; `visitorToken` di body hanya untuk klien dengan `X-Client-Type: mobile` yang tidak membawa cookie `rb_visitor` valid (pemegang cookie tidak pernah menerimanya di body). Token dikirim kembali lewat header `X-Visitor-Token`, bukan `Authorization: Bearer`.
 
 ###### Posisi eksak
 
@@ -1260,7 +1260,7 @@ Response `201` dengan `status: "ADMITTED"` dan `claimDeadline` bila admission in
 
 ###### Klaim
 
-`POST /api/v1/queue-entries/{entryId}/claim` → `{ admissionToken, bookingUrl }` (TTL 60 detik).
+`POST /api/v1/queue-entries/{entryId}/claim` → `{ admissionToken, bookingUrl }` (TTL 60 detik; `bookingUrl` deprecated, klien menavigasi dari `admissionToken`).
 
 Status entry yang mungkin di respons: `WAITING`, `ADMITTED`, `CLAIMED`, `MISSED`, `LEFT`, `SOLD_OUT`, `CLOSED`, `COMPLETED`, `ENDED`. Untuk status akhir, respons memuat `reason` dan `redirect: "/"`.
 
@@ -2501,6 +2501,10 @@ Semua nilai di bawah configurable. Kolom "Saat penjualan" menjelaskan apakah nil
 | `pre_turn_notify_enabled` | true | — | Boleh | Peringatan + push giliran (AS-25) |
 | `category_limited_threshold_pct` | 5 | 1–50 | Boleh | Status `LIMITED` |
 | `one_active_per_visitor` / `one_active_per_email` | true | — | **Dikunci** (validator Queue) | Anti-calo (AS-17) |
+
+Kolom "Default" di tabel Queue adalah nilai bawaan kolom yang dipakai **saat admin membuat** pengaturan dan tidak mengirim field itu; tidak ada baris yang dibuat otomatis (ADR-031).
+
+**Runbook (ADR-031).** Pengaturan antrean dibuat dan diubah lewat `PUT /internal/v1/admin/events/{eventId}/queue-settings` (internal, allow-list admin, lihat `docs/contracts/openapi/queue.yaml`). Setiap event baru tidak bisa di-join (`409 QUEUE_NOT_CONFIGURED`) sampai admin melakukan PUT **setelah event terbit dan sebelum penjualan dimulai**; event draf belum bisa dikonfigurasi. Pengaturan staging, prod, setup e2e, dan uji beban wajib menyertakan langkah ini sebelum join pertama. Selama penjualan terbuka, hanya `one_active_per_*` yang terkunci (409 `EVENT_RULES_LOCKED`); kapasitas dan interval polling boleh diubah dan dipakai promotor pada tick berikutnya tanpa restart. Keterbatasan: keputusan kunci memakai snapshot `Supply` sebelum transaksi, sehingga PUT yang jatuh persis di `salesStartsAt` dapat dinilai "belum terbuka" paling lama satu round-trip Booking (ADR-031).
 
 #### Per Service — env (perubahan lewat deploy)
 

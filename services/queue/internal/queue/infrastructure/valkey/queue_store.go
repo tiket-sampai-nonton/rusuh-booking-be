@@ -36,11 +36,12 @@ type QueueStore struct {
 	clk    clock.IClock
 	shards int
 
-	join     *vk.Lua
-	promote  *vk.Lua
-	claim    *vk.Lua
-	leave    *vk.Lua
-	endEntry *vk.Lua
+	join       *vk.Lua
+	promote    *vk.Lua
+	claim      *vk.Lua
+	leave      *vk.Lua
+	endEntry   *vk.Lua
+	endSoldOut *vk.Lua
 
 	releaseLease *vk.Lua
 
@@ -57,11 +58,12 @@ func NewQueueStore(c vk.Client, keyer Keyer, clk clock.IClock, shards int) *Queu
 	}
 	return &QueueStore{
 		c: c, keyer: keyer, clk: clk, shards: shards,
-		join:     vk.NewLuaScript(lua.Join),
-		promote:  vk.NewLuaScript(lua.Promote),
-		claim:    vk.NewLuaScript(lua.Claim),
-		leave:    vk.NewLuaScript(lua.Leave),
-		endEntry: vk.NewLuaScript(lua.EndEntry),
+		join:       vk.NewLuaScript(lua.Join),
+		promote:    vk.NewLuaScript(lua.Promote),
+		claim:      vk.NewLuaScript(lua.Claim),
+		leave:      vk.NewLuaScript(lua.Leave),
+		endEntry:   vk.NewLuaScript(lua.EndEntry),
+		endSoldOut: vk.NewLuaScript(lua.EndSoldOut),
 
 		releaseLease: vk.NewLuaScript(lua.ReleaseLease),
 
@@ -348,6 +350,45 @@ func (s *QueueStore) EndEntry(ctx context.Context, eventID, entryID, outcome str
 	return outbound.EndResult{Tag: tag, Status: final}, nil
 }
 
+// EndWaitingSoldOut ends up to batch WAITING/STALE entries of the event with status SOLD_OUT (end_sold_out.lua).
+// It returns how many ids were scanned (the batch size when more may remain) and how many entries changed.
+// ADMITTED/CLAIMED entries are never touched. Idempotent: ended entries leave the waiting/stale sets.
+func (s *QueueStore) EndWaitingSoldOut(ctx context.Context, eventID string, nowMs int64, batch int) (outbound.SoldOutBatch, error) {
+	if batch <= 0 {
+		return outbound.SoldOutBatch{}, fmt.Errorf("valkey: EndWaitingSoldOut batch harus positif, dapat %d", batch)
+	}
+	ids, err := s.TopWaiting(ctx, eventID, batch)
+	if err != nil {
+		return outbound.SoldOutBatch{}, err
+	}
+	if rest := batch - len(ids); rest > 0 {
+		stale, err := s.c.Do(ctx, s.c.B().Zrange().Key(s.k(eventID, "stale")).Min("0").Max("+inf").
+			Byscore().Limit(0, int64(rest)).Build()).AsStrSlice()
+		if err != nil {
+			return outbound.SoldOutBatch{}, fmt.Errorf("valkey: zrangebyscore stale: %w", err)
+		}
+		ids = append(ids, stale...)
+	}
+	if len(ids) == 0 {
+		return outbound.SoldOutBatch{}, nil
+	}
+	args := []string{s.prefix(eventID), strconv.FormatInt(nowMs, 10)}
+	for _, id := range ids {
+		shard := s.shardOf(id)
+		args = append(args, id, s.kHbShard(eventID, shard), s.kHbStaleShard(eventID, shard))
+	}
+	arr, err := s.endSoldOut.Exec(ctx, s.c, []string{s.kSeq(eventID)}, args).ToArray()
+	if err != nil {
+		return outbound.SoldOutBatch{}, fmt.Errorf("valkey: end_sold_out.lua: %w", err)
+	}
+	ended := 0
+	if len(arr) > 0 {
+		n, _ := arr[0].AsInt64()
+		ended = int(n)
+	}
+	return outbound.SoldOutBatch{Scanned: len(ids), Ended: ended}, nil
+}
+
 // GetEntry reads the entry hash (design §3.2).
 func (s *QueueStore) GetEntry(ctx context.Context, eventID, entryID string) (entity.Entry, bool, error) {
 	m, err := s.c.Do(ctx, s.c.B().Hgetall().Key(s.kEntry(eventID, entryID)).Build()).AsStrMap()
@@ -441,7 +482,17 @@ func (s *QueueStore) GetSale(ctx context.Context, eventID string) (outbound.Sale
 		return outbound.SaleState{}, fmt.Errorf("valkey: hgetall sale: %w", err)
 	}
 	st := outbound.SaleState{SaleState: m["saleState"], SoldOut: m["soldOut"] == "1"}
+	st.SalesStartsMs = parseMs(m["salesStartsMs"])
+	st.SalesEndsMs = parseMs(m["salesEndsMs"])
 	return st, nil
+}
+
+// SetSaleWindow caches the sale window in the same hash as SetSale. It writes only its own two fields, so neither
+// writer can clobber the other.
+func (s *QueueStore) SetSaleWindow(ctx context.Context, eventID string, startsMs, endsMs int64) error {
+	return s.c.Do(ctx, s.c.B().Hset().Key(s.kSale(eventID)).FieldValue().
+		FieldValue("salesStartsMs", strconv.FormatInt(startsMs, 10)).
+		FieldValue("salesEndsMs", strconv.FormatInt(endsMs, 10)).Build()).Error()
 }
 
 // SetStatusDoc writes the Status Document JSON with a short TTL (design §3.1: 1s).

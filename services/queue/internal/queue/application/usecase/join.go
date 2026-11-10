@@ -126,13 +126,13 @@ func (u *JoinQueue) Join(ctx context.Context, in inbound.JoinInput) (dto.QueueEn
 		return dto.QueueEntry{}, err
 	}
 	if !found {
-		// First join for this event: only a real event (known to Booking) gets queue settings; unknown ids are refused.
-		if _, err := u.d.Booking.Supply(ctx, in.EventID); err != nil {
-			return dto.QueueEntry{}, err
-		}
-		if settings, err = u.d.Settings.Ensure(ctx, in.EventID); err != nil {
-			return dto.QueueEntry{}, err
-		}
+		// Strict configuration (QSA-6): only the admin PUT creates settings. No Booking call, no write, no side effect;
+		// an unknown id and a real event without a row are indistinguishable here.
+		return dto.QueueEntry{}, entity.ErrNotConfigured
+	}
+
+	if err := u.checkSale(ctx, in.EventID, now); err != nil {
+		return dto.QueueEntry{}, err
 	}
 
 	res, err := u.d.Store.Join(ctx, outbound.JoinParams{
@@ -172,6 +172,47 @@ func (u *JoinQueue) Join(ctx context.Context, in inbound.JoinInput) (dto.QueueEn
 	out := u.buildResponse(in, ent, outbound.VisitorClaim{VisitorID: res.VisitorID, Gen: res.Gen, DeviceHash: in.DeviceHash}, now)
 	out.Existing = res.Outcome != outbound.JoinCreated
 	return out, nil
+}
+
+// checkSale refuses a join outside the sale: before salesStartsAt (ErrNotOnSale), after sold out (ErrSoldOut) or
+// from salesEndsAt on (ErrNotOnSale), in that order of precedence. salesStartsAt <= now < salesEndsAt is open. It
+// runs after the rate limit and before Store.Join, so a refused join creates no entry and consumes no seq. The window
+// is cached by the status publisher; only a cold cache costs one Booking read, and if that fails the join fails
+// closed (ErrDependencyUnavailable) rather than being accepted blindly.
+func (u *JoinQueue) checkSale(ctx context.Context, eventID string, now time.Time) error {
+	sale, err := u.d.Store.GetSale(ctx, eventID)
+	if err != nil {
+		return err
+	}
+	if sale.SalesStartsMs == 0 && sale.SalesEndsMs == 0 {
+		supply, serr := u.d.Booking.Supply(ctx, eventID)
+		if serr != nil {
+			u.logger.Warn("jendela penjualan tidak diketahui dan Booking tidak tersedia", "eventId", eventID, "error", serr)
+			return entity.ErrDependencyUnavailable
+		}
+		sale.SalesStartsMs, sale.SalesEndsMs = supply.SalesStartsAt.UnixMilli(), supply.SalesEndsAt.UnixMilli()
+		if supply.SalesStartsAt.IsZero() {
+			sale.SalesStartsMs = 0
+		}
+		if supply.SalesEndsAt.IsZero() {
+			sale.SalesEndsMs = 0
+		}
+		if sale.SalesStartsMs != 0 && sale.SalesEndsMs != 0 {
+			if werr := u.d.Store.SetSaleWindow(ctx, eventID, sale.SalesStartsMs, sale.SalesEndsMs); werr != nil {
+				u.logger.Warn("cache jendela penjualan gagal", "eventId", eventID, "error", werr)
+			}
+		}
+	}
+	nowMs := now.UnixMilli()
+	switch {
+	case sale.SalesStartsMs != 0 && nowMs < sale.SalesStartsMs:
+		return entity.ErrNotOnSale
+	case sale.SaleState == dto.SaleClosed && sale.SoldOut:
+		return entity.ErrSoldOut
+	case sale.SalesEndsMs != 0 && nowMs >= sale.SalesEndsMs:
+		return entity.ErrNotOnSale
+	}
+	return nil
 }
 
 // resolveAccount returns the account id of a valid User bearer, or "" for a guest or an invalid bearer. The
@@ -325,6 +366,7 @@ func (u *JoinQueue) audit(ctx context.Context, eventID string, ent entity.Entry,
 func (u *JoinQueue) buildResponse(in inbound.JoinInput, ent entity.Entry, claim outbound.VisitorClaim, now time.Time) dto.QueueEntry {
 	resp := mapper.ToQueueEntry(ent, now)
 	resp.StatusURL = u.s.StatusURLTemplate + in.EventID
+	// DEPRECATED (owner Q6): queueToken is still issued for one release; no endpoint reads it.
 	if qt, err := u.d.Tokens.IssueQueue(ent.ID, claim.VisitorID, now); err == nil {
 		resp.QueueToken = qt
 	}

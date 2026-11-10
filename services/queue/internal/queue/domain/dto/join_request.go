@@ -8,9 +8,10 @@ type JoinRequest struct{}
 // QueueEntry is the 201 data of Join Queue (design §2.1). visitorToken is returned to mobile clients
 // only; web clients receive it as an HttpOnly cookie set by the handler.
 type QueueEntry struct {
-	EntryID       string `json:"entryId"`
-	Seq           int64  `json:"seq"`
-	Status        string `json:"status"`
+	EntryID string `json:"entryId"`
+	Seq     int64  `json:"seq"`
+	Status  string `json:"status"`
+	// DEPRECATED (owner Q6): no endpoint accepts it; still issued for one release, then removed. Clients use the visitor token.
 	QueueToken    string `json:"queueToken,omitempty"`
 	VisitorToken  string `json:"visitorToken,omitempty"`
 	StatusURL     string `json:"statusUrl,omitempty"`

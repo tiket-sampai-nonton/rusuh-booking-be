@@ -52,11 +52,36 @@ func TestSubscribe_ValidationError(t *testing.T) {
 	assert.Equal(t, apperror.CodeValidationFailed, ae.Code)
 }
 
-func TestUnsubscribe_Deletes(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	subs := mock_outbound.NewMockISubscriptionRepository(ctrl)
-	uc := usecase.NewManageSubscription(subs, mock_outbound.NewMockIPIIProtector(ctrl), clock.Fixed{T: time.Now()}, time.Hour)
-
-	subs.EXPECT().Delete(gomock.Any(), "v1", "e1").Return(nil)
-	require.NoError(t, uc.Unsubscribe(context.Background(), "v1", "e1"))
+func TestUnsubscribe(t *testing.T) {
+	const validEvent = "0b9a3f0e-6b1c-4c1e-9d55-2f1d7a8e4c10"
+	tests := []struct {
+		name      string
+		eventID   string
+		expectDel bool
+		wantCode  apperror.Code
+	}{
+		{"uuid valid menghapus", validEvent, true, ""},
+		{"uuid huruf besar valid", "0B9A3F0E-6B1C-4C1E-9D55-2F1D7A8E4C10", true, ""},
+		{"bukan uuid ditolak sebelum DB", "not-a-uuid", false, apperror.CodeValidationFailed},
+		{"kosong ditolak", "", false, apperror.CodeValidationFailed},
+		{"uuid tanpa tanda hubung ditolak", "0b9a3f0e6b1c4c1e9d552f1d7a8e4c10", false, apperror.CodeValidationFailed},
+		{"injeksi ditolak", validEvent + "'; DROP TABLE x;--", false, apperror.CodeValidationFailed},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			subs := mock_outbound.NewMockISubscriptionRepository(ctrl)
+			uc := usecase.NewManageSubscription(subs, mock_outbound.NewMockIPIIProtector(ctrl), clock.Fixed{T: time.Now()}, time.Hour)
+			if tc.expectDel {
+				subs.EXPECT().Delete(gomock.Any(), "v1", tc.eventID).Return(nil)
+			}
+			err := uc.Unsubscribe(context.Background(), "v1", tc.eventID)
+			if tc.wantCode == "" {
+				require.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
+			assert.Equal(t, tc.wantCode, apperror.From(err).Code)
+		})
+	}
 }

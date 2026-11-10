@@ -161,15 +161,17 @@ GET /api/v1/queue-entries/me?eventId={eventId}
 POST /api/v1/queue-entries/{entryId}/claim
 ```
 
-**Headers:** `Authorization: Bearer <queueToken>`
+**Auth:** token visitor (cookie `rb_visitor` atau header `X-Visitor-Token`) dan query `?eventId=`. `queueToken` tidak diterima (deprecated, keputusan pemilik Q6).
 
-**Response (200):**
+**Response (200):** (`bookingUrl` ada di kontrak `queue.yaml` tetapi deprecated, dipertahankan satu rilis; klien menavigasi dari `admissionToken`. Selisih bentuk respons dan kode error lain dirujuk di `specs/queue-service/requirements.md`, tabel delta baris 71-73.)
 ```json
 {
   "admissionToken": "jwt-one-time-use",
-  "expiresAt": "2026-10-19T10:01:00Z"
+  "bookingUrl": "https://app.example.com/book/{eventId}"
 }
 ```
+
+`admissionToken` sekali pakai, TTL 60 detik (tanpa `expiresAt` pada respons). `bookingUrl` deprecated. Error claim mengikuti `queue.yaml`: `401 VISITOR_TOKEN_INVALID`, `404 NOT_FOUND`, `409 NOT_ADMITTED`, `410 TURN_MISSED` / `EVENT_SOLD_OUT`, `429`; bukan `403 CLAIM_DEADLINE_PASSED` / `403 ENTRY_NOT_ADMITTED` dari SDD lama.
 
 ### 3.5 Leave Queue
 
@@ -230,6 +232,11 @@ GET /internal/v1/events/{id}/supply → Booking Service
 **Cache:** 1 detik di Valkey
 
 ---
+
+> **Pengaturan antrean per event (ADR-031).** Baris `queue.event_settings` hanya dibuat dan diubah oleh
+> `PUT /internal/v1/admin/events/{eventId}/queue-settings`; join untuk event tanpa baris dijawab `409 QUEUE_NOT_CONFIGURED`
+> (id event tidak dikenal menjawab sama). Perubahan dicatat per field di `queue.event_settings_audit` (append-only).
+> Runbook dan batas race `salesStartsAt`: SDD-RBT-001 §6.
 
 ## 5. Data Model
 
@@ -410,7 +417,11 @@ TOKEN_PUBLIC_KEY_PATH=/keys/queue.pub
 QUEUE_MAX_ACTIVE_SLOTS=50
 QUEUE_CLAIM_WINDOW_SECONDS=180
 QUEUE_POLLING_INTERVAL_MS=3000
-QUEUE_PROMOTOR_INTERVAL_MS=100
+QUEUE_PROMOTOR_INTERVAL_MS=100       # jadwal promotor sendiri (default 100ms)
+QUEUE_SWEEPER_INTERVAL_MS=10000      # jadwal sweeper sendiri (default 10s)
+QUEUE_STATUS_INTERVAL_MS=1000        # jadwal status publisher; TTL status doc = QUEUE_STATUS_TTL_MULTIPLIER x nilai ini
+WORKER_INTERVAL=5s                   # jadwal liveness, dan fallback untuk job tanpa interval sendiri
+BOOKING_PAGE_BASE_URL=https://app.example.com/book   # URL publik halaman booking; claim -> {nilai}/{eventId}; https di luar APP_ENV=local
 QUEUE_STATUS_PUBLISH_INTERVAL_MS=500
 ```
 
@@ -567,6 +578,8 @@ func HashNIK(nik string, secret []byte) []byte {
 | `BUYER_QUOTA_EXHAUSTED` | 409 | Kuota NIK habis | Tidak bisa join lagi |
 | `NIK_REQUIRED` | 422 | buyerNik kosong untuk guest/logged-in tanpa NIK | Isi NIK |
 | `EVENT_NOT_ON_SALE` | 409 | Belum/sudah tutup | Tunggu jadwal |
+| `QUEUE_NOT_CONFIGURED` | 409 (join) / 404 (GET admin) | Event belum punya pengaturan antrean (ADR-031) | Pembeli: coba lagi nanti, tanpa retry otomatis; admin: PUT queue-settings |
+| `EVENT_RULES_LOCKED` | 409 (PUT admin) | Penjualan terbuka dan `oneActivePerVisitor`/`oneActivePerEmail` berubah | Ubah field lain atau tunggu event selesai |
 | `EVENT_SOLD_OUT` | 410 | Tiket habis | Event sold out |
 | `CLAIM_DEADLINE_PASSED` | 403 | Giliran hangus | Kembali ke antrean |
 | `ENTRY_NOT_ADMITTED` | 403 | Belum giliran | Tunggu giliran |

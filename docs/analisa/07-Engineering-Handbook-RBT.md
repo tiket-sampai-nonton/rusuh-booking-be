@@ -342,7 +342,7 @@ server {
     proxy_ignore_headers Set-Cookie; proxy_pass http://queue:8081;
   }
   location ~ ^/api/v1/(events/[^/]+/queue-entries|queue-entries) { proxy_pass http://queue:8081; }
-  location ~ ^/api/v1/(payments|payment-page-sessions|webhooks|local-simulator) { proxy_pass http://payment:8083; }
+  location ~ ^/api/v1/(payments|payment-page-sessions|webhooks) { proxy_pass http://payment:8083; }
   location ~ ^/api/v1/(events|booking-sessions|bookings) { proxy_pass http://booking:8082; }
   location / {
     proxy_pass http://web:3000;

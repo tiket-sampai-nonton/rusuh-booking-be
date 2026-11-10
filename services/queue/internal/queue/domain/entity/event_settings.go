@@ -11,6 +11,8 @@ type EventSettings struct {
 	PollFarMs                   int
 	PollMidMs                   int
 	PollNearMs                  int
+	PollFarAbove                int64
+	PollMidAbove                int64
 	OneActivePerVisitor         bool
 	OneActivePerEmail           bool
 	CategoryLimitedThresholdPct int

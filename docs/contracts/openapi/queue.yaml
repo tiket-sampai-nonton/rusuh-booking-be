@@ -67,13 +67,9 @@ paths:
         required: false
         schema:
           type: string
-        description: Visitor token (app). Web memakai cookie HttpOnly `rb_visitor`.
-      - name: X-Device-Id
-        in: header
-        required: false
-        schema:
-          type: string
-        description: Id acak per instalasi/profil browser. Hanya HMAC-nya yang masuk ke token; bukan kontrol bot.
+        description: Visitor token (app). Web memakai cookie HttpOnly `rb_visitor`. Cookie yang tidak kosong dipakai lebih dulu; bila cookie tidak valid, header ini diabaikan.
+      - $ref: '#/components/parameters/XDeviceId'
+      - $ref: '#/components/parameters/XClientType'
       requestBody:
         required: false
         content:
@@ -110,7 +106,9 @@ paths:
                 - meta
                 - data
         '409':
-          description: 'Konflik antrean — errorCode: `ACCOUNT_ALREADY_IN_QUEUE`, `EVENT_NOT_ON_SALE`'
+          description: 'Konflik antrean — errorCode: `ACCOUNT_ALREADY_IN_QUEUE`, `EVENT_NOT_ON_SALE` (sebelum penjualan dibuka atau setelah ditutup), `QUEUE_NOT_CONFIGURED`
+            (event belum punya pengaturan antrean; admin harus PUT /internal/v1/admin/events/{eventId}/queue-settings setelah event terbit.
+            Id event yang tidak dikenal menjawab sama, tanpa membocorkan keberadaan event. Klien: tampilkan pesan tenang, jangan coba ulang otomatis.)'
           content:
             application/json:
               schema:
@@ -128,7 +126,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
         '503':
-          description: 'Dependency sementara tidak tersedia; ulangi dengan Idempotency-Key yang sama — errorCode: `DEPENDENCY_UNAVAILABLE`'
+          description: 'Dependency sementara tidak tersedia (termasuk jendela penjualan yang belum diketahui saat Booking tidak terjangkau; join ditolak, tidak diterima diam-diam); ulangi dengan Idempotency-Key yang sama — errorCode: `DEPENDENCY_UNAVAILABLE`'
           content:
             application/json:
               schema:
@@ -165,6 +163,10 @@ paths:
       tags:
       - queue
       summary: Posisi eksak (saat dekat giliran)
+      description: |
+        `ENTRY_MOVED` (kode terdaftar di Queue, HTTP 409) dicadangkan: belum ada jalur yang menghasilkannya.
+        Desain masa depan: SRS-F-01-10 (dipertahankan, keputusan pemilik Q5), spec queue-service Requirement 7.4
+        dan task 14.2, TC-QUE-16 (NOT_RUN). Klien tidak boleh membangun alur di atasnya.
       operationId: getMyEntry
       security:
       - visitorCookie: []
@@ -176,6 +178,7 @@ paths:
         schema:
           type: string
           format: uuid
+      - $ref: '#/components/parameters/XDeviceId'
       responses:
         '200':
           description: OK
@@ -198,7 +201,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
         '404':
-          description: 'Visitor tidak pernah punya entri untuk event ini — errorCode: `NOT_FOUND`. Entri yang sudah berakhir dijawab 200 dengan state ENDED dan reason.'
+          description: 'Visitor belum pernah bergabung ke event ini (tidak ada catatan generasi token untuk event ini) atau tidak pernah punya entri — errorCode: `NOT_FOUND`. Entri yang sudah berakhir dijawab 200 dengan state ENDED dan reason.'
           content:
             application/json:
               schema:
@@ -230,12 +233,7 @@ paths:
         schema:
           type: string
           format: uuid
-      - name: X-Device-Id
-        in: header
-        required: false
-        schema:
-          type: string
-        description: Wajib bila token diterbitkan dengan X-Device-Id
+      - $ref: '#/components/parameters/XDeviceId'
       responses:
         '200':
           description: OK
@@ -274,6 +272,12 @@ paths:
       tags:
       - queue
       summary: Ambil admission token saat giliran tiba
+      description: |
+        `ENTRY_MOVED` (kode terdaftar di Queue, HTTP 409) dicadangkan: belum ada jalur yang menghasilkannya.
+        Desain masa depan: SRS-F-01-10 (dipertahankan, keputusan pemilik Q5), spec queue-service Requirement 7.4
+        dan task 14.2, TC-QUE-16 (NOT_RUN). Klien tidak boleh membangun alur di atasnya.
+        Claim memakai token visitor (cookie `rb_visitor` atau header `X-Visitor-Token`) dan query `eventId`;
+        `queueToken` tidak diterima. Entri `X-Queue-Token` pada daftar CORS dipertahankan satu rilis yang sama.
       operationId: claimTurn
       security:
       - visitorCookie: []
@@ -292,6 +296,7 @@ paths:
           type: string
           format: uuid
         description: Event dari entri antrean; entri dicari per event.
+      - $ref: '#/components/parameters/XDeviceId'
       responses:
         '200':
           description: OK
@@ -308,13 +313,13 @@ paths:
                 - meta
                 - data
         '401':
-          description: 'Token visitor dirotasi (generasi lama) — errorCode: `VISITOR_TOKEN_INVALID`'
+          description: 'Token visitor tidak ada, tidak valid, kedaluwarsa, dirotasi (generasi lama), atau perangkat tidak cocok; dijawab sebelum entri dicari sehingga sama untuk entri milik sendiri, milik orang lain, atau tidak ada — errorCode: `VISITOR_TOKEN_INVALID`'
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
         '404':
-          description: 'Entry tidak ditemukan, bukan milik visitor ini, atau sudah selesai (LEFT/ENDED/COMPLETED) — errorCode: `NOT_FOUND`'
+          description: 'Token valid tetapi entri tidak ditemukan, bukan milik visitor ini, atau sudah selesai (LEFT/ENDED/COMPLETED), atau visitor belum pernah bergabung ke event ini; respons identik untuk entri orang lain dan entri yang tidak ada — errorCode: `NOT_FOUND`'
           content:
             application/json:
               schema:
@@ -360,17 +365,135 @@ paths:
           type: string
           format: uuid
         description: Event dari entri antrean; entri dicari per event.
+      - $ref: '#/components/parameters/XDeviceId'
       responses:
         '204':
           description: Keluar; slot tidak dipakai lagi
         '401':
-          description: 'Token visitor dirotasi (generasi lama) — errorCode: `VISITOR_TOKEN_INVALID`'
+          description: 'Token visitor tidak ada, tidak valid, kedaluwarsa, dirotasi (generasi lama), atau perangkat tidak cocok; dijawab sebelum entri dicari sehingga sama untuk entri milik sendiri, milik orang lain, atau tidak ada — errorCode: `VISITOR_TOKEN_INVALID`'
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
         '404':
-          description: 'Tidak ada entry — errorCode: `NOT_FOUND`'
+          description: 'Token valid tetapi entri tidak ada atau bukan milik visitor ini (respons identik), atau visitor belum pernah bergabung ke event ini — errorCode: `NOT_FOUND`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '409':
+          description: 'Entri sudah diklaim; sesi booking yang memilikinya, jadi antrean tidak mengubah apa pun. Klien membatalkan lewat POST /api/v1/booking-sessions/{sessionId}/cancel — errorCode: `ENTRY_CLAIMED`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  "/internal/v1/admin/events/{eventId}/queue-settings":
+    get:
+      tags:
+      - admin
+      summary: Baca pengaturan antrean sebuah event (internal, admin)
+      operationId: adminGetQueueSettings
+      description: |
+        Internal, bukan bagian dari routing publik (CloudFront/ALB tidak meneruskan jalur ini; dev Caddy membatasi IP).
+        Token pembeli User Service (scope `buyer`) yang emailnya ada di ADMIN_EMAILS Queue. Semua kegagalan autentikasi
+        menjawab 401 (tidak pernah 403). Tanpa baris pengaturan: 404 `QUEUE_NOT_CONFIGURED`, tanpa nilai bawaan.
+      security:
+      - adminBearer: []
+      parameters:
+      - $ref: '#/components/parameters/EventId'
+      responses:
+        '200':
+          description: Pengaturan tersimpan. Cache-Control no-store.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QueueSettingsEnvelope'
+        '400':
+          description: 'eventId bukan UUID — errorCode: `VALIDATION_ERROR`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '401':
+          description: 'Bearer tidak ada, tidak valid, kedaluwarsa, bukan scope buyer, atau bukan admin — errorCode: `UNAUTHORIZED`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '404':
+          description: 'Pengaturan antrean belum dibuat — errorCode: `QUEUE_NOT_CONFIGURED`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+    put:
+      tags:
+      - admin
+      summary: Buat atau ubah pengaturan antrean sebuah event (internal, admin)
+      operationId: adminPutQueueSettings
+      description: |
+        Upsert. Hanya `activeSlotCapacity` wajib; field lain opsional (JSON `null` dianggap tidak dikirim). Saat membuat,
+        field yang tidak dikirim memakai nilai bawaan kolom (migrasi 0001); saat mengubah, field yang tidak dikirim
+        dipertahankan. Aturan lintas-field dinilai pada nilai hasil gabungan: `pollNearMs ≤ pollMidMs ≤ pollFarMs`,
+        `statusPublishIntervalMs ≤ pollNearMs`, dan `pollMidAbove < pollFarAbove`.
+
+        Event harus dikenal Booking (satu panggilan `supply`), jadi event draf belum bisa dikonfigurasi; lakukan PUT
+        setelah event terbit dan sebelum penjualan dimulai. Selama penjualan terbuka (waktu server ≥ `salesStartsAt`),
+        `oneActivePerVisitor` dan `oneActivePerEmail` terkunci: mengubahnya menjawab 409 `EVENT_RULES_LOCKED`;
+        field lain tetap boleh diubah. Menurunkan `activeSlotCapacity` di bawah jumlah aktif diterima dan tidak mencabut
+        entri aktif. Pengiriman identik adalah no-op (200, tanpa catatan audit). Setiap perubahan dicatat per field
+        (siapa, kapan, nilai lama → baru) dalam transaksi yang sama; `actor` selalu subject token, bukan dari body.
+        Race di batas `salesStartsAt`: keputusan kunci memakai snapshot Booking sesaat sebelum transaksi, jadi PUT yang
+        bersamaan persis dengan awal penjualan dapat dinilai "belum terbuka" paling lama satu round-trip (ADR-031).
+      security:
+      - adminBearer: []
+      parameters:
+      - $ref: '#/components/parameters/EventId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QueueSettingsRequest'
+      responses:
+        '200':
+          description: Pengaturan diperbarui atau pengiriman identik (no-op). Cache-Control no-store.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QueueSettingsEnvelope'
+        '201':
+          description: Baris pengaturan dibuat oleh permintaan ini. Cache-Control no-store.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QueueSettingsEnvelope'
+        '400':
+          description: 'JSON rusak, field tidak dikenal, tipe salah, `activeSlotCapacity` hilang, di luar batas, atau melanggar aturan lintas-field; pesan menyebut nama field — errorCode: `VALIDATION_ERROR`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '401':
+          description: 'Bearer tidak ada, tidak valid, kedaluwarsa, bukan scope buyer, atau bukan admin — errorCode: `UNAUTHORIZED`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '404':
+          description: 'Event tidak dikenal Booking (atau masih draf) — errorCode: `NOT_FOUND`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '409':
+          description: 'Penjualan sudah terbuka dan permintaan mengubah aturan terkunci — errorCode: `EVENT_RULES_LOCKED`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '503':
+          description: 'Booking tidak tersedia; tidak ada yang ditulis — errorCode: `DEPENDENCY_UNAVAILABLE`'
           content:
             application/json:
               schema:
@@ -396,6 +519,35 @@ paths:
               schema:
                 $ref: '#/components/schemas/Health'
 components:
+  parameters:
+    EventId:
+      name: eventId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    XDeviceId:
+      name: X-Device-Id
+      in: header
+      required: false
+      schema:
+        type: string
+      description: |
+        Id acak per instalasi/profil browser. Hanya HMAC-nya yang masuk ke token (tidak pernah disimpan, dicatat, atau
+        dikembalikan); bukan kontrol bot. Opsional, tetapi token yang terbit bersama header ini hanya berlaku dengan
+        header yang sama: tanpa header atau dengan nilai lain -> `401 VISITOR_TOKEN_INVALID` (join: dianggap visitor baru).
+        Browser yang mengirimnya perlu `X-Device-Id` pada `Access-Control-Allow-Headers` (CORS lokal sudah memuatnya).
+    XClientType:
+      name: X-Client-Type
+      in: header
+      required: false
+      schema:
+        type: string
+        enum: [mobile]
+      description: |
+        Aplikasi native mengirim `mobile` pada join agar visitor token juga dikembalikan di body. Web tidak mengirimnya.
+        Pemegang cookie `rb_visitor` yang valid tidak pernah menerima token di body, walau header ini dikirim.
   schemas:
     Meta:
       type: object
@@ -431,6 +583,128 @@ components:
       - meta
       - data
       description: Error envelope SRS §3.1.4. Tidak pernah memuat SQL, stack trace, secret, atau payload provider.
+    QueueSettingsRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - activeSlotCapacity
+      properties:
+        activeSlotCapacity:
+          type: integer
+          minimum: 1
+          maximum: 100000
+        nearFrontMultiplier:
+          type: integer
+          minimum: 1
+          maximum: 10
+          description: Bawaan saat membuat 2
+        statusPublishIntervalMs:
+          type: integer
+          minimum: 250
+          maximum: 5000
+          description: Bawaan saat membuat 1000; harus ≤ pollNearMs
+        pollFarMs:
+          type: integer
+          minimum: 5000
+          maximum: 60000
+          description: Bawaan saat membuat 30000
+        pollMidMs:
+          type: integer
+          minimum: 2000
+          maximum: 30000
+          description: Bawaan saat membuat 10000; harus ≤ pollFarMs
+        pollNearMs:
+          type: integer
+          minimum: 1000
+          maximum: 5000
+          description: Bawaan saat membuat 3000; harus ≤ pollMidMs
+        pollFarAbove:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 1000000
+          description: Ambang posisi antrean untuk memilih tier polling jauh. Bawaan saat membuat 500; harus > pollMidAbove
+        pollMidAbove:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 1000000
+          description: Ambang posisi antrean untuk memilih tier polling menengah. Bawaan saat membuat 100; harus < pollFarAbove
+        oneActivePerVisitor:
+          type: boolean
+          description: Terkunci selama penjualan terbuka. Bawaan saat membuat true
+        oneActivePerEmail:
+          type: boolean
+          description: Terkunci selama penjualan terbuka. Bawaan saat membuat true
+        categoryLimitedThresholdPct:
+          type: integer
+          minimum: 1
+          maximum: 50
+          description: Bawaan saat membuat 5
+        preTurnNotifyEnabled:
+          type: boolean
+          description: Bawaan saat membuat true
+    QueueSettings:
+      type: object
+      required:
+      - eventId
+      - activeSlotCapacity
+      - nearFrontMultiplier
+      - statusPublishIntervalMs
+      - pollFarMs
+      - pollMidMs
+      - pollNearMs
+      - pollFarAbove
+      - pollMidAbove
+      - oneActivePerVisitor
+      - oneActivePerEmail
+      - categoryLimitedThresholdPct
+      - preTurnNotifyEnabled
+      - updatedAt
+      properties:
+        eventId:
+          type: string
+          format: uuid
+        activeSlotCapacity:
+          type: integer
+        nearFrontMultiplier:
+          type: integer
+        statusPublishIntervalMs:
+          type: integer
+        pollFarMs:
+          type: integer
+        pollMidMs:
+          type: integer
+        pollNearMs:
+          type: integer
+        pollFarAbove:
+          type: integer
+          format: int64
+        pollMidAbove:
+          type: integer
+          format: int64
+        oneActivePerVisitor:
+          type: boolean
+        oneActivePerEmail:
+          type: boolean
+        categoryLimitedThresholdPct:
+          type: integer
+        preTurnNotifyEnabled:
+          type: boolean
+        updatedAt:
+          type: string
+          format: date-time
+          description: RFC3339 UTC
+    QueueSettingsEnvelope:
+      type: object
+      properties:
+        meta:
+          $ref: '#/components/schemas/Meta'
+        data:
+          $ref: '#/components/schemas/QueueSettings'
+      required:
+      - meta
+      - data
     Health:
       type: object
       properties:
@@ -512,10 +786,16 @@ components:
           description: Urutan admisi (FIFO ketat atas seq; ADR-030 Amandemen 2026-11-05). null saat ENDED.
         queueToken:
           type: string
+          deprecated: true
+          description: |
+            Deprecated (keputusan pemilik Q6). Tidak diterima endpoint mana pun (claim dan leave memakai token
+            visitor). Masih diterbitkan selama satu rilis, lalu dihapus. Jangan dipakai sebagai kredensial.
         visitorToken:
           type: string
           description: |
-            Hanya untuk mobile (web: cookie HttpOnly). Selalu untuk generasi token TERKINI; rotasi (re-attach akun,
+            Hanya untuk aplikasi native yang mengirim `X-Client-Type: mobile` DAN tidak membawa cookie `rb_visitor`
+            yang valid; selain itu field ini kosong/tidak ada dan token hanya dikirim sebagai cookie HttpOnly
+            (cookie selalu di-set bila token terbit). Selalu untuk generasi token TERKINI; rotasi (re-attach akun,
             join ulang setelah entri berakhir) mencabut token lama (heartbeat/me lama -> 401 VISITOR_TOKEN_INVALID).
             Bila request membawa X-Device-Id, token terikat ke HMAC-nya.
         statusUrl:
@@ -587,7 +867,8 @@ components:
           - CLAIM_WINDOW_EXPIRED
           - PAGE_TIMER_EXPIRED
           - JOURNEY_ENDED
-          description: Hanya untuk state ENDED (adendum 2)
+          - SOLD_OUT
+          description: Hanya untuk state ENDED (adendum 2). SOLD_OUT = tiket event habis; entri WAITING/STALE diakhiri aktif saat Queue memproses `booking.sold_out` (status entri `SOLD_OUT`). ADMITTED/CLAIMED tidak disentuh.
         redirect:
           type: string
       required:
@@ -627,6 +908,12 @@ components:
           description: Sekali pakai, TTL 60 detik
         bookingUrl:
           type: string
+          deprecated: true
+          description: |
+            Deprecated (keputusan pemilik Q4 ii). URL publik halaman booking, `{BOOKING_PAGE_BASE_URL}/{eventId}`.
+            Tidak memuat token. Dipertahankan satu rilis; klien tidak boleh bergantung padanya dan menavigasi dari
+            `admissionToken` lewat `POST /api/v1/booking-sessions`.
+          example: https://app.example.com/book/5b1f2c9e-0000-4000-8000-000000000001
       required:
       - admissionToken
       - bookingUrl
@@ -734,3 +1021,9 @@ components:
         Access token User Service (login OTP, opsional).
         Saat join queue (ADR-030) token hanya mengidentifikasi akun untuk dedup (satu entri aktif per akun);
         claim NIK pada token tidak dipakai. NIK dan email pembeli diisi di halaman Booking.
+    adminBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT (EdDSA)
+      description: Access token pembeli User Service (scope `buyer`) yang emailnya ada di ADMIN_EMAILS Queue. Tanpa kunci
+        publik User Service atau tanpa konfigurasi, semua permintaan ditolak (401).

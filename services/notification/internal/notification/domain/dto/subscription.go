@@ -3,7 +3,21 @@ package dto
 import (
 	"errors"
 	"fmt"
+	"regexp"
 )
+
+var uuidPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+
+// ValidateEventID checks the {eventId} path parameter of DELETE /push-subscriptions/{eventId}; nil when valid.
+func ValidateEventID(eventID string) map[string]string {
+	if eventID == "" {
+		return map[string]string{"eventId": "wajib diisi"}
+	}
+	if !uuidPattern.MatchString(eventID) {
+		return map[string]string{"eventId": "harus UUID"}
+	}
+	return nil
+}
 
 // MaxPushTokenLen is the maximum accepted FCM device token length (contract notification.yaml).
 const MaxPushTokenLen = 4096

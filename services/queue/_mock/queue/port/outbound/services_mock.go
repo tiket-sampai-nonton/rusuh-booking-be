@@ -340,3 +340,42 @@ func (mr *MockIPromoterMetricsMockRecorder) Inc(name any, labels ...any) *gomock
 	varargs := append([]any{name}, labels...)
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Inc", reflect.TypeOf((*MockIPromoterMetrics)(nil).Inc), varargs...)
 }
+
+// MockIAdminTokenVerifier is a mock of IAdminTokenVerifier interface.
+type MockIAdminTokenVerifier struct {
+	ctrl     *gomock.Controller
+	recorder *MockIAdminTokenVerifierMockRecorder
+	isgomock struct{}
+}
+
+// MockIAdminTokenVerifierMockRecorder is the mock recorder for MockIAdminTokenVerifier.
+type MockIAdminTokenVerifierMockRecorder struct {
+	mock *MockIAdminTokenVerifier
+}
+
+// NewMockIAdminTokenVerifier creates a new mock instance.
+func NewMockIAdminTokenVerifier(ctrl *gomock.Controller) *MockIAdminTokenVerifier {
+	mock := &MockIAdminTokenVerifier{ctrl: ctrl}
+	mock.recorder = &MockIAdminTokenVerifierMockRecorder{mock}
+	return mock
+}
+
+// EXPECT returns an object that allows the caller to indicate expected use.
+func (m *MockIAdminTokenVerifier) EXPECT() *MockIAdminTokenVerifierMockRecorder {
+	return m.recorder
+}
+
+// VerifyAdmin mocks base method.
+func (m *MockIAdminTokenVerifier) VerifyAdmin(bearer string) (string, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "VerifyAdmin", bearer)
+	ret0, _ := ret[0].(string)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// VerifyAdmin indicates an expected call of VerifyAdmin.
+func (mr *MockIAdminTokenVerifierMockRecorder) VerifyAdmin(bearer any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "VerifyAdmin", reflect.TypeOf((*MockIAdminTokenVerifier)(nil).VerifyAdmin), bearer)
+}

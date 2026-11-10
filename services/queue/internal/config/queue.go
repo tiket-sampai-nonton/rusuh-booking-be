@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/crypto"
@@ -60,8 +61,12 @@ func (p PII) Validate() error {
 
 // Booking holds the outbound Booking Service client config.
 type Booking struct {
-	BaseURL string
+	BaseURL string // BOOKING_SERVICE_URL: internal, service-to-service
 	Timeout time.Duration
+	// PageBaseURL is the public web URL of the booking page (BOOKING_PAGE_BASE_URL, e.g. https://app.example/book).
+	// The claim response returns PageBaseURL + "/" + eventId; it never carries a token. Validated in Config.Validate
+	// because the http-vs-https rule depends on APP_ENV.
+	PageBaseURL string
 }
 
 // Validate checks Booking.
@@ -92,8 +97,8 @@ type WorkerTuning struct {
 	StatusInterval   time.Duration
 	PromoteBatchMax  int
 
-	// StatusTTLMultiplier sets the published status-doc Valkey TTL as a multiple of the effective publish
-	// cadence (Worker.Interval), decoupling the key lifetime from the status publish interval so a direct
+	// StatusTTLMultiplier sets the published status-doc Valkey TTL as a multiple of the status publisher's own
+	// cadence (QUEUE_STATUS_INTERVAL_MS), decoupling the key lifetime from the status publish interval so a direct
 	// uncached GET /queue-status/{eventId} does not intermittently 404 between republishes
 	// (QUEUE_STATUS_TTL_MULTIPLIER, bounds minStatusTTLMult..maxStatusTTLMult). Grounded in [[caching-strategy]].
 	StatusTTLMultiplier int
@@ -128,6 +133,19 @@ const (
 // Validate checks WorkerTuning against the booking client timeout (the lease must outlive two Booking calls).
 func (w WorkerTuning) Validate(bookingTimeout time.Duration) error {
 	var errs []error
+	// Ordered slice (not a map) so the error order is deterministic.
+	for _, iv := range []struct {
+		name string
+		d    time.Duration
+	}{
+		{"QUEUE_PROMOTOR_INTERVAL_MS", w.PromotorInterval},
+		{"QUEUE_SWEEPER_INTERVAL_MS", w.SweeperInterval},
+		{"QUEUE_STATUS_INTERVAL_MS", w.StatusInterval},
+	} {
+		if iv.d <= 0 {
+			errs = append(errs, fmt.Errorf("%s %s harus > 0", iv.name, iv.d))
+		}
+	}
 	switch {
 	case w.PromoterLeaseTTL < minLeaseTTL || w.PromoterLeaseTTL > maxLeaseTTL:
 		errs = append(errs, fmt.Errorf("QUEUE_PROMOTER_LEASE_TTL_MS %s di luar rentang [%s, %s]", w.PromoterLeaseTTL, minLeaseTTL, maxLeaseTTL))
@@ -192,4 +210,26 @@ func (l Liveness) Validate() error {
 		errs = append(errs, fmt.Errorf("QUEUE_LIVENESS_SHARDS %d di luar rentang 1..256", l.Shards))
 	}
 	return errors.Join(errs...)
+}
+
+// Admin holds the admin allow-list for the internal queue-settings endpoint (ADR-025). It is auth configuration, not
+// a queue default: capacity and tuning are only ever set through the endpoint (QSA-8.1).
+type Admin struct {
+	// Emails are lower-cased, de-duplicated allow-list entries ("user@host" or "@domain"). Empty admits nobody.
+	Emails []string
+}
+
+// parseAdminEmails splits a comma-separated list, trimming, lower-casing and de-duplicating while keeping order.
+func parseAdminEmails(raw string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, e := range strings.Split(raw, ",") {
+		e = strings.ToLower(strings.TrimSpace(e))
+		if e == "" || seen[e] {
+			continue
+		}
+		seen[e] = true
+		out = append(out, e)
+	}
+	return out
 }

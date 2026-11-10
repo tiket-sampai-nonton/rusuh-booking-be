@@ -490,18 +490,18 @@ func (m *MockIAttendeeCheckUsecase) EXPECT() *MockIAttendeeCheckUsecaseMockRecor
 }
 
 // CheckAttendee mocks base method.
-func (m *MockIAttendeeCheckUsecase) CheckAttendee(ctx context.Context, sessionID string, req dto.AttendeeCheckRequest) (dto.AttendeeCheck, error) {
+func (m *MockIAttendeeCheckUsecase) CheckAttendee(ctx context.Context, sessionID, visitorID string, req dto.AttendeeCheckRequest) (dto.AttendeeCheck, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "CheckAttendee", ctx, sessionID, req)
+	ret := m.ctrl.Call(m, "CheckAttendee", ctx, sessionID, visitorID, req)
 	ret0, _ := ret[0].(dto.AttendeeCheck)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // CheckAttendee indicates an expected call of CheckAttendee.
-func (mr *MockIAttendeeCheckUsecaseMockRecorder) CheckAttendee(ctx, sessionID, req any) *gomock.Call {
+func (mr *MockIAttendeeCheckUsecaseMockRecorder) CheckAttendee(ctx, sessionID, visitorID, req any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CheckAttendee", reflect.TypeOf((*MockIAttendeeCheckUsecase)(nil).CheckAttendee), ctx, sessionID, req)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CheckAttendee", reflect.TypeOf((*MockIAttendeeCheckUsecase)(nil).CheckAttendee), ctx, sessionID, visitorID, req)
 }
 
 // MockIStreamSessionUsecase is a mock of IStreamSessionUsecase interface.

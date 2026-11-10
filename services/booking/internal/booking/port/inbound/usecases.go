@@ -72,7 +72,7 @@ type ISessionUsecase interface {
 
 // IAttendeeCheckUsecase probes an attendee NIK during selection.
 type IAttendeeCheckUsecase interface {
-	CheckAttendee(ctx context.Context, sessionID string, req dto.AttendeeCheckRequest) (dto.AttendeeCheck, error)
+	CheckAttendee(ctx context.Context, sessionID, visitorID string, req dto.AttendeeCheckRequest) (dto.AttendeeCheck, error)
 }
 
 // IStreamSessionUsecase pushes live availability + timer events over SSE.

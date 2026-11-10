@@ -101,6 +101,12 @@ type EndResult struct {
 // Changed reports whether the script mutated the entry.
 func (r EndResult) Changed() bool { return r.Tag == "OK" || r.Tag == "OK_CLEANUP" }
 
+// SoldOutBatch is the result of one EndWaitingSoldOut batch.
+type SoldOutBatch struct {
+	Scanned int // ids examined in this batch
+	Ended   int // entries moved to SOLD_OUT
+}
+
 // LeaveResult is the typed reply of leave.lua (NOT_FOUND is reported as entity.ErrNotFound).
 type LeaveResult struct {
 	Tag          string // OK | IGNORED
@@ -133,6 +139,10 @@ type PromoteResult struct {
 type SaleState struct {
 	SaleState string // NOT_STARTED | OPEN | CLOSED
 	SoldOut   bool
+	// SalesStartsMs/SalesEndsMs are the cached sale window (epoch ms), fed from Booking's supply read.
+	// 0 means unknown: the join gate then reads Booking once and caches the answer.
+	SalesStartsMs int64
+	SalesEndsMs   int64
 }
 
 // AuditRecord is one entry_audit row.

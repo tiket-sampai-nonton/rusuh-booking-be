@@ -28,7 +28,7 @@ func (h *ClaimHandler) Register(mux *stdhttp.ServeMux) {
 func (h *ClaimHandler) claim(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	c, ok := h.auth.ResolveToken(r)
 	if !ok {
-		writeDomainError(w, r, entity.ErrNotFound)
+		writeDomainError(w, r, entity.ErrVisitorTokenInvalid)
 		return
 	}
 	resp, err := h.uc.Claim(r.Context(), inbound.ClaimInput{

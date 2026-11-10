@@ -1,23 +1,31 @@
-# Temuan gitleaks yang sudah ditriase: fixture header Idempotency-Key di test (nilai 'idem-key-*', bukan kredensial)
-# dan satu baris spec lama (design.md) yang menyebut nama konfigurasi. Tidak ada rahasia nyata, rotasi tidak diperlukan.
-# Hanya fingerprint ini yang dikecualikan; rule generic-api-key tetap aktif untuk temuan baru.
-e795b45aa2619e0700a46f050d478a751ce23228:services/payment/internal/delivery/payment_journey_integration_test.go:generic-api-key:322
-e795b45aa2619e0700a46f050d478a751ce23228:services/payment/internal/payment/application/usecase/helpers_test.go:generic-api-key:23
-e795b45aa2619e0700a46f050d478a751ce23228:services/payment/internal/payment/infrastructure/bookingclient/client_test.go:generic-api-key:77
-e795b45aa2619e0700a46f050d478a751ce23228:services/payment/internal/payment/infrastructure/http/handlers_test.go:generic-api-key:30
-e795b45aa2619e0700a46f050d478a751ce23228:services/payment/internal/payment/infrastructure/postgres/repositories_integration_test.go:generic-api-key:318
-e52f3e5812405ba873a81370ce9c4dd3abdcab8c:specs/payment-service/design.md:generic-api-key:332
-ad2d5f938b3ed2cc2d1f0fce60b3ce80c25123be:services/booking/internal/booking/application/usecase/hold_test.go:generic-api-key:25
-# Fixture Idempotency-Key di test queue (nilai 'idem-*', bukan kredensial).
+# False positive: request ID dari laporan kontrak (.agents/ sudah dihapus di commit 4bb6616)
+bd0e536ed00229d837c5e817a5caa409c047edb7:.agents/tasks/fix/contract-matrix/matrix.tsv:generic-api-key:13
+bd0e536ed00229d837c5e817a5caa409c047edb7:.agents/tasks/fix/contract-matrix/report.md:generic-api-key:115
+bd0e536ed00229d837c5e817a5caa409c047edb7:.agents/tasks/fix/contract-matrix/report.md:generic-api-key:119
+
+# False positive: idempotency key dummy di integration test (bukan secret)
+9aec5dc28a59ad69fe528e6fd64306c0296dc926:services/queue/internal/queue/infrastructure/valkey/visitor_token_integration_test.go:generic-api-key:153
+9aec5dc28a59ad69fe528e6fd64306c0296dc926:services/queue/internal/queue/infrastructure/valkey/visitor_token_integration_test.go:generic-api-key:155
+9aec5dc28a59ad69fe528e6fd64306c0296dc926:services/queue/internal/queue/infrastructure/valkey/visitor_token_integration_test.go:generic-api-key:169
+9aec5dc28a59ad69fe528e6fd64306c0296dc926:services/queue/internal/queue/infrastructure/valkey/visitor_token_integration_test.go:generic-api-key:171
+
+# False positive: idempotency key dummy di usecase test (bukan secret)
+42d385265d156757e9051506463c492fb157c029:services/queue/internal/queue/application/usecase/join_sale_gate_test.go:generic-api-key:78
+
+# False positive: idempotency key dummy di queue join test dan queue_store integration test
 4b0c540b9e8dba460e342a07fc8110b6999b1371:services/queue/internal/queue/application/usecase/join_test.go:generic-api-key:105
 4b0c540b9e8dba460e342a07fc8110b6999b1371:services/queue/internal/queue/infrastructure/valkey/queue_store_integration_test.go:generic-api-key:207
 4b0c540b9e8dba460e342a07fc8110b6999b1371:services/queue/internal/queue/infrastructure/valkey/queue_store_integration_test.go:generic-api-key:208
-# Fixture Idempotency-Key di test queue (nilai 'idem-*') dan request-id hex di laporan .agents (contract-matrix). Bukan kredensial.
-ecddb58cd09dac1bdabd254ea092878bba916aa2:services/queue/internal/queue/infrastructure/valkey/visitor_token_integration_test.go:generic-api-key:153
-ecddb58cd09dac1bdabd254ea092878bba916aa2:services/queue/internal/queue/infrastructure/valkey/visitor_token_integration_test.go:generic-api-key:155
-ecddb58cd09dac1bdabd254ea092878bba916aa2:services/queue/internal/queue/infrastructure/valkey/visitor_token_integration_test.go:generic-api-key:169
-ecddb58cd09dac1bdabd254ea092878bba916aa2:services/queue/internal/queue/infrastructure/valkey/visitor_token_integration_test.go:generic-api-key:171
-1fed480273debc5447432e10698e05b9922350d8:services/queue/internal/queue/application/usecase/join_sale_gate_test.go:generic-api-key:78
-63f6d598bbad08ddb12db6894b180940f7c8e385:.agents/tasks/fix/contract-matrix/report.md:generic-api-key:115
-63f6d598bbad08ddb12db6894b180940f7c8e385:.agents/tasks/fix/contract-matrix/report.md:generic-api-key:119
-63f6d598bbad08ddb12db6894b180940f7c8e385:.agents/tasks/fix/contract-matrix/matrix.tsv:generic-api-key:13
+
+# False positive: idempotency key dummy di booking hold test
+ad2d5f938b3ed2cc2d1f0fce60b3ce80c25123be:services/booking/internal/booking/application/usecase/hold_test.go:generic-api-key:25
+
+# False positive: idempotency key dummy di payment test files (milik arnu12rahman)
+e795b45aa2619e0700a46f050d478a751ce23228:services/payment/internal/payment/application/usecase/helpers_test.go:generic-api-key:23
+e795b45aa2619e0700a46f050d478a751ce23228:services/payment/internal/payment/infrastructure/bookingclient/client_test.go:generic-api-key:77
+e795b45aa2619e0700a46f050d478a751ce23228:services/payment/internal/delivery/payment_journey_integration_test.go:generic-api-key:322
+e795b45aa2619e0700a46f050d478a751ce23228:services/payment/internal/payment/infrastructure/http/handlers_test.go:generic-api-key:30
+e795b45aa2619e0700a46f050d478a751ce23228:services/payment/internal/payment/infrastructure/postgres/repositories_integration_test.go:generic-api-key:318
+
+# False positive: referensi env var di payment spec (bukan secret aktual)
+e52f3e5812405ba873a81370ce9c4dd3abdcab8c:specs/payment-service/design.md:generic-api-key:332

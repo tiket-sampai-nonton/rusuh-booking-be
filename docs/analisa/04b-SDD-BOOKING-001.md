@@ -552,7 +552,7 @@ CREATE TABLE booking.idempotency_records (
 
 | Event | Routing Key | Consumer(s) | Payload |
 |-------|-------------|-------------|---------|
-| Journey Ended | `booking.journey.ended` | Queue | `{ bookingId, eventId, visitorId, queueEntryId, outcome }` |
+| Journey Ended | `booking.journey.ended` | Queue | `{ eventId, queueEntryId, outcome }` (sesuai skema `booking.journey.ended.v1`; `outcome` ∈ `PAID`, `EXPIRED`, `CANCELLED`, `LEFT_WITHOUT_BUYING`, `UNCLAIMED`; cancel sesi mengirim `LEFT_WITHOUT_BUYING`, `:release` mengirim `UNCLAIMED`, keduanya dalam transaksi yang sama dengan pelepasan stok) |
 | Quota Exhausted | `booking.quota.exhausted` | Queue | `{ eventId, buyerNikHash }` |
 | Sold Out | `booking.sold_out` | Queue | `{ eventId }` |
 | Paid | `booking.paid` | Notification | `{ bookingId, email, tickets[] }` |
@@ -969,6 +969,8 @@ PATCH /internal/v1/admin/events/{eventId}
 **Rules:**
 - Cannot change `config` after `rulesLockedAt` (sale started)
 - Changes logged to `config_audit` table
+- `city` (string, max 100 chars) and `genres` (string[], max 20 tokens of max 64 chars) are accepted on create and PATCH. Stored canonical (city trimmed, casing kept; genres uppercase, `-`/space to `_`, deduplicated, sorted); invalid input is `400 VALIDATION_ERROR` before any write. PATCH: absent or `null` leaves the value unchanged, `""` / `[]` clears it. They are catalog data, not guarantee-forming, so they stay editable after sales open (SRS-F-28-07).
+- Event detail `minPriceMinor` is the cheapest category price, equal to the list value (SRS-F-28-08).
 
 ### C.3 Seed Data Structure
 

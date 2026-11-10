@@ -16,7 +16,7 @@ import (
 )
 
 const eventSettingsCols = `event_id::text, active_slot_capacity, near_front_multiplier, status_publish_interval_ms,
-	poll_far_ms, poll_mid_ms, poll_near_ms, one_active_per_visitor, one_active_per_email,
+	poll_far_ms, poll_mid_ms, poll_near_ms, poll_far_above, poll_mid_above, one_active_per_visitor, one_active_per_email,
 	category_limited_threshold_pct, pre_turn_notify_enabled, updated_at`
 
 // EventSettings implements outbound.IEventSettingsRepo.
@@ -29,7 +29,8 @@ func scanEventSettings(row pgx.Row) (entity.EventSettings, error) {
 	var s entity.EventSettings
 	err := row.Scan(
 		&s.EventID, &s.ActiveSlotCapacity, &s.NearFrontMultiplier, &s.StatusPublishIntervalMs,
-		&s.PollFarMs, &s.PollMidMs, &s.PollNearMs, &s.OneActivePerVisitor, &s.OneActivePerEmail,
+		&s.PollFarMs, &s.PollMidMs, &s.PollNearMs, &s.PollFarAbove, &s.PollMidAbove,
+		&s.OneActivePerVisitor, &s.OneActivePerEmail,
 		&s.CategoryLimitedThresholdPct, &s.PreTurnNotifyEnabled, &s.UpdatedAt,
 	)
 	return s, err
@@ -45,18 +46,6 @@ func (r *EventSettings) Get(ctx context.Context, eventID string) (entity.EventSe
 		return entity.EventSettings{}, false, fmt.Errorf("event_settings: get: %w", err)
 	}
 	return s, true, nil
-}
-
-// Ensure inserts a row with the column defaults when missing, then returns the row.
-func (r *EventSettings) Ensure(ctx context.Context, eventID string) (entity.EventSettings, error) {
-	if _, err := r.pool.Exec(ctx, `INSERT INTO event_settings (event_id) VALUES ($1::uuid) ON CONFLICT (event_id) DO NOTHING`, eventID); err != nil {
-		return entity.EventSettings{}, fmt.Errorf("event_settings: ensure: %w", err)
-	}
-	s, ok, err := r.Get(ctx, eventID)
-	if err != nil || !ok {
-		return entity.EventSettings{}, fmt.Errorf("event_settings: ensure: baris tidak terbaca: %w", err)
-	}
-	return s, nil
 }
 
 // ListEventIDs returns every configured event id (used by workers to iterate events).

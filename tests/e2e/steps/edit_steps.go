@@ -90,7 +90,7 @@ func (e *editCtx) holdOne(_ int) error {
 		return err
 	}
 	e.sessionID = sessionID
-	r := helpers.HoldTickets(e.env, sessionID, admit.VisitorToken,
+	r := helpers.HoldTickets(e.env, sessionID, admit,
 		fmt.Sprintf("edit-key-%d", time.Now().UnixNano()),
 		[]map[string]any{{"categoryId": e.catID, "attendee": map[string]string{"nik": "3174010101800001", "fullName": "Budi"}}})
 	if r.StatusCode != 201 {

@@ -30,7 +30,7 @@ start() { # svc verb port [ENV=val...]
   (cd "$root/services/$svc" && exec env "$@" APP_PORT="$port" "$work/$svc" "$verb" >"$work/$svc-$verb.log" 2>&1) & # exec: $! adalah biner itu sendiri, jadi kill menghentikannya
   pids+=("$!")
 }
-start queue api 8081;        start queue worker 8091
+start queue api 8081 ADMIN_EMAILS="@admin.e2e.test"; start queue worker 8091
 start booking api 8082 "${booking_env[@]}"; start booking worker 8092 "${booking_env[@]}"
 # Satu IP memanggil ratusan kali per menit (polling); limiter punya tes unit sendiri, jadi dimatikan di sini.
 start payment api 8083 RATE_LIMIT_PER_IP=0 RATE_LIMIT_WEBHOOK_PER_IP=0; start payment worker 8093

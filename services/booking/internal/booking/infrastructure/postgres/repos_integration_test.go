@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/domain/dto"
+	vo "github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/domain/valueobject"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/port/inbound"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/port/outbound"
 )
@@ -231,11 +232,11 @@ func TestAdmissionRepo_ReserveBatchGrantsInOrderThenRunsOutOfSupply(t *testing.T
 	assert.Equal(t, "ALREADY_ACTIVE", claimed[0].Outcome, "sudah diklaim: bukan grant baru")
 	assert.Equal(t, 10, f.n(t, `SELECT allocated_units FROM booking.event_supply WHERE event_id=$1::uuid`, f.eventID))
 
-	released, err := repo.Release(ctx, out[1].AllocationID)
+	released, err := repo.Release(ctx, out[1].AllocationID, vo.EndUnclaimed)
 	require.NoError(t, err)
 	assert.True(t, released)
 	assert.Equal(t, 9, f.n(t, `SELECT allocated_units FROM booking.event_supply WHERE event_id=$1::uuid`, f.eventID))
-	released, err = repo.Release(ctx, out[1].AllocationID)
+	released, err = repo.Release(ctx, out[1].AllocationID, vo.EndUnclaimed)
 	require.NoError(t, err)
 	assert.False(t, released, "melepas dua kali tidak mengubah apa pun")
 }

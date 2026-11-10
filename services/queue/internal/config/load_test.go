@@ -12,6 +12,7 @@ func setBase(t *testing.T) {
 	t.Helper()
 	t.Setenv("TOKEN_PRIVATE_KEY_FILE", "/run/secrets/queue-token.pem")
 	t.Setenv("BOOKING_SERVICE_URL", "http://booking:8082")
+	t.Setenv("BOOKING_PAGE_BASE_URL", "https://example.test/book")
 	t.Setenv("PII_HMAC_KEY", "101112131415161718191a1b1c1d1e1f000102030405060708090a0b0c0d0e0f")
 }
 
@@ -235,3 +236,32 @@ func TestLoad_NoPIIEncKeyRequired(t *testing.T) {
 	_, err := Load()
 	assert.NoError(t, err)
 }
+
+func TestLoad_AdminEmails(t *testing.T) {
+	cases := []struct {
+		name string
+		env  *string
+		want []string
+	}{
+		{"unset", nil, nil},
+		{"empty", strPtr(""), nil},
+		{"only spaces and commas", strPtr(" , ,, "), nil},
+		{"single", strPtr("admin@contoh.id"), []string{"admin@contoh.id"}},
+		{"spaces and mixed case", strPtr("  Admin@Contoh.ID , Ops@Contoh.id "), []string{"admin@contoh.id", "ops@contoh.id"}},
+		{"domain entry", strPtr("a@x.id,@lokal.test"), []string{"a@x.id", "@lokal.test"}},
+		{"duplicates collapsed", strPtr("a@x.id,A@X.ID,a@x.id"), []string{"a@x.id"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			setBase(t)
+			if c.env != nil {
+				t.Setenv("ADMIN_EMAILS", *c.env)
+			}
+			cfg, err := Load()
+			require.NoError(t, err)
+			assert.Equal(t, c.want, cfg.Admin.Emails)
+		})
+	}
+}
+
+func strPtr(s string) *string { return &s }

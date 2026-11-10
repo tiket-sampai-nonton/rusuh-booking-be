@@ -43,12 +43,19 @@ func SeedEvent(ctx context.Context, pool *pgxpool.Pool, capacity int) (eventID, 
 	_, err = pool.Exec(ctx, `
 		INSERT INTO booking.event_supply (event_id, total_capacity)
 		VALUES ($1::uuid, $2)`, eventID, capacity)
+	if err != nil {
+		return
+	}
+	// Join is strict (QSA-6): an event without queue settings is unjoinable. Direct fixture row with the column
+	// defaults stands in for the admin PUT; journey_test.go exercises the real endpoint.
+	_, err = pool.Exec(ctx, `INSERT INTO queue.event_settings (event_id) VALUES ($1::uuid)`, eventID)
 	return
 }
 
 // CleanupEvent deletes all booking data seeded for an event (test isolation).
 func CleanupEvent(ctx context.Context, pool *pgxpool.Pool, eventID string) error {
 	queries := []string{
+		`DELETE FROM queue.event_settings WHERE event_id=$1::uuid`,
 		`DELETE FROM booking.outbox_events WHERE aggregate_id = $1::uuid`,
 		`DELETE FROM booking.tickets WHERE booking_id IN (SELECT id FROM booking.bookings WHERE event_id=$1::uuid)`,
 		`DELETE FROM booking.booking_events WHERE stream_id IN (SELECT id FROM booking.bookings WHERE event_id=$1::uuid)`,
@@ -109,10 +116,11 @@ func TicketCount(ctx context.Context, pool *pgxpool.Pool, bookingID string) (int
 	return n, err
 }
 
-// ForceExpireBooking sets payment_expires_at in the past so the sweeper picks it up.
+// ForceExpireBooking sets payment_expires_at in the past so the sweeper picks it up. created_at moves back too:
+// the schema requires payment_expires_at > created_at.
 func ForceExpireBooking(ctx context.Context, pool *pgxpool.Pool, bookingID string) error {
 	_, err := pool.Exec(ctx,
-		`UPDATE booking.bookings SET payment_expires_at = now() - interval '1 minute' WHERE id=$1::uuid`,
+		`UPDATE booking.bookings SET created_at = now() - interval '5 minutes', payment_expires_at = now() - interval '1 minute' WHERE id=$1::uuid`,
 		bookingID)
 	return err
 }

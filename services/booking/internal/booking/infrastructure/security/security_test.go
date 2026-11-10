@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/httpx"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/revocation"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/token"
 
@@ -93,6 +94,48 @@ func TestBearerVerifier_AcceptsOnlyItsScope(t *testing.T) {
 	for _, scope := range []string{"visitor", "queue", "admission", "buyer", ""} {
 		_, err := svc.VerifyAccess(sign(token.Claims{Subject: "x", Scope: scope}))
 		assert.Error(t, err, "scope %q tidak boleh lolos sebagai service", scope)
+	}
+}
+
+// Service tokens live at most httpx.ServiceTokenMaxTTL (same rule as httpx.ServiceAuth); buyer tokens keep their own lifetime.
+func TestBearerVerifier_ServiceTokenMaxLifetime(t *testing.T) {
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+	sg, err := token.NewSigner(priv, "k1")
+	require.NoError(t, err)
+	v, err := token.NewVerifier(map[string]ed25519.PublicKey{"k1": pub}, "iss", "aud", 5*time.Second)
+	require.NoError(t, err)
+	sign := func(scope string, ttl time.Duration) string {
+		now := time.Now()
+		tok, err := sg.Sign(token.Claims{Issuer: "iss", Audience: "aud", Subject: "s", Scope: scope,
+			IssuedAt: now.Unix(), ExpiresAt: now.Add(ttl).Unix()})
+		require.NoError(t, err)
+		return tok
+	}
+
+	tests := []struct {
+		name    string
+		scope   string
+		ttl     time.Duration
+		wantErr bool
+	}{
+		{"service 1 menit diterima", security.ScopeService, time.Minute, false},
+		{"service tepat 5 menit diterima", security.ScopeService, httpx.ServiceTokenMaxTTL, false},
+		{"service 5 menit 1 detik ditolak", security.ScopeService, httpx.ServiceTokenMaxTTL + time.Second, true},
+		{"service 1 jam ditolak", security.ScopeService, time.Hour, true},
+		{"buyer 1 jam tetap diterima", security.ScopeBuyer, time.Hour, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			bv := security.NewBearerVerifier(v, time.Now, tc.scope)
+			sub, err := bv.VerifyAccess(sign(tc.scope, tc.ttl))
+			if tc.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, "s", sub)
+		})
 	}
 }
 

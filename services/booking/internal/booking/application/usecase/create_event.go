@@ -27,6 +27,15 @@ func (uc *CreateEvent) Create(ctx context.Context, req dto.CreateEventRequest) (
 	if err := validateDescription(req.Description); err != nil {
 		return "", err
 	}
+	city, err := normalizeCity(req.City)
+	if err != nil {
+		return "", err
+	}
+	genres, err := normalizeGenres(req.Genres)
+	if err != nil {
+		return "", err
+	}
+	req.City, req.Genres = city, genres // canonical form; validated before any ID or write
 	id := uc.ids.NewID()
 	if err := uc.repo.CreateEvent(ctx, id, req); err != nil {
 		return "", err

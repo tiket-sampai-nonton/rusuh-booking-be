@@ -74,6 +74,7 @@ func TestGetMyEntry_EndedReasons(t *testing.T) {
 		{valueobject.StatusEnded, "SESSION_EXPIRED", "PAGE_TIMER_EXPIRED"},
 		{valueobject.StatusCompleted, "PAID", "JOURNEY_ENDED"},
 		{valueobject.StatusEnded, "ALREADY_ACTIVE", "JOURNEY_ENDED"},
+		{valueobject.StatusSoldOut, "SOLD_OUT", "SOLD_OUT"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.endReason, func(t *testing.T) {
@@ -100,11 +101,18 @@ func TestGetMyEntry_TokenStates(t *testing.T) {
 		assert.Equal(t, 401, inbound.MapError(err).HTTPStatus)
 		assert.Equal(t, "VISITOR_TOKEN_INVALID", string(inbound.MapError(err).Code))
 	})
-	t.Run("unknown visitor is 401", func(t *testing.T) {
+	t.Run("visitor never joined this event is 404 (REQ-QVT-03)", func(t *testing.T) {
 		store, uc := meSetup(t)
 		store.EXPECT().TokenGen(gomock.Any(), "ev1", "v1").Return(int64(0), false, nil)
 		_, err := uc.GetMyEntry(context.Background(), inbound.MyEntryInput{EventID: "ev1", VisitorID: "v1", Gen: 1})
-		assert.ErrorIs(t, err, entity.ErrVisitorTokenInvalid)
+		assert.ErrorIs(t, err, entity.ErrNotFound)
+		assert.Equal(t, 404, inbound.MapError(err).HTTPStatus)
+	})
+	t.Run("cross-event: record exists for A only, event B is 404 and reads no entry", func(t *testing.T) {
+		store, uc := meSetup(t)
+		store.EXPECT().TokenGen(gomock.Any(), "evB", "v1").Return(int64(0), false, nil)
+		_, err := uc.GetMyEntry(context.Background(), inbound.MyEntryInput{EventID: "evB", VisitorID: "v1", Gen: 1})
+		assert.ErrorIs(t, err, entity.ErrNotFound)
 	})
 	t.Run("valid token, no entry ever: 404", func(t *testing.T) {
 		store, uc := meSetup(t)

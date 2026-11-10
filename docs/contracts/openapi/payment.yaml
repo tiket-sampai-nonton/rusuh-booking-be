@@ -290,41 +290,6 @@ paths:
             application/json:
               schema:
                 "$ref": "#/components/schemas/ErrorEnvelope"
-  "/api/v1/local-simulator/payments/{attemptId}/scenario":
-    post:
-      tags:
-      - simulator
-      summary: Simulasi gateway (hanya APP_ENV=local atau ci)
-      operationId: simulatePayment
-      security: []
-      parameters:
-      - name: attemptId
-        in: path
-        required: true
-        schema:
-          type: string
-          format: uuid
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              "$ref": "#/components/schemas/SimulatorScenario"
-      responses:
-        '202':
-          description: Skenario dijalankan
-        '404':
-          description: 'Simulator mati di lingkungan ini — errorCode: `NOT_FOUND`'
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/ErrorEnvelope"
-        '401':
-          description: 'Token visitor tidak valid atau kedaluwarsa — errorCode: `UNAUTHORIZED`'
-          content:
-            application/json:
-              schema:
-                "$ref": "#/components/schemas/ErrorEnvelope"
   "/health":
     get:
       tags:
@@ -606,21 +571,6 @@ components:
       - gross_amount
       - signature_key
       additionalProperties: true
-    SimulatorScenario:
-      type: object
-      properties:
-        scenario:
-          type: string
-          enum:
-          - SETTLE
-          - SETTLE_LATE
-          - EXPIRE
-          - DENY
-          - TIMEOUT
-          - DUPLICATE_WEBHOOK
-          - OUT_OF_ORDER
-      required:
-      - scenario
   securitySchemes:
     visitorCookie:
       type: apiKey

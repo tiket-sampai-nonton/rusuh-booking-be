@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/application/usecase"
+	vo "github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/domain/valueobject"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/port/inbound"
 )
 
@@ -40,4 +41,21 @@ func TestReleaseAllocation_NotFound(t *testing.T) {
 	uc := usecase.NewReleaseAllocation(&fakeAdmissionRepo{getErr: inbound.ErrNotFound})
 	_, err := uc.Release(context.Background(), allocationID)
 	assert.ErrorIs(t, err, inbound.ErrNotFound)
+}
+
+// TC-QUE-37 (1.4, P3): the internal release ends the admission as UNCLAIMED; a locked (EDITABLE) admission
+// is reported as released=false so the internal contract is unchanged.
+func TestReleaseAllocation_ReasonAndLocked(t *testing.T) {
+	t.Run("passes UNCLAIMED", func(t *testing.T) {
+		repo := &fakeAdmissionRepo{}
+		_, err := usecase.NewReleaseAllocation(repo).Release(context.Background(), allocationID)
+		require.NoError(t, err)
+		assert.Equal(t, []vo.EndReason{vo.EndUnclaimed}, repo.releaseReasons)
+	})
+	t.Run("ErrBookingLocked maps to released=false", func(t *testing.T) {
+		repo := &fakeAdmissionRepo{releaseErr: inbound.ErrBookingLocked}
+		resp, err := usecase.NewReleaseAllocation(repo).Release(context.Background(), allocationID)
+		require.NoError(t, err)
+		assert.False(t, resp.Released)
+	})
 }

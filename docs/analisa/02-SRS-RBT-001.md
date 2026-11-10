@@ -23,6 +23,8 @@
 | Version | Date | Author | Summary of change | Baseline |
 |---------|------|--------|-------------------|----------|
 | 1.4 | 2026-10-20 | Tim PT. Tiket Sampai Nonton Sentosa | SRS-F-27-12 direvisi: OTP boleh lewat broker dengan enkripsi; CMP-NOTIF ditambahkan ke §3.2.27 | Keputusan arsitektur: OTP email via Notification Service |
+| 1.5 | 2026-11-09 | Tim PT. Tiket Sampai Nonton Sentosa | §3.2.28: SRS-F-28-07 (admin menetapkan/mengubah `city` dan `genres` event) dan SRS-F-28-08 (`minPriceMinor` detail = daftar) ditambahkan; ID diusulkan, pemilik dokumen mengonfirmasi | Keputusan pemilik: workflow booking-event-city-genres |
+| 1.6 | 2026-11-09 | Tim PT. Tiket Sampai Nonton Sentosa | SRS-F-04-10 dan FR-10: "queue token" menjadi "token visitor" (cookie `rb_visitor` / secure storage); auth claim (§ tabel endpoint) dan glosarium diselaraskan; Queue token deprecated | Keputusan pemilik: workflow queue-deprecations-docs (Q6) |
 | 1.3 | 2026-10-19 | Tim PT. Tiket Sampai Nonton Sentosa | Memperjelas **logged-in user NIK handling**: SRS-F-27-10 direvisi (NIK dari token.nikHash, body optional/ignored), SRS-F-27-10a ditambahkan (logged-in tanpa NIK → body required), SRS-F-01-01 direvisi (guest vs logged-in). Desain menghindari PII di API untuk logged-in user | PRD v5.4, US-092, US-094 |
 | 1.2 | 2026-10-19 | Tim PT. Tiket Sampai Nonton Sentosa | Katalog event dengan filter: §3.2.28 Event Catalog Filter (CAT-01, SRS-F-28-01..06) untuk filter waktu, lokasi, status; field `city` ditambahkan ke skema event; cache key CDN mencakup filter params | PRD v5.3 |
 | 1.1 | 2026-10-19 | Tim PT. Tiket Sampai Nonton Sentosa | Keputusan bersama BE-2: akun opsional dengan login OTP (§3.2.27, SRS-F-01-08 direvisi), event sourcing Booking dan Payment (SRS-C-09, SRS-D-10..12), circuit breaker menjadi MUST (§3.2.19), keamanan akun (SRS-Q-SEC-10..12), alert email (SRS-F-90-06), kontrak OpenAPI satu file per service | PRD v4.6 + D-03, D-04, D-19, D-21, D-40, D-41 |
@@ -94,7 +96,7 @@ Guest session dan data pembeli (§3.2.1); daftar dan detail event (§3.2.2–3.2
 | should | Disarankan (SHOULD pada sumber) |
 | PROPOSED | Nilai awal yang dapat dituning lewat konfigurasi |
 | Idempotency-Key | Kunci unik per penekanan tombol yang membuat request ulang tidak menghasilkan efek ganda |
-| Visitor token / Queue token / Admission token | Token bertanda tangan untuk identitas pengunjung, nomor antrean, dan izin masuk halaman beli (lihat HLD Security view) |
+| Visitor token / Queue token / Admission token | Token bertanda tangan untuk identitas pengunjung, nomor antrean, dan izin masuk halaman beli (lihat HLD Security view). Queue token deprecated (keputusan pemilik Q6) |
 
 #### Key Terms
 
@@ -200,7 +202,7 @@ Tidak ada antarmuka hardware khusus. Scan tiket di gerbang berada di luar scope.
 | SRS-IF-21 | Midtrans Sandbox | Expiry transaksi | The transaction expiry sent to the gateway shall equal the booking's `paymentExpiresAt`. | M | T | TC-PAY-02 |
 | SRS-IF-22 | Penyedia email (Mailpit / Resend) | E-tiket, expired, pembayaran terlambat, OTP | The Notification Service shall send email through SMTP to Mailpit locally and in CI, and through the Resend HTTP API on demo, selected by `EMAIL_PROVIDER` (v1.6, 2026-10-22; replaces SES sandbox). | M | T | TC-TKT-02 |
 | SRS-IF-23 | Penyedia push (FCM; iOS via APNs) | Notifikasi giliran | The Notification Service shall send turn notifications through the push provider and shall use a log adapter in local and CI environments. | M | D | TC-QUE-13 |
-| SRS-IF-24 | Payment simulator | Uji offline | A payment simulator shall be available only when `APP_ENV` is `ci` or `local-offline`, and results produced by it shall be labelled SIMULATED. | M | I | [TP] |
+| SRS-IF-24 | ~~Payment simulator~~ | — | **[Dihapus]** Payment hanya Midtrans (Sandbox di lokal/CI); tidak ada endpoint simulator; unit test memakai fake gateway. | — | — | — |
 
 #### 3.1.4 Communications Interfaces
 
@@ -252,7 +254,7 @@ Semua di bawah `/api/v1`. Kontrak normatif: satu file OpenAPI per service di `do
 | Queue | POST | `/events/{eventId}/queue-entries` | Join (NIK pembeli, email) | WAF challenge, rate limit, idempoten |
 | Queue | GET | `/queue-status/{eventId}` | Status Document | Publik, cache CDN 1 detik |
 | Queue | GET | `/queue-entries/me?eventId=` | Posisi eksak dan status entry | Visitor token, rate limit |
-| Queue | POST | `/queue-entries/{entryId}/claim` | Ambil admission token | Queue token + visitor token |
+| Queue | POST | `/queue-entries/{entryId}/claim` | Ambil admission token | Token visitor (+ `?eventId=`) |
 | Queue | DELETE | `/queue-entries/{entryId}` | Keluar antrean (SHOULD) | Pemilik |
 | Booking | GET | `/events` | Daftar event | Publik, cache 2 detik |
 | Booking | GET | `/events/{eventId}` | Detail event dan kategori | Publik, cache 2 detik |
@@ -275,7 +277,6 @@ Semua di bawah `/api/v1`. Kontrak normatif: satu file OpenAPI per service di `do
 | Payment | POST | `/webhooks/midtrans` | Callback gateway | Signature |
 | Notification | POST | `/push-subscriptions` | Daftarkan token push perangkat untuk event | Visitor token, mobile |
 | Notification | DELETE | `/push-subscriptions/{eventId}` | Hapus token push | Visitor token |
-| Payment | POST | `/local-simulator/payments/{id}/scenario` | Simulasi | Hanya `APP_ENV=ci` atau `local-offline` |
 
 Contoh request/response dan error code lengkap di Lampiran A [v4.6 → SDD §4.6.1].
 
@@ -338,6 +339,7 @@ Status: 400, 401/403, 404, 409, 410, 422, 429, 503. Tidak membocorkan SQL, stack
 | 409 | `BUYER_QUOTA_EXHAUSTED` | Queue, Booking | Kuota 3 tiket NIK pembeli habis | Tidak dapat membeli lagi |
 | 409 | `EVENT_NOT_ON_SALE` | Queue | Di luar jendela penjualan | Tunggu jam buka |
 | 410 | `EVENT_SOLD_OUT` | Queue, Booking | Tiket habis | Kembali ke home |
+| 409 | `ENTRY_CLAIMED` | Queue | `DELETE /queue-entries/{id}` pada entry yang sudah CLAIMED (sesi booking yang memilikinya) | Batalkan lewat `POST /booking-sessions/{id}/cancel` |
 | 409 | `NOT_ADMITTED` | Queue | Claim untuk entry yang masih WAITING (belum mendapat giliran) | Tetap menunggu di antrean |
 | 410 | `TURN_MISSED` | Queue, Booking | Claim window lewat | Kembali ke home / antre ulang |
 | 410 | `SESSION_EXPIRED` | Booking | TTL Booking habis | Kembali ke home |
@@ -435,7 +437,7 @@ Kontrak per endpoint (contoh request/response) ada di SDD-RBT-001 Interface view
 | SRS-F-04-07 | When there is no earlier waiter, an active slot is free, and the allocation succeeds, the customer shall be admitted directly in the join response. *(Amended by Queue hardening design rev 5: applies while the per-event admission lease is obtained, with one jittered 15-35 ms retry; otherwise the join returns `WAITING` with no Booking call and the promoter admits the entry within `PromotorInterval`. See ADR-029, TC-QUE-20b.)* | FR-05 | M | T | TC-QUE-02 |
 | SRS-F-04-08 | When an earlier waiter exists or the active slots are full, the entry shall be `WAITING` and the customer shall be directed to the waiting room. | FR-04 | M | T | TC-QUE-01 |
 | SRS-F-04-09 | The join endpoint shall be protected by an edge challenge, a rate-based rule, and a per-IP rate limit in the Queue Service. | NFR-01 | M | I | [TP] |
-| SRS-F-04-10 | The queue position shall persist across refresh and multiple tabs: the queue token shall be kept in cookie/secure storage and the entry shall be held server-side per buyer NIK. | FR-10 | M | T | TC-QUE-07 |
+| SRS-F-04-10 | The queue position shall persist across refresh and multiple tabs: the visitor token shall be kept in cookie `rb_visitor`/secure storage and the entry shall be held server-side per buyer NIK. | FR-10 | M | T | TC-QUE-07 |
 
 #### 3.2.5 Queue Status and Honest Indicator (QUE-02)
 
@@ -557,7 +559,7 @@ Kontrak per endpoint (contoh request/response) ada di SDD-RBT-001 Interface view
 |----|-------------|--------|-----|-----|------|
 | SRS-F-13-01 | When the customer leaves the buying page without buying, the allocation should return and the slot should be promoted immediately. | GR-16 | S | T | TC-PAY-09 |
 | SRS-F-13-02 | When the customer cancels a booking awaiting payment, the Booking Service should ask the Payment Service to check and cancel the gateway transaction first; if it is already paid, the booking should become PAID and the customer be informed; otherwise CANCELLED and the slot freed. | GR-16 | S | T | TC-PAY-09 |
-| SRS-F-13-03 | A waiting customer should be able to leave the queue. | GR-16 | S | T | [TP] |
+| SRS-F-13-03 | A waiting customer should be able to leave the queue. | GR-16 | S | T | TC-QUE-17, TC-QUE-38 |
 
 #### 3.2.14 Payment Creation and Method Selection (PAY-01)
 
@@ -653,7 +655,7 @@ Kontrak per endpoint (contoh request/response) ada di SDD-RBT-001 Interface view
 | ID | Requirement | Source | Pri | Ver | Test |
 |----|-------------|--------|-----|-----|------|
 | SRS-F-22-01 | Web and mobile shall use the same public API contract (§3.1.4). | FR-24, NFR-08 | M | T | TC-API-01 |
-| SRS-F-22-02 | Web shall authenticate with the HttpOnly cookie and mobile with `Authorization: Bearer <visitorToken>`; both shall be verified by the same middleware. | FR-24 | M | T | TC-API-01 |
+| SRS-F-22-02 | Web shall authenticate with the HttpOnly cookie and mobile with the `X-Visitor-Token` header (a native client sends `X-Client-Type: mobile` on join to receive the token in the body; the `Authorization: Bearer` header is reserved for the User access token); both shall be verified by the same middleware. | FR-24 | M | T | TC-API-01 |
 | SRS-F-22-03 | Contract changes within `v1` shall be additive; breaking changes shall require `v2`. | NFR-08 | M | I | TC-API-02 |
 
 #### 3.2.23 Edit Order Before Payment (BKG-04)
@@ -726,8 +728,8 @@ Kontrak per endpoint (contoh request/response) ada di SDD-RBT-001 Interface view
 | SRS-F-26-04 | Invalid combinations shall be rejected early by data constraints, a validator at service start, or on save. | GR-12 | M | T | TC-CFG-03 |
 | SRS-F-26-05 | Related values shall derive from one parent value (e.g., gateway expiry from `paymentExpiresAt`). | GR-12 | M | I | TC-PAY-02 |
 | SRS-F-26-06 | Client configuration (polling interval, ticket limit, TTL) shall be delivered by the server; client env values shall be fallbacks only; the UI shall not hard-code rule numbers. | GR-12 | M | I | TC-QUE-15 |
-| SRS-F-26-07 | Every change shall be recorded (who, when, old → new), and an internal endpoint shall show the effective configuration per event. | GR-12 | M | T | TC-CFG-04 |
-| SRS-F-26-08 | Per-event changes shall be made through migration/seed or an internal admin endpoint (back-office is out of scope). | PDF §11 | M | I | — |
+| SRS-F-26-07 | Every change shall be recorded (who, when, old → new), and an internal endpoint shall show the effective configuration per event. For queue settings the record is one row per changed field in `queue.event_settings_audit` (append-only, written in the same transaction as the change, actor = verified admin account id) and the endpoint is `GET /internal/v1/admin/events/{eventId}/queue-settings` (ADR-031). | GR-12 | M | T | TC-CFG-04, TC-CFG-08 |
+| SRS-F-26-08 | Per-event changes shall be made through migration/seed or an internal admin endpoint (back-office is out of scope). Queue settings are created and changed only through `PUT /internal/v1/admin/events/{eventId}/queue-settings` (admin allow-list, internal route, ADR-031); the Queue Service shall not create settings implicitly, and a join for an event without settings shall be refused with `409 QUEUE_NOT_CONFIGURED`. | PDF §11 | M | T | TC-CFG-05..TC-CFG-10 |
 
 #### 3.2.27 Optional Account and OTP Login (USR-01)
 
@@ -761,6 +763,8 @@ Kontrak per endpoint (contoh request/response) ada di SDD-RBT-001 Interface view
 | SRS-F-28-04 | Filters shall be combinable; when multiple filters are provided, the result shall be the intersection (AND logic). | US-012, US-013, US-014 | M | T | TC-CAT-04 |
 | SRS-F-28-05 | The filtered event list response shall be cacheable at the CDN for at most 2 seconds; the cache key shall include the filter query parameters (`timeframe`, `city`, `status`) in addition to `page` and `size`. | AS-27, NFR-06 | M | I | TC-CAT-05 |
 | SRS-F-28-06 | The event list endpoint should accept optional query parameters for sorting: `sort` (values: `DATE_ASC`, `PRICE_ASC`, `PRICE_DESC`); default shall be `DATE_ASC`. | US-017 | S | T | TC-CAT-06 |
+| SRS-F-28-07 | The internal admin API shall let an admin set `city` and `genres` when creating an event and change them afterwards (PATCH); values shall be stored canonical (city trimmed with original casing, max 100 characters; genres trimmed, uppercase, hyphen/space to underscore, deduplicated, sorted, max 20 tokens of max 64 characters); invalid input shall be rejected with `400 VALIDATION_ERROR` before any write; omitted fields shall leave stored values unchanged, and `""` / `[]` shall clear them. Changes remain allowed after sales open (no stock, quota or timer impact). *(Proposed ID.)* | US-013, US-015 | S | T | TC-CAT-12, TC-CAT-13, TC-CAT-14, TC-CAT-15 |
+| SRS-F-28-08 | The event detail response shall return `minPriceMinor` equal to the cheapest category price (sold-out categories included; 0 when the event has no category), identical to the value in the event list. *(Proposed ID.)* | US-012 | S | T | TC-EVT-06 |
 
 ### 3.3 Quality Requirements (ISO/IEC 25010:2023)
 
@@ -861,7 +865,7 @@ Kontrak per endpoint (contoh request/response) ada di SDD-RBT-001 Interface view
 | SRS-D-05 | Payment attempt, callback, refund case | Payment | Monotonic status; callback fingerprint unique | [Retensi transaksi: ditetapkan Ops] | Financial |
 | SRS-D-06 | Queue entry and entry audit | Queue | One active per buyer NIK, visitor, email per event; audit is the recovery source for FIFO | Event + 30 hari | Personal (hash, encrypted email) |
 | SRS-D-07 | Delivery, push subscription | Notification | Unique (source message, type); push token encrypted | Push token dihapus saat penjualan berakhir | Personal |
-| SRS-D-08 | Configuration audit | Booking | Every change recorded | Permanent | Internal |
+| SRS-D-08 | Configuration audit | Booking, Queue (`queue.event_settings_audit`, ADR-031) | Every change recorded; Queue audit is append-only (database trigger) with one row per changed field | Permanent | Internal |
 | SRS-D-09 | All timestamps shall be `timestamptz` UTC; all amounts integer minor unit (IDR). | All | — | — | — |
 | SRS-D-10 | Booking events (event store) | Booking | Append-only; key (booking, version); payload without plaintext NIK/email/token | Event + 30 hari (payload tanpa data pribadi plaintext) | Personal (hash) |
 | SRS-D-11 | Payment attempt events (event store) | Payment | Append-only; key (attempt, version) | [Retensi transaksi: ditetapkan Ops] | Financial |
@@ -1055,7 +1059,7 @@ Source requirement → SRS requirement. Alokasi ke komponen ada di HLD §6; test
 | FR-07 | MUST | Posisi diperbarui otomatis setiap antrian di depannya berkurang. | Antrean maju saat transaksi di depan selesai/expired/batal (grooming D-9); near-real-time ≤ 5 detik untuk pengantre dekat (§5.25 [v4.6 → SRS §3.2.25]) | QUE-02, QUE-05 |
 | FR-08 | MUST | Customer otomatis dipindahkan ke Detail Ticket Page saat gilirannya tiba. | Klaim otomatis oleh klien saat entry berstatus `ADMITTED` (ditentukan server) | QUE-03 |
 | FR-09 | COULD | Estimasi waktu tunggu berdasarkan laju antrian. | Disediakan dari laju admission; disembunyikan bila tidak stabil | QUE-02 |
-| FR-10 | MUST | Posisi konsisten saat refresh. | Queue token di cookie/secure storage; entry server-side per NIK pembeli | QUE-01 |
+| FR-10 | MUST | Posisi konsisten saat refresh. | Token visitor di cookie `rb_visitor`/secure storage; entry server-side per NIK pembeli | QUE-01 |
 | FR-11 | MUST | Detail event beserta kategori tempat. | Info event publik; aksi beli hanya setelah admission | EVT-02 |
 | FR-12 | MUST | Setiap kategori menampilkan jumlah tiket available dan harga. | Available per kategori = kapasitas − hold − sold, diperbarui live. Reservasi tingkat event belum terikat kategori sehingga tidak mengurangi angka kategori; jaminan customer berlaku atas total unit (§5.9 [v4.6 → SRS §3.2.9]) | EVT-02 |
 | FR-13 | MUST | Maks 3 tiket (gabungan kategori) dibatasi NIK; tanpa NIK tidak dapat melanjutkan. | NIK pembeli wajib saat join; NIK pemegang wajib per tiket | BKG-01 |
@@ -1405,7 +1409,7 @@ Dari (1) dan (2): stok fisik bebas di semua kategori = `total − held − sold 
 ### API-01 Shared API (Web + Mobile)
 
 - Seluruh endpoint publik REST/JSON di bawah `/api/v1`, satu kontrak OpenAPI untuk web dan mobile (FR-24, NFR-08).
-- Web memakai cookie HttpOnly; mobile memakai header `Authorization: Bearer <visitorToken>`; keduanya diverifikasi oleh middleware yang sama.
+- Web memakai cookie HttpOnly; mobile memakai header `X-Visitor-Token` (app native mengirim `X-Client-Type: mobile` pada join agar token ikut di body; `Authorization: Bearer` hanya untuk access token User); keduanya diverifikasi oleh middleware yang sama.
 - Perubahan kontrak bersifat additive dalam versi `v1`; perubahan breaking membutuhkan `v2`.
 
 ### BKG-04 Ubah Pesanan Sebelum Bayar
@@ -1532,9 +1536,9 @@ Semua TTL, jendela, batas, dan flag dapat dikonfigurasi (daftar lengkap, default
 4. **Satu sumber kebenaran.** Nilai yang saling terkait diturunkan dari satu nilai induk; contohnya expiry transaksi Midtrans diturunkan dari `paymentExpiresAt`, bukan parameter terpisah.
 5. **Konfigurasi klien dikendalikan server.** Interval polling, batas tiket, dan TTL dikirim lewat Status Document dan respons API; env klien hanya cadangan.
 6. **UI tidak meng-hardcode angka aturan** ("3 menit", "maks 3 tiket"); semua teks memakai nilai dari server.
-7. **Setiap perubahan tercatat** di `booking.config_audit` (siapa, kapan, nilai lama → baru); endpoint internal menampilkan konfigurasi efektif per event sebagai evidence.
+7. **Setiap perubahan tercatat** di `booking.config_audit` untuk Booking dan di `queue.event_settings_audit` untuk pengaturan antrean (siapa, kapan, nilai lama → baru, satu baris per field); endpoint internal menampilkan konfigurasi efektif per event sebagai evidence.
 
-Lokasi: per event di database (`booking.events`, `queue.event_settings`), setelan teknis per service di env (perubahan lewat deploy), dan nilai cadangan di klien. Perubahan per event dilakukan lewat migration/seed atau endpoint internal admin (back-office di luar scope).
+Lokasi: per event di database (`booking.events`, `queue.event_settings`), setelan teknis per service di env (perubahan lewat deploy), dan nilai cadangan di klien. Perubahan per event dilakukan lewat migration/seed atau endpoint internal admin (back-office di luar scope). Pengaturan antrean hanya dibuat dan diubah lewat `PUT /internal/v1/admin/events/{eventId}/queue-settings` (ADR-031): tidak ada nilai bawaan implisit, jadi event baru tidak bisa di-join (`409 QUEUE_NOT_CONFIGURED`) sampai admin menyimpan pengaturannya.
 
 ---
 

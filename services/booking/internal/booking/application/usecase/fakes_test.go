@@ -2,10 +2,17 @@ package usecase_test
 
 import (
 	"context"
+	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/apperror"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/domain/dto"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/domain/entity"
+	vo "github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/domain/valueobject"
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/port/inbound"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/port/outbound"
 )
 
@@ -98,17 +105,19 @@ func boolPtr(b bool) *bool { return &b }
 
 // fakeAdmissionRepo returns a fixed admission and records calls.
 type fakeAdmissionRepo struct {
-	admission     entity.Admission
-	getErr        error
-	getCalls      int // number of GetByID calls (REQ-4: assert malformed ids never reach the repo)
-	activated     entity.Admission
-	activErr      error
-	reserve       []outbound.ReserveOutcome
-	reserveErr    error
-	due           []entity.Admission
-	expired       []string
-	released      []string
-	releaseResult *bool // nil = default true
+	admission      entity.Admission
+	getErr         error
+	getCalls       int // number of GetByID calls (REQ-4: assert malformed ids never reach the repo)
+	activated      entity.Admission
+	activErr       error
+	reserve        []outbound.ReserveOutcome
+	reserveErr     error
+	due            []entity.Admission
+	expired        []string
+	released       []string
+	releaseResult  *bool // nil = default true
+	releaseErr     error // returned by Release (e.g. ErrBookingLocked)
+	releaseReasons []vo.EndReason
 }
 
 func (f *fakeAdmissionRepo) FindByJTI(context.Context, string) (entity.Admission, error) {
@@ -130,11 +139,15 @@ func (f *fakeAdmissionRepo) Activate(context.Context, string, time.Time) (entity
 func (f *fakeAdmissionRepo) ReserveBatch(context.Context, string, []outbound.ReserveEntry, time.Time) ([]outbound.ReserveOutcome, error) {
 	return f.reserve, f.reserveErr
 }
-func (f *fakeAdmissionRepo) Release(_ context.Context, id string) (bool, error) {
+func (f *fakeAdmissionRepo) Release(_ context.Context, id string, reason vo.EndReason) (bool, error) {
 	if f.getErr != nil {
 		return false, f.getErr
 	}
+	if f.releaseErr != nil {
+		return false, f.releaseErr
+	}
 	f.released = append(f.released, id)
+	f.releaseReasons = append(f.releaseReasons, reason)
 	if f.releaseResult != nil {
 		return *f.releaseResult, nil
 	}
@@ -157,10 +170,12 @@ type fakeIdem struct {
 	completeErr error
 	aborted     int
 	gotHash     []byte
+	begins      int
 }
 
 func (f *fakeIdem) Begin(_ context.Context, _, _, _ string, hash []byte, _ time.Duration) (outbound.IdempotencyRecord, bool, error) {
 	f.gotHash = hash
+	f.begins++
 	return f.rec, f.found, f.beginErr
 }
 func (f *fakeIdem) Complete(context.Context, string, string, string, int, []byte) error {
@@ -180,6 +195,8 @@ type fakeUoW struct {
 	heldSpec         outbound.HoldSpec
 	replaceVer       int
 	replaceErr       error
+	replaceSpec      outbound.ReplaceSpec
+	replaceCalls     int
 	settled          bool
 	settleErr        error
 	settleSpec       outbound.SettleSpec
@@ -199,7 +216,9 @@ func (f *fakeUoW) Hold(_ context.Context, spec outbound.HoldSpec) (outbound.Hold
 	f.heldSpec = spec
 	return f.holdRes, f.holdErr
 }
-func (f *fakeUoW) ReplaceItems(context.Context, outbound.ReplaceSpec) (int, error) {
+func (f *fakeUoW) ReplaceItems(_ context.Context, spec outbound.ReplaceSpec) (int, error) {
+	f.replaceSpec = spec
+	f.replaceCalls++
 	return f.replaceVer, f.replaceErr
 }
 func (f *fakeUoW) Settle(_ context.Context, spec outbound.SettleSpec) (bool, error) {
@@ -264,12 +283,15 @@ type fakeAttendeeChecker struct {
 	regErr     error
 	counted    bool
 	recErr     error
+	calls      int
 }
 
 func (f *fakeAttendeeChecker) IsRegistered(context.Context, string, []byte) (bool, error) {
+	f.calls++
 	return f.registered, f.regErr
 }
 func (f *fakeAttendeeChecker) RecordCheck(context.Context, string, []byte) (bool, error) {
+	f.calls++
 	return f.counted, f.recErr
 }
 
@@ -343,6 +365,12 @@ type fakeEventWriteRepo struct {
 	imageErr  error
 	imageKind string
 	imageURL  string
+
+	// recorded calls (CreateEvent / UpdateConfig)
+	createCalls int
+	createdReq  dto.CreateEventRequest
+	updateCalls int
+	updatedReq  dto.UpdateEventConfigRequest
 }
 
 func (f *fakeEventWriteRepo) SetImageURL(_ context.Context, _, kind, url string) error {
@@ -350,9 +378,23 @@ func (f *fakeEventWriteRepo) SetImageURL(_ context.Context, _, kind, url string)
 	return f.imageErr
 }
 
-func (f *fakeEventWriteRepo) CreateEvent(_ context.Context, _ string, _ dto.CreateEventRequest) error {
+func (f *fakeEventWriteRepo) CreateEvent(_ context.Context, _ string, req dto.CreateEventRequest) error {
+	f.createCalls++
+	f.createdReq = req
 	return f.createErr
 }
-func (f *fakeEventWriteRepo) UpdateConfig(_ context.Context, _ string, _ dto.UpdateEventConfigRequest) error {
+func (f *fakeEventWriteRepo) UpdateConfig(_ context.Context, _ string, req dto.UpdateEventConfigRequest) error {
+	f.updateCalls++
+	f.updatedReq = req
 	return f.updateErr
+}
+
+// assertValidationField asserts err is a typed VALIDATION_ERROR (400) naming the given field.
+func assertValidationField(t *testing.T, err error, field string) {
+	t.Helper()
+	var ae *apperror.Error
+	require.ErrorAs(t, err, &ae)
+	assert.Equal(t, inbound.CodeValidation, ae.Code)
+	assert.Equal(t, 400, ae.HTTPStatus)
+	assert.Contains(t, ae.Details, field)
 }

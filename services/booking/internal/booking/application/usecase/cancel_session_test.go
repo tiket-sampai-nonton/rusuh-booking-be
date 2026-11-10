@@ -74,3 +74,33 @@ func TestCancelSession_PathUUIDValidation(t *testing.T) {
 		})
 	}
 }
+
+// TC-QUE-37 (P4, 1.4): cancel releases with LEFT_WITHOUT_BUYING; a foreign visitor never reaches Release.
+func TestCancelSession_ReleaseReasonAndOwnership(t *testing.T) {
+	tests := []struct {
+		name        string
+		admVisitor  string
+		releaseErr  error
+		wantReasons []vo.EndReason
+		wantErr     error
+	}{
+		{name: "owner releases as left-without-buying", admVisitor: visitor, wantReasons: []vo.EndReason{vo.EndLeftWithoutBuying}},
+		{name: "foreign visitor never reaches the repo release", admVisitor: "other", wantErr: inbound.ErrVisitorMismatch},
+		{name: "editable session surfaces ErrBookingLocked", admVisitor: visitor, releaseErr: inbound.ErrBookingLocked, wantErr: inbound.ErrBookingLocked},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := &fakeAdmissionRepo{
+				admission:  entity.Admission{ID: sessionID, VisitorID: tt.admVisitor, Status: vo.AdmissionActive},
+				releaseErr: tt.releaseErr,
+			}
+			err := usecase.NewCancelSession(repo).CancelSession(context.Background(), sessionID, visitor)
+			if tt.wantErr != nil {
+				assert.ErrorIs(t, err, tt.wantErr)
+			} else {
+				require.NoError(t, err)
+			}
+			assert.Equal(t, tt.wantReasons, repo.releaseReasons)
+		})
+	}
+}

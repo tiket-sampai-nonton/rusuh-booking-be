@@ -37,8 +37,8 @@ func (p HeartbeatPolicy) next(seq int64, doc dto.StatusDocument) int64 {
 }
 
 // GetMyEntry implements inbound.IMyEntryUsecase: the caller's own entry, rank-based position and server zone
-// (ADR-030). An ENDED entry is returned with state ENDED and a reason (addendum 2); 404 only when the visitor never
-// had an entry; 401 for a rotated-out or unknown token generation.
+// (ADR-030). An ENDED entry is returned with state ENDED and a reason (addendum 2); 404 when the visitor never
+// joined this event (no generation record) or had no entry; 401 for a rotated-out token generation.
 type GetMyEntry struct {
 	store  outbound.IQueueStore
 	policy HeartbeatPolicy
@@ -102,14 +102,24 @@ func (u *GetMyEntry) GetMyEntry(ctx context.Context, in inbound.MyEntryInput) (d
 	return out, nil
 }
 
-// checkTokenGen rejects a token whose generation is not the server's current one (rotated out) or a visitor with no
-// server record (R01.4/R01.6).
+// checkTokenGen is the generation check shared by claim, leave and me (R01.4/R01.6). It runs before any state change
+// and does not depend on the entry id, so a rotated token cannot probe entries. Outcomes:
+//   - empty eventId                       -> ErrVisitorTokenInvalid (401, unchanged)
+//   - no generation record for the event  -> entity.ErrNotFound (404: the visitor never joined this event)
+//   - record present, gen <= 0 or differs -> ErrVisitorTokenInvalid (401: rotated out / legacy token)
+//   - match                               -> nil
 func checkTokenGen(ctx context.Context, store outbound.IQueueStore, eventID, visitorID string, gen int64) error {
+	if eventID == "" {
+		return entity.ErrVisitorTokenInvalid
+	}
 	cur, ok, err := store.TokenGen(ctx, eventID, visitorID)
 	if err != nil {
 		return err
 	}
-	if !ok || gen <= 0 || cur != gen {
+	if !ok {
+		return entity.ErrNotFound
+	}
+	if gen <= 0 || cur != gen {
 		return entity.ErrVisitorTokenInvalid
 	}
 	return nil
@@ -132,6 +142,8 @@ func endedReason(e entity.Entry) string {
 	switch {
 	case e.Status == valueobject.StatusLeft:
 		return "LEFT"
+	case e.Status == valueobject.StatusSoldOut:
+		return "SOLD_OUT"
 	case e.EndReason == "STALE_TIMEOUT":
 		return "STALE_TIMEOUT"
 	case e.Status == valueobject.StatusMissed, e.EndReason == "UNCLAIMED", e.EndReason == "SWEEP_MISSED":

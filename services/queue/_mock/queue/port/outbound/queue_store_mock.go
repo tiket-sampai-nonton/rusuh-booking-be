@@ -104,6 +104,21 @@ func (mr *MockIQueueStoreMockRecorder) EndEntry(ctx, eventID, entryID, outcome, 
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "EndEntry", reflect.TypeOf((*MockIQueueStore)(nil).EndEntry), ctx, eventID, entryID, outcome, nowMs)
 }
 
+// EndWaitingSoldOut mocks base method.
+func (m *MockIQueueStore) EndWaitingSoldOut(ctx context.Context, eventID string, nowMs int64, batch int) (outbound.SoldOutBatch, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "EndWaitingSoldOut", ctx, eventID, nowMs, batch)
+	ret0, _ := ret[0].(outbound.SoldOutBatch)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// EndWaitingSoldOut indicates an expected call of EndWaitingSoldOut.
+func (mr *MockIQueueStoreMockRecorder) EndWaitingSoldOut(ctx, eventID, nowMs, batch any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "EndWaitingSoldOut", reflect.TypeOf((*MockIQueueStore)(nil).EndWaitingSoldOut), ctx, eventID, nowMs, batch)
+}
+
 // ExpiredActive mocks base method.
 func (m *MockIQueueStore) ExpiredActive(ctx context.Context, eventID string, nowMs int64, limit int) ([]string, error) {
 	m.ctrl.T.Helper()
@@ -313,6 +328,20 @@ func (m *MockIQueueStore) SetSale(ctx context.Context, eventID, saleState string
 func (mr *MockIQueueStoreMockRecorder) SetSale(ctx, eventID, saleState, soldOut any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetSale", reflect.TypeOf((*MockIQueueStore)(nil).SetSale), ctx, eventID, saleState, soldOut)
+}
+
+// SetSaleWindow mocks base method.
+func (m *MockIQueueStore) SetSaleWindow(ctx context.Context, eventID string, startsMs, endsMs int64) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "SetSaleWindow", ctx, eventID, startsMs, endsMs)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// SetSaleWindow indicates an expected call of SetSaleWindow.
+func (mr *MockIQueueStoreMockRecorder) SetSaleWindow(ctx, eventID, startsMs, endsMs any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetSaleWindow", reflect.TypeOf((*MockIQueueStore)(nil).SetSaleWindow), ctx, eventID, startsMs, endsMs)
 }
 
 // SetStatusDoc mocks base method.

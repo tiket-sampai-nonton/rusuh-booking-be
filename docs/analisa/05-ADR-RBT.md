@@ -45,6 +45,7 @@
 | ADR-027 | Verifikasi OTP dan counter auth adalah satu skrip atomik Valkey; token diterbitkan sebelum commit sesi | 2026-11-04 | CN-06 | SRS-Q-SEC-10..11, SRS-F-01-08 |
 | ADR-028 | Keputusan status dan kepemilikan Queue dipindahkan ke dalam Lua; Go tidak lagi membaca-lalu-bertindak | 2026-11-04 | CN-03, CN-04 | SRS-F-04, SRS-F-25 |
 | ADR-029 | Admisi diserialisasi lewat lease per-event dan `promote.lua` difagar token lease | 2026-11-04 | CN-03, CN-04 | SRS-F-04-07, SRS-F-25-02 |
+| ADR-031 | Pengaturan antrean per event: PUT admin eksplisit, join ketat, audit di `queue.event_settings_audit` | 2026-11-06 | CN-03, CN-04 | SRS-F-26-07, SRS-F-26-08, SRS-D-08, QSA-1..10 |
 | ADR-030 | Join antrean anonim, jaminan kuantitas, NIK pembeli diikat saat hold, tanpa pemeriksaan bot di klien | 2026-11-04 | CN-03, CN-04 | SRS-F-01-01..09, SRS-F-04-03, SRS-F-05-07, SRS-F-09-01, SRS-F-11-02 |
 
 ---
@@ -632,6 +633,9 @@ Pola yang diadopsi dari usulan BE-2: **satu image banyak verb** (`api`, `worker`
 
 **Confirmation.** CI stage `code-quality` memeriksa `go.mod`/`go.sum` rapi dan `_mock/` sesuai port; `case-coverage` menjalankan integration test; evidence `docs/evidence/2026-10-19-boilerplate-v1.5.md`.
 
+
+**Amandemen (2026-11-09): `BOOKING_PAGE_BASE_URL` dan jadwal per-job Queue worker.** (1) Queue worker menjalankan tiap job pada interval sendiri (`QUEUE_PROMOTOR_INTERVAL_MS` 100ms, `QUEUE_SWEEPER_INTERVAL_MS` 10s, `QUEUE_STATUS_INTERVAL_MS` 1s; liveness `WORKER_INTERVAL`), satu goroutine per job; sebelumnya satu `WORKER_INTERVAL` untuk semua job sehingga promotor tidak pernah berjalan pada ~100 ms seperti SDD §8.1. Ketiga interval divalidasi `> 0` saat start (D-24) dan TTL dokumen status kini pengali x `QUEUE_STATUS_INTERVAL_MS`. (2) Env baru `BOOKING_PAGE_BASE_URL` (wajib; https di luar `APP_ENV=local`; tanpa query/fragment/userinfo) menjadi dasar `bookingUrl` pada respons claim: `{BOOKING_PAGE_BASE_URL}/{eventId}`, tanpa token (NFR-07); `BOOKING_SERVICE_URL` tetap alamat internal. Konsekuensi untuk frontend: `bookingUrl` adalah rute halaman per event, bukan per entry; token dikirim ke `POST /api/v1/booking-sessions`. `bookingUrl` dideprekasi; lihat Adendum ADR-030 2026-11-09 (deprecasi). Risiko yang diterima: R-1 promotor memanggil Booking ~50x lebih sering saat Booking down (dibatasi circuit breaker), R-2 TTL status turun dari ~20 s ke 4 s (pengali dapat naik ke 5), R-3 job yang mengabaikan ctx menunda shutdown (sama seperti sebelumnya), R-4 `ListEventIDs`/`settings.Get` tanpa cache pada 100 ms (tindak lanjut). Bukti: `docs/evidence/2026-11-09-queue-worker-cadence-booking-url.md`.
+
 ---
 
 ## ADR-023: Observability — log JSON ke stdout, metrik Prometheus, Grafana + Loki, korelasi `trace_id`
@@ -776,7 +780,7 @@ Pola yang diadopsi dari usulan BE-2: **satu image banyak verb** (`api`, `worker`
 | **Status** | Accepted (2026-11-04) |
 | **Konteks** | `leave`, `claim`, dan sweeper memutuskan lewat pembacaan Go yang terpisah dari tulis Lua. Akibat yang terverifikasi: (1) `Leave` melepas alokasi Booking dari hasil `GetEntry` sebelum `leave.lua` menolak non-pemilik, sehingga siapa pun yang tahu `entryId` bisa membebaskan tiket yang sudah direservasi pembeli lain; (2) `leave.lua` menimpa status terminal (`COMPLETED`/`ENDED`) menjadi `LEFT`; (3) `claim.lua` menjawab `TURN_MISSED` untuk semua status selain ADMITTED; (4) pembersihan MISSED menghapus kunci constraint milik entry yang lebih baru; (5) pemindaian kedaluwarsa tanpa batas dan member orphan tidak pernah dihapus. |
 | **Keputusan** | Status, kepemilikan, dan hasil (`OK`/`IGNORED`/`NOT_FOUND`) diputuskan atomik di `end_entry.lua`, `leave.lua`, `claim.lua`, dan `promote.lua`; Go hanya membaca field imutabel dan bertindak sesudah commit (release Booking hanya bila `leave.lua` melaporkan `OK` + `ADMITTED`). Sweeper memakai outcome sendiri `SWEEP_MISSED`; outcome Booking `UNCLAIMED` pada ADMITTED/CLAIMED membebaskan slot. `ExpiredActive` dibatasi (`QUEUE_SWEEP_BATCH_MAX`). Rate limiter atomik (`rate_limit.lua`). |
-| **Konsekuensi** | Skrip lama dan baru kompatibel pada data lama (TC `TestLegacy`). Perilaku terlihat pengguna: claim untuk entry WAITING menjawab `409 NOT_ADMITTED`; leave pada entry CLAIMED/terminal menjawab 204 tanpa mengubah apa pun (QSH-OQ-3, provisional). |
+| **Konsekuensi** | Skrip lama dan baru kompatibel pada data lama (TC `TestLegacy`). Perilaku terlihat pengguna: claim untuk entry WAITING menjawab `409 NOT_ADMITTED`; leave pada entry CLAIMED/terminal menjawab 204 tanpa mengubah apa pun (QSH-OQ-3, provisional). **Digantikan sebagian (2026-11-09):** leave pada entry CLAIMED kini `409 ENTRY_CLAIMED` (keputusan pemilik OQ-1 = (b)); terminal tetap 204. Lihat `docs/evidence/2026-11-09-queue-booking-flow-fixes.md`. |
 
 ---
 
@@ -874,3 +878,60 @@ Pola yang diadopsi dari usulan BE-2: **satu image banyak verb** (`api`, `worker`
   mark). **Caveat:** tahap CI `contracts` TIDAK mendeteksi drift kode↔OpenAPI (kin-openapi menerima nama
   `required` yang tak ada di `properties`), sehingga suntingan OpenAPI diverifikasi lewat inspeksi
   (`grep servingSeq queue.yaml ⇒ 0`), bukan lewat exit code gerbang.
+
+### Adendum Amandemen ADR-030 — 2026-11-09 (pengiriman visitor token, 401 vs 404, `X-Device-Id` lintas rute)
+
+- **Status:** Accepted (arah dikonfirmasi pemilik pada triase temuan Batch 2).
+- **Konteks:** Uji curl menemukan empat penyimpangan: (1) join memutuskan "mobile" hanya dari `X-Client-Type`, sehingga
+  pemegang cookie yang menyalin header itu menerima token yang dapat dibaca skrip; (2) claim/leave menjawab 404 untuk
+  token tidak valid sedangkan `me` 401 (kontrak QSH-T10); (3) `checkTokenGen` menjawab 401 untuk "tidak ada catatan
+  generasi" (visitor belum pernah bergabung) sama dengan "token dirotasi"; (4) CORS lokal tidak mengizinkan
+  `X-Device-Id`.
+- **Keputusan:** (a) Cookie `rb_visitor` selalu di-set bila token terbit; `visitorToken` di body hanya bila
+  `X-Client-Type: mobile` DAN request tidak membawa cookie valid (cookie tidak kosong dan lolos verifikasi). Cookie tidak
+  kosong yang tidak valid → visitor baru, header `X-Visitor-Token` diabaikan. (b) Claim/leave menjawab
+  `401 VISITOR_TOKEN_INVALID` untuk token tidak ada/tidak valid/kedaluwarsa/perangkat tidak cocok, sebelum entri dicari
+  (identik untuk entri sendiri, orang lain, atau tidak ada). (c) `checkTokenGen` tiga arah untuk claim, leave, me:
+  `eventId` kosong → 401; catatan generasi tidak ada → 404 `NOT_FOUND` (belum pernah bergabung); catatan ada tetapi
+  generasi beda/0 → 401 (dirotasi). (d) `join.lua` `describe()` memperbarui TTL `vtok` pada setiap join EXISTING/replay
+  agar "catatan tidak ada" benar-benar berarti "belum pernah bergabung" selama token yang baru diterbitkan berlaku.
+  (e) `X-Device-Id` ditambahkan ke `Access-Control-Allow-Headers`; pengikatan perangkat berlaku di join, me, heartbeat,
+  claim, leave. (f) App native WAJIB mengirim `X-Client-Type: mobile` pada join dan mengirim token kembali sebagai
+  `X-Visitor-Token`.
+- **Alternatif ditolak:** menambah `Source` pada `VisitorClaim`/authenticator (churn antarmuka + mock; turunan
+  `ok && cookie tidak kosong` sudah tepat karena `ResolveToken` membaca cookie lebih dulu); melemahkan syarat umur
+  catatan dan menerima 404 di jendela ekor; menyamakan heartbeat ke 404 (ditunda, OQ-3; heartbeat tetap 401).
+- **Konsekuensi:** Perubahan kontrak yang terlihat klien: claim/leave 404→401 untuk token tidak valid; `me` 401→404
+  untuk visitor yang belum pernah bergabung; klien native tanpa `X-Client-Type` tidak menerima token di body; klien
+  harus menangani 401 berdasarkan `errorCode` (`VISITOR_TOKEN_INVALID` bukan kedaluwarsa access token). Risiko
+  diterima: TOCTOU antara cek generasi dan skrip Lua (pra-ada; claim/leave Lua memakai pemilik visitor). Tindak lanjut:
+  field `JoinInput.IsMobile` kini hanya petunjuk transport (kandidat dihapus).
+
+### Adendum Amandemen ADR-030 — 2026-11-09 (deprecasi queueToken dan bookingUrl, ENTRY_MOVED dicadangkan)
+
+- **Status:** Accepted (keputusan pemilik Q4 ii, Q5, Q6).
+- **Konteks:** `queueToken` diterbitkan join tetapi tidak diterima endpoint mana pun (claim, leave, me, heartbeat memakai
+  visitor token); `bookingUrl` pada respons claim tidak lagi dibutuhkan klien (web dan app menavigasi dari
+  `admissionToken`); kode `ENTRY_MOVED` (409) terdaftar di Queue tetapi tidak dihasilkan jalur mana pun.
+- **Keputusan:** (a) `queueToken` dan `bookingUrl` ditandai deprecated di kontrak, dokumen, dan komentar kode; keduanya
+  tetap dikembalikan selama satu rilis, lalu dihapus (tanggal rilis belum ditetapkan). `admissionToken` tetap wajib dan
+  satu-satunya jalur akses (invarian 2, NFR-07). (b) `ENTRY_MOVED` dan SRS-F-01-10 / spec Requirement 7.4 / task 14.2 /
+  TC-QUE-16 dipertahankan sebagai desain masa depan; kode dicadangkan, TC tetap NOT_RUN, task tetap belum dicentang.
+  (c) `BOOKING_PAGE_BASE_URL` tetap wajib divalidasi (D-24) karena `bookingUrl` masih dibangun darinya; penghapusan env
+  ditunda ke rilis yang menghapus `bookingUrl`. (d) Entri CORS `X-Queue-Token` dipertahankan selama rilis yang sama.
+- **Alternatif ditolak:** ADR baru (tidak ada alternatif arsitektur untuk dicatat); menghapus field sekarang (mengubah
+  kontrak respons); penanda `// Deprecated:` Go (memicu SA1019 di `make lint` untuk pemakaian lintas paket, jadi dipakai
+  komentar `DEPRECATED (...)`).
+- **Konsekuensi:** Tidak ada perubahan perilaku runtime; hanya anotasi. Klien tidak boleh bergantung pada kedua field.
+
+---
+
+## ADR-031: Pengaturan antrean per event lewat PUT admin eksplisit, join ketat, audit append-only
+
+| Field | Isi |
+|---|---|
+| **Status** | Proposed (2026-11-06). Menggantikan perilaku pembuatan baris malas pada commit `4c609b0` (tanpa ADR) dan menyempurnakan kata-kata SRS-F-26-07, SRS-F-26-08, SRS-D-08, dan CFG-01.7. |
+| **Konteks** | `queue.event_settings` tidak punya jalur tulis. Join pertama membuat baris bawaan secara malas (`Settings.Ensure`, `4c609b0`), sehingga event baru diam-diam mendapat kapasitas 500 yang tidak pernah dipilih siapa pun, dan tidak ada catatan siapa mengubah apa. SRS-F-26-07 mewajibkan setiap perubahan tercatat (siapa, kapan, lama → baru) dan SRS-F-26-08 mewajibkan endpoint admin internal untuk perubahan per event. Jebakan nilai bawaan di jalur panas (join) juga menyembunyikan event yang lupa dikonfigurasi. |
+| **Keputusan** | (1) Queue menyediakan `GET`/`PUT /internal/v1/admin/events/{eventId}/queue-settings` (internal; token pembeli User Service scope `buyer` + allow-list `ADMIN_EMAILS`, semua kegagalan 401). (2) PUT adalah upsert: hanya `activeSlotCapacity` wajib; saat membuat, field lain memakai bawaan kolom migrasi 0001; saat mengubah, yang tidak dikirim dipertahankan; batas dan aturan lintas-field dinilai pada nilai hasil gabungan. (3) Satu panggilan `Booking.Supply` memastikan event ada dan memberi `salesStartsAt`; selama penjualan terbuka (waktu server ≥ `salesStartsAt`) `oneActivePerVisitor`/`oneActivePerEmail` terkunci (409 `EVENT_RULES_LOCKED`). (4) Setiap perubahan ditulis per field ke `queue.event_settings_audit` (migrasi 0004; append-only ditegakkan trigger DB; `actor` = subject token) dalam transaksi yang sama dengan baris pengaturan, di bawah advisory lock per event; kegagalan audit membatalkan perubahan. (5) Join ketat: tanpa baris pengaturan, join dijawab 409 `QUEUE_NOT_CONFIGURED` sebelum `Supply`, Valkey, atau reservasi apa pun; `Settings.Ensure` dihapus, sehingga PUT admin satu-satunya jalur yang menulis `queue.event_settings`. (6) Tidak ada event RabbitMQ dan tidak ada env nilai bawaan kapasitas. |
+| **Opsi ditolak** | **Env bawaan kapasitas:** satu nilai global untuk semua event, tidak bisa diaudit per event, butuh deploy untuk mengubah. **Event RabbitMQ saat event dibuat + consumer di Queue:** menambah binding dan jalur kegagalan untuk nilai yang hanya sebuah bawaan, dan tetap tidak menjawab "siapa memilih kapasitas ini"; worker membaca PG tiap tick sehingga tidak butuh notifikasi. **Pembuatan malas (`Ensure`) dipertahankan:** menyembunyikan event yang belum dikonfigurasi dan menulis di jalur panas. **Memindahkan `event_settings` ke Booking:** perubahan kepemilikan data (ADR-001) di luar cakupan. |
+| **Konsekuensi** | (a) Setiap event baru tidak bisa di-join (409 `QUEUE_NOT_CONFIGURED`) sampai admin PUT setelah event terbit dan sebelum penjualan dimulai; runbook staging/prod dan bootstrap e2e/uji beban harus melakukannya. (b) Event draf tidak bisa dikonfigurasi karena `Supply` hanya mengenal event terbit. (c) Verifier admin diduplikasi di Queue karena service tidak boleh saling impor dan memindahkannya ke `pkg/` mengubah `services/booking`; utang yang dicatat: ekstrak `pkg/adminauth`. Tidak ada fallback ke kunci Queue sendiri untuk token admin: tanpa `TOKEN_PUBLIC_KEY_FILE` semua permintaan admin 401. (d) **Batas race di `salesStartsAt`:** keputusan kunci memakai snapshot `Supply` yang diambil sebelum transaksi, sehingga PUT yang bersamaan persis dengan awal penjualan dapat dinilai "belum terbuka" paling lama selama satu round-trip Booking; hasilnya tidak bisa dipengaruhi pemanggil. Diterima dan dicatat. (e) Menurunkan kapasitas di bawah jumlah aktif diterima; tidak ada entri aktif yang dicabut. (f) Di luar cakupan: validasi silang `ADMISSION_TOKEN_TTL_SECONDS < claim_window_seconds` saat simpan. |
