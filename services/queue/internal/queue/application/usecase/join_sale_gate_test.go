@@ -75,7 +75,7 @@ func TestJoin_SaleGate_RepeatedAndReplayRejectionsAreIdentical(t *testing.T) {
 	expectLimiterAndSettings(m, 2)
 	soldOut := outbound.SaleState{SaleState: "CLOSED", SoldOut: true, SalesStartsMs: ms(joinNow.Add(-time.Hour)), SalesEndsMs: ms(joinNow.Add(time.Hour))}
 	m.store.EXPECT().GetSale(gomock.Any(), "ev1").Return(soldOut, nil).Times(2)
-	in := inbound.JoinInput{EventID: "ev1", ClientIP: "1.2.3.4", IdempotencyKey: "idem-key-0123456789"}
+	in := inbound.JoinInput{EventID: "ev1", ClientIP: "1.2.3.4", IdempotencyKey: "idem-test-dup-01"}
 	_, e1 := uc.Join(context.Background(), in)
 	_, e2 := uc.Join(context.Background(), in)
 	require.ErrorIs(t, e1, entity.ErrSoldOut)

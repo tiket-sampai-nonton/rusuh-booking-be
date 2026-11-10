@@ -204,8 +204,8 @@ func TestJoinLua_DecisionTable(t *testing.T) {
 	})
 
 	t.Run("T16 Idempotency-Key replay returns the same entry", func(t *testing.T) {
-		first := join(t, s, "ev-t16", outbound.JoinParams{EntryID: "a", NewVisitorID: "v-a", IdemKey: "idem-0123456789abcdef", IdemTTL: time.Minute})
-		again := join(t, s, "ev-t16", outbound.JoinParams{EntryID: "b", NewVisitorID: "v-b", IdemKey: "idem-0123456789abcdef", IdemTTL: time.Minute})
+		first := join(t, s, "ev-t16", outbound.JoinParams{EntryID: "a", NewVisitorID: "v-a", IdemKey: "idem-test-t16-replay", IdemTTL: time.Minute})
+		again := join(t, s, "ev-t16", outbound.JoinParams{EntryID: "b", NewVisitorID: "v-b", IdemKey: "idem-test-t16-replay", IdemTTL: time.Minute})
 		assert.Equal(t, outbound.JoinExisting, again.Outcome)
 		assert.Equal(t, first.EntryID, again.EntryID)
 		assert.Equal(t, first.VisitorID, again.VisitorID)

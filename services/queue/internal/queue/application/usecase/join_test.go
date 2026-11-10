@@ -115,14 +115,14 @@ func TestJoin_BearerAccountIsPassedAsIdentityOnly(t *testing.T) {
 	m.settings.EXPECT().Get(ctx, "ev1").Return(entity.EventSettings{}, true, nil)
 	m.store.EXPECT().Join(ctx, gomock.Any()).DoAndReturn(func(_ context.Context, p outbound.JoinParams) (outbound.JoinResult, error) {
 		assert.Equal(t, "acc-1", p.AccountID)
-		assert.Equal(t, "idem-key-0123456789", p.IdemKey)
+		assert.Equal(t, "idem-test-acct-01", p.IdemKey)
 		return created(p, 1), nil
 	})
 	m.audit.EXPECT().Append(ctx, gomock.Any()).Return(nil)
 	m.tokens.EXPECT().IssueQueue(gomock.Any(), gomock.Any(), gomock.Any()).Return("qt", nil)
 	m.tokens.EXPECT().IssueVisitor(gomock.Any(), gomock.Any()).Return("vt", nil)
 
-	_, err := uc.Join(ctx, inbound.JoinInput{EventID: "ev1", Bearer: "bearer", IdempotencyKey: "idem-key-0123456789", ClientIP: "1.2.3.4"})
+	_, err := uc.Join(ctx, inbound.JoinInput{EventID: "ev1", Bearer: "bearer", IdempotencyKey: "idem-test-acct-01", ClientIP: "1.2.3.4"})
 	require.NoError(t, err)
 }
 
