@@ -16,21 +16,21 @@ raw="$(mktemp)"
 trap 'rm -f "$raw"' EXIT
 
 tags=()
-if [ -n "${GO_TEST_TAGS:-}" ]; then tags=(-tags "$GO_TEST_TAGS"); fi
+if [[ -n "${GO_TEST_TAGS:-}" ]]; then tags=(-tags "$GO_TEST_TAGS"); fi
 (cd "$root/$dir" && go test ${tags[@]+"${tags[@]}"} -race -count=1 -covermode=atomic -coverprofile="$raw" ./...)
 
 out="$root/coverage/${name}.out"
 grep -v -E '/(cmd|_mock|delivery|config)/' "$raw" > "$out"
 
 pct="$(cd "$root/$dir" && go tool cover -func="$out" | awk '/^total:/ {gsub("%", "", $NF); print $NF}')"
-if [ -z "$pct" ]; then
+if [[ -z "$pct" ]]; then
   echo "::error::$name: tidak bisa menghitung coverage"
   exit 1
 fi
 
 line="$name: coverage logika ${pct}% (ambang ${min}%)"
 echo "$line"
-if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
   echo "- $line" >> "$GITHUB_STEP_SUMMARY"
 fi
 

@@ -14,9 +14,9 @@ pids=()
 cleanup() { for p in "${pids[@]:-}"; do kill "$p" 2>/dev/null || true; done; wait 2>/dev/null || true; rm -rf "$work"; }
 trap cleanup EXIT
 
-[ -f "$keys/queue-token.pem" ] || make -C "$root" keys
+[[ -f "$keys/queue-token.pem" ]] || make -C "$root" keys
 for s in queue booking payment notification user; do
-  [ -f "$root/services/$s/.env" ] || { echo "services/$s/.env tidak ada (salin dari .env.example)" >&2; exit 1; }
+  [[ -f "$root/services/$s/.env" ]] || { echo "services/$s/.env tidak ada (salin dari .env.example)" >&2; exit 1; }
   (cd "$root/services/$s" && GOWORK=off go build -o "$work/$s" ./cmd)
   (cd "$root/services/$s" && "$work/$s" migrate up >/dev/null)
 done

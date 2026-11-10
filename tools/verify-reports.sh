@@ -15,27 +15,27 @@ bad() { echo "::error::$*"; fail=1; }
 # count <file> <label> <filter-jq>  -> gagal bila file hilang/tidak valid atau hasil > 0
 count() {
   local f="$1" label="$2" q="$3" n
-  if [ ! -s "$f" ]; then bad "$label: laporan tidak ada ($f)"; return; fi
+  if [[ ! -s "$f" ]]; then bad "$label: laporan tidak ada ($f)"; return; fi
   if ! n=$(jq --arg sev "${IMAGE_FAIL_SEVERITY:-CRITICAL}" "$q" "$f" 2>/dev/null); then
     bad "$label: laporan tidak valid ($f)"; return
   fi
-  if [ "$n" -gt 0 ]; then bad "$label: $n temuan"; else echo "ok  $label"; fi
+  if [[ "$n" -gt 0 ]]; then bad "$label: $n temuan"; else echo "ok  $label"; fi
 }
 
 found=0
 case "$mode" in
   quality)
     for d in "$dir"/quality-*; do
-      [ -d "$d" ] || continue
+      [[ -d "$d" ]] || continue
       found=1
       name="${d##*/quality-}"
-      if [ "$name" = "secrets" ]; then
+      if [[ "$name" = "secrets" ]]; then
         count "$d/gitleaks.json" "secrets" 'length'
         continue
       fi
       count "$d/gosec.json" "$name gosec (HIGH)" '[.Issues[]? | select(.severity == "HIGH")] | length'
       count "$d/govulncheck.sarif" "$name govulncheck" '[.runs[]?.results[]?] | length'
-      if [ "$name" != "pkg" ]; then
+      if [[ "$name" != "pkg" ]]; then
         count "$d/hadolint.json" "$name hadolint (error)" '[.[] | select(.level == "error")] | length'
       fi
     done
@@ -55,7 +55,7 @@ case "$mode" in
     ;;
 esac
 
-if [ "$found" = 0 ]; then
+if [[ "$found" = 0 ]]; then
   bad "tidak ada laporan di $dir"
 fi
 exit "$fail"

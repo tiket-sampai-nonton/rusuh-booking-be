@@ -18,19 +18,19 @@ esac
 
 all=1
 files=""
-if [ -n "$base" ] && [ "$base" != "$ZERO" ] && git cat-file -e "${base}^{commit}" 2>/dev/null; then
+if [[ -n "$base" ]] && [[ "$base" != "$ZERO" ]] && git cat-file -e "${base}^{commit}" 2>/dev/null; then
   files="$(git diff --name-only "$base" HEAD)"
   all=0
 fi
 
 # Perubahan pada bagian bersama memicu semua service.
-if [ "$all" = 0 ] && printf '%s\n' "$files" | grep -Eq '^(pkg/|go\.work|go\.work\.sum|\.golangci\.yml|\.github/workflows/ci\.yml|tools/|sonar-project\.properties|Makefile$)'; then
+if [[ "$all" = 0 ]] && printf '%s\n' "$files" | grep -Eq '^(pkg/|go\.work|go\.work\.sum|\.golangci\.yml|\.github/workflows/ci\.yml|tools/|sonar-project\.properties|Makefile$)'; then
   all=1
 fi
 
 selected=()
 for s in "${SERVICES[@]}"; do
-  if [ "$all" = 1 ] || printf '%s\n' "$files" | grep -q "^services/${s}/"; then
+  if [[ "$all" = 1 ]] || printf '%s\n' "$files" | grep -q "^services/${s}/"; then
     selected+=("$s")
   fi
 done
@@ -47,7 +47,7 @@ services+="]"
 
 modules="["
 sep=""
-if [ "$all" = 1 ]; then
+if [[ "$all" = 1 ]]; then
   modules+="$(obj pkg pkg)"
   sep=","
 fi
@@ -59,14 +59,14 @@ modules+="]"
 
 # Job `contracts` hanya perlu jalan bila kontrak atau validatornya berubah (atau bila semua modul diproses).
 contracts=false
-if [ "$all" = 1 ] || printf '%s\n' "$files" | grep -Eq '^(docs/contracts/|tools/contracts/)'; then
+if [[ "$all" = 1 ]] || printf '%s\n' "$files" | grep -Eq '^(docs/contracts/|tools/contracts/)'; then
   contracts=true
 fi
 
 any=false
-[ "$modules" != "[]" ] && any=true
+[[ "$modules" != "[]" ]] && any=true
 any_services=false
-[ "$services" != "[]" ] && any_services=true
+[[ "$services" != "[]" ]] && any_services=true
 
 {
   echo "modules=$modules"
