@@ -72,7 +72,7 @@ fresh;                                                          expect "env leng
 grep -q "SECRETMARK123" "$TMP/ssmout.txt" && bad "nilai env ikut tercetak" || ok "nilai env tidak pernah dicetak"
 fresh; sed -i.bak '/^BOOKING_PAGE_BASE_URL=/d' "$TMP/ssm/queue.env"
 r=$(ssmcheck); expect "BOOKING_PAGE_BASE_URL hilang (insiden prod): gagal" 1 "$r"; grep -q "queue.env.*BOOKING_PAGE_BASE_URL" "$TMP/ssmout.txt" && ok "pesan menyebut service dan nama key" || bad "pesan tidak menyebut key"
-fresh; sed -i.bak '/^CORS_ALLOWED_ORIGINS=/d' "$TMP/ssm/user.env";        expect "key opsional terdaftar hilang: tetap lolos" 0 "$(ssmcheck)"
+fresh; sed -i.bak '/^OTP_MAX_PER_IP_HOUR=/d' "$TMP/ssm/user.env";        expect "key opsional terdaftar hilang: tetap lolos" 0 "$(ssmcheck)"
 fresh; sed -i.bak '/^PAYMENT_MAX_ATTEMPTS=/d;/^MIDTRANS_SERVER_KEY=/d' "$TMP/ssm/payment.env"; r=$(ssmcheck); expect "key wajib lain hilang: gagal" 1 "$r"
 fresh; rm -f "$TMP/ssm/booking.env";                                    expect "parameter tidak ada: gagal" 1 "$(ssmcheck)"
 fresh; r=$(FAKE_AWS_DENY=1 ssmcheck);                                   expect "kredensial CI tanpa izin baca: dilewati (exit 2)" 2 "$r"
