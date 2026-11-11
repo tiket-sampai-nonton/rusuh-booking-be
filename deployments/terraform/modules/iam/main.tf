@@ -61,7 +61,7 @@ data "aws_iam_policy_document" "instance" {
   }
   statement {
     sid       = "Logs"
-    actions   = ["logs:CreateLogStream", "logs:PutLogEvents"]
+    actions   = ["logs:CreateLogStream", "logs:PutLogEvents", "logs:DescribeLogStreams"] # DescribeLogStreams: CloudWatch Agent (EMF NFR-09)
     resources = ["arn:aws:logs:${var.region}:${data.aws_caller_identity.this.account_id}:log-group:/${var.name}/*:*"]
   }
 }

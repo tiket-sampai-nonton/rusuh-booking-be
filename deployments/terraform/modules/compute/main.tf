@@ -12,6 +12,7 @@ variable "app_sg_id" { type = string }
 variable "instance_profile_name" { type = string }
 variable "registry" { type = string }
 variable "log_group" { type = string }
+variable "metrics_log_group" { type = string }
 variable "certificate_arn" { type = string }
 variable "data_host_instance_id" { type = string }
 variable "data_host_ip" { type = string }
@@ -187,6 +188,9 @@ resource "aws_launch_template" "tier" {
     data_host_ip = var.data_host_ip, booking_internal = aws_lb.internal.dns_name,
     services     = sort([for k, s in var.services : k if s.tier == each.key]),
     ports        = local.ports, has_worker = local.has_worker,
+    # NFR-09: hanya API yang mengekspos metrik bisnis (funnel Booking, kedalaman antrean Queue) yang di-scrape.
+    metric_services   = sort([for k, s in var.services : k if s.tier == each.key && contains(["queue", "booking"], k)])
+    metrics_log_group = var.metrics_log_group, metrics_namespace = "RBT/${var.name}",
   }))
   tag_specifications {
     resource_type = "instance"
