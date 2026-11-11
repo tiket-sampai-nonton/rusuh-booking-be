@@ -8,6 +8,11 @@ set -euo pipefail
 export AWS_REGION AWS_DEFAULT_REGION="$AWS_REGION"
 name="rusuh-$ENV_NAME"
 
+# Env di SSM tidak ikut template (seed-ssm.sh hanya sekali): cek key wajib SEBELUM mengubah apa pun. Kode keluar 2 berarti
+# kredensial ini tidak boleh membaca env (user CI sengaja begitu, isinya rahasia): dilewati, operator yang menjalankannya.
+rc=0; bash "$(dirname "$0")/check-ssm-env.sh" || rc=$?
+case "$rc" in 0) ;; 2) echo "cek env SSM dilewati (kredensial tanpa izin baca)" ;; *) exit 1 ;; esac
+
 for s in queue booking payment notification user; do
   aws ecr describe-images --repository-name "$name/$s" --image-ids imageTag="$IMAGE_TAG" >/dev/null
 done
@@ -44,11 +49,6 @@ for asg in $asgs; do
   echo "$asg selesai"
 done
 
-# Status EC2 sehat belum berarti API sehat (health check ASG tipe EC2), jadi cek lewat jalur publik.
-for _ in $(seq 1 18); do
-  code="$(curl -s -m 10 -o /dev/null -w '%{http_code}' "https://$API_DOMAIN/api/v1/events" || true)"
-  [ "$code" = 200 ] && { echo "smoke test lulus (GET /api/v1/events = 200)"; exit 0; }
-  sleep 10
-done
-echo "smoke test gagal: HTTP $code" >&2
-exit 1
+# Status EC2 sehat belum berarti API sehat (health check ASG tipe EC2), jadi cek lewat jalur publik, dan SEMUA service,
+# bukan hanya /events yang dilayani Booking: dulu rilis tetap hijau walau queue-api mati karena env wajib yang hilang.
+bash "$(dirname "$0")/smoke-test.sh"

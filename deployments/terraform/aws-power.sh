@@ -42,14 +42,9 @@ case "${1:-}" in
     aws ec2 start-instances --instance-ids "$data_id" >/dev/null
     aws ec2 wait instance-running --instance-ids "$data_id"
     for asg in $asgs; do aws autoscaling update-auto-scaling-group --auto-scaling-group-name "$asg" --min-size 1 --desired-capacity 1; done
-    echo "menunggu API siap (biasanya 5-10 menit)"
-    code=000
-    for _ in $(seq 1 60); do
-      code="$(curl -s -m 10 -o /dev/null -w '%{http_code}' "https://$API_DOMAIN/api/v1/events" || true)"
-      [ "$code" = 200 ] && { echo "nyala: GET /api/v1/events = 200"; exit 0; }
-      sleep 15
-    done
-    echo "API belum siap: HTTP $code" >&2
+    echo "menunggu semua service siap (biasanya 5-10 menit)"
+    SMOKE_TRIES=60 SMOKE_SLEEP=15 bash "$(dirname "$0")/smoke-test.sh" && { echo "nyala"; exit 0; }
+    echo "API belum siap" >&2
     exit 1
     ;;
   *) echo "pakai: aws-power.sh on|off" >&2; exit 2 ;;
