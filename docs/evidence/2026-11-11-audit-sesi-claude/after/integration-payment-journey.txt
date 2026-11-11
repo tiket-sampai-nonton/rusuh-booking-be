@@ -1,0 +1,22 @@
+=== RUN   TestPaymentJourney
+2026/11/11 14:56:10 INFO request failed status=401 errorCode=UNAUTHORIZED error="UNAUTHORIZED: token tidak valid atau tidak ada: token: format tidak valid"
+2026/11/11 14:56:10 INFO request failed status=409 errorCode=IDEMPOTENCY_KEY_REUSED error="IDEMPOTENCY_KEY_REUSED: Idempotency-Key sudah dipakai untuk permintaan lain"
+2026/11/11 14:56:10 INFO request failed status=401 errorCode=WEBHOOK_SIGNATURE_INVALID error="WEBHOOK_SIGNATURE_INVALID: signature webhook tidak valid"
+2026/11/11 14:56:10 INFO request failed status=401 errorCode=UNAUTHORIZED error="UNAUTHORIZED: token tidak valid atau tidak ada: token: tanda tangan tidak valid"
+2026/11/11 14:56:10 INFO request failed status=404 errorCode=NOT_FOUND error="NOT_FOUND: booking tidak ditemukan"
+2026/11/11 14:56:10 INFO request failed status=403 errorCode=PAYMENT_PAGE_TOKEN_INVALID error="PAYMENT_PAGE_TOKEN_INVALID: token halaman bayar tidak valid"
+2026/11/11 14:56:10 INFO request failed status=401 errorCode=UNAUTHORIZED error="UNAUTHORIZED: token tidak valid atau tidak ada: token: format tidak valid"
+--- PASS: TestPaymentJourney (0.97s)
+=== RUN   TestNewHandler_HealthWithoutClients
+--- PASS: TestNewHandler_HealthWithoutClients (0.00s)
+=== RUN   TestClients_EmptyIsSafe
+--- PASS: TestClients_EmptyIsSafe (0.00s)
+=== RUN   TestNewAPIHandler_FailsFastWithoutSecretsOrKeys
+--- PASS: TestNewAPIHandler_FailsFastWithoutSecretsOrKeys (0.00s)
+=== RUN   TestNewHandler_RateLimitsPerIPButNotHealth
+2026/11/11 14:56:10 INFO request failed status=429 errorCode=RATE_LIMITED error="RATE_LIMITED: terlalu banyak permintaan; coba lagi nanti"
+--- PASS: TestNewHandler_RateLimitsPerIPButNotHealth (0.00s)
+=== RUN   TestLoop_RunsJobsUntilCancelled
+--- PASS: TestLoop_RunsJobsUntilCancelled (0.01s)
+PASS
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/payment/internal/delivery	2.649s

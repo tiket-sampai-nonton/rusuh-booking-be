@@ -111,6 +111,30 @@ func TestCreateNext_NumbersAttemptsAndBuildsOrderID(t *testing.T) {
 	assert.Equal(t, "RB-7F3A9C21-2", a2.ProviderOrderID)
 }
 
+// Batas attempt (PAYMENT_MAX_ATTEMPTS) ditegakkan di INSERT yang sama dengan penomoran: walau dua permintaan lolos
+// pemeriksaan awal usecase, attempt ke-(batas+1) tidak pernah tersimpan.
+func TestCreateNext_RefusesAttemptPastTheCapAtomically(t *testing.T) {
+	ctx := context.Background()
+	repo := NewAttempts(setup(t))
+	capped := newAttempt()
+	capped.MaxAttemptNo = 2
+	for i := 1; i <= 2; i++ {
+		a, err := repo.CreateNext(ctx, capped)
+		require.NoError(t, err)
+		require.Equal(t, i, a.AttemptNo)
+		ok, err := repo.Transition(ctx, outbound.TransitionSpec{AttemptID: a.ID, To: vo.AttemptFailed})
+		require.NoError(t, err)
+		require.True(t, ok)
+	}
+	_, err := repo.CreateNext(ctx, capped)
+	require.ErrorIs(t, err, outbound.ErrAttemptLimit)
+
+	uncapped := newAttempt() // MaxAttemptNo 0 = tanpa batas (perilaku lama)
+	a3, err := repo.CreateNext(ctx, uncapped)
+	require.NoError(t, err)
+	assert.Equal(t, 3, a3.AttemptNo)
+}
+
 // Property 1: At most one open attempt — dua puluh permintaan bersamaan, satu pemenang.
 func TestCreateNext_ConcurrentRequestsCreateOneOpenAttempt(t *testing.T) {
 	ctx := context.Background()
@@ -173,10 +197,11 @@ func TestTransition_StoresInstructionAndWritesEventOnlyWhenApplied(t *testing.T)
 	assert.True(t, got.SettlementTime.Equal(at))
 	assert.Equal(t, ins, got.Instruction, "instruksi lama tidak terhapus")
 
-	var routing, aggregate string
-	require.NoError(t, pool.QueryRow(ctx, `SELECT routing_key, aggregate_id::text FROM outbox_events`).Scan(&routing, &aggregate))
+	var routing, aggregate, outboxID string
+	require.NoError(t, pool.QueryRow(ctx, `SELECT routing_key, aggregate_id::text, id::text FROM outbox_events`).Scan(&routing, &aggregate, &outboxID))
 	assert.Equal(t, "payment.succeeded", routing)
 	assert.Equal(t, bookingID, aggregate)
+	assert.Equal(t, "7", outboxID[14:15], "id outbox baru adalah UUIDv7 (migrasi 0005, ADR-032)")
 }
 
 // Property 4: webhook idempoten dan status final tidak mundur.

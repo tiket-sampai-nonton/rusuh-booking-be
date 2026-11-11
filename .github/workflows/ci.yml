@@ -459,8 +459,28 @@ jobs:
           SSH_PORT: ${{ vars.DEV_SSH_PORT || '22' }}
         run: |
           # Hanya file yang dibutuhkan Compose: deployments/dev, init SQL, dan provisioning Grafana (path relatif dipertahankan).
+          # Skrip sinkron di bawah SAMA dengan REMOTE_SYNC di deployments/dev/push-config.sh (ubah keduanya bersamaan).
+          REMOTE_SYNC=$(cat <<'EOS'
+          set -eu
+          # Sinkronkan konfigurasi dari repo ke server TANPA meninggalkan berkas lama: berkas di deployments/observability yang sudah
+          # dihapus atau di-rename di repo ikut dihapus (dashboard dan alert lama bisa bentrok, uid sama). Yang dihapus hanya BERKAS,
+          # bukan folder: Grafana memasang folder itu sebagai bind mount, dan folder yang dihapus lalu dibuat ulang tidak terlihat
+          # container sampai di-recreate. cp menimpa berkas di tempat, jadi inode folder dan berkas yang ada tidak berganti.
+          R="${RUSUH_REPO:-/opt/rusuh/repo}"
+          T="$(mktemp -d)"
+          trap 'rm -rf "$T"' EXIT
+          mkdir -p "$R"
+          tar -C "$T" -xzf -
+          if [ -d "$R/deployments/observability" ]; then
+            (cd "$R" && find deployments/observability -type f) | while IFS= read -r f; do
+              [ -e "$T/$f" ] || rm -v "$R/$f"
+            done
+          fi
+          cp -a "$T"/. "$R"/
+          EOS
+          )
           tar -C . -czf - deployments/dev deployments/compose/postgres-init.sql deployments/observability \
-            | ssh -p "$SSH_PORT" "$TARGET" 'mkdir -p /opt/rusuh/repo && tar -C /opt/rusuh/repo -xzf -'
+            | ssh -p "$SSH_PORT" "$TARGET" "$REMOTE_SYNC"
       - name: Deploy ke dev
         if: steps.cfg.outputs.ready == 'true'
         env:

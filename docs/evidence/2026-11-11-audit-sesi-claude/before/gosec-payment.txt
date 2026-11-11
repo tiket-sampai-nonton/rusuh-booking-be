@@ -1,0 +1,26 @@
+services/payment/internal/payment/infrastructure/http/handlers_test.go:124:31: G124: http.Cookie missing or has insecure Secure, HttpOnly, or SameSite attribute (gosec)
+	web.AddCookie(&stdhttp.Cookie{Name: httpx.CookieVisitor, Value: e.visitorToken()})
+	                             ^
+services/payment/internal/payment/infrastructure/http/handlers_test.go:138:29: G124: http.Cookie missing or has insecure Secure, HttpOnly, or SameSite attribute (gosec)
+	r.AddCookie(&stdhttp.Cookie{Name: paymenthttp.CookiePay, Value: e.pageCookie(visitorID, bookingID)})
+	                           ^
+services/payment/internal/payment/infrastructure/http/handlers_test.go:147:29: G124: http.Cookie missing or has insecure Secure, HttpOnly, or SameSite attribute (gosec)
+	r.AddCookie(&stdhttp.Cookie{Name: paymenthttp.CookiePay, Value: e.pageCookie("lain", "lain")})
+	                           ^
+services/payment/internal/payment/infrastructure/http/handlers_test.go:156:81: G124: http.Cookie missing or has insecure Secure, HttpOnly, or SameSite attribute (gosec)
+		"cookie rb_pay sampah": func(r *stdhttp.Request) { r.AddCookie(&stdhttp.Cookie{Name: paymenthttp.CookiePay, Value: "sampah"}) },
+		                                                                              ^
+services/payment/internal/payment/infrastructure/http/handlers_test.go:161:31: G124: http.Cookie missing or has insecure Secure, HttpOnly, or SameSite attribute (gosec)
+			r.AddCookie(&stdhttp.Cookie{Name: paymenthttp.CookiePay, Value: old})
+			                           ^
+services/payment/internal/payment/infrastructure/http/handlers_test.go:177:29: G124: http.Cookie missing or has insecure Secure, HttpOnly, or SameSite attribute (gosec)
+	r.AddCookie(&stdhttp.Cookie{Name: paymenthttp.CookiePay, Value: e.pageCookie(visitorID, bookingID)})
+	                           ^
+services/payment/internal/payment/infrastructure/http/handlers_test.go:296:31: G124: http.Cookie missing or has insecure Secure, HttpOnly, or SameSite attribute (gosec)
+			r.AddCookie(&stdhttp.Cookie{Name: paymenthttp.CookiePay, Value: e.pageCookie(visitorID, bookingID)})
+			                           ^
+services/payment/internal/payment/infrastructure/http/payment_handler.go:103:38: G124: http.Cookie missing or has insecure Secure, HttpOnly, or SameSite attribute (gosec)
+	stdhttp.SetCookie(w, &stdhttp.Cookie{
+	                                    ^
+8 issues:
+* gosec: 8

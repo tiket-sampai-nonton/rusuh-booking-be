@@ -1,0 +1,35 @@
+=== Symbol Results ===
+
+Vulnerability #1: GO-2026-6859
+    HTTP/1 server crash due to MaxBytesReader header race in net/http
+  More info: https://pkg.go.dev/vuln/GO-2026-6859
+  Standard library
+    Found in: net/http@go1.27.3
+    Fixed in: net/http@go1.27.4
+    Example traces found:
+      #1: postgres/client.go:24:34: postgres.New calls pgxpool.ParseConfig, which eventually calls http.CanonicalHeaderKey
+      #2: telemetry/telemetry.go:12:2: telemetry.init calls prometheus.init, which eventually calls http.HandleFunc
+      #3: httpx/request.go:110:19: httpx.BearerToken calls http.Header.Get
+      #4: httpx/trace.go:72:17: httpx.Propagate calls http.Header.Set
+      #5: httpx/request.go:86:26: httpx.ClientIPHops calls http.Header.Values
+      #6: httpx/server.go:27:21: httpx.Serve calls http.Server.Serve
+      #7: httpx/server.go:42:24: httpx.Serve calls http.Server.Shutdown
+      #8: crypto/crypto.go:73:24: crypto.Sealer.Seal calls rand.Read, which eventually calls http.bodyEOFSignal.Read
+      #9: crypto/crypto.go:73:24: crypto.Sealer.Seal calls rand.Read, which eventually calls http.bodyLocked.Read
+      #10: httpx/accesslog.go:42:34: httpx.StatusWriter.Write calls http2.responseWriter.Write, which eventually calls http.checkConnErrorWriter.Write
+      #11: httpx/accesslog.go:42:34: httpx.StatusWriter.Write calls http2.responseWriter.Write, which eventually calls http.chunkWriter.Write
+      #12: crypto/crypto.go:73:24: crypto.Sealer.Seal calls rand.Read, which eventually calls http.connReader.Read
+      #13: httpx/accesslog.go:50:10: httpx.StatusWriter.Flush calls http.http2ResponseWriter.Flush
+      #14: crypto/crypto.go:73:24: crypto.Sealer.Seal calls rand.Read, which eventually calls http.loggingConn.Read
+      #15: valkey/client.go:37:29: valkey.New calls valkey.NewClient, which eventually calls http.loggingConn.Write
+      #16: crypto/crypto.go:73:24: crypto.Sealer.Seal calls rand.Read, which eventually calls http.maxBytesReader.Read
+      #17: postgres/client.go:57:40: postgres.Client.Close calls pgxpool.Pool.Close, which eventually calls http.onceCloseListener.Close
+      #18: httpx/accesslog.go:50:10: httpx.StatusWriter.Flush calls http.response.Flush
+      #19: httpx/accesslog.go:42:34: httpx.StatusWriter.Write calls http.response.Write
+      #20: httpx/accesslog.go:37:30: httpx.StatusWriter.WriteHeader calls http.response.WriteHeader
+      #21: httpx/accesslog.go:42:34: httpx.StatusWriter.Write calls http2.responseWriter.Write, which eventually calls http.response.WriteString
+
+Your code is affected by 1 vulnerability from the Go standard library.
+This scan found no other vulnerabilities in packages you import or modules you
+require.
+Use '-show verbose' for more details.

@@ -38,7 +38,8 @@ func sandboxGateway(t *testing.T) *midtrans.Gateway {
 	return g
 }
 
-func orderID() string { return fmt.Sprintf("RB-SBX%s-1", rabbitmq.NewID()[:8]) }
+// orderID memakai ekor acak UUIDv7: awalannya stempel waktu, dan Midtrans menolak order_id kembar.
+func orderID() string { return fmt.Sprintf("RB-SBX%s-1", rabbitmq.NewID()[28:]) }
 
 // A Snap token creates no Core API order until the payer picks a channel on the Snap page, so before payment the
 // status of a fresh order is "not found" (the usecase treats that as NOT_PAID). Paying needs the Snap page and is manual.

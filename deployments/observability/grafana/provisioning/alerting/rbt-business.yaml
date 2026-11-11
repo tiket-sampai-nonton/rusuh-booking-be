@@ -1,0 +1,107 @@
+# Alert metrik bisnis (SRS-F-90-06: dikirim ke email tim). Grafana menginterpolasi ${VAR} di file provisioning, jadi template
+# pesan di bawah sengaja tidak memakai tanda dolar. Ambang awal adalah tebakan untuk PoC: sesuaikan setelah ada data
+# uji beban atau penjualan nyata. Penerima: RBT_ALERT_EMAILS (dev: diisi dari ADMIN_EMAILS); SMTP: GF_SMTP_* di grafana.env.
+apiVersion: 1
+
+contactPoints:
+  - orgId: 1
+    name: rbt-email
+    receivers:
+      - uid: rbt-email
+        type: email
+        settings:
+          addresses: ${RBT_ALERT_EMAILS}
+          singleEmail: true
+
+policies:
+  - orgId: 1
+    receiver: rbt-email
+    group_by: [alertname, event_id]
+    group_wait: 30s
+    group_interval: 5m
+    repeat_interval: 4h
+
+groups:
+  - orgId: 1
+    name: rbt-business
+    folder: Rusuh Booking Tiket
+    interval: 1m
+    rules:
+      - uid: rbt-business-metrics-down
+        title: Business metrics unreadable
+        condition: C
+        for: 3m
+        # Tanpa data berarti API booking atau queue tidak bisa di-scrape: itu juga alarm.
+        noDataState: Alerting
+        execErrState: Alerting
+        labels: { severity: warning }
+        annotations:
+          summary: The RBT Business Metrics dashboard cannot be trusted because the booking funnel or the queue depth could not be read.
+          description: Check rbt_booking_funnel_up and rbt_queue_depth_up, then the booking-api or queue-api logs.
+        data:
+          - refId: A
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: prometheus
+            model: { refId: A, instant: true, expr: "min(rbt_booking_funnel_up) * min(rbt_queue_depth_up)" }
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions: [{ evaluator: { type: lt, params: [1] } }]
+
+      - uid: rbt-missed-turn-high
+        title: High missed-turn rate
+        condition: C
+        for: 5m
+        noDataState: OK
+        execErrState: Alerting
+        labels: { severity: warning }
+        annotations:
+          summary: 'More than 30% of admissions ended UNCLAIMED for event {{ $labels.event_name }}.'
+          description: Buyers did not claim their turn before the claim window closed. Check the pre-turn notification, the claim TTL and claim errors on the HTTP dashboard.
+        data:
+          - refId: A
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: prometheus
+            # Hanya event dengan minimal 20 admission, agar beberapa pembeli pertama tidak memicu alarm.
+            model:
+              refId: A
+              instant: true
+              expr: >-
+                ((max by (event_id) (rbt_booking_missed_turn_percent) and on (event_id) (sum by (event_id) (max by (event_id, status, reason) (rbt_booking_admissions)) >= 20)) * on (event_id) group_left (event_name) max by (event_id, event_name) (rbt_booking_event_info)) or label_replace((max by (event_id) (rbt_booking_missed_turn_percent) and on (event_id) (sum by (event_id) (max by (event_id, status, reason) (rbt_booking_admissions)) >= 20)) unless on (event_id) max by (event_id, event_name) (rbt_booking_event_info), "event_name", "$1", "event_id", "(.*)")
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions: [{ evaluator: { type: gt, params: [30] } }]
+
+      - uid: rbt-booking-expired-high
+        title: High booking expiry rate
+        condition: C
+        for: 5m
+        noDataState: OK
+        execErrState: Alerting
+        labels: { severity: warning }
+        annotations:
+          summary: 'More than 50% of bookings expired for event {{ $labels.event_name }}.'
+          description: Buyers did not finish paying within the TTL. Check the Midtrans webhooks (rbt_payment_webhooks_total) and the payment attempt status.
+        data:
+          - refId: A
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: prometheus
+            model:
+              refId: A
+              instant: true
+              expr: >-
+                ((max by (event_id) (rbt_booking_expired_percent) and on (event_id) (sum by (event_id) (max by (event_id, status) (rbt_booking_bookings)) >= 20)) * on (event_id) group_left (event_name) max by (event_id, event_name) (rbt_booking_event_info)) or label_replace((max by (event_id) (rbt_booking_expired_percent) and on (event_id) (sum by (event_id) (max by (event_id, status) (rbt_booking_bookings)) >= 20)) unless on (event_id) max by (event_id, event_name) (rbt_booking_event_info), "event_name", "$1", "event_id", "(.*)")
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions: [{ evaluator: { type: gt, params: [50] } }]

@@ -11,6 +11,7 @@ Satu VPS Linux (x86_64 atau arm64) menjalankan semuanya dengan Docker Compose: C
 | `gen-secrets.sh` | membuat kunci Ed25519, rahasia acak, dan file env di `/opt/rusuh` (idempoten, tidak menimpa) |
 | `push-config.sh` | dari laptop: kirim file konfigurasi ke server tanpa workflow |
 | `preflight.sh` | pemeriksaan sebelum deploy (env lengkap, DNS, port, disk, compose valid) |
+| `check-env.sh` | nama key di `env/*.env.example` yang belum ada di `/opt/rusuh/env` (env wajib baru); dipanggil `deploy.sh` dan `preflight.sh`, hanya mencetak nama key |
 | `compose.sh` | pembungkus `docker compose` untuk operasi harian di server |
 | `deploy.sh` | dijalankan di server oleh CI: periksa konfigurasi, `pull`, `up -d` (migrasi ikut), smoke test |
 | `housekeeping.sh`, `backup.sh`, `systemd/`, `install-timers.sh` | pembersihan harian (03:00) dan `pg_dump` harian (02:30) |
@@ -38,3 +39,23 @@ Gateway penyedia meneruskan HTTPS tanpa mengubahnya, sehingga aplikasi melihat s
 - Jangan menaruh rahasia di repo atau di chat; `gen-secrets.sh` menulisnya hanya di `/opt/rusuh/env` (0600).
 - `housekeeping.sh` memakai `docker image prune -af` dan hanya untuk VPS; **jangan dijalankan di laptop**. Skrip itu tidak pernah menghapus volume.
 - Rotasi kunci: hapus file di `/opt/rusuh/keys` atau `/opt/rusuh/env/.generated` hanya dengan sadar; mengganti `PII_ENC_KEY` membuat email terenkripsi lama tidak terbuka.
+
+## Mengubah konfigurasi observability
+
+Semua konfigurasi ada di repo dan ikut terkirim setiap deploy (`/opt/rusuh/repo`); jangan mengedit lewat UI Grafana
+(dashboard hasil provisioning tidak bisa disimpan dari UI).
+
+| Yang diubah | File | Setelah deploy |
+|---|---|---|
+| Dashboard | `deployments/observability/grafana/dashboards/*.json` (buat di UI, lalu Export > JSON) | dibaca ulang otomatis (~10 detik) |
+| Datasource, alert, contact point | `deployments/observability/grafana/provisioning/**` | `deploy.sh` merestart grafana bila isinya berubah |
+| Target scrape | `prometheus.dev.yml` (VPS) dan `deployments/observability/prometheus/prometheus.yml` (lokal) | `deploy.sh` merestart prometheus bila berubah |
+| Caddy, Loki, Alloy | `Caddyfile`, `loki.dev.yaml`, `alloy.dev.alloy` | `deploy.sh` merestart service itu bila berubah |
+
+Berkas yang dihapus atau di-rename di `deployments/observability` ikut terhapus di server: `push-config.sh` dan job `deployment-dev`
+mengekstrak ke folder sementara, menghapus berkas lama yang tidak ada lagi di repo, lalu menimpa. Yang dihapus hanya berkas, bukan folder
+(Grafana memasang folder itu sebagai bind mount; folder yang dihapus dan dibuat ulang tidak terlihat container). Di luar
+`observability` berkas lama tidak dihapus otomatis.
+
+Checksum konfigurasi disimpan di `/opt/rusuh/.config-sums/`. Alert NFR-09 dikirim lewat SMTP Resend (`GF_SMTP_*` dan
+`RBT_ALERT_EMAILS` di `grafana.env`); env lama di server harus ditambah key itu, `check-env.sh` menyebut namanya.

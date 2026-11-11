@@ -1,0 +1,41 @@
+Coverage fungsi yang ditulis/diubah sesi ini (run akhir sesudah rework, go test -race -coverprofile).
+pkg/rabbitmq/envelope.go:63: NewID                                                              100.0%
+pkg/rabbitmq/envelope.go:65: newIDAt                                                            100.0%
+pkg/telemetry/telemetry.go:104: MustRegister                                                    100.0%
+pkg/telemetry/telemetry.go:107: MustRegister                                                    100.0%
+services/booking/internal/booking/infrastructure/http/middleware.go:39: ResolveVisitor          100.0%
+services/booking/internal/booking/infrastructure/http/middleware.go:60: visitorToken            100.0%
+services/booking/internal/booking/infrastructure/http/middleware.go:73: verifyVisitor           100.0%
+services/booking/internal/booking/infrastructure/http/middleware.go:88: rejectVisitor           100.0%
+services/booking/internal/booking/infrastructure/http/middleware.go:98: isPublicCatalogRead     100.0%
+services/booking/internal/booking/infrastructure/http/middleware.go:109: expireVisitorCookie    100.0%
+services/booking/internal/booking/infrastructure/telemetry/funnel_collector.go:33: NewFunnelCollector 100.0%
+services/booking/internal/booking/infrastructure/telemetry/funnel_collector.go:54: Describe     100.0%
+services/booking/internal/booking/infrastructure/telemetry/funnel_collector.go:68: Collect      100.0%
+services/booking/internal/booking/infrastructure/telemetry/funnel_collector.go:101: tally       100.0%
+services/booking/internal/booking/infrastructure/telemetry/funnel_collector.go:129: percent     100.0%
+services/booking/internal/delivery/server.go:68: registerFunnelMetrics                          40.0%
+services/payment/internal/config/payment.go:75: loadPayment                                     100.0%
+services/payment/internal/config/payment.go:130: Validate                                       100.0%
+services/payment/internal/config/payment.go:166: ValidateForServe                               100.0%
+services/payment/internal/payment/application/usecase/create_attempt.go:56: NewCreateAttempt    100.0%
+services/payment/internal/payment/application/usecase/create_attempt.go:68: WithMaxAttempts     100.0%
+services/payment/internal/payment/application/usecase/create_attempt.go:75: CreateAttempt       88.9%
+services/payment/internal/payment/application/usecase/create_attempt.go:132: run                96.9%
+services/payment/internal/payment/application/usecase/create_attempt.go:201: makeRoom           100.0%
+services/payment/internal/payment/application/usecase/create_attempt.go:221: createNextError    100.0%
+services/payment/internal/payment/application/usecase/create_attempt.go:231: checkAttemptLimit  100.0%
+services/payment/internal/payment/infrastructure/postgres/attempt_repository.go:59: CreateNext  0.0%
+services/queue/internal/queue/infrastructure/telemetry/depth_collector.go:28: NewDepthCollector 100.0%
+services/queue/internal/queue/infrastructure/telemetry/depth_collector.go:42: Describe          100.0%
+services/queue/internal/queue/infrastructure/telemetry/depth_collector.go:56: Collect           100.0%
+services/queue/internal/queue/infrastructure/telemetry/depth_collector.go:72: read              100.0%
+
+Total per modul:
+pkg           77.2%
+booking       53.5%
+queue         66.5%
+payment       74.0%
+notification  70.1%
+
+Catatan: CreateNext 0% di profil unit karena hanya diuji integration test Postgres (TestCreateNext_*, termasuk batas atomik; lihat integration-payment.txt). registerFunnelMetrics: cabang Postgres dibuktikan lewat runtime (runtime-booking-metrics.txt).

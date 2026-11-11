@@ -1,0 +1,6 @@
+/api/v1/me/bookings              -> booking-api
+/api/v1/me/bookings?page=1       -> booking-api
+/api/v1/me                       -> user-api
+/api/v1/auth/otp                 -> user-api
+/api/v1/events                   -> booking-api
+/api/v1/bookings/x               -> booking-api

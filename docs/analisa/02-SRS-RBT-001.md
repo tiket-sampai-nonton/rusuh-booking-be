@@ -356,6 +356,7 @@ Status: 400, 401/403, 404, 409, 410, 422, 429, 503. Tidak membocorkan SQL, stack
 | 422 | `QUANTITY_EXCEEDS_LIMIT` | Booking | Melebihi alokasi/kuota | Kurangi jumlah |
 | 409 | `IDEMPOTENCY_KEY_REUSED` | Booking, Payment | Key sama, payload beda | Gunakan key baru |
 | 409 | `BOOKING_NOT_PAYABLE` | Payment | Booking bukan menunggu pembayaran | Muat ulang status |
+| 409 | `PAYMENT_ATTEMPT_LIMIT` | Payment | Batas percobaan bayar per booking tercapai (`PAYMENT_MAX_ATTEMPTS`, bawaan 5) | Sembunyikan "bayar lagi"; bayar instruksi yang masih aktif atau tunggu pesanan berakhir |
 | 422 | `PAYMENT_METHOD_UNAVAILABLE` | Payment | Metode tidak aktif | Pilih metode lain |
 | 503 | `PAYMENT_PROVIDER_UNAVAILABLE` | Payment | Gateway gangguan | Pilih metode lain / tunggu |
 | 403 | `PAYMENT_PAGE_TOKEN_INVALID` | Payment | Token WebView salah/kedaluwarsa | Minta token baru |

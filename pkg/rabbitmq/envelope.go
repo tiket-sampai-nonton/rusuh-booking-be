@@ -56,11 +56,17 @@ func (e Envelope) Validate() error {
 	return nil
 }
 
-// NewID returns a random UUIDv4 string.
-func NewID() string {
-	var b [16]byte
-	_, _ = rand.Read(b[:])
-	b[6] = (b[6] & 0x0f) | 0x40
-	b[8] = (b[8] & 0x3f) | 0x80
-	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
+// NewID returns a UUIDv7 string (RFC 9562, ADR-032): 48-bit Unix milliseconds, then 74 random bits. Ids sort by
+// creation time, so B-tree indexes on them stay dense. The creation time is readable from the id; access never depends
+// on an id being secret. Ids from the same millisecond are unique but not ordered among themselves.
+func NewID() string { return newIDAt(time.Now()) }
+
+func newIDAt(t time.Time) string {
+	var r [10]byte // 80 random bits: 4 version + 12 random, 2 variant + 14 random, 48 random
+	_, _ = rand.Read(r[:])
+	r[0] = (r[0] & 0x0f) | 0x70 // version 7
+	r[2] = (r[2] & 0x3f) | 0x80 // variant 10
+	// The 48-bit millisecond clock is printed straight as 12 hex digits: no integer conversion to overflow.
+	ts := fmt.Sprintf("%012x", t.UnixMilli()&0xffffffffffff)
+	return fmt.Sprintf("%s-%s-%x-%x-%x", ts[:8], ts[8:], r[0:2], r[2:4], r[4:10])
 }

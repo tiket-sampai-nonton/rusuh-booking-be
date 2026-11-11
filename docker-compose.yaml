@@ -340,6 +340,8 @@ services:
       GF_AUTH_ANONYMOUS_ENABLED: "true"
       GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
       GF_AUTH_DISABLE_LOGIN_FORM: "true"
+      # Contact point alert NFR-09 wajib punya alamat; lokal tanpa SMTP, jadi email tidak benar-benar terkirim.
+      RBT_ALERT_EMAILS: ops@example.test
     volumes:
       - ./deployments/observability/grafana/provisioning:/etc/grafana/provisioning:ro
       - ./deployments/observability/grafana/dashboards:/var/lib/grafana/dashboards:ro

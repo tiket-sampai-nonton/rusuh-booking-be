@@ -649,6 +649,7 @@ curl localhost:8083/health
 | Code | HTTP | Description | User Action |
 |------|------|-------------|-------------|
 | `BOOKING_NOT_PAYABLE` | 409 | Booking bukan HELD/LOCKED | Check booking status |
+| `PAYMENT_ATTEMPT_LIMIT` | 409 | Booking sudah punya `PAYMENT_MAX_ATTEMPTS` attempt (semua status dihitung) | Hentikan bayar ulang |
 | `BOOKING_EXPIRED` | 410 | TTL booking habis | Kembali ke antrean |
 | `BOOKING_NOT_FOUND` | 404 | Booking tidak ada | Check ID |
 | `ATTEMPT_IN_PROGRESS` | 409 | Sudah ada attempt pending | Selesaikan atau tunggu |

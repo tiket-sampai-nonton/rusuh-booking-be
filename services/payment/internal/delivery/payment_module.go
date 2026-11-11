@@ -89,7 +89,8 @@ func newPaymentRegistrars(cfg config.Config, clients *Clients) ([]registrar, err
 		paymenthttp.NewPaymentHandler(
 			usecase.NewGetPaymentPage(bookingClient, attempts, p.Methods, clk),
 			usecase.NewGetPaymentStatus(bookingClient, attempts, clk),
-			usecase.NewCreateAttempt(bookingClient, attempts, idem, gateway, clk, p.Methods, usecase.ReturnURLs{Success: p.SuccessReturnURL, Failed: p.FailedReturnURL}),
+			usecase.NewCreateAttempt(bookingClient, attempts, idem, gateway, clk, p.Methods, usecase.ReturnURLs{Success: p.SuccessReturnURL, Failed: p.FailedReturnURL}).
+				WithMaxAttempts(p.MaxAttempts),
 			usecase.NewCreatePageToken(bookingClient, pageTokens, clk, p.PageTokenTTL),
 			usecase.NewExchangePageToken(pageTokens, session, clk),
 			auth,

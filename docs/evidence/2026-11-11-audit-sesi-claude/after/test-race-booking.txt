@@ -1,0 +1,23 @@
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/cmd	2.339s	coverage: 14.3% of statements
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/deployments/migrations	1.522s	coverage: [no statements]
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/application/usecase	1.542s	coverage: 89.9% of statements
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/domain/dto	3.408s	coverage: [no statements]
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/domain/entity	1.372s	coverage: 89.7% of statements
+?   	github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/domain/event	[no test files]
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/domain/mapper	2.604s	coverage: 100.0% of statements
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/domain/valueobject	2.474s	coverage: 93.1% of statements
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/infrastructure/healthcheck	3.312s	coverage: 100.0% of statements
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/infrastructure/http	3.153s	coverage: 94.5% of statements
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/infrastructure/ids	1.673s	coverage: 100.0% of statements
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/infrastructure/paymentclient	2.212s	coverage: 92.3% of statements
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/infrastructure/postgres	2.202s	coverage: 7.0% of statements
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/infrastructure/rabbitmq	2.325s	coverage: 50.0% of statements
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/infrastructure/security	2.374s	coverage: 93.3% of statements
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/infrastructure/storage	4.455s	coverage: 92.3% of statements
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/infrastructure/telemetry	2.211s	coverage: 100.0% of statements
+	github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/infrastructure/valkey		coverage: 0.0% of statements
+	github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/port/inbound		coverage: 0.0% of statements
+?   	github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/port/outbound	[no test files]
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/config	2.025s	coverage: 95.3% of statements
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/delivery	2.345s	coverage: 19.7% of statements
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/shared/entity	2.287s	coverage: 100.0% of statements

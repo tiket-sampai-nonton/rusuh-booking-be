@@ -1,0 +1,56 @@
+=== Symbol Results ===
+
+Vulnerability #1: GO-2026-6859
+    HTTP/1 server crash due to MaxBytesReader header race in net/http
+  More info: https://pkg.go.dev/vuln/GO-2026-6859
+  Standard library
+    Found in: net/http@go1.27.3
+    Fixed in: net/http@go1.27.4
+    Example traces found:
+      #1: internal/delivery/clients.go:33:26: delivery.NewClients calls postgres.New, which eventually calls http.CanonicalHeaderKey
+      #2: internal/queue/infrastructure/bookingclient/client.go:106:24: bookingclient.do calls http.Client.Do
+      #3: cmd/healthcheck.go:17:26: cmd.init calls http.Client.Get
+      #4: internal/queue/infrastructure/telemetry/depth_collector.go:8:2: telemetry.init calls prometheus.init, which eventually calls http.HandleFunc
+      #5: internal/queue/infrastructure/security/visitor_auth.go:82:29: security.VisitorAuthenticator.ResolveToken calls http.Header.Get
+      #6: internal/queue/infrastructure/bookingclient/client.go:97:22: bookingclient.do calls http.Header.Set
+      #7: internal/queue/infrastructure/bookingclient/client.go:92:45: bookingclient.do calls http.NewRequestWithContext
+      #8: internal/queue/infrastructure/security/visitor_auth.go:80:23: security.VisitorAuthenticator.ResolveToken calls http.Request.Cookie
+      #9: internal/delivery/server.go:50:12: delivery.NewHandler calls http.ServeMux.Handle
+      #10: internal/queue/infrastructure/http/join_handler.go:35:16: http.JoinHandler.Register calls http.ServeMux.HandleFunc
+      #11: internal/delivery/server.go:34:18: delivery.RunServer calls httpx.Run, which eventually calls http.Server.Serve
+      #12: internal/delivery/server.go:34:18: delivery.RunServer calls httpx.Run, which eventually calls http.Server.Shutdown
+      #13: internal/queue/infrastructure/bookingclient/client.go:110:36: bookingclient.do calls http.body.Close
+      #14: internal/queue/domain/valueobject/ids.go:46:18: valueobject.NewUUID calls rand.Read, which eventually calls http.body.Read
+      #15: internal/queue/infrastructure/bookingclient/client.go:110:36: bookingclient.do calls http.bodyEOFSignal.Close
+      #16: internal/queue/domain/valueobject/ids.go:46:18: valueobject.NewUUID calls rand.Read, which eventually calls http.bodyEOFSignal.Read
+      #17: internal/queue/domain/valueobject/ids.go:46:18: valueobject.NewUUID calls rand.Read, which eventually calls http.bodyLocked.Read
+      #18: cmd/root.go:60:15: cmd.Execute calls fmt.Fprintln, which eventually calls http.bufioFlushWriter.Write
+      #19: internal/queue/infrastructure/bookingclient/client.go:110:36: bookingclient.do calls http.cancelTimerBody.Close
+      #20: internal/queue/domain/valueobject/ids.go:46:18: valueobject.NewUUID calls rand.Read, which eventually calls http.cancelTimerBody.Read
+      #21: cmd/root.go:60:15: cmd.Execute calls fmt.Fprintln, which eventually calls http.checkConnErrorWriter.Write
+      #22: cmd/root.go:60:15: cmd.Execute calls fmt.Fprintln, which eventually calls http.chunkWriter.Write
+      #23: internal/queue/domain/valueobject/ids.go:46:18: valueobject.NewUUID calls rand.Read, which eventually calls http.connReader.Read
+      #24: internal/queue/infrastructure/bookingclient/client.go:110:36: bookingclient.do calls http2.transportResponseBody.Close, which eventually calls http.expectContinueReader.Close
+      #25: internal/queue/domain/valueobject/ids.go:46:18: valueobject.NewUUID calls rand.Read, which eventually calls http.expectContinueReader.Read
+      #26: internal/queue/infrastructure/bookingclient/client.go:110:36: bookingclient.do calls http.gzipReader.Close
+      #27: internal/queue/domain/valueobject/ids.go:46:18: valueobject.NewUUID calls rand.Read, which eventually calls http.gzipReader.Read
+      #28: internal/queue/domain/valueobject/ids.go:46:18: valueobject.NewUUID calls rand.Read, which eventually calls http.loggingConn.Read
+      #29: internal/delivery/clients.go:42:24: delivery.NewClients calls valkey.New, which eventually calls http.loggingConn.Write
+      #30: internal/queue/domain/valueobject/ids.go:46:18: valueobject.NewUUID calls rand.Read, which eventually calls http.maxBytesReader.Read
+      #31: internal/delivery/server.go:52:15: delivery.NewHandler calls sync.Once.Do, which eventually calls http.onceCloseListener.Close
+      #32: internal/queue/domain/valueobject/ids.go:46:18: valueobject.NewUUID calls rand.Read, which eventually calls http.persistConn.Read
+      #33: internal/queue/infrastructure/postgres/event_settings_repo.go:53:27: postgres.EventSettings.ListEventIDs calls pgxpool.Pool.Query, which eventually calls http.persistConnWriter.ReadFrom
+      #34: cmd/root.go:60:15: cmd.Execute calls fmt.Fprintln, which eventually calls http.persistConnWriter.Write
+      #35: internal/queue/infrastructure/bookingclient/client.go:110:36: bookingclient.do calls http2.transportResponseBody.Close, which eventually calls http.readTrackingBody.Close
+      #36: internal/queue/domain/valueobject/ids.go:46:18: valueobject.NewUUID calls rand.Read, which eventually calls http.readTrackingBody.Read
+      #37: internal/queue/domain/valueobject/ids.go:46:18: valueobject.NewUUID calls rand.Read, which eventually calls http.readWriteCloserBody.Read
+      #38: internal/queue/infrastructure/postgres/event_settings_repo.go:53:27: postgres.EventSettings.ListEventIDs calls pgxpool.Pool.Query, which eventually calls http.response.ReadFrom
+      #39: cmd/root.go:60:15: cmd.Execute calls fmt.Fprintln, which calls http.response.Write
+      #40: cmd/root.go:60:15: cmd.Execute calls fmt.Fprintln, which eventually calls http.response.WriteString
+      #41: cmd/root.go:60:15: cmd.Execute calls fmt.Fprintln, which calls http.timeoutWriter.Write
+      #42: internal/queue/domain/valueobject/ids.go:46:18: valueobject.NewUUID calls rand.Read, which calls http.transportReadFromServerError.Error
+
+Your code is affected by 1 vulnerability from the Go standard library.
+This scan found no other vulnerabilities in packages you import or modules you
+require.
+Use '-show verbose' for more details.

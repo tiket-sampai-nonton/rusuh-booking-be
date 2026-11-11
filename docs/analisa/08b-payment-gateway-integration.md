@@ -282,6 +282,7 @@ SHA512(order_id + status_code + gross_amount + server_key)
 | Error Code | Kondisi | Aksi |
 |------------|---------|------|
 | `BOOKING_NOT_PAYABLE` | Booking bukan status HELD | Redirect ke status yang sesuai |
+| `PAYMENT_ATTEMPT_LIMIT` | Batas percobaan bayar per booking tercapai | Sembunyikan tombol "bayar lagi", tampilkan pesan batas |
 | `BOOKING_EXPIRED` | TTL booking habis | Redirect home |
 | `PAYMENT_METHOD_UNAVAILABLE` | Metode tidak tersedia | Tampilkan metode lain |
 | `GATEWAY_ERROR` | Midtrans error | Tampilkan retry, log untuk ops |

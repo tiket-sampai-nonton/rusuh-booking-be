@@ -63,6 +63,8 @@ type Payment struct {
 	Midtrans     Midtrans
 	Methods      []string
 	PageTokenTTL time.Duration
+	// MaxAttempts caps payment attempts per booking (PAYMENT_MAX_ATTEMPTS, 1..20, default 5).
+	MaxAttempts int
 	// Return URLs handed to the FE with every attempt (PAYMENT_SUCCESS_RETURN_URL, PAYMENT_FAILED_RETURN_URL).
 	SuccessReturnURL string
 	FailedReturnURL  string
@@ -102,6 +104,7 @@ func loadPayment(r *dotenv.Reader) Payment {
 		},
 		Methods:          methods,
 		PageTokenTTL:     time.Duration(r.Int("PAYMENT_PAGE_TOKEN_TTL_SECONDS", 60)) * time.Second,
+		MaxAttempts:      r.Int("PAYMENT_MAX_ATTEMPTS", 5),
 		SuccessReturnURL: r.String("PAYMENT_SUCCESS_RETURN_URL", "http://localhost:8081/payment/success"),
 		FailedReturnURL:  r.String("PAYMENT_FAILED_RETURN_URL", "http://localhost:8081/payment/failed"),
 		BookingURL:       r.String("BOOKING_SERVICE_URL", "http://localhost:8082"),
@@ -151,6 +154,9 @@ func (p Payment) Validate() error {
 	}
 	if p.PageTokenTTL < 30*time.Second || p.PageTokenTTL > 120*time.Second {
 		errs = append(errs, errors.New("PAYMENT_PAGE_TOKEN_TTL_SECONDS harus 30..120"))
+	}
+	if p.MaxAttempts < 1 || p.MaxAttempts > 20 {
+		errs = append(errs, errors.New("PAYMENT_MAX_ATTEMPTS harus 1..20"))
 	}
 	return errors.Join(errs...)
 }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/clock"
@@ -15,6 +16,8 @@ import (
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/application/usecase"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/infrastructure/healthcheck"
 	bookinghttp "github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/infrastructure/http"
+	bookingpg "github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/infrastructure/postgres"
+	bookingtelemetry "github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/infrastructure/telemetry"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/config"
 )
 
@@ -49,9 +52,25 @@ func NewHandler(cfg config.Config, clients *Clients, logger *slog.Logger) (http.
 	routes := mod.WrapVisitor(mux)
 
 	mux.Handle("GET /metrics", telemetry.Handler())
+	registerFunnelMetrics(clients)
 
 	// AccessLog dan telemetry.HTTP membaca r.Pattern, jadi harus di dalam RequestID dan langsung membungkus mux.
 	trustProxy := cfg.App.Env != "local"
 	limit := httpx.RateLimit(cfg.HTTP.RateLimitPerIP, cfg.HTTP.RateLimitWindow, httpx.IPKey(trustProxy, "/health", "/metrics"), time.Now)
 	return httpx.Chain(routes, httpx.CORS(), httpx.RequestID(), httpx.AccessLog(logger), telemetry.HTTP(config.ServiceName), httpx.Recover(logger), limit), nil
+}
+
+var funnelOnce sync.Once
+
+// registerFunnelMetrics exposes the conversion funnel (NFR-09) on the API's /metrics only: the API is what Prometheus
+// and CloudWatch scrape, and one reader per process is enough because the numbers come from PostgreSQL. Once guards
+// the process-wide registry against a second NewHandler (tests).
+func registerFunnelMetrics(clients *Clients) {
+	if clients.PG == nil {
+		return
+	}
+	pool := clients.PG.Pool()
+	funnelOnce.Do(func() {
+		telemetry.MustRegister(bookingtelemetry.NewFunnelCollector(bookingpg.NewFunnelStats(pool)))
+	})
 }

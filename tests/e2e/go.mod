@@ -1,6 +1,6 @@
 module github.com/tiket-sampai-nonton/rusuh-booking-be/tests/e2e
 
-go 1.26.10
+go 1.26.11
 
 require (
 	github.com/cucumber/godog v0.16.0

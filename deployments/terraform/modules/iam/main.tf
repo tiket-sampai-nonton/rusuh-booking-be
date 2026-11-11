@@ -37,6 +37,13 @@ data "aws_iam_policy_document" "instance" {
     actions   = ["ecr:GetAuthorizationToken"]
     resources = ["*"]
   }
+  # CloudWatch Agent membaca tag EC2 instance sendiri saat memvalidasi konfigurasi; tanpa ini validasi gagal (403) dan
+  # metrik NFR-09 tidak terkirim. DescribeTags hanya baca dan tidak mendukung resource-level permission.
+  statement {
+    sid       = "CloudWatchAgentTags"
+    actions   = ["ec2:DescribeTags"]
+    resources = ["*"]
+  }
   statement {
     sid       = "EcrPull"
     actions   = ["ecr:BatchGetImage", "ecr:GetDownloadUrlForLayer", "ecr:BatchCheckLayerAvailability"]
@@ -61,7 +68,7 @@ data "aws_iam_policy_document" "instance" {
   }
   statement {
     sid       = "Logs"
-    actions   = ["logs:CreateLogStream", "logs:PutLogEvents"]
+    actions   = ["logs:CreateLogStream", "logs:PutLogEvents", "logs:DescribeLogStreams"] # DescribeLogStreams: CloudWatch Agent (EMF NFR-09)
     resources = ["arn:aws:logs:${var.region}:${data.aws_caller_identity.this.account_id}:log-group:/${var.name}/*:*"]
   }
 }

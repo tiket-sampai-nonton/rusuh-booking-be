@@ -32,3 +32,58 @@ docker run -d --restart unless-stopped --network rusuh $KEYS $LOG --env-file /et
 docker run -d --restart unless-stopped --network rusuh $KEYS $LOG --env-file /etc/rusuh/${svc}.env -e APP_PORT=${ports[svc] + 10} --name ${svc}-worker "${registry}/${name}/${svc}:$IMAGE_TAG" worker
 %{ endif ~}
 %{ endfor ~}
+
+%{ if length(metric_services) > 0 ~}
+# NFR-09: CloudWatch Agent men-scrape /metrics API di instance ini dan mengirim hanya gauge bisnis sebagai metrik
+# CloudWatch (EMF, namespace ${metrics_namespace}). Metrik lain dibuang di sumber (metric_relabel_configs) agar biaya log
+# dan metrik tetap kecil. Setiap instance melaporkan angka yang sama dari PostgreSQL/Valkey: baca dengan statistik Maximum.
+# Dijalankan di subshell dengan set -e sendiri: gagal memasang agent tidak boleh menggagalkan boot aplikasi yang sudah jalan.
+set +e
+(
+set -e
+dnf install -y amazon-cloudwatch-agent >/dev/null
+CWA=/opt/aws/amazon-cloudwatch-agent/etc
+cat > $CWA/prometheus.yaml <<'PROM'
+global:
+  scrape_interval: 30s
+  scrape_timeout: 10s
+scrape_configs:
+%{ for svc in metric_services ~}
+  - job_name: ${svc}
+    static_configs:
+      - targets: ["127.0.0.1:${ports[svc]}"]
+        labels: { service: ${svc} }
+    metric_relabel_configs:
+      - source_labels: [__name__]
+        regex: "rbt_(queue_(waiting|active)_count|queue_depth_up|booking_(conversion|missed_turn|expired)_percent|booking_funnel_up)"
+        action: keep
+%{ endfor ~}
+PROM
+cat > $CWA/amazon-cloudwatch-agent.json <<'JSON'
+{
+  "logs": {
+    "force_flush_interval": 15,
+    "metrics_collected": {
+      "prometheus": {
+        "log_group_name": "${metrics_log_group}",
+        "prometheus_config_path": "/opt/aws/amazon-cloudwatch-agent/etc/prometheus.yaml",
+        "emf_processor": {
+          "metric_namespace": "${metrics_namespace}",
+          "metric_declaration": [
+            { "source_labels": ["service"], "label_matcher": "^(queue|booking)$", "dimensions": [["event_id"]],
+              "metric_selectors": ["^rbt_queue_(waiting|active)_count$", "^rbt_booking_(conversion|missed_turn|expired)_percent$"] },
+            { "source_labels": ["service"], "label_matcher": "^(queue|booking)$", "dimensions": [["service"]],
+              "metric_selectors": ["^rbt_queue_depth_up$", "^rbt_booking_funnel_up$"] }
+          ]
+        }
+      }
+    }
+  }
+}
+JSON
+/opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -s -c file:$CWA/amazon-cloudwatch-agent.json
+)
+rc=$?
+set -e
+[ "$rc" -eq 0 ] || echo "PERINGATAN: CloudWatch Agent gagal dipasang (rc=$rc); metrik bisnis NFR-09 tidak terkirim dari instance ini" >&2
+%{ endif ~}

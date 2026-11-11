@@ -14,6 +14,9 @@ import (
 // ErrOpenAttemptExists means the booking already has an open attempt (uq_attempt_open_per_booking).
 var ErrOpenAttemptExists = errors.New("attempt: booking sudah punya attempt terbuka")
 
+// ErrAttemptLimit means the next attempt number would exceed NewAttempt.MaxAttemptNo (PAYMENT_MAX_ATTEMPTS).
+var ErrAttemptLimit = errors.New("attempt: batas attempt per booking tercapai")
+
 // NewAttempt is a CREATED attempt to insert. The repository picks attempt_no and builds the order id.
 type NewAttempt struct {
 	BookingID      string
@@ -22,6 +25,9 @@ type NewAttempt struct {
 	AmountMinor    int64
 	ExpiresAt      time.Time
 	BookingVersion int
+	// MaxAttemptNo caps the attempt number in the same INSERT that picks it (0 = no cap), so two requests that both
+	// passed the usecase pre-check can never create attempt cap+1.
+	MaxAttemptNo int
 }
 
 // Event is an integration event written to the outbox in the same transaction as a status change.

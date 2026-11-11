@@ -69,7 +69,7 @@ func publish(t *testing.T, c *Connection, key string) Envelope {
 
 func TestConsume_TransientFailureIsRetriedThenAcked(t *testing.T) {
 	c := integrationConn(t)
-	queue := "it.retry-" + NewID()[:8]
+	queue := "it.retry-" + NewID()[28:] // ekor acak; awalan UUIDv7 = waktu
 	cleanupQueues(t, c, queue)
 
 	var calls atomic.Int32
@@ -98,7 +98,7 @@ func TestConsume_TransientFailureIsRetriedThenAcked(t *testing.T) {
 
 func TestConsume_PermanentFailureGoesToDLQ(t *testing.T) {
 	c := integrationConn(t)
-	queue := "it.dlq-" + NewID()[:8]
+	queue := "it.dlq-" + NewID()[28:] // ekor acak; awalan UUIDv7 = waktu
 	cleanupQueues(t, c, queue)
 
 	sub := Subscription{Queue: queue, RoutingKeys: []string{queue + ".v1"}, Handler: func(context.Context, Delivery) error {

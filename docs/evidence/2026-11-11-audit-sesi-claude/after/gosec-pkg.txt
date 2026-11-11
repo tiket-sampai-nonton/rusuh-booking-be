@@ -1,0 +1,17 @@
+pkg/dotenv/dotenv.go:18:12: G304: Potential file inclusion via variable (gosec)
+	f, err := os.Open(path)
+	          ^
+pkg/httpx/auth_test.go:73:27: G124: http.Cookie missing or has insecure Secure, HttpOnly, or SameSite attribute (gosec)
+	r1.AddCookie(&http.Cookie{Name: httpx.CookieVisitor, Value: tok})
+	                         ^
+pkg/httpx/trace_test.go:23:18: G602: slice index out of range (gosec)
+		h.Set(kv[i], kv[i+1])
+		               ^
+pkg/rabbitmq/handle_test.go:41:27: G115: integer overflow conversion int -> int32 (gosec)
+		h[HeaderAttempt] = int32(attempt)
+		                        ^
+pkg/rabbitmq/rabbitmq_test.go:80:9: G101: Potential hardcoded credentials: Password in URL (gosec)
+	return Config{URL: "amqp://guest:secret@localhost:5672/", Exchange: "rusuh.events", ExchangeType: "topic",
+		Workers: 2, Prefetch: 10, MaxRetries: 3, RetryDelays: delays, ConfirmWait: 5 * time.Second}
+5 issues:
+* gosec: 5

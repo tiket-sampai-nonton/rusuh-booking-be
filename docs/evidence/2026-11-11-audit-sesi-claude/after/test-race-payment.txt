@@ -1,0 +1,18 @@
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/payment/cmd	1.943s	coverage: 6.6% of statements
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/payment/deployments/migrations	1.223s	coverage: [no statements]
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/payment/internal/config	1.393s	coverage: 100.0% of statements
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/payment/internal/delivery	3.142s	coverage: 31.1% of statements
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/payment/internal/payment/application/usecase	2.519s	coverage: 91.3% of statements
+?   	github.com/tiket-sampai-nonton/rusuh-booking-be/services/payment/internal/payment/domain/dto	[no test files]
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/payment/internal/payment/domain/entity	2.054s	coverage: 100.0% of statements
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/payment/internal/payment/domain/mapper	3.422s	coverage: 100.0% of statements
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/payment/internal/payment/domain/valueobject	3.763s	coverage: 97.4% of statements
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/payment/internal/payment/infrastructure/bookingclient	3.642s	coverage: 86.4% of statements
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/payment/internal/payment/infrastructure/healthcheck	3.320s	coverage: 100.0% of statements
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/payment/internal/payment/infrastructure/http	2.746s	coverage: 91.1% of statements
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/payment/internal/payment/infrastructure/midtrans	5.799s	coverage: 89.9% of statements
+	github.com/tiket-sampai-nonton/rusuh-booking-be/services/payment/internal/payment/infrastructure/postgres		coverage: 0.0% of statements
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/payment/internal/payment/infrastructure/security	2.254s	coverage: 86.4% of statements
+	github.com/tiket-sampai-nonton/rusuh-booking-be/services/payment/internal/payment/port/inbound		coverage: 0.0% of statements
+?   	github.com/tiket-sampai-nonton/rusuh-booking-be/services/payment/internal/payment/port/outbound	[no test files]
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/payment/internal/shared/entity	2.244s	coverage: 100.0% of statements

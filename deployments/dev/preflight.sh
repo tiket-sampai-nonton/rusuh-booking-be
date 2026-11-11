@@ -29,6 +29,8 @@ for f in compose postgres rabbitmq valkey grafana queue booking payment notifica
   elif [ "$perm" != "600" ]; then bad "$f.env izin $perm (harus 600: chmod 600 $RUSUH_DIR/env/$f.env)"
   else ok "$f.env lengkap (izin 600)"; fi
 done
+if keys="$(bash "$HERE/check-env.sh")"; then ok "semua key template ada di env server"
+else while IFS= read -r line; do bad "$line"; done <<< "$keys"; fi
 
 echo "4. Format kunci dari luar"
 mk="$(val payment MIDTRANS_SERVER_KEY)"; case "$mk" in SB-Mid-server-*|Mid-server-*) ok "MIDTRANS_SERVER_KEY berformat Midtrans";; "") bad "MIDTRANS_SERVER_KEY kosong";; *) info "MIDTRANS_SERVER_KEY tidak berawalan SB-Mid-server- (bukan kunci Sandbox? pastikan MIDTRANS_ENVIRONMENT sesuai)";; esac

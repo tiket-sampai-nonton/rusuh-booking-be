@@ -1,0 +1,5 @@
+rbt_booking_admissions{event_id="aaaaaaaa-0000-0000-0000-000000000001",reason="",status="ACTIVE"} 3
+rbt_booking_admissions{event_id="aaaaaaaa-0000-0000-0000-000000000001",reason="UNCLAIMED",status="EXPIRED"} 1
+rbt_booking_conversion_percent{event_id="aaaaaaaa-0000-0000-0000-000000000001"} 0
+rbt_booking_funnel_up 1
+rbt_booking_missed_turn_percent{event_id="aaaaaaaa-0000-0000-0000-000000000001"} 25

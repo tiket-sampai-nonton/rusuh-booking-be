@@ -440,6 +440,8 @@ QUEUE_STATUS_PUBLISH_INTERVAL_MS=500
 | `rbt_queue_promotions_total` | Counter | `event_id` | Entries promoted |
 | `rbt_queue_unclaimed_total` | Counter | `event_id` | Deadlines missed |
 
+**Status implementasi (2026-11-11, NFR-09).** `rbt_queue_waiting_count` dan `rbt_queue_active_count` diekspos `queue-api` lewat collector yang membaca Valkey saat scrape (`infrastructure/telemetry/depth_collector.go`, plus `rbt_queue_depth_up`), bukan gauge yang diisi job: nilainya sama di semua instance (agregasi `max by (event_id)`) dan tetap benar setelah restart. Counter lain di tabel belum diimplementasikan dan dipenuhi dari sumber lain: laju join dan claim per route dari `rbt_http_requests_total`; giliran terlewat dari `rbt_booking_admissions{reason="UNCLAIMED"}` (Booking SDD §11.1). Counter promotor (`queue_promote_*`, `queue_entry_ended_total`) berjalan di worker yang tidak di-scrape.
+
 ### 10.2 Alerts
 
 | Alert | Condition | Severity |

@@ -1,0 +1,1 @@
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/payment/internal/payment/infrastructure/postgres	2.163s

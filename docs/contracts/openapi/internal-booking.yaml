@@ -889,10 +889,14 @@ components:
         allowMixedCategories:
           type: boolean
         description:
-          type: array
-          description: Optional Slate document (array of object nodes), max 200 KB.
-          items:
-            type: object
+          description: Optional structured object (longDesc, lineup, location, gallery, terms) or legacy Slate document (array of object nodes), max 200 KB.
+          oneOf:
+            - type: array
+              description: Dokumen Slate lama (array node objek).
+              items:
+                type: object
+            - type: object
+              description: 'Objek terstruktur, contoh kunci: longDesc, lineup[{name, role, avatar}], location{name, address, latitude, longitude, mapImage, mapsUrl}, gallery[], terms[].'
         city:
           type: string
           maxLength: 100
@@ -953,13 +957,16 @@ components:
         maxEdits:
           type: integer
         description:
-          type:
-          - array
-          - 'null'
-          description: Replaces the Slate document (array of object nodes, max 200 KB).
+          description: Replaces the description (structured object or legacy Slate array, max 200 KB).
             JSON null clears it; absent leaves it unchanged.
-          items:
-            type: object
+          oneOf:
+            - type: array
+              description: Dokumen Slate lama (array node objek).
+              items:
+                type: object
+            - type: object
+              description: 'Objek terstruktur, contoh kunci: longDesc, lineup[{name, role, avatar}], location{name, address, latitude, longitude, mapImage, mapsUrl}, gallery[], terms[].'
+            - type: 'null'
         city:
           type: string
           maxLength: 100

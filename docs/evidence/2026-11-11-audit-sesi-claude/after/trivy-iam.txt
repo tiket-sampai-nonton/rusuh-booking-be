@@ -1,0 +1,27 @@
+2026-11-11T14:50:25+07:00	INFO	[misconfig] Misconfiguration scanning is enabled
+2026-11-11T14:50:25+07:00	INFO	[checks-client] Using existing checks from cache	path="/Users/arifraa/Library/Caches/trivy/policy/content"
+2026-11-11T14:50:26+07:00	WARN	[rego] Module will be skipped as current version of Trivy is older than minimum trivy version required - please update Trivy to use this module	file_path="Users/arifraa/Library/Caches/trivy/policy/content/policies/cloud/policies/aws/cloudfront/enable_logging.rego" minimum_trivy_version="0.72.0"
+2026-11-11T14:50:26+07:00	INFO	[terraform scanner] Scanning root module	file_path="."
+2026-11-11T14:50:26+07:00	WARN	[terraform parser] Variable values were not found in the environment or variable files. Evaluating may not work correctly.	module="root" variables="backup_bucket_arn, create_ci_user, create_github_oidc_provider, ecr_repository_arns, env, github_repo, images_bucket_arn, name, region"
+2026-11-11T14:50:26+07:00	INFO	[terraform executor] Ignore finding	rule="aws-iam-no-user-attached-policies" range="main.tf:178-181"
+2026-11-11T14:50:26+07:00	INFO	Detected config files	num=2
+
+Report Summary
+
+┌─────────┬───────────┬───────────────────┐
+│ Target  │   Type    │ Misconfigurations │
+├─────────┼───────────┼───────────────────┤
+│ .       │ terraform │         0         │
+├─────────┼───────────┼───────────────────┤
+│ main.tf │ terraform │         0         │
+└─────────┴───────────┴───────────────────┘
+Legend:
+- '-': Not scanned
+- '0': Clean (no security findings detected)
+
+
+📣 [34mNotices:[0m
+  - Version 0.76.2 of Trivy is now available, current version is 0.70.0
+
+To suppress version checks, run Trivy scans with the --skip-version-check flag
+

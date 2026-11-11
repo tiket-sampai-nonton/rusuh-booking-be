@@ -62,6 +62,13 @@ resource "aws_cloudwatch_log_group" "app" {
   retention_in_days = 30 # log tidak boleh memuat data pribadi; retensi tetap dibatasi
 }
 
+# Metrik bisnis NFR-09 dikirim CloudWatch Agent sebagai EMF ke log group ini; nilainya juga tersimpan sebagai metrik di
+# namespace RBT/<name>, jadi log mentahnya cukup disimpan sebentar.
+resource "aws_cloudwatch_log_group" "metrics" {
+  name              = "/${local.name}/metrics"
+  retention_in_days = 7
+}
+
 module "data_host" {
   source                = "./modules/data_host"
   depends_on            = [aws_ssm_parameter.image_tag]
@@ -91,6 +98,7 @@ module "compute" {
   registry              = local.registry
   preserve_xff          = var.behind_cloudflare
   log_group             = aws_cloudwatch_log_group.app.name
+  metrics_log_group     = aws_cloudwatch_log_group.metrics.name
   certificate_arn       = var.certificate_arn
   data_host_instance_id = module.data_host.instance_id
   data_host_ip          = module.data_host.private_ip
@@ -101,6 +109,7 @@ module "compute" {
 module "observability" {
   source                    = "./modules/observability"
   name                      = local.name
+  region                    = var.region
   alert_email               = var.alert_email
   budget_limits_usd         = var.budget_limits_usd
   alb_arn_suffix            = module.compute.alb_arn_suffix

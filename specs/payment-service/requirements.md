@@ -102,6 +102,7 @@ Trace: SRS-F-14-03..07, SRS-F-19-01, SRS-IF-20, SRS-IF-21, SRS-F-26-05 · TC-PAY
 9. WHILE breaker charge OPEN, THE service SHALL menolak cepat `503 PAYMENT_PROVIDER_UNAVAILABLE` tanpa memanggil gateway (SRS-F-19-01, TC-PAY-08). Payment **tidak** meminta `deadline-extension`: PDF BR-05 menetapkan TTL pembayaran 10 menit sejak booking (audit 2026-10-23 F18).
 10. WHEN pembeli mengganti metode saat ada attempt terbuka, THE service SHALL membatalkan attempt lama di gateway (`cancel`/`expire`, status `CANCELLED`) lalu membuat attempt baru; TTL booking tidak di-reset (SRS-F-14-06, TC-PAY-10).
 11. Memilih metode saja (tanpa menekan bayar / tanpa POST attempts) SHALL tidak mengunci pesanan (SRS-F-14-04).
+12. IF booking sudah memiliki `PAYMENT_MAX_ATTEMPTS` attempt (bawaan 5, semua status dihitung karena masing-masing membuat transaksi di gateway), THEN THE service SHALL menolak attempt baru dengan `409 PAYMENT_ATTEMPT_LIMIT` **tanpa** menutup attempt yang masih terbuka dan tanpa memanggil gateway; permintaan dengan metode yang sama selagi instruksinya aktif tetap mengembalikan instruksi itu, dan pengulangan dengan `Idempotency-Key` yang sama tidak dihitung (rencana 2026-11-10). Batas ditegakkan juga di statement `INSERT` yang memberi nomor attempt, sehingga permintaan paralel tidak pernah menghasilkan attempt ke-(batas+1) (TC-PAY-13).
 
 ## Requirement 4 — Webhook Midtrans
 

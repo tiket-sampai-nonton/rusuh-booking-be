@@ -1,0 +1,35 @@
+services/queue/internal/config/cadence_url_test.go:76:3: G101: Potential hardcoded credentials: Password in URL (gosec)
+		{name: "userinfo", env: "local", val: "https://u:p@x.test/book", want: "userinfo"},
+		^
+services/queue/internal/queue/infrastructure/http/join_handler.go:81:39: G124: http.Cookie missing or has insecure Secure, HttpOnly, or SameSite attribute (gosec)
+		stdhttp.SetCookie(w, &stdhttp.Cookie{
+		                                    ^
+services/queue/internal/queue/infrastructure/http/join_visitor_test.go:63:30: G124: http.Cookie missing or has insecure Secure, HttpOnly, or SameSite attribute (gosec)
+		r.AddCookie(&stdhttp.Cookie{Name: "rb_visitor", Value: "forged.jwt.value"})
+		                           ^
+services/queue/internal/queue/infrastructure/http/join_visitor_test.go:75:30: G124: http.Cookie missing or has insecure Secure, HttpOnly, or SameSite attribute (gosec)
+		r.AddCookie(&stdhttp.Cookie{Name: "rb_visitor", Value: "valid.jwt"})
+		                           ^
+services/queue/internal/queue/infrastructure/http/join_visitor_test.go:237:82: G124: http.Cookie missing or has insecure Secure, HttpOnly, or SameSite attribute (gosec)
+		{"M2 web, valid cookie", func(r *stdhttp.Request) { r.AddCookie(&stdhttp.Cookie{Name: "rb_visitor", Value: valid}) }, false, "known-visitor", "known-visitor"},
+		                                                                               ^
+services/queue/internal/queue/infrastructure/http/join_visitor_test.go:240:31: G124: http.Cookie missing or has insecure Secure, HttpOnly, or SameSite attribute (gosec)
+			r.AddCookie(&stdhttp.Cookie{Name: "rb_visitor", Value: valid})
+			                           ^
+services/queue/internal/queue/infrastructure/http/join_visitor_test.go:245:31: G124: http.Cookie missing or has insecure Secure, HttpOnly, or SameSite attribute (gosec)
+			r.AddCookie(&stdhttp.Cookie{Name: "rb_visitor", Value: valid})
+			                           ^
+services/queue/internal/queue/infrastructure/http/join_visitor_test.go:250:31: G124: http.Cookie missing or has insecure Secure, HttpOnly, or SameSite attribute (gosec)
+			r.AddCookie(&stdhttp.Cookie{Name: "rb_visitor", Value: "garbage"})
+			                           ^
+services/queue/internal/queue/infrastructure/http/join_visitor_test.go:254:31: G124: http.Cookie missing or has insecure Secure, HttpOnly, or SameSite attribute (gosec)
+			r.AddCookie(&stdhttp.Cookie{Name: "rb_visitor", Value: "garbage"})
+			                           ^
+services/queue/internal/queue/infrastructure/http/join_visitor_test.go:264:31: G124: http.Cookie missing or has insecure Secure, HttpOnly, or SameSite attribute (gosec)
+			r.AddCookie(&stdhttp.Cookie{Name: "rb_visitor", Value: valid})
+			                           ^
+services/queue/internal/queue/infrastructure/security/security_test.go:105:28: G124: http.Cookie missing or has insecure Secure, HttpOnly, or SameSite attribute (gosec)
+	req.AddCookie(&http.Cookie{Name: "rb_visitor", Value: vt})
+	                          ^
+11 issues:
+* gosec: 11
