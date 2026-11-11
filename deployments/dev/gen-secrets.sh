@@ -3,7 +3,7 @@
 # Aman dijalankan ulang: file yang sudah ada TIDAK ditimpa (rahasia tidak berubah).
 #
 #   DEV_DOMAIN=dev.rusuhbooking.my.id ACME_EMAIL=anda@contoh.id \
-#   ADMIN_EMAILS=anda@contoh.id MIDTRANS_SERVER_KEY=... RESEND_API_KEY=... \
+#   ADMIN_EMAILS=anda@contoh.id MIDTRANS_SERVER_KEY=... RESEND_API_KEY=... GRAFANA_SMTP_KEY=... \
 #   bash gen-secrets.sh
 #
 # Nilai rahasia luar (Midtrans, Resend) diberikan lewat variabel lingkungan sesaat itu saja, jangan lewat chat atau repo.
@@ -53,6 +53,7 @@ while IFS='=' read -r k v; do [ -n "$k" ] && subst+=("$k=$v"); done < "$GEN"
 [ -n "${ADMIN_EMAILS:-}" ]          && subst+=("SET_ADMIN_EMAILS=$ADMIN_EMAILS")
 [ -n "${MIDTRANS_SERVER_KEY:-}" ]   && subst+=("SET_MIDTRANS_SERVER_KEY=$MIDTRANS_SERVER_KEY")
 [ -n "${RESEND_API_KEY:-}" ]        && subst+=("SET_RESEND_API_KEY=$RESEND_API_KEY")
+[ -n "${GRAFANA_SMTP_KEY:-}" ]      && subst+=("SET_GRAFANA_SMTP_KEY=$GRAFANA_SMTP_KEY") # key Resend khusus Grafana (alert NFR-09)
 
 render() { # template -> tujuan; mengganti @@NAMA@@ dengan nilainya
   local src="$1" dst="$2" line k v out

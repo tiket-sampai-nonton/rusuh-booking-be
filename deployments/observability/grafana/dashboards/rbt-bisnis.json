@@ -1,0 +1,354 @@
+{
+  "uid": "rbt-bisnis",
+  "title": "RBT — Bisnis (NFR-09)",
+  "tags": [
+    "rbt",
+    "metrics",
+    "nfr-09"
+  ],
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "refresh": "10s",
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "description": "Antrean, konversi, expired, dan missed turn per event (NFR-09, US-081). Angka dibaca dari PostgreSQL/Valkey saat scrape; agregasi memakai max karena setiap instance melaporkan baris yang sama.",
+  "templating": {
+    "list": [
+      {
+        "name": "event_id",
+        "label": "Event",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": {
+          "query": "label_values(rbt_queue_waiting_count, event_id)",
+          "refId": "v"
+        },
+        "definition": "label_values(rbt_queue_waiting_count, event_id)",
+        "includeAll": true,
+        "multi": true,
+        "allValue": ".*",
+        "refresh": 2,
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "row",
+      "title": "Antrean",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Antrean menunggu per event",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 1,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max by (event_id) (rbt_queue_waiting_count{event_id=~\"$event_id\"})",
+          "legendFormat": "{{event_id}}"
+        }
+      ],
+      "description": "Entry WAITING yang masih hidup (Valkey)."
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Slot aktif per event",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 1,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max by (event_id) (rbt_queue_active_count{event_id=~\"$event_id\"})",
+          "legendFormat": "{{event_id}}"
+        }
+      ],
+      "description": "Slot terpakai: ADMITTED, CLAIMED, dan MISSED yang belum disapu sweeper. Mentok di kapasitas berarti antrean bergerak sesuai kapasitas."
+    },
+    {
+      "id": 4,
+      "type": "row",
+      "title": "Konversi dan expired",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 9,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Konversi (%) = booking PAID / admission",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 10,
+        "w": 8,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max by (event_id) (rbt_booking_conversion_percent{event_id=~\"$event_id\"})",
+          "legendFormat": "{{event_id}}"
+        }
+      ],
+      "description": "Dari pembeli yang masuk detail (admission), berapa persen yang sudah bayar."
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Booking expired (%)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 10,
+        "w": 8,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max by (event_id) (rbt_booking_expired_percent{event_id=~\"$event_id\"})",
+          "legendFormat": "{{event_id}}"
+        }
+      ],
+      "description": "Booking yang habis TTL pembayaran dibanding semua booking."
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Missed turn (%) = admission UNCLAIMED / admission",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 10,
+        "w": 8,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max by (event_id) (rbt_booking_missed_turn_percent{event_id=~\"$event_id\"})",
+          "legendFormat": "{{event_id}}"
+        }
+      ],
+      "description": "Giliran yang tidak diambil sampai claim window habis."
+    },
+    {
+      "id": 8,
+      "type": "row",
+      "title": "Laju dan status",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 18,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Admission baru per menit",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 19,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "delta((sum by (event_id) (max by (event_id, status, reason) (rbt_booking_admissions{event_id=~\"$event_id\"})))[5m:30s]) / 5",
+          "legendFormat": "{{event_id}}"
+        }
+      ],
+      "description": "Rata-rata 5 menit terakhir: laju pembeli yang masuk ke detail."
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Booking per status",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 19,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "stacking": {
+              "mode": "normal"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max by (event_id, status) (rbt_booking_bookings{event_id=~\"$event_id\"})",
+          "legendFormat": "{{event_id}} {{status}}"
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "type": "stat",
+      "title": "Sumber metrik terbaca (1 = OK)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 27,
+        "w": 24,
+        "h": 4
+      },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "GAGAL",
+                  "color": "red"
+                },
+                "1": {
+                  "text": "OK",
+                  "color": "green"
+                }
+              }
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "values": false
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "min(rbt_booking_funnel_up)",
+          "legendFormat": "funnel booking (PostgreSQL)"
+        },
+        {
+          "refId": "B",
+          "expr": "min(rbt_queue_depth_up)",
+          "legendFormat": "kedalaman antrean (Valkey)"
+        }
+      ]
+    }
+  ]
+}

@@ -39,3 +39,18 @@ Gateway penyedia meneruskan HTTPS tanpa mengubahnya, sehingga aplikasi melihat s
 - Jangan menaruh rahasia di repo atau di chat; `gen-secrets.sh` menulisnya hanya di `/opt/rusuh/env` (0600).
 - `housekeeping.sh` memakai `docker image prune -af` dan hanya untuk VPS; **jangan dijalankan di laptop**. Skrip itu tidak pernah menghapus volume.
 - Rotasi kunci: hapus file di `/opt/rusuh/keys` atau `/opt/rusuh/env/.generated` hanya dengan sadar; mengganti `PII_ENC_KEY` membuat email terenkripsi lama tidak terbuka.
+
+## Mengubah konfigurasi observability
+
+Semua konfigurasi ada di repo dan ikut terkirim setiap deploy (`/opt/rusuh/repo`); jangan mengedit lewat UI Grafana
+(dashboard hasil provisioning tidak bisa disimpan dari UI).
+
+| Yang diubah | File | Setelah deploy |
+|---|---|---|
+| Dashboard | `deployments/observability/grafana/dashboards/*.json` (buat di UI, lalu Export > JSON) | dibaca ulang otomatis (~10 detik) |
+| Datasource, alert, contact point | `deployments/observability/grafana/provisioning/**` | `deploy.sh` merestart grafana bila isinya berubah |
+| Target scrape | `prometheus.dev.yml` (VPS) dan `deployments/observability/prometheus/prometheus.yml` (lokal) | `deploy.sh` merestart prometheus bila berubah |
+| Caddy, Loki, Alloy | `Caddyfile`, `loki.dev.yaml`, `alloy.dev.alloy` | `deploy.sh` merestart service itu bila berubah |
+
+Checksum konfigurasi disimpan di `/opt/rusuh/.config-sums/`. Alert NFR-09 dikirim lewat SMTP Resend (`GF_SMTP_*` dan
+`RBT_ALERT_EMAILS` di `grafana.env`); env lama di server harus ditambah key itu, `check-env.sh` menyebut namanya.

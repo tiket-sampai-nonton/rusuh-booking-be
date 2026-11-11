@@ -1,0 +1,109 @@
+# Alert NFR-09 (SRS-F-90-06: dikirim ke email tim). Grafana menginterpolasi ${VAR} di file provisioning, jadi template
+# pesan di bawah sengaja tidak memakai tanda dolar. Ambang awal adalah tebakan untuk PoC: sesuaikan setelah ada data
+# uji beban atau penjualan nyata. Penerima: RBT_ALERT_EMAILS (dev: diisi dari ADMIN_EMAILS); SMTP: GF_SMTP_* di grafana.env.
+apiVersion: 1
+
+contactPoints:
+  - orgId: 1
+    name: rbt-email
+    receivers:
+      - uid: rbt-email
+        type: email
+        settings:
+          addresses: ${RBT_ALERT_EMAILS}
+          singleEmail: true
+
+policies:
+  - orgId: 1
+    receiver: rbt-email
+    group_by: [alertname, event_id]
+    group_wait: 30s
+    group_interval: 5m
+    repeat_interval: 4h
+
+groups:
+  - orgId: 1
+    name: rbt-nfr09
+    folder: Rusuh Booking Tiket
+    interval: 1m
+    rules:
+      - uid: rbt-business-metrics-down
+        title: Metrik bisnis tidak terbaca
+        condition: C
+        for: 3m
+        # Tanpa data berarti API booking atau queue tidak bisa di-scrape: itu juga alarm.
+        noDataState: Alerting
+        execErrState: Alerting
+        labels: { severity: warning }
+        annotations:
+          summary: Dashboard RBT Bisnis tidak bisa dipercaya karena funnel booking atau kedalaman antrean gagal dibaca.
+          description: Cek rbt_booking_funnel_up dan rbt_queue_depth_up, lalu log booking-api atau queue-api.
+        data:
+          - refId: A
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: prometheus
+            model: { refId: A, instant: true, expr: "min(rbt_booking_funnel_up) * min(rbt_queue_depth_up)" }
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions: [{ evaluator: { type: lt, params: [1] } }]
+
+      - uid: rbt-missed-turn-high
+        title: Missed turn tinggi
+        condition: C
+        for: 5m
+        noDataState: OK
+        execErrState: Alerting
+        labels: { severity: warning }
+        annotations:
+          summary: Lebih dari 30 persen admission berakhir UNCLAIMED pada satu event.
+          description: Pembeli tidak mengambil giliran sampai claim window habis. Cek notifikasi pre-turn, TTL claim, dan error claim di dashboard HTTP.
+        data:
+          - refId: A
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: prometheus
+            # Hanya event dengan minimal 20 admission, agar beberapa pembeli pertama tidak memicu alarm.
+            model:
+              refId: A
+              instant: true
+              expr: >-
+                max by (event_id) (rbt_booking_missed_turn_percent)
+                and on (event_id) (sum by (event_id) (max by (event_id, status, reason) (rbt_booking_admissions)) >= 20)
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions: [{ evaluator: { type: gt, params: [30] } }]
+
+      - uid: rbt-booking-expired-high
+        title: Booking expired tinggi
+        condition: C
+        for: 5m
+        noDataState: OK
+        execErrState: Alerting
+        labels: { severity: warning }
+        annotations:
+          summary: Lebih dari 50 persen booking pada satu event berakhir EXPIRED.
+          description: Pembeli gagal menyelesaikan pembayaran dalam TTL. Cek webhook Midtrans (rbt_payment_webhooks_total) dan status attempt pembayaran.
+        data:
+          - refId: A
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: prometheus
+            model:
+              refId: A
+              instant: true
+              expr: >-
+                max by (event_id) (rbt_booking_expired_percent)
+                and on (event_id) (sum by (event_id) (max by (event_id, status) (rbt_booking_bookings)) >= 20)
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions: [{ evaluator: { type: gt, params: [50] } }]

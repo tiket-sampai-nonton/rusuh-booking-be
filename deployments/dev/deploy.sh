@@ -32,6 +32,21 @@ mkdir -p "$RUSUH_DIR/data/images"
 dc pull
 dc up -d --remove-orphans
 
+# 2b. `up -d` tidak membuat ulang container bila hanya isi file konfigurasi yang di-bind-mount berubah, dan file tunggal
+#     yang diganti tar tetap terbaca versi lamanya. Restart hanya service yang konfigurasinya berubah sejak deploy lalu.
+#     Dashboard Grafana tidak perlu: folder dashboard dibaca ulang otomatis.
+mkdir -p "$RUSUH_DIR/.config-sums"
+for pair in caddy:Caddyfile prometheus:prometheus.dev.yml loki:loki.dev.yaml alloy:alloy.dev.alloy \
+            grafana:../observability/grafana/provisioning; do
+  svc="${pair%%:*}" path="${pair#*:}"
+  sum="$(find "$path" -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -d' ' -f1)"
+  if [ "$(cat "$RUSUH_DIR/.config-sums/$svc" 2>/dev/null)" != "$sum" ]; then
+    echo "konfigurasi $svc berubah: restart"
+    dc restart "$svc"
+    echo "$sum" > "$RUSUH_DIR/.config-sums/$svc"
+  fi
+done
+
 # 3. smoke test: setiap container yang punya HEALTHCHECK (semua api dan worker) harus healthy, dan katalog lewat Caddy
 #    harus 200. Katalog saja tidak cukup: ia dilayani Booking, jadi queue-api atau worker yang mati tetap lolos.
 domain="$(grep -E '^DEV_DOMAIN=' "$RUSUH_DIR/env/compose.env" | cut -d= -f2-)"
