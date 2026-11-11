@@ -52,5 +52,10 @@ Semua konfigurasi ada di repo dan ikut terkirim setiap deploy (`/opt/rusuh/repo`
 | Target scrape | `prometheus.dev.yml` (VPS) dan `deployments/observability/prometheus/prometheus.yml` (lokal) | `deploy.sh` merestart prometheus bila berubah |
 | Caddy, Loki, Alloy | `Caddyfile`, `loki.dev.yaml`, `alloy.dev.alloy` | `deploy.sh` merestart service itu bila berubah |
 
+Berkas yang dihapus atau di-rename di `deployments/observability` ikut terhapus di server: `push-config.sh` dan job `deployment-dev`
+mengekstrak ke folder sementara, menghapus berkas lama yang tidak ada lagi di repo, lalu menimpa. Yang dihapus hanya berkas, bukan folder
+(Grafana memasang folder itu sebagai bind mount; folder yang dihapus dan dibuat ulang tidak terlihat container). Di luar
+`observability` berkas lama tidak dihapus otomatis.
+
 Checksum konfigurasi disimpan di `/opt/rusuh/.config-sums/`. Alert NFR-09 dikirim lewat SMTP Resend (`GF_SMTP_*` dan
 `RBT_ALERT_EMAILS` di `grafana.env`); env lama di server harus ditambah key itu, `check-env.sh` menyebut namanya.
