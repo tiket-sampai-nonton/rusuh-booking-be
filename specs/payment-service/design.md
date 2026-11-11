@@ -69,7 +69,7 @@ Envelope `{meta, data}`; error `ErrorEnvelope` tanpa SQL/stack/secret/payload pr
 ### 2.4 `POST /api/v1/payments/{bookingId}/attempts` (R3)
 - **Header:** `Idempotency-Key` (16–64). **Request:** `{ method }`.
 - **201 `Attempt`:** `{ attemptNo, method, status, bookingVersion, expiresAt, instruction }`; `instruction.type ∈ {VA, QR, DEEPLINK}`.
-- **Errors (kontrak):** `409 BOOKING_NOT_PAYABLE | IDEMPOTENCY_KEY_REUSED`; `422 PAYMENT_METHOD_UNAVAILABLE`; `503 PAYMENT_PROVIDER_UNAVAILABLE`. Kode lain SDD-PAYMENT (`ATTEMPT_IN_PROGRESS`, `BOOKING_EXPIRED`) → OQ-19.
+- **Errors (kontrak):** `409 BOOKING_NOT_PAYABLE | IDEMPOTENCY_KEY_REUSED | PAYMENT_ATTEMPT_LIMIT`; `422 PAYMENT_METHOD_UNAVAILABLE`; `503 PAYMENT_PROVIDER_UNAVAILABLE`. Kode lain SDD-PAYMENT (`ATTEMPT_IN_PROGRESS`, `BOOKING_EXPIRED`) → OQ-19.
 
 ### 2.5 `GET /api/v1/payments/{bookingId}/status` (R6)
 - **200 `PaymentStatus`:** `{ bookingId, bookingStatus, attempt, serverTime }`; read-only.
@@ -92,6 +92,7 @@ Envelope `{meta, data}`; error `ErrorEnvelope` tanpa SQL/stack/secret/payload pr
 |-----------|------|----------|--------|
 | `BOOKING_NOT_PAYABLE` | 409 | page, page-tokens, attempts | Booking bukan `PENDING_PAYMENT` atau `payment-lock` → `BOOKING_NOT_PAYABLE`/`PAYMENT_EXPIRED` |
 | `IDEMPOTENCY_KEY_REUSED` | 409 | attempts | key sama, `request_hash` beda |
+| `PAYMENT_ATTEMPT_LIMIT` | 409 | attempts | `attempt_no` terakhir booking >= `PAYMENT_MAX_ATTEMPTS`; dicek sebelum attempt terbuka ditutup, dan lagi secara atomik di `INSERT` `CreateNext` (`WHERE next.no <= max`) untuk permintaan paralel |
 | `PAYMENT_METHOD_UNAVAILABLE` | 422 | attempts | metode di luar `PAYMENT_METHODS_ENABLED` |
 | `PAYMENT_PROVIDER_UNAVAILABLE` | 503 | attempts | gateway error/timeout/breaker OPEN |
 | `PAYMENT_PAGE_TOKEN_INVALID` | 403 | page-sessions | token salah/kedaluwarsa/dipakai |

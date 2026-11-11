@@ -14,6 +14,7 @@ const (
 	CodeProviderUnavailable apperror.Code = "PAYMENT_PROVIDER_UNAVAILABLE"
 	CodePageTokenInvalid    apperror.Code = "PAYMENT_PAGE_TOKEN_INVALID"
 	CodeSignatureInvalid    apperror.Code = "WEBHOOK_SIGNATURE_INVALID"
+	CodeAttemptLimit        apperror.Code = "PAYMENT_ATTEMPT_LIMIT"
 )
 
 // Errors shared by usecases and the HTTP adapter. Booking that is not the caller's is reported as not found
@@ -27,6 +28,7 @@ var (
 	ErrPageTokenInvalid    = apperror.New(CodePageTokenInvalid, http.StatusForbidden, "token halaman bayar tidak valid")
 	ErrSignatureInvalid    = apperror.New(CodeSignatureInvalid, http.StatusUnauthorized, "signature webhook tidak valid")
 	ErrDependency          = apperror.New(apperror.CodeDependencyUnavailable, http.StatusServiceUnavailable, "layanan terkait sedang tidak tersedia")
+	ErrAttemptLimit        = apperror.New(CodeAttemptLimit, http.StatusConflict, "batas percobaan pembayaran untuk booking ini sudah tercapai")
 )
 
 // Validation returns a 400 error for one invalid field.

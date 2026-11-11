@@ -370,3 +370,120 @@ func TestCreateAttempt_ReturnURLPlaceholdersAreFilledPerAttempt(t *testing.T) {
 	assert.Equal(t, wantOK, got.SuccessReturnURL)
 	assert.Equal(t, wantFail, got.FailedReturnURL)
 }
+
+// Batas attempt per booking (rencana 2026-11-10): attempt ke-N+1 ditolak 409 PAYMENT_ATTEMPT_LIMIT. Order lama yang
+// masih terbuka TIDAK dibatalkan (pembeli masih bisa membayar instruksi itu), dan tidak ada order baru ke Midtrans.
+func TestCreateAttempt_LimitReachedRefusesWithoutCancellingTheOpenOrder(t *testing.T) {
+	m := newMocks(t)
+	expectFresh(m)
+	m.booking.EXPECT().Lock(gomock.Any(), bookingID, idemKey).Return(lockOK(), nil)
+	open := attempt(vo.AttemptPending)
+	open.AttemptNo = 3
+	m.attempts.EXPECT().FindOpen(gomock.Any(), bookingID).Return(open, true, nil)
+	m.attempts.EXPECT().FindLatest(gomock.Any(), bookingID).Return(open, true, nil)
+	m.idem.EXPECT().Release(gomock.Any(), "create_attempt", visitorID, idemKey).Return(nil)
+	// Tidak ada ekspektasi Status/Cancel/Transition/CreateNext/Charge: gomock gagal bila dipanggil.
+
+	_, err := newCreate(m).WithMaxAttempts(3).CreateAttempt(ctx(), payer, bookingID, idemKey, req("QRIS"))
+	require.Error(t, err)
+	assert.Equal(t, inbound.CodeAttemptLimit, codeOf(t, err))
+	var ae *apperror.Error
+	require.True(t, errors.As(err, &ae))
+	assert.Equal(t, 409, ae.HTTPStatus)
+}
+
+// Cancelled/failed attempts count too: each one created a transaction at Midtrans.
+func TestCreateAttempt_LimitCountsClosedAttempts(t *testing.T) {
+	m := newMocks(t)
+	expectFresh(m)
+	m.booking.EXPECT().Lock(gomock.Any(), bookingID, idemKey).Return(lockOK(), nil)
+	m.attempts.EXPECT().FindOpen(gomock.Any(), bookingID).Return(entity.Attempt{}, false, nil)
+	last := attempt(vo.AttemptFailed)
+	last.AttemptNo = 5
+	m.attempts.EXPECT().FindLatest(gomock.Any(), bookingID).Return(last, true, nil)
+	m.idem.EXPECT().Release(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+
+	_, err := newCreate(m).WithMaxAttempts(5).CreateAttempt(ctx(), payer, bookingID, idemKey, req("VA_BCA"))
+	assert.Equal(t, inbound.CodeAttemptLimit, codeOf(t, err))
+}
+
+// The same method with a live instruction is not a new attempt: it is returned even at the limit.
+func TestCreateAttempt_LimitStillReturnsTheLiveInstructionOfTheSameMethod(t *testing.T) {
+	m := newMocks(t)
+	expectFresh(m)
+	m.booking.EXPECT().Lock(gomock.Any(), bookingID, idemKey).Return(lockOK(), nil)
+	open := attempt(vo.AttemptPending)
+	open.AttemptNo = 5
+	open.Instruction = &entity.Instruction{Type: "SNAP", RedirectURL: "https://snap/r/5"}
+	m.attempts.EXPECT().FindOpen(gomock.Any(), bookingID).Return(open, true, nil)
+	m.idem.EXPECT().Complete(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), 201, gomock.Any()).Return(nil)
+
+	got, err := newCreate(m).WithMaxAttempts(5).CreateAttempt(ctx(), payer, bookingID, idemKey, req("VA_BCA"))
+	require.NoError(t, err)
+	assert.Equal(t, "https://snap/r/5", got.RedirectURL)
+}
+
+func TestCreateAttempt_BelowLimitCreatesTheNextAttempt(t *testing.T) {
+	m := newMocks(t)
+	expectFresh(m)
+	m.booking.EXPECT().Lock(gomock.Any(), bookingID, idemKey).Return(lockOK(), nil)
+	m.attempts.EXPECT().FindOpen(gomock.Any(), bookingID).Return(entity.Attempt{}, false, nil)
+	last := attempt(vo.AttemptFailed)
+	last.AttemptNo = 4
+	m.attempts.EXPECT().FindLatest(gomock.Any(), bookingID).Return(last, true, nil)
+	next := attempt(vo.AttemptCreated)
+	next.AttemptNo = 5
+	m.attempts.EXPECT().CreateNext(gomock.Any(), gomock.Any()).Return(next, nil)
+	m.gateway.EXPECT().Charge(gomock.Any(), gomock.Any()).Return(outbound.ChargeResult{Instruction: entity.Instruction{Type: "SNAP"}}, nil)
+	m.attempts.EXPECT().Transition(gomock.Any(), gomock.Any()).Return(true, nil)
+	m.idem.EXPECT().Complete(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), 201, gomock.Any()).Return(nil)
+
+	got, err := newCreate(m).WithMaxAttempts(5).CreateAttempt(ctx(), payer, bookingID, idemKey, req("VA_BCA"))
+	require.NoError(t, err)
+	assert.Equal(t, 5, got.AttemptNo)
+}
+
+// The cap is also enforced inside the INSERT (race between two requests that both passed the pre-check): the usecase
+// reports it as the same 409, never as a retryable 503.
+func TestCreateAttempt_LimitHitAtInsertIsStillA409(t *testing.T) {
+	m := newMocks(t)
+	expectFresh(m)
+	m.booking.EXPECT().Lock(gomock.Any(), bookingID, idemKey).Return(lockOK(), nil)
+	m.attempts.EXPECT().FindOpen(gomock.Any(), bookingID).Return(entity.Attempt{}, false, nil)
+	last := attempt(vo.AttemptFailed)
+	last.AttemptNo = 4
+	m.attempts.EXPECT().FindLatest(gomock.Any(), bookingID).Return(last, true, nil)
+	m.attempts.EXPECT().CreateNext(gomock.Any(), gomock.Any()).DoAndReturn(func(_ any, n outbound.NewAttempt) (entity.Attempt, error) {
+		assert.Equal(t, 5, n.MaxAttemptNo, "batas ikut dikirim ke INSERT")
+		return entity.Attempt{}, outbound.ErrAttemptLimit
+	})
+	m.idem.EXPECT().Release(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+
+	_, err := newCreate(m).WithMaxAttempts(5).CreateAttempt(ctx(), payer, bookingID, idemKey, req("VA_BCA"))
+	assert.Equal(t, inbound.CodeAttemptLimit, codeOf(t, err))
+}
+
+// If the count cannot be read the limit cannot be checked: fail as a retryable 503 and touch nothing (no close, no
+// charge), never let the attempt through uncounted.
+func TestCreateAttempt_LimitReadFailureIsRetryableAndTouchesNothing(t *testing.T) {
+	m := newMocks(t)
+	expectFresh(m)
+	m.booking.EXPECT().Lock(gomock.Any(), bookingID, idemKey).Return(lockOK(), nil)
+	m.attempts.EXPECT().FindOpen(gomock.Any(), bookingID).Return(attempt(vo.AttemptPending), true, nil)
+	m.attempts.EXPECT().FindLatest(gomock.Any(), bookingID).Return(entity.Attempt{}, false, errors.New("db down"))
+	m.idem.EXPECT().Release(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+
+	_, err := newCreate(m).WithMaxAttempts(5).CreateAttempt(ctx(), payer, bookingID, idemKey, req("QRIS"))
+	assert.Equal(t, apperror.CodeDependencyUnavailable, codeOf(t, err))
+}
+
+func TestCreateAttempt_FindOpenFailureIsRetryable(t *testing.T) {
+	m := newMocks(t)
+	expectFresh(m)
+	m.booking.EXPECT().Lock(gomock.Any(), bookingID, idemKey).Return(lockOK(), nil)
+	m.attempts.EXPECT().FindOpen(gomock.Any(), bookingID).Return(entity.Attempt{}, false, errors.New("db down"))
+	m.idem.EXPECT().Release(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+
+	_, err := newCreate(m).WithMaxAttempts(5).CreateAttempt(ctx(), payer, bookingID, idemKey, req("VA_BCA"))
+	assert.Equal(t, apperror.CodeDependencyUnavailable, codeOf(t, err))
+}

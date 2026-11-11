@@ -52,6 +52,7 @@ func TestLoad_PaymentDefaultsAndRanges(t *testing.T) {
 	assert.Equal(t, "https://api.sandbox.midtrans.com", cfg.Payment.Midtrans.BaseURL)
 	assert.Equal(t, "https://app.sandbox.midtrans.com", cfg.Payment.Midtrans.SnapBaseURL)
 	assert.Equal(t, []string{"VA_BCA", "VA_BNI", "VA_BRI", "QRIS", "GOPAY"}, cfg.Payment.Methods)
+	assert.Equal(t, 5, cfg.Payment.MaxAttempts, "batas attempt per booking bawaan")
 	assert.Equal(t, 60*time.Second, cfg.Payment.PageTokenTTL)
 	assert.Equal(t, 5, cfg.Payment.Midtrans.Charge.FailureThreshold)
 	assert.Equal(t, 20, cfg.Payment.Midtrans.Charge.Bulkhead)
@@ -72,6 +73,8 @@ func TestLoad_ReportsInvalidPaymentValues(t *testing.T) {
 		{"PAYMENT_METHODS_ENABLED", " , ", "PAYMENT_METHODS_ENABLED"},
 		{"PAYMENT_PAGE_TOKEN_TTL_SECONDS", "10", "PAYMENT_PAGE_TOKEN_TTL_SECONDS"},
 		{"PAYMENT_PAGE_TOKEN_TTL_SECONDS", "300", "PAYMENT_PAGE_TOKEN_TTL_SECONDS"},
+		{"PAYMENT_MAX_ATTEMPTS", "0", "PAYMENT_MAX_ATTEMPTS"},
+		{"PAYMENT_MAX_ATTEMPTS", "21", "PAYMENT_MAX_ATTEMPTS"},
 		{"MIDTRANS_CHARGE_FAILURE_THRESHOLD", "0", "MIDTRANS_CHARGE"},
 		{"MIDTRANS_STATUS_BULKHEAD", "0", "MIDTRANS_STATUS"},
 		{"MIDTRANS_CHARGE_COOLDOWN", "0s", "MIDTRANS_CHARGE"},

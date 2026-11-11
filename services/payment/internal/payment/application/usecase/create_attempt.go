@@ -38,6 +38,9 @@ type CreateAttempt struct {
 	clock    clock.IClock
 	enabled  map[vo.Method]bool
 	returns  ReturnURLs
+	// maxAttempts caps attempts per booking (PAYMENT_MAX_ATTEMPTS); 0 = no cap. Every attempt counts, including the
+	// cancelled ones: each created a transaction at Midtrans.
+	maxAttempts int
 }
 
 // ReturnURLs are the FE pages Snap sends the payer back to; both verify the status with the backend before showing a result.
@@ -59,6 +62,12 @@ func NewCreateAttempt(b outbound.IBookingClient, a outbound.IAttemptRepository, 
 		}
 	}
 	return &CreateAttempt{booking: b, attempts: a, idem: idem, gateway: g, clock: clk, enabled: enabled, returns: returns}
+}
+
+// WithMaxAttempts sets the per-booking attempt cap (0 = no cap).
+func (u *CreateAttempt) WithMaxAttempts(n int) *CreateAttempt {
+	u.maxAttempts = n
+	return u
 }
 
 // CreateAttempt returns the attempt with its payment instruction. A repeat with the same Idempotency-Key returns
@@ -137,30 +146,23 @@ func (u *CreateAttempt) run(ctx context.Context, payable outbound.Payable, metho
 		return dto.Attempt{}, inbound.ErrNotPayable
 	}
 
-	// 2. Same method again with a live instruction: return it, never charge twice. Another method: close the old one.
-	open, found, err := u.attempts.FindOpen(ctx, payable.BookingID)
+	// 2. Same method with a live instruction: return it, never charge twice. Otherwise make room for the next attempt.
+	live, err := u.makeRoom(ctx, payable.BookingID, method, now)
 	if err != nil {
-		return dto.Attempt{}, fmt.Errorf("%w: %w", inbound.ErrDependency, err)
+		return dto.Attempt{}, err
 	}
-	if found {
-		if open.Method == method && open.Status == vo.AttemptPending && open.Instruction != nil {
-			return mapper.AttemptToDTO(open), nil
-		}
-		if err := u.closeOpen(ctx, open, now); err != nil {
-			return dto.Attempt{}, err
-		}
+	if live != nil {
+		return *live, nil
 	}
 
 	// 3. Store CREATED before the charge so an ambiguous timeout can be reconciled on the same order id.
 	a, err := u.attempts.CreateNext(ctx, outbound.NewAttempt{
 		BookingID: payable.BookingID, PublicRef: payable.PublicRef, Method: method,
 		AmountMinor: lock.AmountMinor, ExpiresAt: lock.PaymentExpiresAt, BookingVersion: lock.Version,
+		MaxAttemptNo: u.maxAttempts,
 	})
-	if errors.Is(err, outbound.ErrOpenAttemptExists) {
-		return dto.Attempt{}, fmt.Errorf("%w: %w", inbound.ErrDependency, err) // a parallel request won; retry
-	}
 	if err != nil {
-		return dto.Attempt{}, fmt.Errorf("%w: %w", inbound.ErrDependency, err)
+		return dto.Attempt{}, createNextError(err)
 	}
 
 	// 4. Charge. The provider transaction expires with the booking (Property 5).
@@ -191,6 +193,53 @@ func (u *CreateAttempt) run(ctx context.Context, payable outbound.Payable, metho
 	}
 	slog.WarnContext(ctx, "charge gagal", "attemptNo", a.AttemptNo, "method", method, "error", cerr)
 	return dto.Attempt{}, inbound.ErrProviderUnavailable
+}
+
+// makeRoom handles the booking's open attempt before a new one. The same method with a live instruction is returned
+// as is. Otherwise the cap is checked BEFORE the open order is closed: refusing after cancelling it would leave the
+// buyer with nothing to pay. A nil attempt and nil error mean "go on and create the next attempt".
+func (u *CreateAttempt) makeRoom(ctx context.Context, bookingID string, method vo.Method, now time.Time) (*dto.Attempt, error) {
+	open, found, err := u.attempts.FindOpen(ctx, bookingID)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", inbound.ErrDependency, err)
+	}
+	if found && open.Method == method && open.Status == vo.AttemptPending && open.Instruction != nil {
+		live := mapper.AttemptToDTO(open)
+		return &live, nil
+	}
+	if err := u.checkAttemptLimit(ctx, bookingID); err != nil {
+		return nil, err
+	}
+	if found {
+		return nil, u.closeOpen(ctx, open, now)
+	}
+	return nil, nil
+}
+
+// createNextError maps a CreateNext failure. ErrOpenAttemptExists means a parallel request won: retryable 503, like
+// any storage error. ErrAttemptLimit is the cap hit inside the INSERT by a request that raced past the pre-check.
+func createNextError(err error) error {
+	if errors.Is(err, outbound.ErrAttemptLimit) {
+		return inbound.ErrAttemptLimit
+	}
+	return fmt.Errorf("%w: %w", inbound.ErrDependency, err)
+}
+
+// checkAttemptLimit refuses a new attempt once the booking has maxAttempts of them. attempt_no is 1, 2, ... per
+// booking, so the latest number is the count. This pre-check runs before the open order is closed (good UX); the same
+// cap is enforced atomically inside CreateNext for requests racing past it.
+func (u *CreateAttempt) checkAttemptLimit(ctx context.Context, bookingID string) error {
+	if u.maxAttempts <= 0 {
+		return nil
+	}
+	latest, found, err := u.attempts.FindLatest(ctx, bookingID)
+	if err != nil {
+		return fmt.Errorf("%w: %w", inbound.ErrDependency, err)
+	}
+	if found && latest.AttemptNo >= u.maxAttempts {
+		return inbound.ErrAttemptLimit
+	}
+	return nil
 }
 
 func (u *CreateAttempt) closeAttempt(ctx context.Context, a entity.Attempt, to vo.AttemptStatus, cause error) {

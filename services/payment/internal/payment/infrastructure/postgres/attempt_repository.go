@@ -54,16 +54,21 @@ func scanAttempt(row pgx.Row) (entity.Attempt, error) {
 
 // CreateNext inserts the next attempt as CREATED. The attempt number and the order id are decided in one
 // statement. Two requests racing for the same booking end in a unique violation (attempt_no or the open-attempt
-// index): exactly one wins, the other gets ErrOpenAttemptExists (Property 1).
+// index): exactly one wins, the other gets ErrOpenAttemptExists (Property 1). With MaxAttemptNo > 0 the INSERT selects
+// no row once the next number would pass the cap: ErrAttemptLimit.
 func (r *Attempts) CreateNext(ctx context.Context, n outbound.NewAttempt) (entity.Attempt, error) {
 	a, err := scanAttempt(r.pool.QueryRow(ctx, `
 		WITH next AS (SELECT COALESCE(MAX(attempt_no), 0) + 1 AS no FROM payment_attempts WHERE booking_id = $1::uuid)
 		INSERT INTO payment_attempts (booking_id, attempt_no, method, provider, provider_order_id, status, amount_minor, expires_at, booking_version)
 		SELECT $1::uuid, next.no, $2, $3, $4 || '-' || next.no, 'CREATED', $5, $6, $7 FROM next
+		WHERE $8::int = 0 OR next.no <= $8::int
 		RETURNING `+attemptCols,
-		n.BookingID, string(n.Method), entity.Provider, n.PublicRef, n.AmountMinor, n.ExpiresAt, n.BookingVersion))
+		n.BookingID, string(n.Method), entity.Provider, n.PublicRef, n.AmountMinor, n.ExpiresAt, n.BookingVersion, n.MaxAttemptNo))
 	if pkgpg.IsCode(err, pkgpg.CodeUniqueViolation) {
 		return entity.Attempt{}, outbound.ErrOpenAttemptExists
+	}
+	if errors.Is(err, pgx.ErrNoRows) {
+		return entity.Attempt{}, outbound.ErrAttemptLimit
 	}
 	if err != nil {
 		return entity.Attempt{}, fmt.Errorf("attempts: create: %w", err)

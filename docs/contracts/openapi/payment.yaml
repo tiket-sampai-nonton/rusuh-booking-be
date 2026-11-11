@@ -194,7 +194,9 @@ paths:
                 - meta
                 - data
         '409':
-          description: 'Konflik — errorCode: `BOOKING_NOT_PAYABLE`, `IDEMPOTENCY_KEY_REUSED`'
+          description: 'Konflik — errorCode: `BOOKING_NOT_PAYABLE`, `IDEMPOTENCY_KEY_REUSED`, `PAYMENT_ATTEMPT_LIMIT`
+            (booking sudah mencapai `PAYMENT_MAX_ATTEMPTS` attempt, termasuk yang dibatalkan; instruksi attempt
+            terbuka dengan metode yang sama tetap dikembalikan 201)'
           content:
             application/json:
               schema:
