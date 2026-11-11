@@ -2,7 +2,6 @@ package rabbitmq
 
 import (
 	"crypto/rand"
-	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -63,10 +62,11 @@ func (e Envelope) Validate() error {
 func NewID() string { return newIDAt(time.Now()) }
 
 func newIDAt(t time.Time) string {
-	var b [16]byte
-	binary.BigEndian.PutUint64(b[:8], uint64(t.UnixMilli())<<16) // 48-bit ms in b[0:6]; b[6:8] overwritten below
-	_, _ = rand.Read(b[6:])
-	b[6] = (b[6] & 0x0f) | 0x70 // version 7
-	b[8] = (b[8] & 0x3f) | 0x80 // variant 10
-	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
+	var r [10]byte // 80 random bits: 4 version + 12 random, 2 variant + 14 random, 48 random
+	_, _ = rand.Read(r[:])
+	r[0] = (r[0] & 0x0f) | 0x70 // version 7
+	r[2] = (r[2] & 0x3f) | 0x80 // variant 10
+	// The 48-bit millisecond clock is printed straight as 12 hex digits: no integer conversion to overflow.
+	ts := fmt.Sprintf("%012x", t.UnixMilli()&0xffffffffffff)
+	return fmt.Sprintf("%s-%s-%x-%x-%x", ts[:8], ts[8:], r[0:2], r[2:4], r[4:10])
 }

@@ -66,7 +66,7 @@ token SonarCloud, kunci Midtrans), plus temuan lama di luar cakupan. **Status: P
 | F2 | `NewAttempt.MaxAttemptNo`; `INSERT ... WHERE $8 = 0 OR next.no <= $8`; tanpa baris → `outbound.ErrAttemptLimit` → 409 | `TestCreateNext_RefusesAttemptPastTheCapAtomically` (Postgres 16), `TestCreateAttempt_LimitHitAtInsertIsStillA409` |
 | F3 | Pakai ekor acak `NewID()[28:]` | Vet dengan tag `integration sandbox`; `pkg/rabbitmq` dan `pkg/outbox` integration lolos dengan RabbitMQ sungguhan |
 | F4 | `ResolveVisitor` dipecah (`visitorToken`, `verifyVisitor`, `rejectVisitor`); `run` dipecah (`makeRoom`, `createNextError`); `Collect` (15) dipecah (`tally`) | gocognit: `ResolveVisitor` 21→7, `run` 17→8, `Collect` 15→9; semua test tetap hijau |
-| F5 | `binary.BigEndian.PutUint64` | Test v7 hijau; gosec bersih di `envelope.go` |
+| F5 | `binary.BigEndian.PutUint64` (dikoreksi pasca-CI, bagian 13) | Test v7 hijau; gosec bawaan golangci-lint bersih, tetapi gosec v2.22.0 CI menilai HIGH |
 | F6 | HELP, test, dan deskripsi panel Grafana diperbaiki | Test collector hijau |
 | F7 | Blok agent di subshell `set -e` sendiri, gagal hanya peringatan | `terraform validate`; render template + `bash -n`; simulasi perilaku |
 | F8 | Konstanta `headerWWWAuthenticate` (hanya di file yang diubah) | Lint dan test hijau |
@@ -178,3 +178,16 @@ Tidak dijalankan: E2E k6, test `sandbox` Midtrans (butuh kunci), integration que
   Trivy, promtool, dan Grafana.
 - Belum PASS penuh karena hal di bagian 11: belum ada deploy dan uji di dev/AWS (TC-OBS-02 NOT_RUN), analisis Sonar
   atas perubahan ini terhalang token, E2E pembayaran ulang belum dijalankan, dan kerentanan toolchain lokal.
+
+## 13. Koreksi pasca-CI (PR #28)
+
+CI (`verify-code-quality`) menolak PR di dua tempat. Dua-duanya lolos di pemeriksaan lokal saya karena alat yang saya
+pakai berbeda dari gate CI:
+
+| Gate CI | Penyebab | Kenapa luput | Perbaikan |
+|---|---|---|---|
+| `pkg gosec (HIGH)`: 1 temuan, G115 `int64 -> uint64` di `pkg/rabbitmq/envelope.go` | Perbaikan F5 saya memindahkan konversi `uint64->byte` menjadi `uint64(t.UnixMilli())`, yang oleh gosec v2.22.0 dinilai HIGH | Saya memverifikasi lewat gosec bawaan `golangci-lint` (versi dan severity berbeda), padahal CI memakai `gosec v2.22.0` mandiri dan menghitung severity HIGH. Klaim "gosec bersih di `envelope.go`" di bagian 7 hanya berlaku untuk alat itu | Stempel waktu dicetak langsung sebagai 12 digit hex (`%012x`) tanpa konversi bilangan bulat. Terbukti di Docker (Go 1.26, gosec v2.22.0): HIGH 0 |
+| `govulncheck`: 1 temuan di 6 modul, GO-2026-6859 (`net/http`) | Dipublikasikan 2026-11-11 02:51 UTC, setelah run hijau terakhir `main` (2026-11-10). Berlaku juga untuk `main`, bukan akibat PR ini. Diperbaiki di Go 1.26.11 dan 1.27.4 | Bagian 7 mencatatnya sebagai toolchain lokal (go1.27.3); di CI `setup-go` membaca `go 1.26.10` dari `go.mod` | `go 1.26.11` di semua `go.mod` dan `go.work`. Terbukti di Docker (Go 1.26.11, govulncheck v1.1.4): 0 hasil di keenam modul |
+
+Pelajaran: verifikasi memakai alat dan versi yang sama persis dengan gate CI (`gosec@v2.22.0`, `govulncheck@v1.1.4`,
+severity HIGH), bukan padanannya.
