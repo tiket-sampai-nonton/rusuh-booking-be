@@ -44,11 +44,6 @@ for asg in $asgs; do
   echo "$asg selesai"
 done
 
-# Status EC2 sehat belum berarti API sehat (health check ASG tipe EC2), jadi cek lewat jalur publik.
-for _ in $(seq 1 18); do
-  code="$(curl -s -m 10 -o /dev/null -w '%{http_code}' "https://$API_DOMAIN/api/v1/events" || true)"
-  [ "$code" = 200 ] && { echo "smoke test lulus (GET /api/v1/events = 200)"; exit 0; }
-  sleep 10
-done
-echo "smoke test gagal: HTTP $code" >&2
-exit 1
+# Status EC2 sehat belum berarti API sehat (health check ASG tipe EC2), jadi cek lewat jalur publik, dan SEMUA service,
+# bukan hanya /events yang dilayani Booking: dulu rilis tetap hijau walau queue-api mati karena env wajib yang hilang.
+bash "$(dirname "$0")/smoke-test.sh"
