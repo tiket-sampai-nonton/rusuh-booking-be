@@ -100,7 +100,7 @@ func endEntryNow(t *testing.T, s *QueueStore, ev, id string) {
 	require.NoError(t, s.c.Do(context.Background(), s.c.B().Zrem().Key(s.kWaiting(ev)).Member(id).Build()).Error())
 }
 
-// ADR-030 decision table (TC-ANON-02) against the real script: T1, T2, T3, T5, T6, T9, T10, T11, T12, T14, T15, T16.
+// ADR-030 decision table (TC-ANON-02) against the real script: T1, T2, T3, T5, T6, T9, T10, T11, T12, T14, T15, T16, T17, T18, T19, T19b.
 func TestJoinLua_DecisionTable(t *testing.T) {
 	s := newTestStore(t)
 
@@ -209,6 +209,75 @@ func TestJoinLua_DecisionTable(t *testing.T) {
 		assert.Equal(t, outbound.JoinExisting, again.Outcome)
 		assert.Equal(t, first.EntryID, again.EntryID)
 		assert.Equal(t, first.VisitorID, again.VisitorID)
+	})
+
+	t.Run("T17 token dari event lain diterima di event baru; visitor id dan gen tetap sama", func(t *testing.T) {
+		a := join(t, s, "ev-t17-A", outbound.JoinParams{EntryID: "eA", NewVisitorID: "v-t17"})
+		assert.Equal(t, outbound.JoinCreated, a.Outcome)
+		assert.EqualValues(t, 1, a.Gen)
+
+		b := join(t, s, "ev-t17-B", outbound.JoinParams{EntryID: "eB", NewVisitorID: "v-t17-new", TokenVisitorID: "v-t17"})
+		assert.Equal(t, outbound.JoinCreated, b.Outcome)
+		assert.Equal(t, "v-t17", b.VisitorID, "visitor id harus sama, bukan visitor ID baru")
+		assert.EqualValues(t, 1, b.Gen, "gen di Event B harus = tokGen, bukan hasil rotate")
+
+		again := join(t, s, "ev-t17-A", outbound.JoinParams{EntryID: "eA2", NewVisitorID: "v-t17-x", TokenVisitorID: "v-t17"})
+		assert.Equal(t, outbound.JoinExisting, again.Outcome)
+		assert.Equal(t, a.EntryID, again.EntryID, "entry Event A masih dapat ditemukan")
+	})
+
+	t.Run("T18 token gen > 1 dari event lain diterima di event baru; gen di event baru = tokGen", func(t *testing.T) {
+		a1 := join(t, s, "ev-t18-A", outbound.JoinParams{EntryID: "eA1", NewVisitorID: "v-t18"})
+		assert.Equal(t, outbound.JoinCreated, a1.Outcome)
+		assert.EqualValues(t, 1, a1.Gen)
+
+		// rotasi gen di Event A ke 2: end entry lalu rejoin dengan token yang sama
+		endEntryNow(t, s, "ev-t18-A", "eA1")
+		require.NoError(t, s.c.Do(context.Background(), s.c.B().Del().Key(s.kVisitor("ev-t18-A", "v-t18")).Build()).Error())
+		a2 := join(t, s, "ev-t18-A", outbound.JoinParams{EntryID: "eA2", NewVisitorID: "v-t18-x", TokenVisitorID: "v-t18"})
+		assert.Equal(t, outbound.JoinCreated, a2.Outcome)
+		assert.EqualValues(t, 2, a2.Gen, "gen di Event A seharusnya sudah dirotasi ke 2")
+
+		// join Event B dengan token gen=2 dari Event A
+		b := join(t, s, "ev-t18-B", outbound.JoinParams{EntryID: "eB", NewVisitorID: "v-t18-new", TokenVisitorID: "v-t18", TokenGen: 2})
+		assert.Equal(t, outbound.JoinCreated, b.Outcome)
+		assert.Equal(t, "v-t18", b.VisitorID, "visitor id harus sama")
+		assert.EqualValues(t, 2, b.Gen, "gen di Event B harus = tokGen (2), bukan 1 atau hasil rotate")
+	})
+
+	t.Run("T19 guard: vtok+visitor expired tapi vlast masih ada -> EXISTING dikembalikan, bukan duplikat", func(t *testing.T) {
+		join(t, s, "ev-t19-A", outbound.JoinParams{EntryID: "eA", NewVisitorID: "v-t19"})
+		b1 := join(t, s, "ev-t19-B", outbound.JoinParams{EntryID: "eB1", NewVisitorID: "v-t19-new", TokenVisitorID: "v-t19"})
+		assert.Equal(t, outbound.JoinCreated, b1.Outcome)
+
+		// simulasi vtok + visitor key expired; vlast masih ada (TTL sama, tapi belum expired)
+		require.NoError(t, s.c.Do(context.Background(), s.c.B().Del().Key(s.k("ev-t19-B", "vtok:v-t19")).Build()).Error())
+		require.NoError(t, s.c.Do(context.Background(), s.c.B().Del().Key(s.kVisitor("ev-t19-B", "v-t19")).Build()).Error())
+
+		// guard via vlast -> harus EXISTING, bukan entry baru
+		b2 := join(t, s, "ev-t19-B", outbound.JoinParams{EntryID: "eB2", NewVisitorID: "v-t19-new2", TokenVisitorID: "v-t19"})
+		assert.Equal(t, outbound.JoinExisting, b2.Outcome, "guard mencegah duplikat")
+		assert.Equal(t, b1.EntryID, b2.EntryID, "entry yang sama dikembalikan")
+		z, _ := s.c.Do(context.Background(), s.c.B().Zcard().Key(s.kWaiting("ev-t19-B")).Build()).ToInt64()
+		assert.EqualValues(t, 1, z, "hanya satu entry aktif")
+	})
+
+	t.Run("T19b known-limitation: vtok+visitor+vlast semua expired -> entry baru dibuat", func(t *testing.T) {
+		join(t, s, "ev-t19b-A", outbound.JoinParams{EntryID: "eA", NewVisitorID: "v-t19b"})
+		b1 := join(t, s, "ev-t19b-B", outbound.JoinParams{EntryID: "eB1", NewVisitorID: "v-t19b-new", TokenVisitorID: "v-t19b"})
+		assert.Equal(t, outbound.JoinCreated, b1.Outcome)
+
+		// simulasi semua key expired bersamaan (window sangat sempit di produksi)
+		require.NoError(t, s.c.Do(context.Background(), s.c.B().Del().Key(s.k("ev-t19b-B", "vtok:v-t19b")).Build()).Error())
+		require.NoError(t, s.c.Do(context.Background(), s.c.B().Del().Key(s.kVisitor("ev-t19b-B", "v-t19b")).Build()).Error())
+		require.NoError(t, s.c.Do(context.Background(), s.c.B().Del().Key(s.k("ev-t19b-B", "vlast:v-t19b")).Build()).Error())
+
+		// remaining limitation: semua key expired -> entry baru (vtok dan vlast TTL-nya sama, sangat sempit terjadi)
+		b2 := join(t, s, "ev-t19b-B", outbound.JoinParams{EntryID: "eB2", NewVisitorID: "v-t19b-new2", TokenVisitorID: "v-t19b"})
+		assert.Equal(t, outbound.JoinCreated, b2.Outcome, "remaining limitation: semua key expired bersamaan")
+		assert.NotEqual(t, b1.EntryID, b2.EntryID)
+		z, _ := s.c.Do(context.Background(), s.c.B().Zcard().Key(s.kWaiting("ev-t19b-B")).Build()).ToInt64()
+		assert.EqualValues(t, 2, z, "dua entry aktif — limitation tersisa (vtok+vlast harus expired bersamaan)")
 	})
 }
 

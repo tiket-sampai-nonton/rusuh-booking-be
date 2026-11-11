@@ -58,7 +58,15 @@ end
 
 -- 0. Token normalisation (never an error): a rotated-out generation, or a token of ANOTHER account's entry, is ignored.
 local v = tokV
-if v ~= '' and (tokGen == '0' or tostring(gen(v)) ~= tokGen) then v = '' end
+local serverGen = 0
+if v ~= '' then
+  if tokGen == '0' then
+    v = ''
+  else
+    serverGen = gen(v)
+    if serverGen > 0 and tostring(serverGen) ~= tokGen then v = '' end
+  end
+end
 local ev = nil
 if v ~= '' then ev = active(P .. 'visitor:' .. v) end
 if acct ~= '' and ev then
@@ -87,11 +95,28 @@ elseif ev then
   return describe('EXISTING', ev)
 end
 
+-- 4b. Guard: vtok absent (serverGen=0) tapi vlast masih menunjuk ke entry aktif → kembalikan entry tanpa membuat baru.
+if v ~= '' and serverGen == 0 then
+  local lastId = redis.call('GET', P .. 'vlast:' .. v)
+  if lastId then
+    local st = redis.call('HGET', ekey(lastId), 'status')
+    if st and st ~= 'ENDED' and st ~= 'COMPLETED' and st ~= 'LEFT' and st ~= 'MISSED' then
+      return describe('EXISTING', lastId)
+    end
+  end
+end
+
 -- 5. Create. A valid token of an ENDED entry keeps its visitor id (rotated); otherwise the minted id starts at gen 1.
 local vid, g = ARGV[3], 1
 if v ~= '' then
   vid = v
-  g = rotate(vid)
+  if serverGen == 0 then
+    -- event baru: init gen = tokGen agar token lama tetap valid di event ini
+    g = tonumber(tokGen)
+    redis.call('SET', P .. 'vtok:' .. vid, tokGen, 'EX', tokenTTL)
+  else
+    g = rotate(vid)   -- entry ENDED sebelumnya: rotate seperti biasa (T3)
+  end
 else
   redis.call('SET', P .. 'vtok:' .. vid, 1, 'EX', tokenTTL)
 end
