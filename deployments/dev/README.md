@@ -11,6 +11,7 @@ Satu VPS Linux (x86_64 atau arm64) menjalankan semuanya dengan Docker Compose: C
 | `gen-secrets.sh` | membuat kunci Ed25519, rahasia acak, dan file env di `/opt/rusuh` (idempoten, tidak menimpa) |
 | `push-config.sh` | dari laptop: kirim file konfigurasi ke server tanpa workflow |
 | `preflight.sh` | pemeriksaan sebelum deploy (env lengkap, DNS, port, disk, compose valid) |
+| `check-env.sh` | nama key di `env/*.env.example` yang belum ada di `/opt/rusuh/env` (env wajib baru); dipanggil `deploy.sh` dan `preflight.sh`, hanya mencetak nama key |
 | `compose.sh` | pembungkus `docker compose` untuk operasi harian di server |
 | `deploy.sh` | dijalankan di server oleh CI: periksa konfigurasi, `pull`, `up -d` (migrasi ikut), smoke test |
 | `housekeeping.sh`, `backup.sh`, `systemd/`, `install-timers.sh` | pembersihan harian (03:00) dan `pg_dump` harian (02:30) |
