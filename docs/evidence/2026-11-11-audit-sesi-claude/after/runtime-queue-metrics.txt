@@ -1,0 +1,3 @@
+rbt_queue_active_count{event_id="aaaaaaaa-0000-0000-0000-000000000001"} 0
+rbt_queue_depth_up 1
+rbt_queue_waiting_count{event_id="aaaaaaaa-0000-0000-0000-000000000001"} 0

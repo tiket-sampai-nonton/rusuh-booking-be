@@ -1,0 +1,3 @@
+Checking /w/rules.yml
+  SUCCESS: 12 rules found
+

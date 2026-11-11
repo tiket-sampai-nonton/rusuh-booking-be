@@ -1,0 +1,66 @@
+=== Symbol Results ===
+
+Vulnerability #1: GO-2026-6859
+    HTTP/1 server crash due to MaxBytesReader header race in net/http
+  More info: https://pkg.go.dev/vuln/GO-2026-6859
+  Standard library
+    Found in: net/http@go1.27.3
+    Fixed in: net/http@go1.27.4
+    Example traces found:
+      #1: internal/booking/infrastructure/storage/s3.go:39:30: storage.S3.Put calls s3.Client.PutObject, which eventually calls http.CanonicalHeaderKey
+      #2: internal/booking/infrastructure/paymentclient/client.go:66:24: paymentclient.Client.Resolve calls http.Client.Do
+      #3: cmd/healthcheck.go:17:26: cmd.init calls http.Client.Get
+      #4: internal/booking/infrastructure/telemetry/funnel_collector.go:9:2: telemetry.init calls prometheus.init, which eventually calls http.HandleFunc
+      #5: internal/booking/infrastructure/storage/s3.go:39:30: storage.S3.Put calls s3.Client.PutObject, which eventually calls http.Header.Add
+      #6: internal/booking/infrastructure/storage/s3.go:39:30: storage.S3.Put calls s3.Client.PutObject, which eventually calls http.Header.Del
+      #7: internal/booking/infrastructure/storage/s3.go:39:30: storage.S3.Put calls s3.Client.PutObject, which eventually calls http.Header.Get
+      #8: internal/booking/infrastructure/paymentclient/client.go:58:16: paymentclient.Client.Resolve calls http.Header.Set
+      #9: internal/booking/infrastructure/storage/s3.go:39:30: storage.S3.Put calls s3.Client.PutObject, which eventually calls http.Header.Values
+      #10: internal/booking/infrastructure/paymentclient/client.go:54:40: paymentclient.Client.Resolve calls http.NewRequestWithContext
+      #11: internal/booking/infrastructure/storage/s3.go:39:30: storage.S3.Put calls s3.Client.PutObject, which eventually calls http.ReadRequest
+      #12: internal/booking/infrastructure/storage/s3.go:39:30: storage.S3.Put calls s3.Client.PutObject, which eventually calls http.Response.Write
+      #13: internal/booking/infrastructure/http/internal_handler.go:70:13: http.InternalHandler.Register calls http.ServeMux.Handle
+      #14: internal/booking/infrastructure/http/booking_handler.go:35:16: http.BookingHandler.Register calls http.ServeMux.HandleFunc
+      #15: internal/delivery/server.go:37:18: delivery.RunServer calls httpx.Run, which eventually calls http.Server.Serve
+      #16: internal/delivery/server.go:37:18: delivery.RunServer calls httpx.Run, which eventually calls http.Server.Shutdown
+      #17: internal/booking/infrastructure/storage/s3.go:28:28: storage.NewS3 calls s3.NewFromConfig, which eventually calls http.Transport.Clone
+      #18: internal/booking/infrastructure/storage/s3.go:39:30: storage.S3.Put calls s3.Client.PutObject, which eventually calls http.Transport.CloseIdleConnections
+      #19: internal/booking/infrastructure/storage/s3.go:39:30: storage.S3.Put calls s3.Client.PutObject, which eventually calls http.Transport.RoundTrip
+      #20: internal/booking/infrastructure/paymentclient/client.go:70:36: paymentclient.Resolve calls http.body.Close
+      #21: internal/booking/application/usecase/cancel_booking.go:88:24: usecase.NewTicketCode calls rand.Read, which eventually calls http.body.Read
+      #22: internal/booking/infrastructure/paymentclient/client.go:70:36: paymentclient.Resolve calls http.bodyEOFSignal.Close
+      #23: internal/booking/application/usecase/cancel_booking.go:88:24: usecase.NewTicketCode calls rand.Read, which eventually calls http.bodyEOFSignal.Read
+      #24: internal/booking/application/usecase/cancel_booking.go:88:24: usecase.NewTicketCode calls rand.Read, which eventually calls http.bodyLocked.Read
+      #25: cmd/root.go:60:15: cmd.Execute calls fmt.Fprintln, which eventually calls http.bufioFlushWriter.Write
+      #26: internal/booking/infrastructure/paymentclient/client.go:70:36: paymentclient.Resolve calls http.cancelTimerBody.Close
+      #27: internal/booking/application/usecase/cancel_booking.go:88:24: usecase.NewTicketCode calls rand.Read, which eventually calls http.cancelTimerBody.Read
+      #28: internal/booking/application/usecase/stream_session.go:95:21: usecase.StreamSession.Stream calls fmt.Fprintf, which eventually calls http.checkConnErrorWriter.Write
+      #29: internal/booking/application/usecase/stream_session.go:95:21: usecase.StreamSession.Stream calls fmt.Fprintf, which eventually calls http.chunkWriter.Write
+      #30: internal/booking/application/usecase/cancel_booking.go:88:24: usecase.NewTicketCode calls rand.Read, which eventually calls http.connReader.Read
+      #31: internal/booking/infrastructure/paymentclient/client.go:70:36: paymentclient.Resolve calls http.expectContinueReader.Close
+      #32: internal/booking/application/usecase/cancel_booking.go:88:24: usecase.NewTicketCode calls rand.Read, which eventually calls http.expectContinueReader.Read
+      #33: internal/booking/infrastructure/paymentclient/client.go:70:36: paymentclient.Resolve calls http.gzipReader.Close
+      #34: internal/booking/application/usecase/cancel_booking.go:88:24: usecase.NewTicketCode calls rand.Read, which eventually calls http.gzipReader.Read
+      #35: internal/booking/application/usecase/stream_session.go:109:8: usecase.StreamSession.Stream calls http.http2ResponseWriter.Flush
+      #36: internal/booking/application/usecase/cancel_booking.go:88:24: usecase.NewTicketCode calls rand.Read, which eventually calls http.loggingConn.Read
+      #37: internal/booking/application/usecase/stream_session.go:95:21: usecase.StreamSession.Stream calls fmt.Fprintf, which calls http.loggingConn.Write
+      #38: internal/booking/infrastructure/paymentclient/client.go:70:36: paymentclient.Resolve calls http.maxBytesReader.Close
+      #39: internal/booking/application/usecase/cancel_booking.go:88:24: usecase.NewTicketCode calls rand.Read, which eventually calls http.maxBytesReader.Read
+      #40: internal/delivery/server.go:73:15: delivery.registerFunnelMetrics calls sync.Once.Do, which eventually calls http.onceCloseListener.Close
+      #41: internal/booking/application/usecase/cancel_booking.go:88:24: usecase.NewTicketCode calls rand.Read, which eventually calls http.persistConn.Read
+      #42: internal/booking/infrastructure/postgres/admission_repo.go:364:27: postgres.AdmissionRepo.DueSessions calls pgxpool.Pool.Query, which eventually calls http.persistConnWriter.ReadFrom
+      #43: internal/booking/application/usecase/stream_session.go:95:21: usecase.StreamSession.Stream calls fmt.Fprintf, which eventually calls http.persistConnWriter.Write
+      #44: internal/booking/infrastructure/paymentclient/client.go:70:36: paymentclient.Resolve calls http.readTrackingBody.Close
+      #45: internal/booking/application/usecase/cancel_booking.go:88:24: usecase.NewTicketCode calls rand.Read, which eventually calls http.readTrackingBody.Read
+      #46: internal/booking/application/usecase/cancel_booking.go:88:24: usecase.NewTicketCode calls rand.Read, which eventually calls http.readWriteCloserBody.Read
+      #47: internal/booking/application/usecase/stream_session.go:109:8: usecase.StreamSession.Stream calls http.response.Flush
+      #48: internal/booking/infrastructure/postgres/admission_repo.go:364:27: postgres.AdmissionRepo.DueSessions calls pgxpool.Pool.Query, which eventually calls http.response.ReadFrom
+      #49: internal/booking/application/usecase/stream_session.go:95:21: usecase.StreamSession.Stream calls fmt.Fprintf, which calls http.response.Write
+      #50: internal/booking/application/usecase/stream_session.go:95:21: usecase.StreamSession.Stream calls fmt.Fprintf, which eventually calls http.response.WriteString
+      #51: internal/booking/application/usecase/stream_session.go:95:21: usecase.StreamSession.Stream calls fmt.Fprintf, which calls http.timeoutWriter.Write
+      #52: internal/booking/infrastructure/postgres/event_write_repo.go:154:18: postgres.mapEventWriteErr calls http.transportReadFromServerError.Error
+
+Your code is affected by 1 vulnerability from the Go standard library.
+This scan found no other vulnerabilities in packages you import or modules you
+require.
+Use '-show verbose' for more details.

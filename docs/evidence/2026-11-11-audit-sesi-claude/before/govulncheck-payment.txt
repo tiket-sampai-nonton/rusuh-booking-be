@@ -1,0 +1,54 @@
+=== Symbol Results ===
+
+Vulnerability #1: GO-2026-6859
+    HTTP/1 server crash due to MaxBytesReader header race in net/http
+  More info: https://pkg.go.dev/vuln/GO-2026-6859
+  Standard library
+    Found in: net/http@go1.27.3
+    Fixed in: net/http@go1.27.4
+    Example traces found:
+      #1: internal/delivery/clients.go:30:26: delivery.NewClients calls postgres.New, which eventually calls http.CanonicalHeaderKey
+      #2: internal/payment/infrastructure/bookingclient/client.go:146:24: bookingclient.Client.call calls http.Client.Do
+      #3: cmd/healthcheck.go:17:26: cmd.init calls http.Client.Get
+      #4: internal/payment/infrastructure/postgres/attempt_repository.go:16:2: postgres.init calls telemetry.init, which eventually calls http.HandleFunc
+      #5: internal/payment/infrastructure/bookingclient/client.go:139:16: bookingclient.Client.call calls http.Header.Set
+      #6: internal/payment/infrastructure/bookingclient/client.go:135:40: bookingclient.Client.call calls http.NewRequestWithContext
+      #7: internal/payment/infrastructure/http/payment_handler.go:33:12: http.PaymentHandler.Register calls http.ServeMux.Handle
+      #8: internal/payment/infrastructure/http/payment_handler.go:37:16: http.PaymentHandler.Register calls http.ServeMux.HandleFunc
+      #9: internal/delivery/server.go:34:18: delivery.RunServer calls httpx.Run, which eventually calls http.Server.Serve
+      #10: internal/delivery/server.go:34:18: delivery.RunServer calls httpx.Run, which eventually calls http.Server.Shutdown
+      #11: cmd/healthcheck.go:21:37: cmd.init calls http.body.Close
+      #12: internal/payment/application/usecase/page_tokens.go:44:24: usecase.CreatePageToken.CreatePageToken calls rand.Read, which eventually calls http.body.Read
+      #13: cmd/healthcheck.go:21:37: cmd.init calls http.bodyEOFSignal.Close
+      #14: internal/payment/application/usecase/page_tokens.go:44:24: usecase.CreatePageToken.CreatePageToken calls rand.Read, which eventually calls http.bodyEOFSignal.Read
+      #15: internal/payment/application/usecase/page_tokens.go:44:24: usecase.CreatePageToken.CreatePageToken calls rand.Read, which eventually calls http.bodyLocked.Read
+      #16: cmd/root.go:60:15: cmd.Execute calls fmt.Fprintln, which eventually calls http.bufioFlushWriter.Write
+      #17: cmd/healthcheck.go:21:37: cmd.init calls http.cancelTimerBody.Close
+      #18: internal/payment/application/usecase/page_tokens.go:44:24: usecase.CreatePageToken.CreatePageToken calls rand.Read, which eventually calls http.cancelTimerBody.Read
+      #19: cmd/root.go:60:15: cmd.Execute calls fmt.Fprintln, which eventually calls http.checkConnErrorWriter.Write
+      #20: cmd/root.go:60:15: cmd.Execute calls fmt.Fprintln, which eventually calls http.chunkWriter.Write
+      #21: internal/payment/application/usecase/page_tokens.go:44:24: usecase.CreatePageToken.CreatePageToken calls rand.Read, which eventually calls http.connReader.Read
+      #22: internal/payment/application/usecase/page_tokens.go:44:24: usecase.CreatePageToken.CreatePageToken calls rand.Read, which eventually calls http.expectContinueReader.Close
+      #23: internal/payment/application/usecase/page_tokens.go:44:24: usecase.CreatePageToken.CreatePageToken calls rand.Read, which eventually calls http.expectContinueReader.Read
+      #24: cmd/healthcheck.go:21:37: cmd.init calls http.gzipReader.Close
+      #25: internal/payment/application/usecase/page_tokens.go:44:24: usecase.CreatePageToken.CreatePageToken calls rand.Read, which eventually calls http.gzipReader.Read
+      #26: internal/payment/application/usecase/page_tokens.go:44:24: usecase.CreatePageToken.CreatePageToken calls rand.Read, which eventually calls http.loggingConn.Read
+      #27: cmd/migrate.go:67:29: cmd.init#1 calls pflag.FlagSet.IntVar, which eventually calls http.loggingConn.Write
+      #28: internal/payment/application/usecase/page_tokens.go:44:24: usecase.CreatePageToken.CreatePageToken calls rand.Read, which eventually calls http.maxBytesReader.Read
+      #29: internal/payment/domain/valueobject/provider_status.go:12:25: valueobject.init calls time.FixedZone, which eventually calls http.onceCloseListener.Close
+      #30: internal/payment/application/usecase/page_tokens.go:44:24: usecase.CreatePageToken.CreatePageToken calls rand.Read, which eventually calls http.persistConn.Read
+      #31: internal/payment/infrastructure/postgres/idempotency_store.go:65:26: postgres.Idempotency.Release calls pgxpool.Pool.Exec, which eventually calls http.persistConnWriter.ReadFrom
+      #32: cmd/root.go:60:15: cmd.Execute calls fmt.Fprintln, which eventually calls http.persistConnWriter.Write
+      #33: internal/payment/application/usecase/page_tokens.go:44:24: usecase.CreatePageToken.CreatePageToken calls rand.Read, which eventually calls http.readTrackingBody.Close
+      #34: internal/payment/application/usecase/page_tokens.go:44:24: usecase.CreatePageToken.CreatePageToken calls rand.Read, which eventually calls http.readTrackingBody.Read
+      #35: internal/payment/application/usecase/page_tokens.go:44:24: usecase.CreatePageToken.CreatePageToken calls rand.Read, which eventually calls http.readWriteCloserBody.Read
+      #36: internal/payment/infrastructure/postgres/idempotency_store.go:65:26: postgres.Idempotency.Release calls pgxpool.Pool.Exec, which eventually calls http.response.ReadFrom
+      #37: cmd/root.go:60:15: cmd.Execute calls fmt.Fprintln, which calls http.response.Write
+      #38: internal/payment/application/usecase/create_attempt.go:52:30: usecase.ReturnURLs.fill calls strings.Replacer.Replace, which eventually calls http.response.WriteString
+      #39: cmd/root.go:60:15: cmd.Execute calls fmt.Fprintln, which calls http.timeoutWriter.Write
+      #40: internal/payment/application/usecase/page_tokens.go:44:24: usecase.CreatePageToken.CreatePageToken calls rand.Read, which calls http.transportReadFromServerError.Error
+
+Your code is affected by 1 vulnerability from the Go standard library.
+This scan found no other vulnerabilities in packages you import or modules you
+require.
+Use '-show verbose' for more details.

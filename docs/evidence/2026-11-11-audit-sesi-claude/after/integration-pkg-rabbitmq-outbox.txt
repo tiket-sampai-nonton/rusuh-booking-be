@@ -1,0 +1,102 @@
+=== RUN   TestDial_FailsFast
+--- PASS: TestDial_FailsFast (0.00s)
+=== RUN   TestHandle
+=== RUN   TestHandle/success
+=== RUN   TestHandle/transient_→_retry_5s
+=== RUN   TestHandle/third_transient_→_retry_2m
+=== RUN   TestHandle/exhausted_→_dlq
+=== RUN   TestHandle/permanent_→_dlq
+=== RUN   TestHandle/bad_json_→_dlq
+=== RUN   TestHandle/invalid_envelope_→_dlq
+=== RUN   TestHandle/republish_fails_→_requeue
+--- PASS: TestHandle (0.00s)
+    --- PASS: TestHandle/success (0.00s)
+    --- PASS: TestHandle/transient_→_retry_5s (0.00s)
+    --- PASS: TestHandle/third_transient_→_retry_2m (0.00s)
+    --- PASS: TestHandle/exhausted_→_dlq (0.00s)
+    --- PASS: TestHandle/permanent_→_dlq (0.00s)
+    --- PASS: TestHandle/bad_json_→_dlq (0.00s)
+    --- PASS: TestHandle/invalid_envelope_→_dlq (0.00s)
+    --- PASS: TestHandle/republish_fails_→_requeue (0.00s)
+=== RUN   TestNewID_IsUUIDv7WithCreationTime
+--- PASS: TestNewID_IsUUIDv7WithCreationTime (0.00s)
+=== RUN   TestNewID_SortsByTimeAndIsUnique
+--- PASS: TestNewID_SortsByTimeAndIsUnique (0.03s)
+=== RUN   TestConsume_TransientFailureIsRetriedThenAcked
+--- PASS: TestConsume_TransientFailureIsRetriedThenAcked (0.35s)
+=== RUN   TestConsume_PermanentFailureGoesToDLQ
+--- PASS: TestConsume_PermanentFailureGoesToDLQ (0.12s)
+=== RUN   TestDecide
+=== RUN   TestDecide/success_acks
+=== RUN   TestDecide/first_failure_→_5s
+=== RUN   TestDecide/second_failure_→_30s
+=== RUN   TestDecide/third_failure_→_2m
+=== RUN   TestDecide/fourth_failure_→_DLQ
+=== RUN   TestDecide/permanent_→_DLQ_at_once
+--- PASS: TestDecide (0.00s)
+    --- PASS: TestDecide/success_acks (0.00s)
+    --- PASS: TestDecide/first_failure_→_5s (0.00s)
+    --- PASS: TestDecide/second_failure_→_30s (0.00s)
+    --- PASS: TestDecide/third_failure_→_2m (0.00s)
+    --- PASS: TestDecide/fourth_failure_→_DLQ (0.00s)
+    --- PASS: TestDecide/permanent_→_DLQ_at_once (0.00s)
+=== RUN   TestDecide_ReusesLastDelayAndNoDelays
+--- PASS: TestDecide_ReusesLastDelayAndNoDelays (0.00s)
+=== RUN   TestPermanent
+--- PASS: TestPermanent (0.00s)
+=== RUN   TestNames
+--- PASS: TestNames (0.00s)
+=== RUN   TestAttemptOf
+--- PASS: TestAttemptOf (0.00s)
+=== RUN   TestParseDelays
+--- PASS: TestParseDelays (0.00s)
+=== RUN   TestConfigValidate
+=== RUN   TestConfigValidate/valid
+=== RUN   TestConfigValidate/bad_url
+=== RUN   TestConfigValidate/no_exchange
+=== RUN   TestConfigValidate/bad_type
+=== RUN   TestConfigValidate/workers
+=== RUN   TestConfigValidate/prefetch
+=== RUN   TestConfigValidate/retries
+=== RUN   TestConfigValidate/delays_missing
+=== RUN   TestConfigValidate/confirm
+--- PASS: TestConfigValidate (0.00s)
+    --- PASS: TestConfigValidate/valid (0.00s)
+    --- PASS: TestConfigValidate/bad_url (0.00s)
+    --- PASS: TestConfigValidate/no_exchange (0.00s)
+    --- PASS: TestConfigValidate/bad_type (0.00s)
+    --- PASS: TestConfigValidate/workers (0.00s)
+    --- PASS: TestConfigValidate/prefetch (0.00s)
+    --- PASS: TestConfigValidate/retries (0.00s)
+    --- PASS: TestConfigValidate/delays_missing (0.00s)
+    --- PASS: TestConfigValidate/confirm (0.00s)
+=== RUN   TestRedacted
+--- PASS: TestRedacted (0.00s)
+=== RUN   TestEnvelope
+--- PASS: TestEnvelope (0.00s)
+=== RUN   TestSafeCall_RecoversPanic
+--- PASS: TestSafeCall_RecoversPanic (0.00s)
+=== RUN   TestTruncate
+--- PASS: TestTruncate (0.00s)
+PASS
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/rabbitmq	1.752s
+=== RUN   TestWrite_DefaultsSchemaVersionAndMarshalsPayload
+--- PASS: TestWrite_DefaultsSchemaVersionAndMarshalsPayload (0.00s)
+=== RUN   TestWrite_RejectsMissingFieldsAndBadPayload
+--- PASS: TestWrite_RejectsMissingFieldsAndBadPayload (0.00s)
+=== RUN   TestWrite_WrapsExecError
+--- PASS: TestWrite_WrapsExecError (0.00s)
+=== RUN   TestBackoff_GrowsAndIsCapped
+--- PASS: TestBackoff_GrowsAndIsCapped (0.00s)
+=== RUN   TestWrite_IsAtomicWithCallerTransaction
+--- PASS: TestWrite_IsAtomicWithCallerTransaction (0.06s)
+=== RUN   TestRelay_PublishesWithRowIdAsMessageId
+--- PASS: TestRelay_PublishesWithRowIdAsMessageId (0.03s)
+=== RUN   TestRelay_BrokerDownKeepsRowPendingThenRecovers
+--- PASS: TestRelay_BrokerDownKeepsRowPendingThenRecovers (0.04s)
+=== RUN   TestRelay_TwoRelaysNeverPublishSameRowInOneCycle
+--- PASS: TestRelay_TwoRelaysNeverPublishSameRowInOneCycle (0.44s)
+=== RUN   TestRelay_PublishesToRealRabbitMQ
+--- PASS: TestRelay_PublishesToRealRabbitMQ (0.39s)
+PASS
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/outbox	2.384s

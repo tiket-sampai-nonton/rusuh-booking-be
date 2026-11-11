@@ -1,0 +1,6 @@
+Total issue terbuka di main (halaman pertama, ps=500): 81
+Issue di file yang saya sentuh: 4
+- services/queue/internal/delivery/queue_module.go:165 [CRITICAL/CODE_SMELL] go:S1192: Define a constant instead of duplicating this literal "status-publisher" 3 times.
+- services/booking/internal/booking/infrastructure/http/middleware.go:50 [CRITICAL/CODE_SMELL] go:S1192: Define a constant instead of duplicating this literal "WWW-Authenticate" 4 times.
+- services/payment/internal/delivery/payment_module.go:26 [MINOR/CODE_SMELL] godre:S8196: Rename this interface to follow Go naming conventions for single-method interfaces.
+- services/queue/internal/delivery/queue_module.go:35 [MINOR/CODE_SMELL] godre:S8196: Rename this interface to follow Go naming conventions for single-method interfaces.

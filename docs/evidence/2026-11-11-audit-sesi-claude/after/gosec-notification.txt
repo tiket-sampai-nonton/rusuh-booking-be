@@ -1,0 +1,17 @@
+services/notification/internal/notification/application/usecase/consumed_events_contract_test.go:62:14: G304: Potential file inclusion via variable (gosec)
+	raw, err := os.ReadFile(path)
+	            ^
+services/notification/internal/notification/application/usecase/notify_booking_paid_test.go:27:9: G101: Potential hardcoded credentials (gosec)
+	return dto.BookingPaidPayload{
+		BookingID:       "11111111-1111-1111-1111-111111111111",
+		PublicRef:       "RBT-ABC123",
+		BuyerEmail:      "buyer@example.id",
+		Event:           dto.EventInfo{EventID: "e1", Name: "Konser ABC", StartsAt: "2026-11-15T19:00:00Z", Venue: "GBK"},
+		Tickets:         []dto.TicketInfo{{TicketCode: "TKT-001", AttendeeName: "Budi", AttendeeNikMasked: "3174********0001", CategoryCode: "VIP"}},
+		TicketLinkToken: "opaque-token",
+	}
+services/notification/internal/notification/infrastructure/fcm/push_sender.go:54:14: G304: Potential file inclusion via variable (gosec)
+	raw, err := os.ReadFile(credentialsPath)
+	            ^
+3 issues:
+* gosec: 3

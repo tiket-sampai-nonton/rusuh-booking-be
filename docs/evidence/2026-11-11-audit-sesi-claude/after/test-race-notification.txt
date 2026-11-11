@@ -1,0 +1,24 @@
+?   	github.com/tiket-sampai-nonton/rusuh-booking-be/services/notification/assets/templates	[no test files]
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/notification/cmd	1.655s	coverage: 6.6% of statements
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/notification/deployments/migrations	1.230s	coverage: [no statements]
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/notification/internal/config	1.394s	coverage: 100.0% of statements
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/notification/internal/delivery	1.907s	coverage: 20.1% of statements
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/notification/internal/notification/application/usecase	2.345s	coverage: 81.9% of statements
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/notification/internal/notification/domain/dto	2.192s	coverage: 87.8% of statements
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/notification/internal/notification/domain/entity	2.033s	coverage: 100.0% of statements
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/notification/internal/notification/domain/mapper	2.836s	coverage: 100.0% of statements
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/notification/internal/notification/domain/valueobject	2.669s	coverage: 100.0% of statements
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/notification/internal/notification/infrastructure/emailguard	2.531s	coverage: 86.7% of statements
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/notification/internal/notification/infrastructure/fcm	2.215s	coverage: 70.3% of statements
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/notification/internal/notification/infrastructure/healthcheck	1.814s	coverage: 100.0% of statements
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/notification/internal/notification/infrastructure/http	1.664s	coverage: 93.8% of statements
+	github.com/tiket-sampai-nonton/rusuh-booking-be/services/notification/internal/notification/infrastructure/postgres		coverage: 0.0% of statements
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/notification/internal/notification/infrastructure/qrcode	1.436s	coverage: 100.0% of statements
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/notification/internal/notification/infrastructure/rabbitmq	1.592s	coverage: 79.5% of statements
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/notification/internal/notification/infrastructure/resend	1.678s	coverage: 88.9% of statements
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/notification/internal/notification/infrastructure/security	1.609s	coverage: 87.5% of statements
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/notification/internal/notification/infrastructure/smtp	1.587s	coverage: 80.2% of statements
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/notification/internal/notification/infrastructure/template	1.636s	coverage: 83.0% of statements
+	github.com/tiket-sampai-nonton/rusuh-booking-be/services/notification/internal/notification/port/inbound		coverage: 0.0% of statements
+?   	github.com/tiket-sampai-nonton/rusuh-booking-be/services/notification/internal/notification/port/outbound	[no test files]
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/notification/internal/shared/entity	1.492s	coverage: 100.0% of statements

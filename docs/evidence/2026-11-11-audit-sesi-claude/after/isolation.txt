@@ -1,0 +1,5 @@
+==> isolation queue
+==> isolation booking
+==> isolation payment
+==> isolation notification
+==> isolation user

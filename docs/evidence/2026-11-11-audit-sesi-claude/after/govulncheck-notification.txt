@@ -1,0 +1,57 @@
+=== Symbol Results ===
+
+Vulnerability #1: GO-2026-6859
+    HTTP/1 server crash due to MaxBytesReader header race in net/http
+  More info: https://pkg.go.dev/vuln/GO-2026-6859
+  Standard library
+    Found in: net/http@go1.27.3
+    Fixed in: net/http@go1.27.4
+    Example traces found:
+      #1: internal/delivery/clients.go:30:26: delivery.NewClients calls postgres.New, which eventually calls http.CanonicalHeaderKey
+      #2: internal/notification/infrastructure/fcm/push_sender.go:130:24: fcm.Sender.Send calls http.Client.Do
+      #3: cmd/healthcheck.go:17:26: cmd.init calls http.Client.Get
+      #4: internal/notification/infrastructure/fcm/push_sender.go:158:26: fcm.Sender.accessToken calls oauth2.reuseTokenSource.Token, which eventually calls http.Client.PostForm
+      #5: internal/notification/infrastructure/emailguard/sender.go:13:2: emailguard.init calls telemetry.init, which eventually calls http.HandleFunc
+      #6: internal/notification/infrastructure/security/visitor_auth.go:30:29: security.VisitorAuthenticator.Resolve calls http.Header.Get
+      #7: internal/notification/infrastructure/fcm/push_sender.go:127:16: fcm.Sender.Send calls http.Header.Set
+      #8: internal/notification/infrastructure/fcm/push_sender.go:123:40: fcm.Sender.Send calls http.NewRequestWithContext
+      #9: internal/notification/infrastructure/security/visitor_auth.go:28:23: security.VisitorAuthenticator.Resolve calls http.Request.Cookie
+      #10: internal/delivery/server.go:49:12: delivery.NewHandler calls http.ServeMux.Handle
+      #11: internal/notification/infrastructure/http/subscription_handler.go:30:16: http.SubscriptionHandler.Register calls http.ServeMux.HandleFunc
+      #12: internal/delivery/server.go:33:18: delivery.RunServer calls httpx.Run, which eventually calls http.Server.Serve
+      #13: internal/delivery/server.go:33:18: delivery.RunServer calls httpx.Run, which eventually calls http.Server.Shutdown
+      #14: internal/notification/infrastructure/fcm/push_sender.go:134:36: fcm.Send calls http.body.Close
+      #15: internal/notification/infrastructure/fcm/push_sender.go:135:27: fcm.Sender.Send calls io.ReadAll, which calls http.body.Read
+      #16: internal/notification/infrastructure/fcm/push_sender.go:134:36: fcm.Send calls http.bodyEOFSignal.Close
+      #17: internal/notification/infrastructure/fcm/push_sender.go:135:27: fcm.Sender.Send calls io.ReadAll, which calls http.bodyEOFSignal.Read
+      #18: internal/notification/infrastructure/fcm/push_sender.go:135:27: fcm.Sender.Send calls io.ReadAll, which eventually calls http.bodyLocked.Read
+      #19: internal/notification/infrastructure/smtp/email_sender.go:126:24: smtp.Sender.build calls multipart.Writer.CreatePart, which eventually calls http.bufioFlushWriter.Write
+      #20: internal/notification/infrastructure/fcm/push_sender.go:134:36: fcm.Send calls http.cancelTimerBody.Close
+      #21: internal/notification/infrastructure/fcm/push_sender.go:135:27: fcm.Sender.Send calls io.ReadAll, which calls http.cancelTimerBody.Read
+      #22: internal/notification/infrastructure/fcm/push_sender.go:134:36: fcm.Send calls http2.transportResponseBody.Close, which eventually calls http.checkConnErrorWriter.Write
+      #23: internal/notification/infrastructure/fcm/push_sender.go:134:36: fcm.Send calls http2.transportResponseBody.Close, which eventually calls http.chunkWriter.Write
+      #24: internal/notification/infrastructure/fcm/push_sender.go:135:27: fcm.Sender.Send calls io.ReadAll, which eventually calls http.connReader.Read
+      #25: internal/notification/infrastructure/fcm/push_sender.go:134:36: fcm.Send calls http2.transportResponseBody.Close, which eventually calls http.expectContinueReader.Close
+      #26: internal/notification/infrastructure/fcm/push_sender.go:135:27: fcm.Sender.Send calls io.ReadAll, which eventually calls http.expectContinueReader.Read
+      #27: internal/notification/infrastructure/fcm/push_sender.go:134:36: fcm.Send calls http.gzipReader.Close
+      #28: internal/notification/infrastructure/fcm/push_sender.go:135:27: fcm.Sender.Send calls io.ReadAll, which calls http.gzipReader.Read
+      #29: internal/notification/infrastructure/security/pii_protector.go:70:22: security.PII.SealPushToken calls crypto.Sealer.Seal, which eventually calls http.loggingConn.Read
+      #30: internal/notification/infrastructure/smtp/email_sender.go:126:24: smtp.Sender.build calls multipart.Writer.CreatePart, which eventually calls http.loggingConn.Write
+      #31: internal/notification/infrastructure/fcm/push_sender.go:135:27: fcm.Sender.Send calls io.ReadAll, which eventually calls http.maxBytesReader.Read
+      #32: internal/notification/infrastructure/template/renderer.go:85:25: template.init calls time.FixedZone, which eventually calls http.onceCloseListener.Close
+      #33: internal/notification/infrastructure/fcm/push_sender.go:135:27: fcm.Sender.Send calls io.ReadAll, which eventually calls http.persistConn.Read
+      #34: internal/notification/infrastructure/smtp/email_sender.go:126:24: smtp.Sender.build calls multipart.Writer.CreatePart, which eventually calls http.persistConnWriter.ReadFrom
+      #35: internal/notification/infrastructure/fcm/push_sender.go:134:36: fcm.Send calls http2.transportResponseBody.Close, which eventually calls http.persistConnWriter.Write
+      #36: internal/notification/infrastructure/fcm/push_sender.go:134:36: fcm.Send calls http2.transportResponseBody.Close, which eventually calls http.readTrackingBody.Close
+      #37: internal/notification/infrastructure/fcm/push_sender.go:135:27: fcm.Sender.Send calls io.ReadAll, which eventually calls http.readTrackingBody.Read
+      #38: internal/notification/infrastructure/fcm/push_sender.go:135:27: fcm.Sender.Send calls io.ReadAll, which calls http.readWriteCloserBody.Read
+      #39: internal/notification/infrastructure/smtp/email_sender.go:126:24: smtp.Sender.build calls multipart.Writer.CreatePart, which eventually calls http.response.ReadFrom
+      #40: cmd/root.go:60:15: cmd.Execute calls fmt.Fprintln, which calls http.response.Write
+      #41: cmd/root.go:60:15: cmd.Execute calls fmt.Fprintln, which eventually calls http.response.WriteString
+      #42: cmd/root.go:60:15: cmd.Execute calls fmt.Fprintln, which calls http.timeoutWriter.Write
+      #43: internal/notification/infrastructure/smtp/email_sender.go:85:18: smtp.redact calls http.transportReadFromServerError.Error
+
+Your code is affected by 1 vulnerability from the Go standard library.
+This scan found no other vulnerabilities in packages you import or modules you
+require.
+Use '-show verbose' for more details.

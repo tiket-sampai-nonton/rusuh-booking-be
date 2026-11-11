@@ -1,0 +1,22 @@
+?   	github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/assets/lua	[no test files]
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/cmd	1.694s	coverage: 6.6% of statements
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/deployments/migrations	1.382s	coverage: [no statements]
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/config	1.241s	coverage: 94.5% of statements
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/delivery	3.318s	coverage: 34.2% of statements
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/application/usecase	1.757s	coverage: 92.0% of statements
+?   	github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/domain/dto	[no test files]
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/domain/entity	2.479s	coverage: 93.8% of statements
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/domain/mapper	1.885s	coverage: 100.0% of statements
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/domain/valueobject	2.627s	coverage: 96.6% of statements
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/infrastructure/bookingclient	2.050s	coverage: 80.6% of statements
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/infrastructure/healthcheck	2.824s	coverage: 100.0% of statements
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/infrastructure/http	1.844s	coverage: 98.7% of statements
+	github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/infrastructure/postgres		coverage: 0.0% of statements
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/infrastructure/rabbitmq	1.699s	coverage: 84.6% of statements
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/infrastructure/security	1.695s	coverage: 95.7% of statements
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/infrastructure/telemetry	1.702s	coverage: 100.0% of statements
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/infrastructure/valkey	1.697s	coverage: 0.9% of statements
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/infrastructure/worker	1.730s	coverage: 89.7% of statements
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/port/inbound	1.415s	coverage: 100.0% of statements
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/port/outbound	1.409s	coverage: 93.3% of statements
+ok  	github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/shared/entity	1.340s	coverage: 100.0% of statements

@@ -1,0 +1,20 @@
+cd tools/contracts && GOWORK=off go run . ../../docs/contracts
+ok   ../../docs/contracts/openapi/booking.yaml
+ok   ../../docs/contracts/openapi/internal-booking.yaml
+ok   ../../docs/contracts/openapi/internal-payment.yaml
+ok   ../../docs/contracts/openapi/notification.yaml
+ok   ../../docs/contracts/openapi/payment.yaml
+ok   ../../docs/contracts/openapi/queue.yaml
+ok   ../../docs/contracts/openapi/user.yaml
+ok   ../../docs/contracts/events/booking.expired.v1.schema.json
+ok   ../../docs/contracts/events/booking.journey.ended.v1.schema.json
+ok   ../../docs/contracts/events/booking.paid.v1.schema.json
+ok   ../../docs/contracts/events/booking.quota.exhausted.v1.schema.json
+ok   ../../docs/contracts/events/booking.review.v1.schema.json
+ok   ../../docs/contracts/events/booking.sold_out.v1.schema.json
+ok   ../../docs/contracts/events/envelope.schema.json
+ok   ../../docs/contracts/events/otp.requested.v1.schema.json
+ok   ../../docs/contracts/events/payment.failed.v1.schema.json
+ok   ../../docs/contracts/events/payment.succeeded.v1.schema.json
+ok   ../../docs/contracts/events/queue.turn.arrived.v1.schema.json
+ok   ../../docs/contracts/events/queue.turn.soon.v1.schema.json

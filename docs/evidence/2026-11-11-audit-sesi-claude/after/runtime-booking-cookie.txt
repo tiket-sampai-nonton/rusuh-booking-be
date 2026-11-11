@@ -1,0 +1,7 @@
+== GET /api/v1/events dengan cookie rusak (dulu 401):
+200
+== GET /api/v1/events/{id} dengan cookie rusak:
+200
+== GET /api/v1/booking-sessions/current dengan cookie rusak (harus 401, TANPA Set-Cookie):
+HTTP/1.1 401 Unauthorized
+Www-Authenticate: Bearer realm="rbt-visitor", error="invalid_token"

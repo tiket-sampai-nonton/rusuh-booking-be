@@ -1,0 +1,20 @@
+services/booking/internal/booking/infrastructure/http/visitor_test.go:52:77: G124: http.Cookie missing or has insecure Secure, HttpOnly, or SameSite attribute (gosec)
+	id, code = visitorOf(t, v, func(r *http.Request) { r.AddCookie(&http.Cookie{Name: "rb_visitor", Value: "good"}) })
+	                                                                           ^
+services/booking/internal/booking/infrastructure/http/visitor_test.go:88:59: G124: http.Cookie missing or has insecure Secure, HttpOnly, or SameSite attribute (gosec)
+	stale := func(r *http.Request) { r.AddCookie(&http.Cookie{Name: "rb_visitor", Value: "stale"}) }
+	                                                         ^
+services/booking/internal/booking/infrastructure/http/visitor_test.go:99:59: G124: http.Cookie missing or has insecure Secure, HttpOnly, or SameSite attribute (gosec)
+	stale := func(r *http.Request) { r.AddCookie(&http.Cookie{Name: "rb_visitor", Value: "stale"}) }
+	                                                         ^
+services/booking/internal/booking/infrastructure/http/visitor_test.go:117:57: G124: http.Cookie missing or has insecure Secure, HttpOnly, or SameSite attribute (gosec)
+	return func(r *http.Request) { r.AddCookie(&http.Cookie{Name: "rb_visitor", Value: val}) }
+	                                                       ^
+services/booking/internal/booking/infrastructure/storage/local.go:33:12: G306: Expect WriteFile permissions to be 0600 or less (gosec)
+	if err := os.WriteFile(path, body, 0o640); err != nil {
+	          ^
+services/booking/internal/booking/infrastructure/storage/storage_test.go:22:14: G304: Potential file inclusion via variable (gosec)
+	got, err := os.ReadFile(filepath.Join(dir, "events", "e1", "image-a.png"))
+	            ^
+6 issues:
+* gosec: 6
