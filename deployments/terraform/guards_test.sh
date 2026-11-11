@@ -53,4 +53,28 @@ serve "$(variant "/events" 502 html)";                               expect "boo
 serve "$(variant "/push-subscriptions" 503 html)";                   expect "notification 503: gagal" 1 "$(smoke)"
 stop; PORT=1;                                                        expect "tidak ada server (000): gagal" 1 "$(smoke)"
 
+echo; echo "check-ssm-env.sh"
+mkdir -p "$TMP/bin" "$TMP/ssm"
+cat > "$TMP/bin/aws" <<'AWS'
+#!/usr/bin/env bash
+# aws tiruan: hanya `ssm get-parameter --name /rusuh-test/<svc>.env`
+name=""; while [ $# -gt 0 ]; do [ "$1" = "--name" ] && name="$2"; shift; done
+if [ "${FAKE_AWS_DENY:-}" = 1 ]; then echo "An error occurred (AccessDeniedException) when calling the GetParameter operation: User is not authorized to perform: ssm:GetParameter" >&2; exit 254; fi
+f="$FAKE_SSM/$(basename "$name")"
+[ -f "$f" ] && { cat "$f"; exit 0; }
+echo "An error occurred (ParameterNotFound) when calling the GetParameter operation: " >&2; exit 254
+AWS
+chmod +x "$TMP/bin/aws"
+tplsvc() { grep -oE '^[A-Z_][A-Z0-9_]*=' "$HERE/../dev/env/$1.env.example" | sed 's/$/SECRETMARK123/'; }
+fresh() { rm -f "$TMP"/ssm/*; for s in queue booking payment notification user; do tplsvc $s > "$TMP/ssm/$s.env"; done; }
+ssmcheck() { PATH="$TMP/bin:$PATH" FAKE_SSM="$TMP/ssm" ENV_NAME=test bash "$HERE/check-ssm-env.sh" > "$TMP/ssmout.txt" 2>&1; echo $?; }
+fresh;                                                          expect "env lengkap terhadap template: lolos" 0 "$(ssmcheck)"
+grep -q "SECRETMARK123" "$TMP/ssmout.txt" && bad "nilai env ikut tercetak" || ok "nilai env tidak pernah dicetak"
+fresh; sed -i.bak '/^BOOKING_PAGE_BASE_URL=/d' "$TMP/ssm/queue.env"
+r=$(ssmcheck); expect "BOOKING_PAGE_BASE_URL hilang (insiden prod): gagal" 1 "$r"; grep -q "queue.env.*BOOKING_PAGE_BASE_URL" "$TMP/ssmout.txt" && ok "pesan menyebut service dan nama key" || bad "pesan tidak menyebut key"
+fresh; sed -i.bak '/^CORS_ALLOWED_ORIGINS=/d' "$TMP/ssm/user.env";        expect "key opsional terdaftar hilang: tetap lolos" 0 "$(ssmcheck)"
+fresh; sed -i.bak '/^PAYMENT_MAX_ATTEMPTS=/d;/^MIDTRANS_SERVER_KEY=/d' "$TMP/ssm/payment.env"; r=$(ssmcheck); expect "key wajib lain hilang: gagal" 1 "$r"
+fresh; rm -f "$TMP/ssm/booking.env";                                    expect "parameter tidak ada: gagal" 1 "$(ssmcheck)"
+fresh; r=$(FAKE_AWS_DENY=1 ssmcheck);                                   expect "kredensial CI tanpa izin baca: dilewati (exit 2)" 2 "$r"
+
 echo; echo "hasil: $pass lolos, $fail gagal"; [ "$fail" -eq 0 ]

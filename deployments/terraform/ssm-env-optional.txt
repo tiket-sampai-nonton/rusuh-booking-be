@@ -1,0 +1,25 @@
+# Key di deployments/dev/env/<service>.env.example yang SENGAJA tidak ada di SSM /rusuh-<env>/<service>.env (kode memakai
+# bawaan, atau nilainya khusus dev). Format: <service> <KEY>   # alasan. check-ssm-env.sh menolak rilis bila template punya key
+# lain yang belum ada di SSM, jadi env wajib baru (seperti BOOKING_PAGE_BASE_URL pada insiden 2026-11-11) tidak lolos diam-diam.
+# Menambah baris di sini adalah keputusan sadar bahwa key itu opsional di AWS; jangan menambah hanya agar cek lolos.
+#
+# Terbukti opsional: prod berjalan sehat tanpa key ini (2026-11-11).
+queue        ADMIN_EMAILS                              # endpoint admin queue; AWS belum memakainya
+queue        COOKIE_SAMESITE                           # bawaan Lax; dev memakai none karena FE lokal lintas-site
+queue        CORS_ALLOWED_ORIGINS                      # BELUM DIPUTUSKAN untuk prod: FE di domain lain butuh ini
+queue        QUEUE_END_AFTER_SECONDS                   # bawaan kode
+queue        QUEUE_HEARTBEAT_INTERVAL_SECONDS          # bawaan kode
+queue        QUEUE_HEARTBEAT_NEAR_INTERVAL_SECONDS     # bawaan kode
+queue        QUEUE_STALE_AFTER_SECONDS                 # bawaan kode
+queue        RATE_LIMIT_JOIN_PER_IP                    # dev dilonggarkan karena semua trafik satu IP (gateway VPS)
+booking      CORS_ALLOWED_ORIGINS                      # BELUM DIPUTUSKAN untuk prod
+booking      IMAGE_LOCAL_DIR                           # penyimpanan gambar lokal; AWS memakai S3
+booking      RATE_LIMIT_PER_IP                         # dev dilonggarkan
+payment      COOKIE_SAMESITE                           # bawaan Lax
+payment      CORS_ALLOWED_ORIGINS                      # BELUM DIPUTUSKAN untuk prod
+payment      RATE_LIMIT_PER_IP                         # dev dilonggarkan
+user         CORS_ALLOWED_ORIGINS                      # BELUM DIPUTUSKAN untuk prod
+user         OTP_MAX_PER_IP_HOUR                       # dev dilonggarkan
+user         OTP_MAX_VERIFY_PER_IP_MIN                 # dev dilonggarkan
+user         TOKEN_MAX_REFRESH_PER_IP_MIN              # dev dilonggarkan
+notification CORS_ALLOWED_ORIGINS                      # BELUM DIPUTUSKAN untuk prod

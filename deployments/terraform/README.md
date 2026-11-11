@@ -132,3 +132,17 @@ melaporkan nilai yang sama, jadi baca dengan `MAX`/`MIN`, bukan `SUM`.
 Biaya: metrik kustom ±US$0,30 per kombinasi metrik dan `event_id` per bulan, yaitu sekitar 5 metrik per event yang
 punya pengaturan antrean, ditambah 2 metrik status. Event lama tetap terlapor; hapus pengaturan antreannya bila jumlah
 event bertambah banyak. Belum diuji di AWS (`plan`/`apply` belum dijalankan).
+
+## Pengaman rilis
+
+- `smoke-test.sh` (dipakai `deploy-aws.sh` dan `aws-power.sh on`): setelah rilis, setiap service (booking, queue, user, payment,
+  notification) harus menjawab rutenya sendiri lewat jalur publik. Dulu hanya `/events` yang dicek, sehingga rilis tetap hijau
+  walau queue-api mati (insiden 2026-11-11: env wajib `BOOKING_PAGE_BASE_URL` tidak ada di SSM, dan refresh ASG hanya menunggu
+  health check EC2).
+- `check-ssm-env.sh` (dipanggil `deploy-aws.sh` di awal): membandingkan nama key `deployments/dev/env/<service>.env.example`
+  dengan parameter SSM. Key template yang tidak ada di SSM menggagalkan rilis, kecuali terdaftar di `ssm-env-optional.txt`
+  dengan alasan. User CI sengaja tidak boleh membaca env (isinya rahasia), jadi di CI cek ini dilewati; jalankan sebagai
+  operator sebelum rilis: `ENV_NAME=prod AWS_REGION=ap-southeast-2 bash deployments/terraform/check-ssm-env.sh`. Menambah env wajib
+  baru ke template berarti menambahkannya juga ke SSM: `aws ssm put-parameter --overwrite` pada `/rusuh-<env>/<service>.env`
+  (ambil nilai lama, tambah barisnya, simpan; versi lama tetap ada di riwayat SSM untuk rollback).
+- `guards_test.sh` menguji keduanya tanpa AWS: `bash deployments/terraform/guards_test.sh`.

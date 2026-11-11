@@ -8,6 +8,11 @@ set -euo pipefail
 export AWS_REGION AWS_DEFAULT_REGION="$AWS_REGION"
 name="rusuh-$ENV_NAME"
 
+# Env di SSM tidak ikut template (seed-ssm.sh hanya sekali): cek key wajib SEBELUM mengubah apa pun. Kode keluar 2 berarti
+# kredensial ini tidak boleh membaca env (user CI sengaja begitu, isinya rahasia): dilewati, operator yang menjalankannya.
+rc=0; bash "$(dirname "$0")/check-ssm-env.sh" || rc=$?
+case "$rc" in 0) ;; 2) echo "cek env SSM dilewati (kredensial tanpa izin baca)" ;; *) exit 1 ;; esac
+
 for s in queue booking payment notification user; do
   aws ecr describe-images --repository-name "$name/$s" --image-ids imageTag="$IMAGE_TAG" >/dev/null
 done
