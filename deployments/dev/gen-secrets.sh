@@ -56,7 +56,7 @@ while IFS='=' read -r k v; do [ -n "$k" ] && subst+=("$k=$v"); done < "$GEN"
 [ -n "${GRAFANA_SMTP_KEY:-}" ]      && subst+=("SET_GRAFANA_SMTP_KEY=$GRAFANA_SMTP_KEY") # key Resend khusus Grafana (alert NFR-09)
 
 render() { # template -> tujuan; mengganti @@NAMA@@ dengan nilainya
-  local src="$1" dst="$2" line k v out
+  local src="$1" dst="$2" line k v kv
   umask 077
   : > "$dst"
   while IFS= read -r line || [ -n "$line" ]; do

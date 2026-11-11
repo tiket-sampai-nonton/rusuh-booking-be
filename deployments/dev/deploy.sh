@@ -8,7 +8,9 @@ set -euo pipefail
 : "${IMAGE_TAG:?IMAGE_TAG wajib (sha commit)}"
 export IMAGE_PREFIX IMAGE_TAG
 export RUSUH_DIR="${RUSUH_DIR:-/opt/rusuh}"
-export RUSUH_UID="$(id -u)" RUSUH_GID="$(id -g)"
+RUSUH_UID="$(id -u)"
+RUSUH_GID="$(id -g)"
+export RUSUH_UID RUSUH_GID
 cd "$(dirname "$0")"
 dc() { docker compose -f docker-compose.dev.yaml "$@"; }
 
