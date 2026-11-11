@@ -70,3 +70,18 @@ func (mr *MockIFunnelStatsMockRecorder) BookingCounts(ctx any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "BookingCounts", reflect.TypeOf((*MockIFunnelStats)(nil).BookingCounts), ctx)
 }
+
+// EventNames mocks base method.
+func (m *MockIFunnelStats) EventNames(ctx context.Context) ([]outbound.EventName, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "EventNames", ctx)
+	ret0, _ := ret[0].([]outbound.EventName)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// EventNames indicates an expected call of EventNames.
+func (mr *MockIFunnelStatsMockRecorder) EventNames(ctx any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "EventNames", reflect.TypeOf((*MockIFunnelStats)(nil).EventNames), ctx)
+}

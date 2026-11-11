@@ -38,4 +38,9 @@ func TestFunnelStats_CountsAdmissionsPerEventAndStatus(t *testing.T) {
 
 	_, err = NewFunnelStats(pool).BookingCounts(ctx)
 	require.NoError(t, err)
+
+	names, err := NewFunnelStats(pool).EventNames(ctx)
+	require.NoError(t, err)
+	assert.Contains(t, names, outbound.EventName{EventID: eventID, Name: "slug-" + eventID},
+		"seedTestEvent memakai slug sebagai nama; nama event ikut sebagai label info")
 }

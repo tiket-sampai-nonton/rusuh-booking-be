@@ -23,6 +23,7 @@ type FunnelCollector struct {
 	stats      outbound.IFunnelStats
 	admissions *prometheus.Desc
 	bookings   *prometheus.Desc
+	eventInfo  *prometheus.Desc
 	conversion *prometheus.Desc
 	missedTurn *prometheus.Desc
 	expired    *prometheus.Desc
@@ -39,6 +40,9 @@ func NewFunnelCollector(stats outbound.IFunnelStats) *FunnelCollector {
 		bookings: prometheus.NewDesc("rbt_booking_bookings",
 			"Booking per event dan status; dibaca dari PostgreSQL saat scrape.",
 			[]string{"event_id", "status"}, nil),
+		eventInfo: prometheus.NewDesc("rbt_booking_event_info",
+			"Nama event per event_id (nilai selalu 1); dipakai dashboard untuk menampilkan nama, bukan UUID.",
+			[]string{"event_id", "event_name"}, nil),
 		conversion: prometheus.NewDesc("rbt_booking_conversion_percent",
 			"Booking PAID dibanding admission per event (persen).", []string{"event_id"}, nil),
 		missedTurn: prometheus.NewDesc("rbt_booking_missed_turn_percent",
@@ -54,6 +58,7 @@ func NewFunnelCollector(stats outbound.IFunnelStats) *FunnelCollector {
 func (c *FunnelCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.admissions
 	ch <- c.bookings
+	ch <- c.eventInfo
 	ch <- c.conversion
 	ch <- c.missedTurn
 	ch <- c.expired
@@ -73,6 +78,10 @@ func (c *FunnelCollector) Collect(ch chan<- prometheus.Metric) {
 	if err == nil {
 		bk, err = c.stats.BookingCounts(ctx)
 	}
+	var names []outbound.EventName
+	if err == nil {
+		names, err = c.stats.EventNames(ctx)
+	}
 	if err != nil {
 		slog.Warn("metrik funnel gagal dibaca", "error", err)
 		ch <- prometheus.MustNewConstMetric(c.up, prometheus.GaugeValue, 0)
@@ -83,6 +92,9 @@ func (c *FunnelCollector) Collect(ch chan<- prometheus.Metric) {
 	}
 	for _, r := range bk {
 		ch <- prometheus.MustNewConstMetric(c.bookings, prometheus.GaugeValue, float64(r.Count), r.EventID, r.Status)
+	}
+	for _, n := range names {
+		ch <- prometheus.MustNewConstMetric(c.eventInfo, prometheus.GaugeValue, 1, n.EventID, n.Name)
 	}
 	totals := tally(adm, bk)
 	for id, t := range totals {

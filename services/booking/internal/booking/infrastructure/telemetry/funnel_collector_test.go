@@ -15,7 +15,8 @@ import (
 
 type fakeFunnel struct {
 	admissions, bookings []outbound.FunnelCount
-	err                  error
+	names                []outbound.EventName
+	err, namesErr        error
 }
 
 func (f fakeFunnel) AdmissionCounts(context.Context) ([]outbound.FunnelCount, error) {
@@ -23,6 +24,9 @@ func (f fakeFunnel) AdmissionCounts(context.Context) ([]outbound.FunnelCount, er
 }
 func (f fakeFunnel) BookingCounts(context.Context) ([]outbound.FunnelCount, error) {
 	return f.bookings, f.err
+}
+func (f fakeFunnel) EventNames(context.Context) ([]outbound.EventName, error) {
+	return f.names, f.namesErr
 }
 
 func TestFunnelCollector_ExposesAdmissionsAndBookingsPerEvent(t *testing.T) {
@@ -38,6 +42,7 @@ func TestFunnelCollector_ExposesAdmissionsAndBookingsPerEvent(t *testing.T) {
 			{EventID: "e1", Status: "EXPIRED", Count: 1},
 			{EventID: "e1", Status: "PENDING_PAYMENT", Count: 1},
 		},
+		names: []outbound.EventName{{EventID: "e1", Name: "Jazz Night"}, {EventID: "e3", Name: "Event \"Tanpa\" Data"}},
 	})
 	want := `
 # HELP rbt_booking_admissions Admission (sesi detail) per event, status, dan alasan akhir; dibaca dari PostgreSQL saat scrape.
@@ -55,6 +60,10 @@ rbt_booking_bookings{event_id="e1",status="PENDING_PAYMENT"} 1
 # TYPE rbt_booking_conversion_percent gauge
 rbt_booking_conversion_percent{event_id="e1"} 25
 rbt_booking_conversion_percent{event_id="e2"} 0
+# HELP rbt_booking_event_info Nama event per event_id (nilai selalu 1); dipakai dashboard untuk menampilkan nama, bukan UUID.
+# TYPE rbt_booking_event_info gauge
+rbt_booking_event_info{event_id="e1",event_name="Jazz Night"} 1
+rbt_booking_event_info{event_id="e3",event_name="Event \"Tanpa\" Data"} 1
 # HELP rbt_booking_expired_percent Booking EXPIRED dibanding semua booking per event (persen).
 # TYPE rbt_booking_expired_percent gauge
 rbt_booking_expired_percent{event_id="e1"} 25
@@ -72,6 +81,18 @@ rbt_booking_missed_turn_percent{event_id="e2"} 0
 // A failing read must not break /metrics (HTTP metrics would vanish too): it reports up=0 and no stale numbers.
 func TestFunnelCollector_ReadFailureReportsDown(t *testing.T) {
 	c := telemetry.NewFunnelCollector(fakeFunnel{err: errors.New("db down")})
+	want := `
+# HELP rbt_booking_funnel_up 1 bila metrik funnel terbaca dari PostgreSQL pada scrape ini, 0 bila gagal.
+# TYPE rbt_booking_funnel_up gauge
+rbt_booking_funnel_up 0
+`
+	require.NoError(t, testutil.CollectAndCompare(c, strings.NewReader(want)))
+}
+
+// The event names come from the same database: if they cannot be read the funnel is reported down too, never a
+// funnel without names that the dashboard would show as bare UUIDs.
+func TestFunnelCollector_EventNamesFailureReportsDown(t *testing.T) {
+	c := telemetry.NewFunnelCollector(fakeFunnel{namesErr: errors.New("db down")})
 	want := `
 # HELP rbt_booking_funnel_up 1 bila metrik funnel terbaca dari PostgreSQL pada scrape ini, 0 bila gagal.
 # TYPE rbt_booking_funnel_up gauge
