@@ -34,7 +34,7 @@ flowchart TB
 | `storage` | bucket backup (versioned, SSE-S3, tanpa akses publik, TLS saja, lifecycle 90 hari); bucket gambar (baca publik hanya `events/*`) |
 | `data_host` | EC2 arm64, IMDSv2, volume data terpisah (`prevent_destroy`); snapshot harian DLM (simpan 7, `enable_daily_snapshot`) dan snapshot tiap `aws-power.sh off` (simpan 3) |
 | `compute` | ALB (80→443), ALB internal Queue → Booking, target group per service (`/health`), rule path per HLD (queue pertama), launch template + ASG `queue` (1–3) dan `core` (1–2), target tracking CPU 60%, health check tipe EC2 |
-| `observability` | alarm ALB 5xx dan unhealthy host per service, SNS email, AWS Budgets 50/100/150 USD; NFR-09: dashboard `<name>-bisnis` (antrean menunggu dan slot aktif, konversi, expired, missed turn per event) dan alarm funnel/antrean tidak terbaca, missed turn > 30%, booking expired > 50% |
+| `observability` | alarm ALB 5xx dan unhealthy host per service, SNS email, AWS Budgets 50/100/150 USD; NFR-09: dashboard `<name>-business-metrics` (antrean menunggu dan slot aktif, konversi, expired, missed turn per event) dan alarm funnel/antrean tidak terbaca, missed turn > 30%, booking expired > 50% |
 
 **Tidak termasuk (follow-up INF-2):** edge dan DNS dikelola di Cloudflare (`behind_cloudflare = true`), ACM (ARN sertifikat dipasok dari luar), Next.js web, Prometheus/Grafana (AWS memakai CloudWatch), X-Ray (ADR-023), scheduled scaling sebelum jam penjualan, RDS/ElastiCache/Amazon MQ (tier produksi di HLD §17).
 Biaya perkiraan ±US$120–150/bulan bila 24/7, termasuk ALB internal; teardown setelah assessment (`expires_on`).

@@ -1,10 +1,9 @@
 {
-  "uid": "rbt-bisnis",
-  "title": "RBT — Bisnis (NFR-09)",
+  "uid": "rbt-business",
+  "title": "RBT — Business Metrics",
   "tags": [
     "rbt",
-    "metrics",
-    "nfr-09"
+    "business"
   ],
   "schemaVersion": 39,
   "version": 1,
@@ -14,7 +13,7 @@
     "from": "now-1h",
     "to": "now"
   },
-  "description": "Antrean, konversi, expired, dan missed turn per event (NFR-09, US-081). Angka dibaca dari PostgreSQL/Valkey saat scrape; agregasi memakai max karena setiap instance melaporkan baris yang sama.",
+  "description": "Queue depth, conversion, expiry and missed turns per event. Values are read from PostgreSQL/Valkey at scrape time; panels aggregate with max because every instance reports the same rows.",
   "templating": {
     "list": [
       {
@@ -26,10 +25,11 @@
           "uid": "prometheus"
         },
         "query": {
-          "query": "label_values(rbt_queue_waiting_count, event_id)",
+          "query": "query_result(((max by (event_id) (rbt_queue_waiting_count)) * on (event_id) group_left (event_name) max by (event_id, event_name) (rbt_booking_event_info)) or label_replace((max by (event_id) (rbt_queue_waiting_count)) unless on (event_id) max by (event_id, event_name) (rbt_booking_event_info), \"event_name\", \"$1\", \"event_id\", \"(.*)\"))",
           "refId": "v"
         },
-        "definition": "label_values(rbt_queue_waiting_count, event_id)",
+        "definition": "query_result(((max by (event_id) (rbt_queue_waiting_count)) * on (event_id) group_left (event_name) max by (event_id, event_name) (rbt_booking_event_info)) or label_replace((max by (event_id) (rbt_queue_waiting_count)) unless on (event_id) max by (event_id, event_name) (rbt_booking_event_info), \"event_name\", \"$1\", \"event_id\", \"(.*)\"))",
+        "regex": "/event_id=\"(?<value>[^\"]+)\".*event_name=\"(?<text>.+)\"/",
         "includeAll": true,
         "multi": true,
         "allValue": ".*",
@@ -45,7 +45,7 @@
     {
       "id": 1,
       "type": "row",
-      "title": "Antrean",
+      "title": "Queue",
       "collapsed": false,
       "gridPos": {
         "x": 0,
@@ -58,7 +58,7 @@
     {
       "id": 2,
       "type": "timeseries",
-      "title": "Antrean menunggu per event",
+      "title": "Waiting in queue",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -76,16 +76,16 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "max by (event_id) (rbt_queue_waiting_count{event_id=~\"$event_id\"})",
-          "legendFormat": "{{event_id}}"
+          "expr": "((max by (event_id) (rbt_queue_waiting_count{event_id=~\"$event_id\"})) * on (event_id) group_left (event_name) max by (event_id, event_name) (rbt_booking_event_info)) or label_replace((max by (event_id) (rbt_queue_waiting_count{event_id=~\"$event_id\"})) unless on (event_id) max by (event_id, event_name) (rbt_booking_event_info), \"event_name\", \"$1\", \"event_id\", \"(.*)\")",
+          "legendFormat": "{{event_name}}"
         }
       ],
-      "description": "Entry WAITING yang masih hidup (Valkey)."
+      "description": "Live WAITING entries per event (read from Valkey)."
     },
     {
       "id": 3,
       "type": "timeseries",
-      "title": "Slot aktif per event",
+      "title": "Active slots",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -103,16 +103,16 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "max by (event_id) (rbt_queue_active_count{event_id=~\"$event_id\"})",
-          "legendFormat": "{{event_id}}"
+          "expr": "((max by (event_id) (rbt_queue_active_count{event_id=~\"$event_id\"})) * on (event_id) group_left (event_name) max by (event_id, event_name) (rbt_booking_event_info)) or label_replace((max by (event_id) (rbt_queue_active_count{event_id=~\"$event_id\"})) unless on (event_id) max by (event_id, event_name) (rbt_booking_event_info), \"event_name\", \"$1\", \"event_id\", \"(.*)\")",
+          "legendFormat": "{{event_name}}"
         }
       ],
-      "description": "Slot terpakai: ADMITTED, CLAIMED, dan MISSED yang belum disapu sweeper. Mentok di kapasitas berarti antrean bergerak sesuai kapasitas."
+      "description": "Slots in use: ADMITTED, CLAIMED and MISSED not yet swept. A flat line at capacity means the queue moves at the configured rate."
     },
     {
       "id": 4,
       "type": "row",
-      "title": "Konversi dan expired",
+      "title": "Conversion & expiry",
       "collapsed": false,
       "gridPos": {
         "x": 0,
@@ -125,7 +125,7 @@
     {
       "id": 5,
       "type": "timeseries",
-      "title": "Konversi (%) = booking PAID / admission",
+      "title": "Conversion (%) = paid bookings / admissions",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -145,16 +145,16 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "max by (event_id) (rbt_booking_conversion_percent{event_id=~\"$event_id\"})",
-          "legendFormat": "{{event_id}}"
+          "expr": "((max by (event_id) (rbt_booking_conversion_percent{event_id=~\"$event_id\"})) * on (event_id) group_left (event_name) max by (event_id, event_name) (rbt_booking_event_info)) or label_replace((max by (event_id) (rbt_booking_conversion_percent{event_id=~\"$event_id\"})) unless on (event_id) max by (event_id, event_name) (rbt_booking_event_info), \"event_name\", \"$1\", \"event_id\", \"(.*)\")",
+          "legendFormat": "{{event_name}}"
         }
       ],
-      "description": "Dari pembeli yang masuk detail (admission), berapa persen yang sudah bayar."
+      "description": "Of the buyers who reached the detail page (admission), the share that paid."
     },
     {
       "id": 6,
       "type": "timeseries",
-      "title": "Booking expired (%)",
+      "title": "Booking expiry (%)",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -174,16 +174,16 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "max by (event_id) (rbt_booking_expired_percent{event_id=~\"$event_id\"})",
-          "legendFormat": "{{event_id}}"
+          "expr": "((max by (event_id) (rbt_booking_expired_percent{event_id=~\"$event_id\"})) * on (event_id) group_left (event_name) max by (event_id, event_name) (rbt_booking_event_info)) or label_replace((max by (event_id) (rbt_booking_expired_percent{event_id=~\"$event_id\"})) unless on (event_id) max by (event_id, event_name) (rbt_booking_event_info), \"event_name\", \"$1\", \"event_id\", \"(.*)\")",
+          "legendFormat": "{{event_name}}"
         }
       ],
-      "description": "Booking yang habis TTL pembayaran dibanding semua booking."
+      "description": "Bookings that ran out of payment time, as a share of all bookings."
     },
     {
       "id": 7,
       "type": "timeseries",
-      "title": "Missed turn (%) = admission UNCLAIMED / admission",
+      "title": "Missed turn (%) = unclaimed admissions / admissions",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -203,16 +203,16 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "max by (event_id) (rbt_booking_missed_turn_percent{event_id=~\"$event_id\"})",
-          "legendFormat": "{{event_id}}"
+          "expr": "((max by (event_id) (rbt_booking_missed_turn_percent{event_id=~\"$event_id\"})) * on (event_id) group_left (event_name) max by (event_id, event_name) (rbt_booking_event_info)) or label_replace((max by (event_id) (rbt_booking_missed_turn_percent{event_id=~\"$event_id\"})) unless on (event_id) max by (event_id, event_name) (rbt_booking_event_info), \"event_name\", \"$1\", \"event_id\", \"(.*)\")",
+          "legendFormat": "{{event_name}}"
         }
       ],
-      "description": "Giliran yang tidak diambil sampai claim window habis."
+      "description": "Turns that were never claimed before the claim window closed."
     },
     {
       "id": 8,
       "type": "row",
-      "title": "Laju dan status",
+      "title": "Throughput & status",
       "collapsed": false,
       "gridPos": {
         "x": 0,
@@ -225,7 +225,7 @@
     {
       "id": 9,
       "type": "timeseries",
-      "title": "Admission baru per menit",
+      "title": "New admissions per minute",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -243,16 +243,16 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "delta((sum by (event_id) (max by (event_id, status, reason) (rbt_booking_admissions{event_id=~\"$event_id\"})))[5m:30s]) / 5",
-          "legendFormat": "{{event_id}}"
+          "expr": "((delta((sum by (event_id) (max by (event_id, status, reason) (rbt_booking_admissions{event_id=~\"$event_id\"})))[5m:30s]) / 5) * on (event_id) group_left (event_name) max by (event_id, event_name) (rbt_booking_event_info)) or label_replace((delta((sum by (event_id) (max by (event_id, status, reason) (rbt_booking_admissions{event_id=~\"$event_id\"})))[5m:30s]) / 5) unless on (event_id) max by (event_id, event_name) (rbt_booking_event_info), \"event_name\", \"$1\", \"event_id\", \"(.*)\")",
+          "legendFormat": "{{event_name}}"
         }
       ],
-      "description": "Rata-rata 5 menit terakhir: laju pembeli yang masuk ke detail."
+      "description": "Average over the last 5 minutes: buyers entering the detail page."
     },
     {
       "id": 10,
       "type": "timeseries",
-      "title": "Booking per status",
+      "title": "Bookings by status",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -276,15 +276,15 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "max by (event_id, status) (rbt_booking_bookings{event_id=~\"$event_id\"})",
-          "legendFormat": "{{event_id}} {{status}}"
+          "expr": "((max by (event_id, status) (rbt_booking_bookings{event_id=~\"$event_id\"})) * on (event_id) group_left (event_name) max by (event_id, event_name) (rbt_booking_event_info)) or label_replace((max by (event_id, status) (rbt_booking_bookings{event_id=~\"$event_id\"})) unless on (event_id) max by (event_id, event_name) (rbt_booking_event_info), \"event_name\", \"$1\", \"event_id\", \"(.*)\")",
+          "legendFormat": "{{event_name}} {{status}}"
         }
       ]
     },
     {
       "id": 11,
       "type": "stat",
-      "title": "Sumber metrik terbaca (1 = OK)",
+      "title": "Metric sources healthy (1 = OK)",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -302,7 +302,7 @@
               "type": "value",
               "options": {
                 "0": {
-                  "text": "GAGAL",
+                  "text": "FAILED",
                   "color": "red"
                 },
                 "1": {
@@ -341,12 +341,12 @@
         {
           "refId": "A",
           "expr": "min(rbt_booking_funnel_up)",
-          "legendFormat": "funnel booking (PostgreSQL)"
+          "legendFormat": "booking funnel (PostgreSQL)"
         },
         {
           "refId": "B",
           "expr": "min(rbt_queue_depth_up)",
-          "legendFormat": "kedalaman antrean (Valkey)"
+          "legendFormat": "queue depth (Valkey)"
         }
       ]
     }

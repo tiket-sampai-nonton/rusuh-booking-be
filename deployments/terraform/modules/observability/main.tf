@@ -73,12 +73,12 @@ resource "aws_budgets_budget" "monthly" {
 locals {
   ns = "RBT/${var.name}"
   business_widgets = [
-    ["Antrean menunggu per event", "SELECT MAX(rbt_queue_waiting_count) FROM SCHEMA(\"${local.ns}\", event_id) GROUP BY event_id"],
-    ["Slot aktif per event", "SELECT MAX(rbt_queue_active_count) FROM SCHEMA(\"${local.ns}\", event_id) GROUP BY event_id"],
-    ["Konversi (%) = PAID / admission", "SELECT MAX(rbt_booking_conversion_percent) FROM SCHEMA(\"${local.ns}\", event_id) GROUP BY event_id"],
-    ["Booking expired (%)", "SELECT MAX(rbt_booking_expired_percent) FROM SCHEMA(\"${local.ns}\", event_id) GROUP BY event_id"],
-    ["Missed turn (%)", "SELECT MAX(rbt_booking_missed_turn_percent) FROM SCHEMA(\"${local.ns}\", event_id) GROUP BY event_id"],
-    ["Sumber metrik terbaca (1 = OK)", "SELECT MIN(rbt_booking_funnel_up) FROM SCHEMA(\"${local.ns}\", service) GROUP BY service"],
+    ["Waiting in queue", "SELECT MAX(rbt_queue_waiting_count) FROM SCHEMA(\"${local.ns}\", event_id) GROUP BY event_id"],
+    ["Active slots", "SELECT MAX(rbt_queue_active_count) FROM SCHEMA(\"${local.ns}\", event_id) GROUP BY event_id"],
+    ["Conversion (%) = paid bookings / admissions", "SELECT MAX(rbt_booking_conversion_percent) FROM SCHEMA(\"${local.ns}\", event_id) GROUP BY event_id"],
+    ["Booking expiry (%)", "SELECT MAX(rbt_booking_expired_percent) FROM SCHEMA(\"${local.ns}\", event_id) GROUP BY event_id"],
+    ["Missed turn (%) = unclaimed admissions / admissions", "SELECT MAX(rbt_booking_missed_turn_percent) FROM SCHEMA(\"${local.ns}\", event_id) GROUP BY event_id"],
+    ["Booking funnel healthy (1 = OK)", "SELECT MIN(rbt_booking_funnel_up) FROM SCHEMA(\"${local.ns}\", service) GROUP BY service"],
   ]
   # Ambang awal (tebakan PoC, sama dengan alert Grafana dev): sesuaikan setelah ada data uji beban atau penjualan nyata.
   # Berbeda dari Grafana, alarm CloudWatch tidak bisa menyaring event dengan volume kecil, jadi butuh 5 menit berturut-turut.
@@ -86,28 +86,28 @@ locals {
     funnel-down = {
       query    = "SELECT MIN(rbt_booking_funnel_up) FROM SCHEMA(\"${local.ns}\", service)"
       operator = "LessThanThreshold", threshold = 1, periods = 3
-      summary  = "Funnel Booking gagal dibaca dari PostgreSQL (rbt_booking_funnel_up = 0)."
+      summary  = "The booking funnel could not be read from PostgreSQL (rbt_booking_funnel_up = 0)."
     }
     queue-depth-down = {
       query    = "SELECT MIN(rbt_queue_depth_up) FROM SCHEMA(\"${local.ns}\", service)"
       operator = "LessThanThreshold", threshold = 1, periods = 3
-      summary  = "Kedalaman antrean gagal dibaca dari Valkey (rbt_queue_depth_up = 0)."
+      summary  = "The queue depth could not be read from Valkey (rbt_queue_depth_up = 0)."
     }
     missed-turn-high = {
       query    = "SELECT MAX(rbt_booking_missed_turn_percent) FROM SCHEMA(\"${local.ns}\", event_id)"
       operator = "GreaterThanThreshold", threshold = 30, periods = 5
-      summary  = "Lebih dari 30% admission pada salah satu event berakhir UNCLAIMED."
+      summary  = "More than 30% of admissions ended UNCLAIMED for at least one event (event_id dimension)."
     }
     booking-expired-high = {
       query    = "SELECT MAX(rbt_booking_expired_percent) FROM SCHEMA(\"${local.ns}\", event_id)"
       operator = "GreaterThanThreshold", threshold = 50, periods = 5
-      summary  = "Lebih dari 50% booking pada salah satu event berakhir EXPIRED."
+      summary  = "More than 50% of bookings expired for at least one event (event_id dimension)."
     }
   }
 }
 
 resource "aws_cloudwatch_dashboard" "business" {
-  dashboard_name = "${var.name}-bisnis"
+  dashboard_name = "${var.name}-business-metrics"
   dashboard_body = jsonencode({
     widgets = [for i, w in local.business_widgets : {
       type   = "metric"
