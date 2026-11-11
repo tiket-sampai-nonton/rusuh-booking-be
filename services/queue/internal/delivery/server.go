@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"sync"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/clock"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/httpx"
@@ -47,7 +48,14 @@ func NewHandler(cfg config.Config, clients *Clients, logger *slog.Logger) (http.
 	mod.Register(mux)
 
 	mux.Handle("GET /metrics", telemetry.Handler())
+	if mod.depth != nil {
+		depthOnce.Do(func() { telemetry.MustRegister(mod.depth) })
+	}
 
 	// AccessLog dan telemetry.HTTP membaca r.Pattern, jadi harus di dalam RequestID dan langsung membungkus mux.
 	return httpx.Chain(mux, httpx.CORS(), httpx.RequestID(), httpx.AccessLog(logger), telemetry.HTTP(config.ServiceName), httpx.Recover(logger)), nil
 }
+
+// depthOnce guards the process-wide registry against a second NewHandler (tests); the API's /metrics is what
+// Prometheus and CloudWatch scrape, so the worker does not register it.
+var depthOnce sync.Once

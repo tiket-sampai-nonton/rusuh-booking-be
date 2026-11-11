@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -153,4 +154,30 @@ func TestNewCounterVec_AppearsInMetricsOutput(t *testing.T) {
 	assert.Contains(t, rec.Body.String(), `rbt_test_events_total{method="VA_BCA",status="SUCCEEDED"} 2`)
 
 	assert.Panics(t, func() { r.NewCounterVec("rbt_test_events_total", "duplikat", "x") }, "nama ganda ditolak")
+}
+
+type constCollector struct{ desc *prometheus.Desc }
+
+func (c constCollector) Describe(ch chan<- *prometheus.Desc) { ch <- c.desc }
+func (c constCollector) Collect(ch chan<- prometheus.Metric) {
+	ch <- prometheus.MustNewConstMetric(c.desc, prometheus.GaugeValue, 7, "e1")
+}
+
+func TestMustRegister_CollectorAppearsInMetricsOutput(t *testing.T) {
+	r := New()
+	c := constCollector{prometheus.NewDesc("rbt_test_state", "Hanya untuk test.", []string{"event_id"}, nil)}
+	r.MustRegister(c)
+
+	rec := httptest.NewRecorder()
+	r.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	assert.Contains(t, rec.Body.String(), `rbt_test_state{event_id="e1"} 7`)
+	assert.Panics(t, func() { r.MustRegister(c) }, "collector ganda ditolak")
+}
+
+func TestMustRegister_PackageLevelUsesDefault(t *testing.T) {
+	c := constCollector{prometheus.NewDesc("rbt_test_default_state", "Hanya untuk test.", []string{"event_id"}, nil)}
+	MustRegister(c)
+	f := family(t, Default, "rbt_test_default_state")
+	require.NotNil(t, f)
+	assert.EqualValues(t, 7, f.Metric[0].GetGauge().GetValue())
 }

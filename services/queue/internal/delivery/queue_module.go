@@ -40,6 +40,7 @@ type queueModule struct {
 	jobs     []Job
 	consumer *queuerabbitmq.Consumer
 	rmqConn  *rabbitmq.Connection
+	depth    *queuetelemetry.DepthCollector // NFR-09 queue depth; registered by the API server only
 }
 
 // Register mounts every domain handler on the mux.
@@ -149,7 +150,8 @@ func newQueueModule(cfg config.Config, clients *Clients, logger *slog.Logger) (*
 
 	consumer := queuerabbitmq.NewConsumer(store, clk)
 
-	return &queueModule{handlers: handlers, jobs: jobs, consumer: consumer, rmqConn: rmqConn}, nil
+	return &queueModule{handlers: handlers, jobs: jobs, consumer: consumer, rmqConn: rmqConn,
+		depth: queuetelemetry.NewDepthCollector(settingsRepo, store)}, nil
 }
 
 // statusTTL derives the status-doc TTL from the status publisher's own cadence (QUEUE_STATUS_INTERVAL_MS).

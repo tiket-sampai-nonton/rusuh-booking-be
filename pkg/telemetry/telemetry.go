@@ -1,5 +1,7 @@
 // Package telemetry exposes Prometheus metrics (platform R4.1-R4.3, R4.6; ADR-023). Label dibatasi ke
-// service, method, route (template), status, dan name; ID bisnis, NIK, dan email tidak pernah menjadi label.
+// service, method, route (template), status, dan name, plus event_id dan reason untuk metrik bisnis (NFR-09, US-081
+// "per event": jumlah nilainya dibatasi jumlah event). ID per pembeli (booking, sesi, entry), NIK, dan email tidak
+// pernah menjadi label.
 package telemetry
 
 import (
@@ -96,6 +98,13 @@ func (r *Registry) NewCounterVec(name, help string, labels ...string) *prometheu
 	r.reg.MustRegister(c)
 	return c
 }
+
+// MustRegister adds collectors that compute their values at scrape time, e.g. business gauges read from the store
+// of record (NFR-09). Same label rules as NewCounterVec. It panics on a duplicate, like prometheus.MustRegister.
+func (r *Registry) MustRegister(cs ...prometheus.Collector) { r.reg.MustRegister(cs...) }
+
+// MustRegister is Default.MustRegister.
+func MustRegister(cs ...prometheus.Collector) { Default.MustRegister(cs...) }
 
 // NewCounterVec is Default.NewCounterVec.
 func NewCounterVec(name, help string, labels ...string) *prometheus.CounterVec {
