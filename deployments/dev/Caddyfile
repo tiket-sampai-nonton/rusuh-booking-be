@@ -35,6 +35,12 @@
 		reverse_proxy notification-api:8084
 	}
 
+	# Riwayat pesanan akun milik Booking (booking.yaml), bukan User: harus sebelum @user yang menangkap /api/v1/me*.
+	@my_bookings path /api/v1/me/bookings*
+	handle @my_bookings {
+		reverse_proxy booking-api:8082
+	}
+
 	@user path /api/v1/auth/* /api/v1/me*
 	handle @user {
 		reverse_proxy user-api:8085

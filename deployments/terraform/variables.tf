@@ -50,7 +50,7 @@ variable "certificate_arn" {
 }
 
 variable "services" {
-  description = "Service backend: port dan path ALB. Rule queue selalu dievaluasi pertama (lihat compute)."
+  description = "Service backend: port dan path ALB (maks 5 path per rule). Rule queue selalu dievaluasi pertama, lalu urut nama: booking (termasuk /api/v1/me/bookings*) sebelum user (/api/v1/me*)."
   type = map(object({
     port  = number
     paths = list(string)
@@ -58,7 +58,7 @@ variable "services" {
   }))
   default = {
     queue        = { port = 8081, paths = ["/api/v1/queue*", "/api/v1/queue-status/*", "/api/v1/events/*/queue-entries", "/api/v1/queue-entries/*"], tier = "queue" }
-    booking      = { port = 8082, paths = ["/api/v1/events", "/api/v1/events/*", "/api/v1/bookings*", "/api/v1/booking-sessions*"], tier = "core" }
+    booking      = { port = 8082, paths = ["/api/v1/events", "/api/v1/events/*", "/api/v1/bookings*", "/api/v1/booking-sessions*", "/api/v1/me/bookings*"], tier = "core" }
     payment      = { port = 8083, paths = ["/api/v1/payments*", "/api/v1/payment-page-sessions", "/api/v1/webhooks/midtrans"], tier = "core" }
     notification = { port = 8084, paths = ["/api/v1/push-subscriptions*"], tier = "data" }
     user         = { port = 8085, paths = ["/api/v1/auth/*", "/api/v1/me*"], tier = "core" }
