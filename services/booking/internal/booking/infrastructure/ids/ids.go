@@ -15,7 +15,7 @@ type Gen struct{}
 // New returns a generator.
 func New() *Gen { return &Gen{} }
 
-// NewID returns a random UUIDv4.
+// NewID returns a UUIDv7 (ADR-032).
 func (g *Gen) NewID() string { return pkgrabbitmq.NewID() }
 
 // NewPublicRef returns a short, human-readable reference such as RB-7F3A9C21. It is random (not a

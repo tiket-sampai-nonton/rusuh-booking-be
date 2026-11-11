@@ -2,6 +2,7 @@ package rabbitmq
 
 import (
 	"crypto/rand"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -56,11 +57,16 @@ func (e Envelope) Validate() error {
 	return nil
 }
 
-// NewID returns a random UUIDv4 string.
-func NewID() string {
+// NewID returns a UUIDv7 string (RFC 9562, ADR-032): 48-bit Unix milliseconds, then 74 random bits. Ids sort by
+// creation time, so B-tree indexes on them stay dense. The creation time is readable from the id; access never depends
+// on an id being secret. Ids from the same millisecond are unique but not ordered among themselves.
+func NewID() string { return newIDAt(time.Now()) }
+
+func newIDAt(t time.Time) string {
 	var b [16]byte
-	_, _ = rand.Read(b[:])
-	b[6] = (b[6] & 0x0f) | 0x40
-	b[8] = (b[8] & 0x3f) | 0x80
+	binary.BigEndian.PutUint64(b[:8], uint64(t.UnixMilli())<<16) // 48-bit ms in b[0:6]; b[6:8] overwritten below
+	_, _ = rand.Read(b[6:])
+	b[6] = (b[6] & 0x0f) | 0x70 // version 7
+	b[8] = (b[8] & 0x3f) | 0x80 // variant 10
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
 }

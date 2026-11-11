@@ -230,7 +230,7 @@ func TestRelay_PublishesToRealRabbitMQ(t *testing.T) {
 	defer func() { _ = pub.Close() }()
 
 	got := make(chan rabbitmq.Delivery, 16)
-	queue := "it.outbox-" + rabbitmq.NewID()[:8]
+	queue := "it.outbox-" + rabbitmq.NewID()[28:] // ekor acak; awalan UUIDv7 = waktu
 	go func() {
 		_ = conn.Consume(ctx, rabbitmq.Subscription{Queue: queue, RoutingKeys: []string{"payment.succeeded"},
 			Handler: func(_ context.Context, d rabbitmq.Delivery) error { got <- d; return nil }}, quiet)

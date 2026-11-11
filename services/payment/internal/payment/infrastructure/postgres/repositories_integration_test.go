@@ -197,10 +197,11 @@ func TestTransition_StoresInstructionAndWritesEventOnlyWhenApplied(t *testing.T)
 	assert.True(t, got.SettlementTime.Equal(at))
 	assert.Equal(t, ins, got.Instruction, "instruksi lama tidak terhapus")
 
-	var routing, aggregate string
-	require.NoError(t, pool.QueryRow(ctx, `SELECT routing_key, aggregate_id::text FROM outbox_events`).Scan(&routing, &aggregate))
+	var routing, aggregate, outboxID string
+	require.NoError(t, pool.QueryRow(ctx, `SELECT routing_key, aggregate_id::text, id::text FROM outbox_events`).Scan(&routing, &aggregate, &outboxID))
 	assert.Equal(t, "payment.succeeded", routing)
 	assert.Equal(t, bookingID, aggregate)
+	assert.Equal(t, "7", outboxID[14:15], "id outbox baru adalah UUIDv7 (migrasi 0005, ADR-032)")
 }
 
 // Property 4: webhook idempoten dan status final tidak mundur.
