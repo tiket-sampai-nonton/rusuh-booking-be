@@ -41,6 +41,17 @@ func TestPII(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEmpty(t, nikEnc)
 
+	plainNIK, err := p.UnsealNIK(nikEnc)
+	require.NoError(t, err)
+	assert.Equal(t, "3174010101900001", plainNIK)
+
+	plainEmail, err := p.UnsealEmail(enc)
+	require.NoError(t, err)
+	assert.Equal(t, "a@b.id", plainEmail)
+
+	_, err = p.UnsealNIK(enc) // ciphertext email dibuka dengan AAD nik: harus gagal (domain separation)
+	assert.Error(t, err)
+
 	_, err = NewPII(key(1)[:5], key(2), key(3))
 	assert.Error(t, err)
 	_, err = NewPII(key(1), key(2)[:5], key(3))

@@ -34,13 +34,36 @@ var _ inbound.IProfileUsecase = (*Profile)(nil)
 
 var errNameLength = errors.New("nama 1–100 karakter")
 
-// GetProfile returns the profile of accountID.
+// GetProfile returns the profile of accountID. Email dan NIK dikirim dalam bentuk asli di sini saja
+// (pemilik akun melihat datanya sendiri); endpoint/alur lain tetap hanya mengirim bentuk tersamar.
 func (u *Profile) GetProfile(ctx context.Context, accountID string) (dto.ProfileResponse, error) {
 	acc, err := u.accounts.GetByID(ctx, accountID)
 	if err != nil {
 		return dto.ProfileResponse{}, mapAccountErr(err)
 	}
-	return mapper.ToProfileResponse(acc), nil
+	resp := mapper.ToProfileResponse(acc)
+
+	emailEnc, err := u.accounts.GetEmailEncByID(ctx, accountID)
+	if err != nil {
+		return dto.ProfileResponse{}, mapAccountErr(err)
+	}
+	resp.Email, err = u.pii.UnsealEmail(emailEnc)
+	if err != nil {
+		return dto.ProfileResponse{}, apperror.Internal(err)
+	}
+
+	if acc.HasNIK() {
+		nikEnc, err := u.accounts.GetNIKEncByID(ctx, accountID)
+		if err != nil {
+			return dto.ProfileResponse{}, mapAccountErr(err)
+		}
+		resp.NIK, err = u.pii.UnsealNIK(nikEnc)
+		if err != nil {
+			return dto.ProfileResponse{}, apperror.Internal(err)
+		}
+	}
+
+	return resp, nil
 }
 
 // UpdateProfile changes the full name and/or the stored NIK. NIK disimpan terenkripsi dan unik antar akun.

@@ -63,6 +63,7 @@ type IPIIProtector interface {
 	SealOTP(code string) ([]byte, error)
 	HashNIK(nik string) []byte
 	SealNIK(nik string) ([]byte, error)
+	UnsealNIK(enc []byte) (string, error)
 	HashOTP(emailHash []byte, code string) []byte
 	HashRefreshToken(raw string) []byte
 }
