@@ -134,11 +134,12 @@ func (r *BookingRepo) DueBookingIDs(ctx context.Context, now time.Time, limit in
 	return out, rows.Err()
 }
 
-// DeferVerification sets the next check of a VERIFYING booking to until (D-B5). It is scheduling state, so no event is
-// appended. A booking that already left VERIFYING is left unchanged.
+// DeferVerification moves the next check of a VERIFYING booking to until, but never earlier (D-B5): GREATEST keeps a
+// later check already scheduled, such as the grace end set when the payment window lapsed. It is scheduling state, so
+// no event is appended. A booking that already left VERIFYING is left unchanged.
 func (r *BookingRepo) DeferVerification(ctx context.Context, bookingID string, until time.Time) error {
 	if _, err := r.pool.Exec(ctx, `
-		UPDATE booking.bookings SET verification_until=$2, updated_at=now()
+		UPDATE booking.bookings SET verification_until=GREATEST(verification_until, $2), updated_at=now()
 		 WHERE id=$1::uuid AND status='VERIFYING'`, bookingID, until); err != nil {
 		return fmt.Errorf("bookings: defer verification: %w", err)
 	}

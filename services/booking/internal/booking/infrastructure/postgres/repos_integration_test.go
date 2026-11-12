@@ -219,6 +219,27 @@ func TestBookingRepo_DeferVerificationOnlyMovesVerifying(t *testing.T) {
 	assert.Equal(t, []string{pending}, due, "VERIFYING yang ditunda belum jatuh tempo")
 }
 
+// Deferral only moves the next check later: a check already scheduled further out (the grace end) is kept, so a
+// backoff after UNKNOWN cannot shorten the grace window that protects late webhooks.
+func TestDeferVerification_NeverMovesTheCheckEarlier(t *testing.T) {
+	f := seed(t)
+	ctx := context.Background()
+	repo := NewBookingRepo(f.pool)
+	now := time.Now()
+	id := f.insertBooking(t, "VERIFYING", now.Add(-10*time.Minute), ptrTime(now.Add(3*time.Minute)))
+	untilOf := func() time.Time {
+		var got time.Time
+		require.NoError(t, f.pool.QueryRow(ctx, `SELECT verification_until FROM booking.bookings WHERE id=$1::uuid`, id).Scan(&got))
+		return got
+	}
+
+	require.NoError(t, repo.DeferVerification(ctx, id, now.Add(30*time.Second)))
+	assert.WithinDuration(t, now.Add(3*time.Minute), untilOf(), time.Millisecond, "penundaan yang lebih awal dari akhir grace diabaikan")
+
+	require.NoError(t, repo.DeferVerification(ctx, id, now.Add(10*time.Minute)))
+	assert.WithinDuration(t, now.Add(10*time.Minute), untilOf(), time.Millisecond, "pemeriksaan yang lebih jauh diterapkan")
+}
+
 func TestAdmissionRepo_FindActivateReserveReleaseAndDue(t *testing.T) {
 	f := seed(t)
 	ctx := context.Background()
