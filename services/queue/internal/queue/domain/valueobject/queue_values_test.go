@@ -1,7 +1,11 @@
 package valueobject_test
 
 import (
+	"regexp"
+	"strconv"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -60,6 +64,21 @@ func TestNewSeq(t *testing.T) {
 	require.ErrorIs(t, err, valueobject.ErrInvalidSeq)
 	_, err = valueobject.NewSeq(-1)
 	require.ErrorIs(t, err, valueobject.ErrInvalidSeq)
+}
+
+func TestNewUUID_IsV7(t *testing.T) {
+	v7 := regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
+	seen := map[string]bool{}
+	before := time.Now().UnixMilli()
+	for i := 0; i < 1000; i++ {
+		id := valueobject.NewUUID()
+		assert.Regexp(t, v7, id)
+		seen[id] = true
+	}
+	assert.Len(t, seen, 1000, "unik")
+	ms, err := strconv.ParseInt(strings.ReplaceAll(valueobject.NewUUID()[:13], "-", ""), 16, 64)
+	require.NoError(t, err)
+	assert.InDelta(t, before, ms, 2000, "48 bit pertama adalah waktu Unix dalam milidetik")
 }
 
 func TestNewIDs(t *testing.T) {
