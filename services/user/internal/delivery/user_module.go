@@ -108,19 +108,7 @@ func newUserModule(cfg config.Config, clients *Clients, logger *slog.Logger) (re
 	// Di luar lokal service berada di belakang proxy tepercaya: IP klien diambil dari X-Forwarded-For sebanyak
 	// APP_TRUSTED_PROXY_HOPS entri dari kanan. Hanya angkanya yang di-log.
 	logger.Info("trusted proxy hops", "hops", cfg.App.TrustedProxyHops)
-	authHandler := userhttp.NewAuthHandler(auth, profile, tokens, cfg.App.Env != "local", cfg.App.TrustedProxyHops)
-	internalHandler := userhttp.NewInternalHandler(accounts, tokens)
-	return &userModule{auth: authHandler, internal: internalHandler}, nil
-}
-
-type userModule struct {
-	auth     registrar
-	internal registrar
-}
-
-func (m *userModule) Register(mux *http.ServeMux) {
-	m.auth.Register(mux)
-	m.internal.Register(mux)
+	return userhttp.NewAuthHandler(auth, profile, tokens, cfg.App.Env != "local", cfg.App.TrustedProxyHops), nil
 }
 
 // newPII parses the three keys and builds the protector. Kesalahan dikembalikan (bukan diabaikan) dan hanya

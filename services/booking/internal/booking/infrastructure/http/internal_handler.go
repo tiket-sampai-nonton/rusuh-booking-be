@@ -92,7 +92,7 @@ func (h *InternalHandler) Register(mux *stdhttp.ServeMux) {
 func (h *InternalHandler) paymentOnly(next stdhttp.HandlerFunc) stdhttp.Handler {
 	if h.paymentAuth == nil {
 		return stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-			w.Header().Set(headerWWWAuthenticate, `Bearer realm="rbt-internal"`)
+			w.Header().Set("WWW-Authenticate", `Bearer realm="rbt-internal"`)
 			httpx.WriteError(w, r, inbound.ErrUnauthorized)
 		})
 	}

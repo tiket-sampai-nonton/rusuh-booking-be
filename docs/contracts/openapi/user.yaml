@@ -403,10 +403,18 @@ components:
         accountId:
           type: string
           format: uuid
+        email:
+          type: string
+          format: email
+          description: Email asli pemilik akun; hanya diisi oleh GET /api/v1/me, kosong di endpoint/alur lain
         emailMasked:
           type: string
         fullName:
           type: string
+        nik:
+          type: string
+          pattern: ^[0-9]{16}$
+          description: NIK asli pemilik akun, jika sudah tersimpan; hanya diisi oleh GET /api/v1/me, kosong di endpoint/alur lain
         nikMasked:
           type: string
           example: 3174********0001

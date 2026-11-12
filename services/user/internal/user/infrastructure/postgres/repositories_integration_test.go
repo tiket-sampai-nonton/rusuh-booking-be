@@ -124,6 +124,20 @@ func TestAccounts(t *testing.T) {
 	_, err = repo.GetEmailEncByID(ctx, "6f1c0e7a-0000-4000-8000-000000000009")
 	assert.ErrorIs(t, err, entity.ErrNotFound)
 
+	// GetNIKEncByID — account without NIK returns nil, nil
+	nikEncNil, err := repo.GetNIKEncByID(ctx, b.ID)
+	require.NoError(t, err)
+	assert.Nil(t, nikEncNil, "account without NIK must return nil nik_enc")
+
+	// GetNIKEncByID — account with NIK returns stored ciphertext
+	nikEnc, err := repo.GetNIKEncByID(ctx, a.ID)
+	require.NoError(t, err)
+	assert.Equal(t, []byte("e"), nikEnc, "GetNIKEncByID must return the stored nik_enc")
+
+	// GetNIKEncByID — unknown ID returns ErrNotFound
+	_, err = repo.GetNIKEncByID(ctx, "6f1c0e7a-0000-4000-8000-000000000009")
+	assert.ErrorIs(t, err, entity.ErrNotFound)
+
 	audit := NewAudit(pool)
 	require.NoError(t, audit.Record(ctx, entity.LoginEvent{AccountID: a.ID, EmailHash: []byte("h1"), Outcome: entity.AuditLoginOK, ClientIP: "203.0.113.9"}))
 	require.NoError(t, audit.Record(ctx, entity.LoginEvent{Outcome: entity.AuditRefreshReused}))

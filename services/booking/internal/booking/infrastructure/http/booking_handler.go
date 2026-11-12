@@ -55,48 +55,21 @@ func (h *BookingHandler) createBooking(w stdhttp.ResponseWriter, r *stdhttp.Requ
 		httpx.WriteError(w, r, err)
 		return
 	}
+	// Optional bearer: identifies the account (principal) only. It never supplies or binds a NIK.
 	var accountID string
-	var loginNIKHash []byte
-	var loginNIKMasked string
-	if usesLoginNIK(req) {
-		// useLoginNik (buyer atau attendee): wajib bearer token yang memuat NIK akun.
-		tok, ok := httpx.BearerToken(r)
-		if !ok || h.buyer == nil {
-			w.Header().Set(headerWWWAuthenticate, `Bearer realm="rbt"`)
-			httpx.WriteError(w, r, inbound.ErrUnauthorized)
-			return
-		}
-		full, canFull := h.buyer.(IBuyerNIKVerifier)
-		if !canFull {
-			httpx.WriteError(w, r, inbound.ErrUnauthorized)
-			return
-		}
-		id, nikHash, nikMasked, verr := full.VerifyAccessFull(tok)
-		if verr != nil || id == "" || len(nikHash) == 0 {
-			w.Header().Set(headerWWWAuthenticate, `Bearer realm="rbt", error="invalid_token"`)
-			httpx.WriteError(w, r, inbound.ErrUnauthorized)
-			return
-		}
-		accountID, loginNIKHash, loginNIKMasked = id, nikHash, nikMasked
-	} else if tok, ok := httpx.BearerToken(r); ok && h.buyer != nil {
-		// Optional bearer: identifies the account (principal) only. It never supplies or binds a NIK.
+	if tok, ok := httpx.BearerToken(r); ok && h.buyer != nil {
 		id, verr := h.buyer.VerifyAccess(tok)
 		if verr != nil || id == "" {
-			w.Header().Set(headerWWWAuthenticate, `Bearer realm="rbt", error="invalid_token"`)
+			w.Header().Set("WWW-Authenticate", `Bearer realm="rbt", error="invalid_token"`)
 			httpx.WriteError(w, r, inbound.ErrUnauthorized)
 			return
 		}
 		accountID = id
 	}
-	// bearerRaw is forwarded to User Service when an attendee uses useLoginNik.
-	bearerRaw, _ := httpx.BearerToken(r)
 	resp, err := h.hold.Hold(r.Context(), inbound.HoldCommand{
 		Request:        req,
 		VisitorID:      VisitorID(r),
 		AccountID:      accountID,
-		LoginNIKHash:   loginNIKHash,
-		LoginNIKMasked: loginNIKMasked,
-		BearerToken:    bearerRaw,
 		IdempotencyKey: r.Header.Get("Idempotency-Key"),
 		CorrelationID:  httpx.RequestIDFrom(r.Context()),
 	})
@@ -137,7 +110,7 @@ func (h *BookingHandler) getTickets(w stdhttp.ResponseWriter, r *stdhttp.Request
 		}
 		id, err := h.buyer.VerifyAccess(tok)
 		if err != nil || id == "" {
-			w.Header().Set(headerWWWAuthenticate, `Bearer realm="rbt", error="invalid_token"`)
+			w.Header().Set("WWW-Authenticate", `Bearer realm="rbt", error="invalid_token"`)
 			httpx.WriteError(w, r, inbound.ErrUnauthorized)
 			return
 		}
@@ -163,15 +136,3 @@ func (h *BookingHandler) doCancelBooking(w stdhttp.ResponseWriter, r *stdhttp.Re
 }
 
 func noStore(w stdhttp.ResponseWriter) { w.Header().Set("Cache-Control", "no-store") }
-
-func usesLoginNIK(req dto.HoldRequest) bool {
-	if req.Buyer.UseLoginNIK {
-		return true
-	}
-	for _, it := range req.Items {
-		if it.Attendee.UseLoginNIK {
-			return true
-		}
-	}
-	return false
-}

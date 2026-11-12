@@ -33,9 +33,6 @@ func login(t *testing.T, email string) string {
 	mustStatus(t, 200, r, "otp verify")
 	tok := r.str("accessToken")
 	require.NotEmpty(t, tok, r.Raw)
-	refreshMu.Lock()
-	lastRefresh[email] = r.str("refreshToken")
-	refreshMu.Unlock()
 	return tok
 }
 
