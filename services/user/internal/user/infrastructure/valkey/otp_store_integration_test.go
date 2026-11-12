@@ -102,11 +102,11 @@ func TestOTPStore_Verify_MismatchThenLocked(t *testing.T) {
 	assert.Equal(t, entity.OTPLocked, res.Verdict)
 	code, attempts, cd := s.keys("lock")
 	assert.False(t, exists(t, c, code))
-	assert.False(t, exists(t, c, attempts))
+	assert.True(t, exists(t, c, attempts), "counter tetap ada selama kode masih berlaku")
 	assert.True(t, exists(t, c, cd), "cooldown tetap berlaku setelah lock")
 	res, err = s.Verify(ctx, "lock", []byte{1}, 3)
 	require.NoError(t, err)
-	assert.Equal(t, entity.OTPNotFound, res.Verdict)
+	assert.Equal(t, entity.OTPLocked, res.Verdict, "terkunci sampai kode baru diminta, bukan NotFound")
 
 	_, err = s.Start(ctx, "exp", []byte{1}, 150*time.Millisecond, time.Minute)
 	require.NoError(t, err)
@@ -116,6 +116,35 @@ func TestOTPStore_Verify_MismatchThenLocked(t *testing.T) {
 	assert.Equal(t, entity.OTPNotFound, res.Verdict)
 	_, attempts, _ = s.keys("exp")
 	assert.False(t, exists(t, c, attempts), "kedaluwarsa tidak meninggalkan counter")
+}
+
+// U5 (P3-16): a locked challenge keeps answering Locked, even for the right code, until a new code is requested.
+func TestOTPVerify_LockedStaysLockedUntilNewCode(t *testing.T) {
+	ctx := context.Background()
+	c := client(t)
+	s := NewOTPStore(c.VK(), c)
+	_, err := s.Start(ctx, "stay", []byte{1}, time.Minute, 200*time.Millisecond)
+	require.NoError(t, err)
+	for i := 1; i <= 5; i++ {
+		res, err := s.Verify(ctx, "stay", []byte{9}, 5)
+		require.NoError(t, err)
+		require.Equal(t, entity.OTPMismatch, res.Verdict)
+	}
+	res, err := s.Verify(ctx, "stay", []byte{9}, 5)
+	require.NoError(t, err)
+	assert.Equal(t, entity.OTPAttempt{Verdict: entity.OTPLocked, Attempts: 6}, res, "percobaan ke-6 terkunci")
+
+	res, err = s.Verify(ctx, "stay", []byte{1}, 5)
+	require.NoError(t, err)
+	assert.Equal(t, entity.OTPLocked, res.Verdict, "kode benar tetap terkunci sampai kode baru diminta")
+
+	time.Sleep(300 * time.Millisecond) // cooldown habis
+	started, err := s.Start(ctx, "stay", []byte{2}, time.Minute, time.Second)
+	require.NoError(t, err)
+	require.True(t, started)
+	res, err = s.Verify(ctx, "stay", []byte{2}, 5)
+	require.NoError(t, err)
+	assert.Equal(t, entity.OTPAttempt{Verdict: entity.OTPMatched, Attempts: 1}, res, "kode baru membuka kunci")
 }
 
 func TestOTPStore_Verify_MatchDeletesChallenge(t *testing.T) {
