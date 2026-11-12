@@ -138,7 +138,7 @@ func scanSession(row pgx.Row) (entity.Session, error) {
 func (r *Sessions) Create(ctx context.Context, n entity.NewSession) (entity.Session, error) {
 	s, err := scanSession(r.pool.QueryRow(ctx, `
 		INSERT INTO sessions (id, account_id, refresh_token_hash, user_agent, expires_at)
-		VALUES (COALESCE(NULLIF($1::text, '')::uuid, gen_random_uuid()), $2::uuid, $3, $4, $5)
+		VALUES (COALESCE(NULLIF($1::text, '')::uuid, uuid_generate_v7()), $2::uuid, $3, $4, $5)
 		RETURNING `+sessionCols, n.ID, n.AccountID, n.RefreshTokenHash, n.UserAgent, n.ExpiresAt))
 	if err != nil {
 		return entity.Session{}, fmt.Errorf("sessions: create: %w", err)
@@ -165,7 +165,7 @@ func (r *Sessions) Rotate(ctx context.Context, oldID string, next entity.NewSess
 	err := pkgpg.WithTx(ctx, r.pool, pgx.TxOptions{}, func(tx pgx.Tx) error {
 		s, err := scanSession(tx.QueryRow(ctx, `
 			INSERT INTO sessions (id, account_id, refresh_token_hash, user_agent, expires_at)
-			VALUES (COALESCE(NULLIF($1::text, '')::uuid, gen_random_uuid()), $2::uuid, $3, $4, $5)
+			VALUES (COALESCE(NULLIF($1::text, '')::uuid, uuid_generate_v7()), $2::uuid, $3, $4, $5)
 			RETURNING `+sessionCols, next.ID, next.AccountID, next.RefreshTokenHash, next.UserAgent, next.ExpiresAt))
 		if err != nil {
 			return fmt.Errorf("sessions: rotate insert: %w", err)

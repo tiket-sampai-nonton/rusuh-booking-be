@@ -170,7 +170,7 @@ func TestTokens_VerifyAccessRejectsTokensOfLoggedOutSessions(t *testing.T) {
 }
 
 func TestSecrets_SessionID(t *testing.T) {
-	re := regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
+	re := regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
 	seen := map[string]bool{}
 	for i := 0; i < 100; i++ {
 		id, err := Secrets{}.SessionID()
