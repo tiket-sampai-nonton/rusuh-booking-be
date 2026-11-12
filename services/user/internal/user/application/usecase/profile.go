@@ -41,6 +41,9 @@ func (u *Profile) GetProfile(ctx context.Context, accountID string) (dto.Profile
 	if err != nil {
 		return dto.ProfileResponse{}, mapAccountErr(err)
 	}
+	if !acc.Active() {
+		return dto.ProfileResponse{}, inbound.ErrAccountDisabled
+	}
 	resp := mapper.ToProfileResponse(acc)
 
 	emailEnc, err := u.accounts.GetEmailEncByID(ctx, accountID)
@@ -57,9 +60,12 @@ func (u *Profile) GetProfile(ctx context.Context, accountID string) (dto.Profile
 		if err != nil {
 			return dto.ProfileResponse{}, mapAccountErr(err)
 		}
-		resp.NIK, err = u.pii.UnsealNIK(nikEnc)
-		if err != nil {
-			return dto.ProfileResponse{}, apperror.Internal(err)
+		// Data lama bisa punya nik_masked tanpa nik_enc: NIK asli dibiarkan kosong, bentuk tersamar tetap.
+		if nikEnc != nil {
+			resp.NIK, err = u.pii.UnsealNIK(nikEnc)
+			if err != nil {
+				return dto.ProfileResponse{}, apperror.Internal(err)
+			}
 		}
 	}
 
@@ -95,6 +101,13 @@ func (u *Profile) UpdateProfile(ctx context.Context, accountID string, req dto.U
 	}
 	if upd.FullName == nil && upd.NIKHash == nil {
 		return dto.ProfileResponse{}, inbound.ErrNothingToUpdate
+	}
+	current, err := u.accounts.GetByID(ctx, accountID)
+	if err != nil {
+		return dto.ProfileResponse{}, mapAccountErr(err)
+	}
+	if !current.Active() {
+		return dto.ProfileResponse{}, inbound.ErrAccountDisabled
 	}
 	acc, err := u.accounts.UpdateProfile(ctx, accountID, upd)
 	if err != nil {
