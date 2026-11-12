@@ -74,16 +74,3 @@ func TestParseNIKHashOnly_NoEnc(t *testing.T) {
 	assert.Nil(t, nik.Enc())
 	assert.NotEmpty(t, nik.Hash())
 }
-
-func TestNIKFromTokenParts(t *testing.T) {
-	n := vo.NIKFromHashAndMasked([]byte("h"), "3174********0001")
-	assert.Equal(t, []byte("h"), n.Hash())
-	assert.Equal(t, "3174********0001", n.Masked())
-	assert.Nil(t, n.Enc(), "dari klaim token tidak ada ciphertext")
-
-	p := vo.NIKFromParts([]byte("h"), "3174********0001", []byte("enc"))
-	assert.Equal(t, []byte("h"), p.Hash())
-	assert.Equal(t, "3174********0001", p.String())
-	assert.Equal(t, []byte("enc"), p.Enc())
-	assert.Equal(t, "NIK tidak valid", vo.ErrInvalidNIK.Error())
-}

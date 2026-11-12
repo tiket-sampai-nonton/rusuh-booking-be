@@ -181,11 +181,3 @@ type IAvailabilityCache interface {
 type IAvailabilitySource interface {
 	OnSaleAvailability(ctx context.Context, now time.Time) (map[string][]CategoryAvailabilitySnap, error)
 }
-
-// IUserNIKClient fetches a logged-in account's stored NIK ciphertext from User Service so that
-// Booking can record it as attendee_nik_enc. The implementation unseals the ciphertext with User
-// Service's AAD and re-seals it with Booking's AAD so it can be stored directly (ADR-030).
-// bearerToken is the buyer's own access token (User Service verifies ownership server-side).
-type IUserNIKClient interface {
-	GetNIKEnc(ctx context.Context, accountID, bearerToken string) (nikEnc []byte, err error)
-}

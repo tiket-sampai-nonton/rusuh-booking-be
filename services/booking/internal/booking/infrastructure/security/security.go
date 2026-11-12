@@ -6,7 +6,6 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
-	"encoding/hex"
 	"errors"
 	"strings"
 	"time"
@@ -40,8 +39,8 @@ func NewPII(hashKey, encKey []byte) (*PII, error) {
 	return &PII{hasher: h, sealer: s}, nil
 }
 
-// HashNIK returns the HMAC lookup hash. Prefix "nik:" harus cocok dengan User Service (security.go).
-func (p *PII) HashNIK(nik string) []byte { return p.hasher.Hash("nik:" + nik) }
+// HashNIK returns the HMAC lookup hash.
+func (p *PII) HashNIK(nik string) []byte { return p.hasher.Hash(nik) }
 
 // SealNIK returns the AES-256-GCM ciphertext bound to the NIK column context.
 func (p *PII) SealNIK(nik string) ([]byte, error) { return p.sealer.Seal([]byte(nik), []byte(aadNIK)) }
@@ -58,9 +57,6 @@ func (p *PII) SealBuyerEmail(email string) (string, error) {
 
 // Fingerprint returns a keyed HMAC of data (idempotency request hash that holds no plaintext).
 func (p *PII) Fingerprint(data []byte) []byte { return p.hasher.Hash(string(data)) }
-
-// Sealer returns the underlying AES-256-GCM sealer for use by adapters that need raw seal/open.
-func (p *PII) Sealer() *crypto.Sealer { return p.sealer }
 
 // AdmissionVerifier verifies the one-time EdDSA admission token minted by the Queue Service. It
 // satisfies outbound.IAdmissionTokenVerifier.
@@ -162,35 +158,6 @@ func (v *BearerVerifier) VerifyAccess(tok string) (string, error) {
 		return "", errors.New("security: bukan admin")
 	}
 	return claims.Subject, nil
-}
-
-// VerifyAccessFull is like VerifyAccess but also decodes NIK claims from the token.
-// nikHash is nil when claims.HasNIK is false or the token carries no NIK.
-func (v *BearerVerifier) VerifyAccessFull(tok string) (string, []byte, string, error) {
-	if v == nil || v.verifier == nil {
-		return "", nil, "", errors.New("security: token verifier belum dikonfigurasi")
-	}
-	claims, err := v.verifier.Verify(tok, v.now())
-	if err != nil {
-		return "", nil, "", err
-	}
-	if claims.Scope != v.scope {
-		return "", nil, "", errors.New("security: scope token tidak sesuai")
-	}
-	if err := revocation.Check(v.deny, claims); err != nil {
-		return "", nil, "", err
-	}
-	if v.admins != nil && !v.isAdmin(claims.Email) {
-		return "", nil, "", errors.New("security: bukan admin")
-	}
-	var nikHash []byte
-	if claims.HasNIK && claims.NIKHash != "" {
-		nikHash, err = hex.DecodeString(claims.NIKHash)
-		if err != nil {
-			return "", nil, "", errors.New("security: format nik_hash token tidak valid")
-		}
-	}
-	return claims.Subject, nikHash, claims.NIKMasked, nil
 }
 
 func (v *BearerVerifier) isAdmin(email string) bool {

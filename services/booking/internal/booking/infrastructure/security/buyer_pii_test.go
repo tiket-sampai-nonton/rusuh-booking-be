@@ -19,15 +19,15 @@ func keys() (hash, enc []byte) {
 	return
 }
 
-// The buyer hash at hold must equal the hash User Service produces (same HMAC key, same "nik:" prefix),
-// so that claims.NIKHash from the access token can be compared against buyer_nik_hash in DB.
+// The buyer hash at hold must equal the hash Queue used before ADR-030 (same HMAC key), otherwise logged-in
+// accounts' buyer_quotas rows would diverge from new holds (cutover self-test).
 func TestBuyerPII_HashEqualsKeyedHMAC(t *testing.T) {
 	h, e := keys()
 	p, err := security.NewPII(h, e)
 	require.NoError(t, err)
 	ref, err := crypto.NewHasher(h)
 	require.NoError(t, err)
-	assert.Equal(t, ref.Hash("nik:3174010101010009"), p.HashNIK("3174010101010009"))
+	assert.Equal(t, ref.Hash("3174010101010009"), p.HashNIK("3174010101010009"))
 }
 
 func TestBuyerPII_SealBuyerEmailOpensWithNotificationAAD(t *testing.T) {
