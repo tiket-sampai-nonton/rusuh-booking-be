@@ -66,13 +66,15 @@ func (c *NIKClient) GetNIKEnc(ctx context.Context, accountID, bearerToken string
 		return nil, inbound.ErrDependency
 	}
 	var payload struct {
-		NikEnc string `json:"nikEnc"`
+		Data struct {
+			NikEnc string `json:"nikEnc"`
+		} `json:"data"`
 	}
-	if err := json.Unmarshal(body, &payload); err != nil || payload.NikEnc == "" {
+	if err := json.Unmarshal(body, &payload); err != nil || payload.Data.NikEnc == "" {
 		return nil, inbound.ErrDependency
 	}
 
-	userEnc, err := base64.StdEncoding.DecodeString(payload.NikEnc)
+	userEnc, err := base64.StdEncoding.DecodeString(payload.Data.NikEnc)
 	if err != nil {
 		return nil, inbound.ErrDependency
 	}

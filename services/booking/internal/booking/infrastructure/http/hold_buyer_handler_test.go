@@ -86,3 +86,31 @@ func TestBookingHandler_HoldRefusalMapping(t *testing.T) {
 		})
 	}
 }
+
+type fakeNIKVerifier struct{ fakeUserVerifier }
+
+func (f fakeNIKVerifier) VerifyAccessFull(tok string) (string, []byte, string, error) {
+	id, err := f.VerifyAccess(tok)
+	if err != nil {
+		return "", nil, "", err
+	}
+	return id, []byte("login-hash"), "3174********0001", nil
+}
+
+func TestBookingHandler_HoldAttendeeOnlyUseLoginNIK(t *testing.T) {
+	const body = `{"sessionId":"s","buyer":{"nik":"3174010101010009","email":"b@example.test","emailConfirmation":"b@example.test","consent":true},` +
+		`"items":[{"categoryId":"c","attendee":{"useLoginNik":true,"fullName":"Alice"}}]}`
+	hold := &fakeHold{resp: dto.Booking{BookingID: "bk-1"}}
+	h := bookinghttp.NewBookingHandler(hold, fakeEdit{}, fakeTickets{}, fakeGet{}, fakeCancel{}).
+		WithBuyerAuth(fakeNIKVerifier{fakeUserVerifier{id: "acc-1"}})
+
+	w := serve(t, h, http.MethodPost, "/api/v1/bookings", body,
+		map[string]string{"Idempotency-Key": "abc", "X-Visitor-Token": "v-1", "Authorization": "Bearer good"})
+	require.Equal(t, http.StatusCreated, w.Code)
+	assert.Equal(t, []byte("login-hash"), hold.cmd.LoginNIKHash)
+	assert.Equal(t, "3174010101010009", hold.cmd.Request.Buyer.NIK, "buyer NIK tetap dari body")
+	assert.Equal(t, "good", hold.cmd.BearerToken)
+
+	w = serve(t, h, http.MethodPost, "/api/v1/bookings", body, map[string]string{"Idempotency-Key": "abc", "X-Visitor-Token": "v-1"})
+	assert.Equal(t, http.StatusUnauthorized, w.Code, "attendee useLoginNik tanpa bearer ditolak")
+}

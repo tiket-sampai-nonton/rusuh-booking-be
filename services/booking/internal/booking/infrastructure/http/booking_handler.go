@@ -56,13 +56,13 @@ func (h *BookingHandler) createBooking(w stdhttp.ResponseWriter, r *stdhttp.Requ
 		return
 	}
 	var accountID string
-	var buyerNIKHash []byte
-	var buyerNIKMasked string
-	if req.Buyer.UseLoginNIK {
-		// useLoginNik: wajib ada bearer token dengan NIK tersimpan.
+	var loginNIKHash []byte
+	var loginNIKMasked string
+	if usesLoginNIK(req) {
+		// useLoginNik (buyer atau attendee): wajib bearer token yang memuat NIK akun.
 		tok, ok := httpx.BearerToken(r)
 		if !ok || h.buyer == nil {
-			w.Header().Set("WWW-Authenticate", `Bearer realm="rbt"`)
+			w.Header().Set(headerWWWAuthenticate, `Bearer realm="rbt"`)
 			httpx.WriteError(w, r, inbound.ErrUnauthorized)
 			return
 		}
@@ -73,29 +73,29 @@ func (h *BookingHandler) createBooking(w stdhttp.ResponseWriter, r *stdhttp.Requ
 		}
 		id, nikHash, nikMasked, verr := full.VerifyAccessFull(tok)
 		if verr != nil || id == "" || len(nikHash) == 0 {
-			w.Header().Set("WWW-Authenticate", `Bearer realm="rbt", error="invalid_token"`)
+			w.Header().Set(headerWWWAuthenticate, `Bearer realm="rbt", error="invalid_token"`)
 			httpx.WriteError(w, r, inbound.ErrUnauthorized)
 			return
 		}
-		accountID, buyerNIKHash, buyerNIKMasked = id, nikHash, nikMasked
+		accountID, loginNIKHash, loginNIKMasked = id, nikHash, nikMasked
 	} else if tok, ok := httpx.BearerToken(r); ok && h.buyer != nil {
 		// Optional bearer: identifies the account (principal) only. It never supplies or binds a NIK.
 		id, verr := h.buyer.VerifyAccess(tok)
 		if verr != nil || id == "" {
-			w.Header().Set("WWW-Authenticate", `Bearer realm="rbt", error="invalid_token"`)
+			w.Header().Set(headerWWWAuthenticate, `Bearer realm="rbt", error="invalid_token"`)
 			httpx.WriteError(w, r, inbound.ErrUnauthorized)
 			return
 		}
 		accountID = id
 	}
-	// bearerRaw is kept for forwarding to User Service when items have useLoginNik=true for attendees.
+	// bearerRaw is forwarded to User Service when an attendee uses useLoginNik.
 	bearerRaw, _ := httpx.BearerToken(r)
 	resp, err := h.hold.Hold(r.Context(), inbound.HoldCommand{
 		Request:        req,
 		VisitorID:      VisitorID(r),
 		AccountID:      accountID,
-		BuyerNIKHash:   buyerNIKHash,
-		BuyerNIKMasked: buyerNIKMasked,
+		LoginNIKHash:   loginNIKHash,
+		LoginNIKMasked: loginNIKMasked,
 		BearerToken:    bearerRaw,
 		IdempotencyKey: r.Header.Get("Idempotency-Key"),
 		CorrelationID:  httpx.RequestIDFrom(r.Context()),
@@ -137,7 +137,7 @@ func (h *BookingHandler) getTickets(w stdhttp.ResponseWriter, r *stdhttp.Request
 		}
 		id, err := h.buyer.VerifyAccess(tok)
 		if err != nil || id == "" {
-			w.Header().Set("WWW-Authenticate", `Bearer realm="rbt", error="invalid_token"`)
+			w.Header().Set(headerWWWAuthenticate, `Bearer realm="rbt", error="invalid_token"`)
 			httpx.WriteError(w, r, inbound.ErrUnauthorized)
 			return
 		}
@@ -163,3 +163,15 @@ func (h *BookingHandler) doCancelBooking(w stdhttp.ResponseWriter, r *stdhttp.Re
 }
 
 func noStore(w stdhttp.ResponseWriter) { w.Header().Set("Cache-Control", "no-store") }
+
+func usesLoginNIK(req dto.HoldRequest) bool {
+	if req.Buyer.UseLoginNIK {
+		return true
+	}
+	for _, it := range req.Items {
+		if it.Attendee.UseLoginNIK {
+			return true
+		}
+	}
+	return false
+}

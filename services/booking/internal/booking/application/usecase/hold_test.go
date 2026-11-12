@@ -379,14 +379,31 @@ func TestHold_AttendeeUseLoginNIK_Success(t *testing.T) {
 		},
 		VisitorID:      visitor,
 		AccountID:      "acct-1",
-		BuyerNIKHash:   nikHash,
-		BuyerNIKMasked: "3174********0001",
+		LoginNIKHash:   nikHash,
+		LoginNIKMasked: "3174********0001",
 		BearerToken:    "tok",
 		IdempotencyKey: idemKey,
 	}
 	res, err := uc.Hold(context.Background(), cmd)
 	require.NoError(t, err)
 	assert.NotEmpty(t, res.BookingID)
+}
+
+func TestHold_AttendeeOnlyUseLoginNIK_BuyerKeepsTypedNIK(t *testing.T) {
+	loginHash := []byte("login-hash")
+	uow := &fakeUoW{holdRes: outbound.HoldResult{BookingID: "bk-1", PublicRef: "RB-1", Version: 1, Status: "PENDING_PAYMENT", AmountMinor: 1000}}
+	uc := newHoldUC(&fakeAdmissionRepo{admission: admission3()}, &fakeEventRepo{detail: detailWith(false, 3)}, &fakeIdem{}, uow).
+		WithUserNIKClient(&fakeUserNIKClient{nikEnc: []byte("e:sealed")})
+
+	cmd := holdCmd([]dto.HoldItem{{CategoryID: catA, Attendee: dto.AttendeeInput{UseLoginNIK: true, FullName: "Alice"}}})
+	cmd.AccountID, cmd.BearerToken = "acct-1", "tok"
+	cmd.LoginNIKHash, cmd.LoginNIKMasked = loginHash, "3174********0001"
+
+	_, err := uc.Hold(context.Background(), cmd)
+	require.NoError(t, err)
+	assert.Equal(t, []byte("h:"+buyerNIK), uow.heldSpec.BuyerNIKHash, "buyer tetap NIK yang diketik")
+	require.Len(t, uow.heldSpec.Lines, 1)
+	assert.Equal(t, loginHash, uow.heldSpec.Lines[0].AttendeeNIKHash, "attendee memakai NIK akun")
 }
 
 func TestHold_AttendeeUseLoginNIK_NoNIKOnToken(t *testing.T) {
@@ -404,7 +421,7 @@ func TestHold_AttendeeUseLoginNIK_NoNIKOnToken(t *testing.T) {
 		},
 		VisitorID:      visitor,
 		AccountID:      "acct-1",
-		BuyerNIKHash:   nil, // no NIK in token
+		LoginNIKHash:   nil, // no NIK in token
 		BearerToken:    "tok",
 		IdempotencyKey: idemKey,
 	}
