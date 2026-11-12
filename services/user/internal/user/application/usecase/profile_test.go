@@ -246,6 +246,25 @@ func TestUpdateProfile(t *testing.T) {
 		assert.Equal(t, inbound.CodeAccountDisabled, code(err))
 	})
 
+	// Karakter kontrol dan bidi override ditolak sebelum menyentuh repo (tanpa ekspektasi GetByID).
+	for _, name := range []string{"Budi\u202eSantoso", "Budi\x07"} {
+		t.Run("name with control or bidi character rejected on fullName: "+name, func(t *testing.T) {
+			u, _, _, _, _ := newProfileDeps(t)
+			_, err := u.UpdateProfile(ctx, "acc-1", "sid-1", dto.UpdateProfileRequest{FullName: ptr(name)})
+			assert.Equal(t, apperror.CodeValidationFailed, code(err))
+			assert.Contains(t, apperror.From(err).Details, "fullName")
+		})
+	}
+
+	t.Run("name with plain spaces accepted", func(t *testing.T) {
+		u, repo, _, _, _ := newProfileDeps(t)
+		repo.EXPECT().GetByID(gomock.Any(), "acc-1").Return(entity.Account{ID: "acc-1", Status: entity.AccountActive}, nil)
+		repo.EXPECT().UpdateProfile(gomock.Any(), "acc-1", entity.ProfileUpdate{FullName: ptr("Budi Santoso")}).Return(entity.Account{ID: "acc-1", FullName: "Budi Santoso"}, nil)
+
+		_, err := u.UpdateProfile(ctx, "acc-1", "sid-1", dto.UpdateProfileRequest{FullName: ptr("Budi Santoso")})
+		require.NoError(t, err)
+	})
+
 	tests := []struct {
 		name  string
 		req   dto.UpdateProfileRequest

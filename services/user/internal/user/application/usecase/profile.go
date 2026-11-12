@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/apperror"
@@ -44,7 +45,10 @@ func NewProfile(accounts outbound.IAccountRepository, pii outbound.IPIIProtector
 
 var _ inbound.IProfileUsecase = (*Profile)(nil)
 
-var errNameLength = errors.New("nama 1–100 karakter")
+var (
+	errNameLength = errors.New("nama 1–100 karakter")
+	errNameChars  = errors.New("nama berisi karakter tidak diizinkan")
+)
 
 // GetProfile returns the profile of accountID. Email dan NIK dikirim dalam bentuk asli di sini saja
 // (pemilik akun melihat datanya sendiri); endpoint/alur lain tetap hanya mengirim bentuk tersamar.
@@ -93,6 +97,9 @@ func (u *Profile) UpdateProfile(ctx context.Context, accountID, sessionID string
 		name := strings.TrimSpace(*req.FullName)
 		if n := utf8.RuneCountInString(name); n < 1 || n > 100 {
 			return dto.ProfileResponse{}, inbound.Validation("fullName", errNameLength)
+		}
+		if strings.IndexFunc(name, isNameForbidden) >= 0 {
+			return dto.ProfileResponse{}, inbound.Validation("fullName", errNameChars)
 		}
 		upd.FullName = &name
 	}
@@ -143,6 +150,11 @@ func (u *Profile) UpdateProfile(ctx context.Context, accountID, sessionID string
 		}
 	}
 	return mapper.ToProfileResponse(acc), nil
+}
+
+// isNameForbidden: kontrol dan bidi override (mis. U+202E) bisa menyamarkan nama di UI dan log.
+func isNameForbidden(r rune) bool {
+	return unicode.IsControl(r) || unicode.Is(unicode.Bidi_Control, r)
 }
 
 func mapAccountErr(err error) error {
