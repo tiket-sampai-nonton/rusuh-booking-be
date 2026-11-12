@@ -84,13 +84,14 @@ func newUserModule(cfg config.Config, clients *Clients, logger *slog.Logger) (re
 	denylist := revocation.NewStore(clients.VK.VK(), clients.VK) // logout mencabut access token sesi itu (SCRUM-53)
 	tokens := security.NewTokens(signer, verifier, cfg.Token.Issuer, cfg.Token.Audience, cfg.Token.AccessTTL, clk.Now).WithDenylist(denylist)
 	accounts := userpg.NewAccounts(clients.PG.Pool())
+	limiter := uservalkey.NewRateLimiter(clients.VK.VK(), clients.VK, clk.Now)
 
 	auth := usecase.NewAuth(usecase.AuthDeps{
 		Accounts:  accounts,
 		Sessions:  userpg.NewSessions(clients.PG.Pool()),
 		Audit:     userpg.NewAudit(clients.PG.Pool()),
 		OTP:       uservalkey.NewOTPStore(clients.VK.VK(), clients.VK),
-		Limiter:   uservalkey.NewRateLimiter(clients.VK.VK(), clients.VK, clk.Now),
+		Limiter:   limiter,
 		Publisher: publisher,
 		Tokens:    tokens,
 		Secrets:   security.Secrets{},
@@ -104,7 +105,7 @@ func newUserModule(cfg config.Config, clients *Clients, logger *slog.Logger) (re
 		AccessTTL: cfg.Token.AccessTTL, MaxVerifyPerIPMinute: cfg.OTP.MaxVerifyPerIPMinute,
 		MaxSessionPerIPMinute: cfg.Token.MaxRefreshPerIPMinute,
 	})
-	profile := usecase.NewProfile(accounts, pii, clk)
+	profile := usecase.NewProfile(accounts, pii, clk, limiter, denylist, cfg.Token.AccessTTL)
 	// Di luar lokal service berada di belakang proxy tepercaya: IP klien diambil dari X-Forwarded-For sebanyak
 	// APP_TRUSTED_PROXY_HOPS entri dari kanan. Hanya angkanya yang di-log.
 	logger.Info("trusted proxy hops", "hops", cfg.App.TrustedProxyHops)

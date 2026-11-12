@@ -93,9 +93,10 @@ func TestTokens_IssueAndVerify(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, now.Add(15*time.Minute), exp)
 
-		id, err := tk.VerifyAccess(tok)
+		id, sid, err := tk.VerifyAccess(tok)
 		require.NoError(t, err)
 		assert.Equal(t, "acc-1", id)
+		assert.Equal(t, "sess-1", sid, "session id dari claim sid ikut dikembalikan")
 
 		// Verify token claims directly
 		claims, err := verifier.Verify(tok, now)
@@ -111,9 +112,10 @@ func TestTokens_IssueAndVerify(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, now.Add(15*time.Minute), exp)
 
-		id, err := tk.VerifyAccess(tok)
+		id, sid, err := tk.VerifyAccess(tok)
 		require.NoError(t, err)
 		assert.Equal(t, "acc-2", id)
+		assert.Equal(t, "sess-2", sid)
 
 		// Verify token claims directly
 		claims, err := verifier.Verify(tok, now)
@@ -127,12 +129,12 @@ func TestTokens_IssueAndVerify(t *testing.T) {
 	t.Run("expired", func(t *testing.T) {
 		tok, _, _ := tk.IssueAccess("acc-1", "sess-1", "buyer@example.com", nil, "", now)
 		clock = now.Add(16 * time.Minute)
-		_, err = tk.VerifyAccess(tok)
+		_, _, err = tk.VerifyAccess(tok)
 		assert.ErrorIs(t, err, inbound.ErrUnauthorized)
 	})
 
 	t.Run("garbage", func(t *testing.T) {
-		_, err := tk.VerifyAccess("garbage")
+		_, _, err := tk.VerifyAccess("garbage")
 		assert.ErrorIs(t, err, inbound.ErrUnauthorized)
 	})
 }
@@ -163,20 +165,20 @@ func TestTokens_VerifyAccessRejectsTokensOfLoggedOutSessions(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "sess-1", claims.SessionID, "sid ikut di access token")
 
-	acc, err := tk.VerifyAccess(tok)
+	acc, _, err := tk.VerifyAccess(tok)
 	require.NoError(t, err)
 	assert.Equal(t, "acc-1", acc, "tanpa denylist token berlaku seperti sebelumnya")
 
 	tk.WithDenylist(stubDenylist{revoked: map[string]bool{"sess-1": true}})
-	_, err = tk.VerifyAccess(tok)
+	_, _, err = tk.VerifyAccess(tok)
 	assert.ErrorIs(t, err, inbound.ErrUnauthorized, "sesi sudah logout: ditolak walau exp belum lewat")
 
 	tk.WithDenylist(stubDenylist{revoked: map[string]bool{"sess-lain": true}})
-	_, err = tk.VerifyAccess(tok)
+	_, _, err = tk.VerifyAccess(tok)
 	assert.NoError(t, err, "sesi lain yang logout tidak berpengaruh")
 
 	tk.WithDenylist(stubDenylist{err: errors.New("valkey mati")})
-	_, err = tk.VerifyAccess(tok)
+	_, _, err = tk.VerifyAccess(tok)
 	assert.ErrorIs(t, err, inbound.ErrUnauthorized, "fail closed bila denylist tidak bisa dibaca")
 }
 

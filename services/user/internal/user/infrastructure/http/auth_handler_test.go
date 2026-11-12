@@ -123,12 +123,12 @@ func TestMe(t *testing.T) {
 	assert.Equal(t, stdhttp.StatusUnauthorized, rec.Code)
 	assert.Contains(t, rec.Header().Get("WWW-Authenticate"), "Bearer")
 
-	f.verifier.EXPECT().VerifyAccess("bad").Return("", inbound.ErrUnauthorized)
+	f.verifier.EXPECT().VerifyAccess("bad").Return("", "", inbound.ErrUnauthorized)
 	rec = do(f, "GET", "/api/v1/me", "", map[string]string{"Authorization": "Bearer bad"})
 	assert.Equal(t, stdhttp.StatusUnauthorized, rec.Code)
 	assert.Contains(t, rec.Header().Get("WWW-Authenticate"), "invalid_token")
 
-	f.verifier.EXPECT().VerifyAccess("good").Return("acc-1", nil).Times(5)
+	f.verifier.EXPECT().VerifyAccess("good").Return("acc-1", "sid-1", nil).Times(6)
 	f.profile.EXPECT().GetProfile(gomock.Any(), "acc-1").Return(dto.ProfileResponse{AccountID: "acc-1"}, nil)
 	rec = do(f, "GET", "/api/v1/me", "", auth)
 	assert.Equal(t, stdhttp.StatusOK, rec.Code)
@@ -138,13 +138,19 @@ func TestMe(t *testing.T) {
 	assert.Equal(t, stdhttp.StatusUnauthorized, do(f, "GET", "/api/v1/me", "", auth).Code)
 
 	name := "Arif"
-	f.profile.EXPECT().UpdateProfile(gomock.Any(), "acc-1", dto.UpdateProfileRequest{FullName: &name}).Return(dto.ProfileResponse{AccountID: "acc-1", FullName: "Arif"}, nil)
+	// sid dari access token sampai ke usecase: NIK change mencabut sesi ini
+	f.profile.EXPECT().UpdateProfile(gomock.Any(), "acc-1", "sid-1", dto.UpdateProfileRequest{FullName: &name}).Return(dto.ProfileResponse{AccountID: "acc-1", FullName: "Arif"}, nil)
 	assert.Equal(t, stdhttp.StatusOK, do(f, "PATCH", "/api/v1/me", `{"fullName":"Arif"}`, auth).Code)
 
-	f.profile.EXPECT().UpdateProfile(gomock.Any(), "acc-1", gomock.Any()).Return(dto.ProfileResponse{}, inbound.ErrNIKAlreadyLinked)
+	f.profile.EXPECT().UpdateProfile(gomock.Any(), "acc-1", "sid-1", gomock.Any()).Return(dto.ProfileResponse{}, inbound.ErrNIKAlreadyLinked)
 	rec = do(f, "PATCH", "/api/v1/me", `{"nik":"3174010101900001"}`, auth)
 	assert.Equal(t, stdhttp.StatusConflict, rec.Code)
 	assert.Equal(t, inbound.CodeNIKAlreadyLinked, errCode(t, rec))
+
+	f.profile.EXPECT().UpdateProfile(gomock.Any(), "acc-1", "sid-1", gomock.Any()).Return(dto.ProfileResponse{}, inbound.ErrRateLimited)
+	rec = do(f, "PATCH", "/api/v1/me", `{"nik":"3174010101900001"}`, auth)
+	assert.Equal(t, stdhttp.StatusTooManyRequests, rec.Code)
+	assert.Equal(t, apperror.CodeRateLimited, errCode(t, rec))
 
 	assert.Equal(t, stdhttp.StatusBadRequest, do(f, "PATCH", "/api/v1/me", `{"email":"x"}`, auth).Code)
 }
