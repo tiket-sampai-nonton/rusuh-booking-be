@@ -367,3 +367,64 @@ func TestUpdateConfig_OutOfRangeValueIsAValidationError(t *testing.T) {
 	require.ErrorAs(t, err, &ae)
 	assert.Equal(t, http.StatusBadRequest, ae.HTTPStatus)
 }
+
+// AC-1..3 (audit P0-5): a late payment found while expiring goes to REVIEW and must give the held stock back exactly
+// once, free the visitor (journey.ended), and a repeated expiry must do nothing.
+func TestExpire_ReviewReleasesHeldStockOnce(t *testing.T) {
+	f := seed(t)
+	ctx := context.Background()
+	id := f.hold(t)
+
+	acted, err := f.uow.Expire(ctx, outbound.ExpireSpec{BookingID: id, Reason: "PAYMENT_TIMEOUT", Review: true, CorrelationID: id})
+	require.NoError(t, err)
+	require.True(t, acted)
+	assert.Equal(t, "REVIEW", f.status(t, id))
+	assert.Equal(t, [5]int{0, 0, 0, 0, 0}, f.stock(t), "stok ditahan dikembalikan saat REVIEW")
+	assert.Equal(t, 0, f.n(t, `SELECT held_quantity FROM booking.buyer_quotas WHERE event_id=$1::uuid`, f.eventID), "kuota ditahan dikembalikan")
+	assert.Equal(t, 0, f.n(t, `SELECT count(*) FROM booking.booking_items WHERE booking_id=$1::uuid AND item_status='HELD'`, id))
+	assert.Equal(t, 1, f.n(t, `SELECT count(*) FROM booking.outbox_events WHERE routing_key='booking.journey.ended'`), "pengunjung dibebaskan")
+
+	again, err := f.uow.Expire(ctx, outbound.ExpireSpec{BookingID: id, Reason: "PAYMENT_TIMEOUT", Review: true, CorrelationID: id})
+	require.NoError(t, err)
+	assert.False(t, again, "expiry kedua tidak boleh mengerjakan apa-apa")
+	assert.Equal(t, [5]int{0, 0, 0, 0, 0}, f.stock(t), "stok tidak dilepas dua kali")
+	assert.Equal(t, 1, f.n(t, `SELECT count(*) FROM booking.outbox_events WHERE routing_key='booking.review'`))
+	assert.Equal(t, 1, f.n(t, `SELECT count(*) FROM booking.outbox_events WHERE routing_key='booking.journey.ended'`))
+}
+
+// AC-4 (audit P0-4): the payment provider confirmed the charge but gave no settlement time. The booking is still
+// payable, so it is treated as on time: PAID, tickets issued, held stock becomes sold, settlement_time is recorded.
+func TestSettle_UnknownSettlementTimeIsTimely(t *testing.T) {
+	f := seed(t)
+	ctx := context.Background()
+	id := f.hold(t)
+	_, err := f.pool.Exec(ctx, `UPDATE booking.bookings SET created_at = now() - interval '20 minutes', payment_expires_at = now() - interval '1 minute' WHERE id=$1::uuid`, id)
+	require.NoError(t, err)
+
+	settled, err := f.uow.Settle(ctx, settleSpec(id)) // SettlementTime is zero: unknown
+	require.NoError(t, err)
+	assert.True(t, settled)
+	assert.Equal(t, "PAID", f.status(t, id))
+	assert.Equal(t, 1, f.n(t, `SELECT count(*) FROM booking.tickets`))
+	assert.Equal(t, 1, f.n(t, `SELECT count(*) FROM booking.bookings WHERE id=$1::uuid AND settlement_time IS NOT NULL AND settlement_time > '2000-01-01'`, id))
+	assert.Equal(t, [5]int{0, 0, 1, 0, 1}, f.stock(t), "ditahan menjadi terjual: allocated 0, held 0, sold 1, kategori held 0, kuota paid 1")
+}
+
+// AC-5 regression: a settlement time that is known and after the deadline still goes to REVIEW and releases the stock.
+func TestSettle_KnownLateSettlementGoesToReviewAndReleases(t *testing.T) {
+	f := seed(t)
+	ctx := context.Background()
+	id := f.hold(t)
+	_, err := f.pool.Exec(ctx, `UPDATE booking.bookings SET created_at = now() - interval '20 minutes', payment_expires_at = now() - interval '2 minutes' WHERE id=$1::uuid`, id)
+	require.NoError(t, err)
+
+	late := settleSpec(id)
+	late.SettlementTime = time.Now().Add(-1 * time.Minute)
+	settled, err := f.uow.Settle(ctx, late)
+	require.NoError(t, err)
+	assert.False(t, settled)
+	assert.Equal(t, "REVIEW", f.status(t, id))
+	assert.Equal(t, 0, f.n(t, `SELECT count(*) FROM booking.tickets`))
+	assert.Equal(t, [5]int{0, 0, 0, 0, 0}, f.stock(t), "stok dilepas")
+	assert.Equal(t, 1, f.n(t, `SELECT count(*) FROM booking.outbox_events WHERE routing_key='booking.journey.ended'`))
+}
