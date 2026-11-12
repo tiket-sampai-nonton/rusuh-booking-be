@@ -131,13 +131,6 @@ type IUserTokenVerifier interface {
 	VerifyAccess(token string) (accountID string, err error)
 }
 
-// IBuyerNIKVerifier extends IUserTokenVerifier to also return NIK identity claims when the account
-// has a registered NIK. Used by createBooking when buyer.useLoginNik=true.
-type IBuyerNIKVerifier interface {
-	IUserTokenVerifier
-	VerifyAccessFull(token string) (accountID string, nikHash []byte, nikMasked string, err error)
-}
-
 // withUser verifies the bearer token and stores the account id in context, or returns 401.
 func withUser(v IUserTokenVerifier, next stdhttp.HandlerFunc) stdhttp.Handler {
 	return stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {

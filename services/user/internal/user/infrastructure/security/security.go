@@ -65,6 +65,15 @@ func (p *PII) SealNIK(nik string) ([]byte, error) {
 	return p.sealer.Seal([]byte(nik), []byte("users.accounts.nik"))
 }
 
+// UnsealNIK decrypts the NIK.
+func (p *PII) UnsealNIK(enc []byte) (string, error) {
+	data, err := p.sealer.Open(enc, []byte("users.accounts.nik"))
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
+}
+
 // HashOTP binds the code to the email so a code for one email is useless for another.
 func (p *PII) HashOTP(emailHash []byte, code string) []byte {
 	return p.otpHasher.Hash(fmt.Sprintf("%x:%s", emailHash, code))

@@ -699,8 +699,7 @@ paths:
             `QUANTITY_INVALID` (kosong atau lebih dari unit yang dicadangkan untuk sesi ini), `MIXED_CATEGORIES_NOT_ALLOWED`,
             `NIK_INVALID`, `EMAIL_MISMATCH`, `CONSENT_REQUIRED`, `BUYER_NIK_LIMIT_REACHED` ("NIK ini sudah mencapai batas,
             gunakan NIK lain"; sesi, unit cadangan, dan timer tetap; boleh dicoba lagi dengan NIK pembeli lain dan
-            Idempotency-Key yang sama), `NIK_NOT_LINKED` (useLoginNik=true tetapi akun belum ditautkan NIK; masukkan NIK
-            secara manual)'
+            Idempotency-Key yang sama)'
           content:
             application/json:
               schema:
@@ -1415,19 +1414,13 @@ components:
           type: object
           description: |
             Data pembeli diisi di halaman Booking (ADR-030) dan diikat ke admission di dalam transaksi hold.
-            Dua mode: (a) standar — `nik` wajib, bearer opsional hanya mengidentifikasi akun;
-            (b) `useLoginNik: true` — NIK diambil dari klaim token bearer (bearer wajib, akun harus sudah ditautkan NIK),
-            `nik` tidak dikirim. Server memvalidasi mode sebelum menyentuh DB.
+            Pengguna login boleh diprefill dari akun di klien; server tetap memvalidasi. Bearer opsional hanya
+            mengidentifikasi akun, tidak pernah menyuplai NIK.
           properties:
             nik:
               type: string
               pattern: "^[0-9]{16}$"
-              description: NIK pembeli 16 digit. Wajib bila `useLoginNik` absen atau `false`.
-            useLoginNik:
-              type: boolean
-              description: |
-                Gunakan NIK tersimpan dari akun (User Service). Wajib bearer Access Token yang memuat NIK claim
-                (hanya token dari akun yang sudah ditautkan NIK memiliki claim ini). Bila `true`, `nik` tidak dikirim.
+              description: NIK pembeli 16 digit (struktur dicek; disimpan hanya sebagai HMAC dan versi tersamar)
             email:
               type: string
               format: email
@@ -1438,6 +1431,7 @@ components:
               type: boolean
               const: true
           required:
+          - nik
           - email
           - emailConfirmation
           - consent
@@ -1454,23 +1448,18 @@ components:
                 format: uuid
               attendee:
                 type: object
-                description: |
-                  Dua mode: (a) standar — `nik` wajib; (b) `useLoginNik: true` — NIK diambil dari NIK tersimpan pembeli
-                  di User Service (memerlukan bearer dengan NIK claim). Hanya 1 item per pesanan yang boleh
-                  menggunakan `useLoginNik: true`. `nik` tidak dikirim bila `useLoginNik: true`.
                 properties:
                   nik:
                     type: string
                     pattern: "^[0-9]{16}$"
-                    description: NIK 16 digit pemegang tiket. Wajib bila `useLoginNik` absen atau `false`.
-                  useLoginNik:
-                    type: boolean
-                    description: Gunakan NIK tersimpan pembeli sebagai pemegang tiket. Hanya boleh `true` bila buyer juga menggunakan `useLoginNik`.
+                    description: NIK 16 digit (dicek strukturnya; tidak pernah disimpan
+                      plaintext)
                   fullName:
                     type: string
                     minLength: 2
                     maxLength: 100
                 required:
+                - nik
                 - fullName
             required:
             - categoryId

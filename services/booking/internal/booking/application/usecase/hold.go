@@ -43,7 +43,6 @@ type Hold struct {
 	idem       outbound.IIdempotencyStore
 	uow        outbound.IUnitOfWork
 	pii        outbound.IBuyerPII
-	userNIK    outbound.IUserNIKClient // optional; nil = useLoginNik for attendees unavailable
 	ids        IDGen
 	clock      clock.IClock
 	policy     HoldPolicy
@@ -57,12 +56,6 @@ func NewHold(admissions outbound.IAdmissionRepo, events outbound.IEventRepo, ide
 		admissions: admissions, events: events, idem: idem, uow: uow,
 		pii: pii, ids: ids, clock: clk, policy: policy, idemTTL: 24 * time.Hour,
 	}
-}
-
-// WithUserNIKClient enables the attendee useLoginNik path by providing the User Service NIK client.
-func (uc *Hold) WithUserNIKClient(c outbound.IUserNIKClient) *Hold {
-	uc.userNIK = c
-	return uc
 }
 
 // validated is the output of the pure validation step: no database or event read happened to produce it.
@@ -81,7 +74,7 @@ func (uc *Hold) Hold(ctx context.Context, cmd inbound.HoldCommand) (dto.Booking,
 	if err := validateIdempotencyKey(cmd.IdempotencyKey); err != nil {
 		return dto.Booking{}, err
 	}
-	v, err := uc.validate(ctx, cmd)
+	v, err := uc.validate(cmd.Request)
 	if err != nil {
 		return dto.Booking{}, err
 	}
@@ -190,108 +183,61 @@ func (uc *Hold) execute(ctx context.Context, cmd inbound.HoldCommand, v validate
 	}, nil
 }
 
-// validate performs the validation step. I/O is limited to attendee useLoginNik path (fetching NIK enc from
-// User Service). The max_tickets_per_order check lives in plan(), because the limit sits on the event row.
-func (uc *Hold) validate(ctx context.Context, cmd inbound.HoldCommand) (validated, error) {
-	req := cmd.Request
-	if err := validateShape(req); err != nil {
-		return validated{}, err
-	}
-	now := uc.clock.Now()
-	buyerNIK, err := uc.resolveBuyerNIK(cmd, now)
-	if err != nil {
-		return validated{}, err
-	}
-	email, err := validateBuyerContact(req.Buyer)
-	if err != nil {
-		return validated{}, err
-	}
-	holders, canon, err := uc.resolveHolders(ctx, cmd, now)
-	if err != nil {
-		return validated{}, err
-	}
-	canonical, _ := json.Marshal(map[string]any{
-		"s": req.SessionID, "b": hex.EncodeToString(buyerNIK.Hash()),
-		"e": hex.EncodeToString(uc.pii.Fingerprint([]byte(strings.ToLower(email)))), "c": req.Buyer.Consent, "i": canon,
-	})
-	return validated{buyerNIK: buyerNIK, buyerEmail: email, holders: holders, requestHash: uc.pii.Fingerprint(canonical)}, nil
-}
-
-func validateShape(req dto.HoldRequest) error {
+// validate performs the pure checks in the documented order. It does no I/O, so a malformed request never
+// creates an idempotency record and a replay never re-reads state. The max_tickets_per_order check lives in
+// plan(), because the limit sits on the event row.
+func (uc *Hold) validate(req dto.HoldRequest) (validated, error) {
 	if !isUUID(req.SessionID) {
-		return inbound.Validation("sessionId", "sessionId harus UUID")
+		return validated{}, inbound.Validation("sessionId", "sessionId harus UUID")
 	}
-	loginNIKItems := 0
 	for _, it := range req.Items {
 		if !isUUID(it.CategoryID) {
-			return inbound.Validation("categoryId", "categoryId harus UUID")
-		}
-		if it.Attendee.UseLoginNIK {
-			loginNIKItems++
+			return validated{}, inbound.Validation("categoryId", "categoryId harus UUID")
 		}
 	}
 	if len(req.Items) == 0 {
-		return inbound.ErrQuantityInvalid
+		return validated{}, inbound.ErrQuantityInvalid
 	}
-	if loginNIKItems > 1 {
-		return inbound.Validation("items", "useLoginNik hanya boleh dipakai untuk 1 item per pesanan")
+	now := uc.clock.Now()
+	if err := pkgnik.Validate(req.Buyer.NIK, now); err != nil {
+		return validated{}, inbound.ErrNIKInvalid
 	}
-	return nil
-}
+	buyerNIK, perr := vo.ParseNIKHashOnly(req.Buyer.NIK, uc.pii)
+	if perr != nil {
+		return validated{}, inbound.ErrNIKInvalid
+	}
+	if !vo.EmailsMatch(req.Buyer.Email, req.Buyer.EmailConfirmation) {
+		return validated{}, inbound.ErrEmailMismatch
+	}
+	email, eerr := vo.ParseEmail(req.Buyer.Email)
+	if eerr != nil {
+		return validated{}, inbound.Validation("email", "format email tidak valid")
+	}
+	if !req.Buyer.Consent {
+		return validated{}, inbound.ErrConsentRequired
+	}
 
-// resolveBuyerNIK uses the account NIK only when buyer.useLoginNik is set; otherwise the buyer's typed NIK, which may
-// differ from the account NIK an attendee uses.
-func (uc *Hold) resolveBuyerNIK(cmd inbound.HoldCommand, now time.Time) (vo.NIK, error) {
-	if cmd.Request.Buyer.UseLoginNIK {
-		if len(cmd.LoginNIKHash) == 0 {
-			return vo.NIK{}, inbound.ErrUnauthorized
-		}
-		return vo.NIKFromHashAndMasked(cmd.LoginNIKHash, cmd.LoginNIKMasked), nil
-	}
-	if err := pkgnik.Validate(cmd.Request.Buyer.NIK, now); err != nil {
-		return vo.NIK{}, inbound.ErrNIKInvalid
-	}
-	nik, err := vo.ParseNIKHashOnly(cmd.Request.Buyer.NIK, uc.pii)
-	if err != nil {
-		return vo.NIK{}, inbound.ErrNIKInvalid
-	}
-	return nik, nil
-}
-
-func validateBuyerContact(b dto.BuyerInput) (string, error) {
-	if !vo.EmailsMatch(b.Email, b.EmailConfirmation) {
-		return "", inbound.ErrEmailMismatch
-	}
-	email, err := vo.ParseEmail(b.Email)
-	if err != nil {
-		return "", inbound.Validation("email", "format email tidak valid")
-	}
-	if !b.Consent {
-		return "", inbound.ErrConsentRequired
-	}
-	return email, nil
-}
-
-func (uc *Hold) resolveHolders(ctx context.Context, cmd inbound.HoldCommand, now time.Time) ([]outbound.HoldLine, []map[string]string, error) {
-	items := cmd.Request.Items
 	seenNIK := map[string]bool{}
-	holders := make([]outbound.HoldLine, 0, len(items))
-	canon := make([]map[string]string, 0, len(items))
-	for _, it := range items {
+	holders := make([]outbound.HoldLine, 0, len(req.Items))
+	canon := make([]map[string]string, 0, len(req.Items))
+	for _, it := range req.Items {
 		if it.Attendee.KeepFromItemID != "" {
-			return nil, nil, inbound.Validation("keepFromItemId", "keepFromItemId hanya berlaku saat mengubah pesanan")
+			return validated{}, inbound.Validation("keepFromItemId", "keepFromItemId hanya berlaku saat mengubah pesanan")
 		}
 		name := it.Attendee.FullName
 		if len(name) < 2 || len(name) > 100 {
-			return nil, nil, inbound.Validation("fullName", "fullName harus 2..100 karakter")
+			return validated{}, inbound.Validation("fullName", "fullName harus 2..100 karakter")
 		}
-		nik, err := uc.resolveAttendeeNIK(ctx, cmd, it.Attendee, now)
-		if err != nil {
-			return nil, nil, err
+		if err := pkgnik.Validate(it.Attendee.NIK, now); err != nil {
+			return validated{}, inbound.ErrNIKInvalid
+		}
+		nik, perr := vo.ParseNIK(it.Attendee.NIK, uc.pii)
+		if perr != nil {
+			return validated{}, inbound.ErrNIKInvalid
 		}
 		key := string(nik.Hash())
 		if seenNIK[key] {
-			return nil, nil, inbound.ErrNikDuplicate
+			return validated{}, inbound.ErrNikDuplicate
 		}
 		seenNIK[key] = true
 		holders = append(holders, outbound.HoldLine{
@@ -301,34 +247,15 @@ func (uc *Hold) resolveHolders(ctx context.Context, cmd inbound.HoldCommand, now
 			AttendeeNIKMasked: nik.Masked(),
 			AttendeeName:      name,
 		})
-		canon = append(canon, map[string]string{"c": it.CategoryID, "h": hex.EncodeToString(nik.Hash()), "n": name})
+		canon = append(canon, map[string]string{
+			"c": it.CategoryID, "h": hex.EncodeToString(nik.Hash()), "n": name,
+		})
 	}
-	return holders, canon, nil
-}
-
-// resolveAttendeeNIK uses the account NIK (re-sealed from User Service) for a useLoginNik attendee, else the typed NIK.
-func (uc *Hold) resolveAttendeeNIK(ctx context.Context, cmd inbound.HoldCommand, a dto.AttendeeInput, now time.Time) (vo.NIK, error) {
-	if !a.UseLoginNIK {
-		if err := pkgnik.Validate(a.NIK, now); err != nil {
-			return vo.NIK{}, inbound.ErrNIKInvalid
-		}
-		nik, err := vo.ParseNIK(a.NIK, uc.pii)
-		if err != nil {
-			return vo.NIK{}, inbound.ErrNIKInvalid
-		}
-		return nik, nil
-	}
-	if len(cmd.LoginNIKHash) == 0 || cmd.BearerToken == "" {
-		return vo.NIK{}, inbound.ErrUnauthorized
-	}
-	if uc.userNIK == nil {
-		return vo.NIK{}, inbound.ErrDependency
-	}
-	nikEnc, err := uc.userNIK.GetNIKEnc(ctx, cmd.AccountID, cmd.BearerToken)
-	if err != nil {
-		return vo.NIK{}, err
-	}
-	return vo.NIKFromParts(cmd.LoginNIKHash, cmd.LoginNIKMasked, nikEnc), nil
+	canonical, _ := json.Marshal(map[string]any{
+		"s": req.SessionID, "b": hex.EncodeToString(buyerNIK.Hash()),
+		"e": hex.EncodeToString(uc.pii.Fingerprint([]byte(strings.ToLower(email)))), "c": req.Buyer.Consent, "i": canon,
+	})
+	return validated{buyerNIK: buyerNIK, buyerEmail: email, holders: holders, requestHash: uc.pii.Fingerprint(canonical)}, nil
 }
 
 // plan reads the admission and event (after the idempotency record exists) and prices the lines. It performs

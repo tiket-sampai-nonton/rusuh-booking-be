@@ -20,7 +20,8 @@ type IAccountRepository interface {
 	GetNIKHashByID(ctx context.Context, id string) ([]byte, error)
 	// GetEmailEncByID returns the encrypted email for a given account. Caller must unseal via IPIIProtector.
 	GetEmailEncByID(ctx context.Context, id string) ([]byte, error)
-	// GetNIKEncByID returns the nik_enc ciphertext for a given account. Returns nil, nil if account has no NIK.
+	// GetNIKEncByID returns the encrypted NIK for a given account. Returns nil, nil if account has no NIK.
+	// Caller must unseal via IPIIProtector.
 	GetNIKEncByID(ctx context.Context, id string) ([]byte, error)
 }
 

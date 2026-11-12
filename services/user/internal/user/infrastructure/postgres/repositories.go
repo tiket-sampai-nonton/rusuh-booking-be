@@ -120,7 +120,7 @@ func (r *Accounts) GetEmailEncByID(ctx context.Context, id string) ([]byte, erro
 	return emailEnc, nil
 }
 
-// GetNIKEncByID returns the nik_enc ciphertext for a given account. Returns nil, nil if account has no NIK.
+// GetNIKEncByID returns the nik_enc for a given account. Returns nil, nil if account has no NIK.
 func (r *Accounts) GetNIKEncByID(ctx context.Context, id string) ([]byte, error) {
 	var nikEnc []byte
 	err := r.pool.QueryRow(ctx, `SELECT nik_enc FROM accounts WHERE id = $1::uuid`, id).Scan(&nikEnc)

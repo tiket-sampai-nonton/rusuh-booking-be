@@ -32,11 +32,15 @@ type TokenResponse struct {
 	Account               ProfileResponse `json:"account"`
 }
 
-// ProfileResponse is returned by GET/PATCH /api/v1/me. NIK hanya dikirim tersamar.
+// ProfileResponse is returned by GET/PATCH /api/v1/me dan sebagai Account di TokenResponse. Email dan NIK asli
+// (Email, NIK) hanya diisi oleh GetProfile (GET /me); endpoint/alur lain selalu mengirim keduanya kosong
+// (omitempty) sehingga hanya bentuk tersamar yang tampil.
 type ProfileResponse struct {
 	AccountID   string `json:"accountId"`
+	Email       string `json:"email,omitempty"`
 	EmailMasked string `json:"emailMasked"`
 	FullName    string `json:"fullName,omitempty"`
+	NIK         string `json:"nik,omitempty"`
 	NIKMasked   string `json:"nikMasked,omitempty"`
 	HasNIK      bool   `json:"hasNik"`
 }

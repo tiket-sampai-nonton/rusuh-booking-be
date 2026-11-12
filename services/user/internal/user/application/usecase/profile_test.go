@@ -28,15 +28,101 @@ func newProfile(t *testing.T) (*Profile, *mock_outbound.MockIAccountRepository, 
 }
 
 func TestGetProfile(t *testing.T) {
-	u, repo, _ := newProfile(t)
-	repo.EXPECT().GetByID(gomock.Any(), "acc-1").Return(entity.Account{ID: "acc-1", EmailMasked: "a***@b.id"}, nil)
-	got, err := u.GetProfile(context.Background(), "acc-1")
-	require.NoError(t, err)
-	assert.Equal(t, "acc-1", got.AccountID)
+	ctx := context.Background()
 
-	repo.EXPECT().GetByID(gomock.Any(), "gone").Return(entity.Account{}, entity.ErrNotFound)
-	_, err = u.GetProfile(context.Background(), "gone")
-	assert.Equal(t, inbound.CodeUnauthorized, code(err))
+	t.Run("without nik: returns real email, nik stays empty", func(t *testing.T) {
+		u, repo, pii := newProfile(t)
+		repo.EXPECT().GetByID(gomock.Any(), "acc-1").Return(entity.Account{ID: "acc-1", EmailMasked: "a***@b.id"}, nil)
+		repo.EXPECT().GetEmailEncByID(gomock.Any(), "acc-1").Return([]byte("enc-email"), nil)
+		pii.EXPECT().UnsealEmail([]byte("enc-email")).Return("arif@example.test", nil)
+
+		got, err := u.GetProfile(ctx, "acc-1")
+		require.NoError(t, err)
+		assert.Equal(t, "acc-1", got.AccountID)
+		assert.Equal(t, "arif@example.test", got.Email)
+		assert.Equal(t, "a***@b.id", got.EmailMasked)
+		assert.Empty(t, got.NIK, "akun tanpa NIK tidak boleh memanggil GetNIKEncByID/UnsealNIK")
+		assert.False(t, got.HasNIK)
+	})
+
+	t.Run("with nik: returns real email and real nik", func(t *testing.T) {
+		u, repo, pii := newProfile(t)
+		repo.EXPECT().GetByID(gomock.Any(), "acc-1").Return(entity.Account{ID: "acc-1", EmailMasked: "a***@b.id", NIKMasked: "3174********0001"}, nil)
+		repo.EXPECT().GetEmailEncByID(gomock.Any(), "acc-1").Return([]byte("enc-email"), nil)
+		pii.EXPECT().UnsealEmail([]byte("enc-email")).Return("arif@example.test", nil)
+		repo.EXPECT().GetNIKEncByID(gomock.Any(), "acc-1").Return([]byte("enc-nik"), nil)
+		pii.EXPECT().UnsealNIK([]byte("enc-nik")).Return("3174010101900001", nil)
+
+		got, err := u.GetProfile(ctx, "acc-1")
+		require.NoError(t, err)
+		assert.Equal(t, "arif@example.test", got.Email)
+		assert.Equal(t, "3174010101900001", got.NIK)
+		assert.Equal(t, "3174********0001", got.NIKMasked)
+		assert.True(t, got.HasNIK)
+	})
+
+	t.Run("account not found", func(t *testing.T) {
+		u, repo, _ := newProfile(t)
+		repo.EXPECT().GetByID(gomock.Any(), "gone").Return(entity.Account{}, entity.ErrNotFound)
+		_, err := u.GetProfile(ctx, "gone")
+		assert.Equal(t, inbound.CodeUnauthorized, code(err))
+	})
+
+	t.Run("fetch email enc error", func(t *testing.T) {
+		u, repo, _ := newProfile(t)
+		repo.EXPECT().GetByID(gomock.Any(), "acc-1").Return(entity.Account{ID: "acc-1"}, nil)
+		repo.EXPECT().GetEmailEncByID(gomock.Any(), "acc-1").Return(nil, errors.New("db"))
+		_, err := u.GetProfile(ctx, "acc-1")
+		assert.Equal(t, apperror.CodeInternal, code(err))
+	})
+
+	t.Run("account disappears between GetByID and GetEmailEncByID", func(t *testing.T) {
+		u, repo, _ := newProfile(t)
+		repo.EXPECT().GetByID(gomock.Any(), "acc-1").Return(entity.Account{ID: "acc-1"}, nil)
+		repo.EXPECT().GetEmailEncByID(gomock.Any(), "acc-1").Return(nil, entity.ErrNotFound)
+		_, err := u.GetProfile(ctx, "acc-1")
+		assert.Equal(t, inbound.CodeUnauthorized, code(err), "ErrNotFound harus dipetakan sama seperti GetByID, bukan 500")
+	})
+
+	t.Run("unseal email error", func(t *testing.T) {
+		u, repo, pii := newProfile(t)
+		repo.EXPECT().GetByID(gomock.Any(), "acc-1").Return(entity.Account{ID: "acc-1"}, nil)
+		repo.EXPECT().GetEmailEncByID(gomock.Any(), "acc-1").Return([]byte("enc-email"), nil)
+		pii.EXPECT().UnsealEmail([]byte("enc-email")).Return("", errors.New("decrypt"))
+		_, err := u.GetProfile(ctx, "acc-1")
+		assert.Equal(t, apperror.CodeInternal, code(err))
+	})
+
+	t.Run("fetch nik enc error", func(t *testing.T) {
+		u, repo, pii := newProfile(t)
+		repo.EXPECT().GetByID(gomock.Any(), "acc-1").Return(entity.Account{ID: "acc-1", NIKMasked: "3174********0001"}, nil)
+		repo.EXPECT().GetEmailEncByID(gomock.Any(), "acc-1").Return([]byte("enc-email"), nil)
+		pii.EXPECT().UnsealEmail([]byte("enc-email")).Return("arif@example.test", nil)
+		repo.EXPECT().GetNIKEncByID(gomock.Any(), "acc-1").Return(nil, errors.New("db"))
+		_, err := u.GetProfile(ctx, "acc-1")
+		assert.Equal(t, apperror.CodeInternal, code(err))
+	})
+
+	t.Run("account disappears between GetByID and GetNIKEncByID", func(t *testing.T) {
+		u, repo, pii := newProfile(t)
+		repo.EXPECT().GetByID(gomock.Any(), "acc-1").Return(entity.Account{ID: "acc-1", NIKMasked: "3174********0001"}, nil)
+		repo.EXPECT().GetEmailEncByID(gomock.Any(), "acc-1").Return([]byte("enc-email"), nil)
+		pii.EXPECT().UnsealEmail([]byte("enc-email")).Return("arif@example.test", nil)
+		repo.EXPECT().GetNIKEncByID(gomock.Any(), "acc-1").Return(nil, entity.ErrNotFound)
+		_, err := u.GetProfile(ctx, "acc-1")
+		assert.Equal(t, inbound.CodeUnauthorized, code(err), "ErrNotFound harus dipetakan sama seperti GetByID, bukan 500")
+	})
+
+	t.Run("unseal nik error", func(t *testing.T) {
+		u, repo, pii := newProfile(t)
+		repo.EXPECT().GetByID(gomock.Any(), "acc-1").Return(entity.Account{ID: "acc-1", NIKMasked: "3174********0001"}, nil)
+		repo.EXPECT().GetEmailEncByID(gomock.Any(), "acc-1").Return([]byte("enc-email"), nil)
+		pii.EXPECT().UnsealEmail([]byte("enc-email")).Return("arif@example.test", nil)
+		repo.EXPECT().GetNIKEncByID(gomock.Any(), "acc-1").Return([]byte("enc-nik"), nil)
+		pii.EXPECT().UnsealNIK([]byte("enc-nik")).Return("", errors.New("decrypt"))
+		_, err := u.GetProfile(ctx, "acc-1")
+		assert.Equal(t, apperror.CodeInternal, code(err))
+	})
 }
 
 func TestUpdateProfile(t *testing.T) {

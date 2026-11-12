@@ -44,7 +44,6 @@ const (
 	CodeRulesLocked             apperror.Code = "EVENT_RULES_LOCKED"
 	CodeSupplyMismatch          apperror.Code = "SUPPLY_CATEGORY_MISMATCH"
 	CodeEventCancelled          apperror.Code = "EVENT_CANCELLED"
-	CodeNIKNotLinked            apperror.Code = "NIK_NOT_LINKED"
 )
 
 // Domain errors (design §11). Each carries the exact errorCode + HTTP status.
@@ -78,7 +77,6 @@ var (
 	ErrRulesLocked             = apperror.New(CodeRulesLocked, http.StatusConflict, "aturan event sudah terkunci")
 	ErrSupplyMismatch          = apperror.New(CodeSupplyMismatch, http.StatusConflict, "total kapasitas tidak cocok dengan jumlah kategori")
 	ErrEventCancelled          = apperror.New(CodeEventCancelled, http.StatusConflict, "event dibatalkan; penjualan dihentikan")
-	ErrNIKNotLinked            = apperror.New(CodeNIKNotLinked, http.StatusUnprocessableEntity, "NIK belum ditautkan ke akun; masukkan NIK secara manual")
 )
 
 // Validation returns a VALIDATION_ERROR (400) with the failing field in details.
