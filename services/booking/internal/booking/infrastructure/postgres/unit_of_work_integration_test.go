@@ -22,6 +22,7 @@ import (
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/domain/dto"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/deployments/migrations"
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/port/inbound"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/port/outbound"
 )
 
@@ -390,6 +391,26 @@ func TestExpire_ReviewReleasesHeldStockOnce(t *testing.T) {
 	assert.Equal(t, [5]int{0, 0, 0, 0, 0}, f.stock(t), "stok tidak dilepas dua kali")
 	assert.Equal(t, 1, f.n(t, `SELECT count(*) FROM booking.outbox_events WHERE routing_key='booking.review'`))
 	assert.Equal(t, 1, f.n(t, `SELECT count(*) FROM booking.outbox_events WHERE routing_key='booking.journey.ended'`))
+}
+
+// P1-4: once payment has started (payment_started_at stamped by payment-lock), a cancel must be refused under the row
+// lock: the booking stays PENDING_PAYMENT, no stock moves, and no expired event or outbox message is written.
+func TestExpire_CancelAfterPaymentLockIsRefused(t *testing.T) {
+	f := seed(t)
+	ctx := context.Background()
+	id := f.hold(t)
+	held := f.stock(t)
+
+	lock, err := f.uow.PaymentLock(ctx, outbound.PaymentLockSpec{BookingID: id, CorrelationID: id})
+	require.NoError(t, err)
+	require.Equal(t, "OK", lock.Outcome)
+
+	acted, err := f.uow.Expire(ctx, outbound.ExpireSpec{BookingID: id, Reason: "CANCELLED", CorrelationID: id})
+	require.ErrorIs(t, err, inbound.ErrBookingLocked)
+	assert.False(t, acted)
+	assert.Equal(t, "PENDING_PAYMENT", f.status(t, id))
+	assert.Equal(t, held, f.stock(t), "stok tidak berubah saat pembatalan ditolak")
+	assert.Equal(t, 0, f.n(t, `SELECT count(*) FROM booking.outbox_events WHERE routing_key='booking.expired'`))
 }
 
 // AC-4 (audit P0-4): the payment provider confirmed the charge but gave no settlement time. The booking is still

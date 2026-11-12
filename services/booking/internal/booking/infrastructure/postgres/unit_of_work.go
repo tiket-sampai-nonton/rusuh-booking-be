@@ -698,14 +698,19 @@ func (u *UnitOfWork) expire(ctx context.Context, tx pgx.Tx, spec outbound.Expire
 	var publicRef, email string
 	var buyerHash []byte
 	var amount int64
+	var paymentStarted *time.Time
 	if err := tx.QueryRow(ctx, `
-		SELECT status, version, public_ref, COALESCE(buyer_email_enc, ''), buyer_nik_hash, amount_minor
+		SELECT status, version, public_ref, COALESCE(buyer_email_enc, ''), buyer_nik_hash, amount_minor, payment_started_at
 		  FROM booking.bookings WHERE id=$1::uuid FOR UPDATE`, spec.BookingID).
-		Scan(&status, &version, &publicRef, &email, &buyerHash, &amount); err != nil {
+		Scan(&status, &version, &publicRef, &email, &buyerHash, &amount, &paymentStarted); err != nil {
 		return false, err
 	}
 	if !status.IsPayable() {
 		return false, nil // already terminal — idempotent
+	}
+	// P1-4: a cancel after payment-lock is refused here, under the booking row lock, before any stock write.
+	if spec.Reason == "CANCELLED" && paymentStarted != nil {
+		return false, inbound.ErrBookingLocked
 	}
 
 	// Step 4: lock event_supply (§9.0: after booking, before quota/categories).
