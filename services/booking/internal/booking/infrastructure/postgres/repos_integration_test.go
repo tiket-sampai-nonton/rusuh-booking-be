@@ -640,12 +640,45 @@ func TestEventWriteRepo_CreateAndUpdateConfig(t *testing.T) {
 	require.Error(t, dup, "slug sama ditolak sebagai validasi")
 
 	sel, pay := 120, 900
-	require.NoError(t, w.UpdateConfig(ctx, id, dto.UpdateEventConfigRequest{SelectionTTLSeconds: &sel, PaymentTTLSeconds: &pay}))
+	require.NoError(t, w.UpdateConfig(ctx, id, "acct-test", dto.UpdateEventConfigRequest{SelectionTTLSeconds: &sel, PaymentTTLSeconds: &pay}))
 	e, err := NewEventRepo(f.pool).GetByID(ctx, id)
 	require.NoError(t, err)
 	assert.Equal(t, 120, e.SelectionTTLSeconds)
 	assert.Equal(t, 900, e.PaymentTTLSeconds)
-	assert.ErrorIs(t, w.UpdateConfig(ctx, "00000000-0000-0000-0000-000000000000", dto.UpdateEventConfigRequest{SelectionTTLSeconds: &sel}), inbound.ErrNotFound)
+	assert.ErrorIs(t, w.UpdateConfig(ctx, "00000000-0000-0000-0000-000000000000", "acct-test", dto.UpdateEventConfigRequest{SelectionTTLSeconds: &sel}), inbound.ErrNotFound)
+}
+
+// AC-C4.3 (F-actor): the actor is written to config_audit.changed_by in the same transaction as the change.
+func TestEventWriteRepo_AuditRecordsActor(t *testing.T) {
+	f := seed(t)
+	ctx := context.Background()
+	w := NewEventWriteRepo(f.pool)
+
+	sel := 400
+	require.NoError(t, w.UpdateConfig(ctx, f.eventID, "acct-1", dto.UpdateEventConfigRequest{SelectionTTLSeconds: &sel}))
+	assert.Equal(t, "acct-1", f.q(t, `SELECT changed_by FROM booking.config_audit WHERE event_id=$1::uuid AND field='selection_ttl_seconds'`, f.eventID))
+
+	require.NoError(t, w.SetPublished(ctx, f.eventID, "acct-2", false))
+	require.NoError(t, w.SetPublished(ctx, f.eventID, "acct-2", true))
+	assert.Equal(t, 2, f.n(t, `SELECT count(*)::int FROM booking.config_audit WHERE event_id=$1::uuid AND field='published_at' AND changed_by='acct-2'`, f.eventID), "menyembunyikan dan menerbitkan lagi")
+}
+
+// AC-C4.4 (F-cancel, admin part): a cancelled event refuses config changes and publication, and its row stays unchanged.
+func TestEventWriteRepo_CancelledEventRefusesConfigAndPublish(t *testing.T) {
+	f := seed(t)
+	ctx := context.Background()
+	w := NewEventWriteRepo(f.pool)
+	require.NoError(t, w.Cancel(ctx, f.eventID, "acct-3"))
+	ttlBefore := f.n(t, `SELECT selection_ttl_seconds FROM booking.events WHERE id=$1::uuid`, f.eventID)
+	auditBefore := f.n(t, `SELECT count(*)::int FROM booking.config_audit WHERE event_id=$1::uuid`, f.eventID)
+
+	sel := 400
+	assert.ErrorIs(t, w.UpdateConfig(ctx, f.eventID, "acct-4", dto.UpdateEventConfigRequest{SelectionTTLSeconds: &sel}), inbound.ErrEventCancelled)
+	assert.ErrorIs(t, w.SetPublished(ctx, f.eventID, "acct-4", true), inbound.ErrEventCancelled)
+
+	assert.Equal(t, "CANCELLED", f.q(t, `SELECT status FROM booking.events WHERE id=$1::uuid`, f.eventID))
+	assert.Equal(t, ttlBefore, f.n(t, `SELECT selection_ttl_seconds FROM booking.events WHERE id=$1::uuid`, f.eventID), "konfigurasi tidak berubah")
+	assert.Equal(t, auditBefore, f.n(t, `SELECT count(*)::int FROM booking.config_audit WHERE event_id=$1::uuid`, f.eventID), "tidak ada audit baru")
 }
 
 func TestEventWriteRepo_Description(t *testing.T) {
@@ -666,20 +699,20 @@ func TestEventWriteRepo_Description(t *testing.T) {
 
 	// Absent leaves the document unchanged (no-op update).
 	sel := 100
-	require.NoError(t, w.UpdateConfig(ctx, id, dto.UpdateEventConfigRequest{SelectionTTLSeconds: &sel}))
+	require.NoError(t, w.UpdateConfig(ctx, id, "acct-test", dto.UpdateEventConfigRequest{SelectionTTLSeconds: &sel}))
 	e, err = r.GetByID(ctx, id)
 	require.NoError(t, err)
 	assert.JSONEq(t, string(doc), string(e.Description), "tanpa field description tidak berubah")
 
 	// Replace.
 	next := json.RawMessage(`[{"type":"h1","children":[{"text":"baru"}]}]`)
-	require.NoError(t, w.UpdateConfig(ctx, id, dto.UpdateEventConfigRequest{Description: next}))
+	require.NoError(t, w.UpdateConfig(ctx, id, "acct-test", dto.UpdateEventConfigRequest{Description: next}))
 	e, err = r.GetByID(ctx, id)
 	require.NoError(t, err)
 	assert.JSONEq(t, string(next), string(e.Description))
 
 	// JSON null clears it.
-	require.NoError(t, w.UpdateConfig(ctx, id, dto.UpdateEventConfigRequest{Description: json.RawMessage(`null`)}))
+	require.NoError(t, w.UpdateConfig(ctx, id, "acct-test", dto.UpdateEventConfigRequest{Description: json.RawMessage(`null`)}))
 	e, err = r.GetByID(ctx, id)
 	require.NoError(t, err)
 	assert.Empty(t, e.Description, "null menghapus deskripsi")
@@ -763,26 +796,26 @@ func TestEventRepo_DraftIsHiddenAndCannotBeReservedUntilPublished(t *testing.T) 
 		return out[0].Outcome
 	}
 
-	require.NoError(t, write.SetPublished(ctx, f.eventID, false))
+	require.NoError(t, write.SetPublished(ctx, f.eventID, "acct-test", false))
 	assert.Equal(t, 0, listed(), "draf tidak masuk katalog")
 	detail, err := events.GetDetail(ctx, f.eventID)
 	require.NoError(t, err)
 	assert.False(t, detail.Event.Published, "repo tetap bisa membaca draf (dipakai admin)")
 	assert.Equal(t, "NO_SUPPLY_NOW", reserve(), "draf tidak boleh dialokasikan")
 
-	require.NoError(t, write.SetPublished(ctx, f.eventID, true))
+	require.NoError(t, write.SetPublished(ctx, f.eventID, "acct-test", true))
 	assert.Equal(t, 1, listed())
 	assert.Equal(t, "GRANTED", reserve(), "terbit: alokasi normal")
 
 	var first time.Time
 	require.NoError(t, f.pool.QueryRow(ctx, `SELECT published_at FROM booking.events WHERE id=$1::uuid`, f.eventID).Scan(&first))
-	require.NoError(t, write.SetPublished(ctx, f.eventID, true))
+	require.NoError(t, write.SetPublished(ctx, f.eventID, "acct-test", true))
 	var second time.Time
 	require.NoError(t, f.pool.QueryRow(ctx, `SELECT published_at FROM booking.events WHERE id=$1::uuid`, f.eventID).Scan(&second))
 	assert.True(t, first.Equal(second), "menerbitkan ulang tidak menggeser waktu terbit pertama")
 
-	assert.ErrorIs(t, write.SetPublished(ctx, "00000000-0000-0000-0000-000000000000", true), inbound.ErrNotFound)
-	assert.ErrorIs(t, write.SetPublished(ctx, "bukan-uuid", true), inbound.ErrNotFound)
+	assert.ErrorIs(t, write.SetPublished(ctx, "00000000-0000-0000-0000-000000000000", "acct-test", true), inbound.ErrNotFound)
+	assert.ErrorIs(t, write.SetPublished(ctx, "bukan-uuid", "acct-test", true), inbound.ErrNotFound)
 }
 
 // SCRUM-56: a cancelled event leaves the default list, can be listed by status CANCELLED, stays readable by id, and
@@ -799,8 +832,8 @@ func TestEventRepo_CancelledEventLeavesTheListButStaysReadable(t *testing.T) {
 	}
 	assert.Equal(t, 1, count("ALL"))
 
-	require.NoError(t, write.Cancel(ctx, f.eventID))
-	require.NoError(t, write.Cancel(ctx, f.eventID), "idempoten")
+	require.NoError(t, write.Cancel(ctx, f.eventID, "acct-test"))
+	require.NoError(t, write.Cancel(ctx, f.eventID, "acct-test"), "idempoten")
 	assert.Equal(t, 0, count("ALL"), "dibatalkan: hilang dari daftar bawaan")
 	assert.Equal(t, 0, count("AVAILABLE"))
 	assert.Equal(t, 1, count("CANCELLED"), "tetap bisa disaring lewat status")
@@ -817,7 +850,7 @@ func TestEventRepo_CancelledEventLeavesTheListButStaysReadable(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "NO_SUPPLY_NOW", out[0].Outcome, "tidak ada admission baru untuk event dibatalkan")
 
-	assert.ErrorIs(t, write.Cancel(ctx, "00000000-0000-0000-0000-000000000000"), inbound.ErrNotFound)
+	assert.ErrorIs(t, write.Cancel(ctx, "00000000-0000-0000-0000-000000000000", "acct-test"), inbound.ErrNotFound)
 }
 
 // AC-C4.2 (F-status): SOLD_OUT in the catalog comes from supply (held + sold >= total) inside the sales window, not

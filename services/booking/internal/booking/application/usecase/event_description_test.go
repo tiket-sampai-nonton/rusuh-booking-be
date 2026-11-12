@@ -76,7 +76,7 @@ func TestUpdateEventConfig_Description(t *testing.T) {
 	for _, c := range descriptionCases {
 		t.Run(c.name, func(t *testing.T) {
 			uc := usecase.NewUpdateEventConfig(&fakeEventWriteRepo{})
-			err := uc.Update(context.Background(), "ev-1", dto.UpdateEventConfigRequest{Description: c.raw})
+			err := uc.Update(context.Background(), "ev-1", "acct-7", dto.UpdateEventConfigRequest{Description: c.raw})
 			if c.invalid {
 				assertDescriptionError(t, err)
 				return
@@ -94,6 +94,6 @@ func TestUpdateEventConfig_DescriptionAtLimit(t *testing.T) {
 	require.Len(t, raw, 200<<10)
 
 	err := usecase.NewUpdateEventConfig(&fakeEventWriteRepo{}).
-		Update(context.Background(), "ev-1", dto.UpdateEventConfigRequest{Description: raw})
+		Update(context.Background(), "ev-1", "acct-7", dto.UpdateEventConfigRequest{Description: raw})
 	assert.NoError(t, err)
 }

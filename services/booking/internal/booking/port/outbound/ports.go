@@ -27,7 +27,9 @@ type IEventRepo interface {
 // IEventWriteRepo creates and configures events (admin operations).
 type IEventWriteRepo interface {
 	CreateEvent(ctx context.Context, id string, req dto.CreateEventRequest) error
-	UpdateConfig(ctx context.Context, eventID string, req dto.UpdateEventConfigRequest) error
+	// UpdateConfig applies the configuration change and records actor (the admin account id) in config_audit.
+	// inbound.ErrEventCancelled for a cancelled event; inbound.ErrNotFound for an unknown event.
+	UpdateConfig(ctx context.Context, eventID, actor string, req dto.UpdateEventConfigRequest) error
 	// SetImageURL stores url in the column for kind (image | banner | thumbnail); ErrNotFound for an unknown event.
 	SetImageURL(ctx context.Context, eventID, kind, url string) error
 }
@@ -35,10 +37,10 @@ type IEventWriteRepo interface {
 // IEventPublicationRepo switches an event between draft and published and cancels it (admin operations).
 type IEventPublicationRepo interface {
 	// SetPublished publishes (published_at = now, unchanged when already published) or unpublishes the event;
-	// inbound.ErrNotFound for an unknown event.
-	SetPublished(ctx context.Context, eventID string, published bool) error
-	// Cancel marks the event CANCELLED (idempotent); inbound.ErrNotFound for an unknown event.
-	Cancel(ctx context.Context, eventID string) error
+	// inbound.ErrNotFound for an unknown event; inbound.ErrEventCancelled for a cancelled one.
+	SetPublished(ctx context.Context, eventID, actor string, published bool) error
+	// Cancel marks the event CANCELLED (idempotent) and records actor; inbound.ErrNotFound for an unknown event.
+	Cancel(ctx context.Context, eventID, actor string) error
 }
 
 // IImageStore saves an uploaded image under key and returns its public URL.

@@ -60,6 +60,7 @@ type fakeAdminUC struct {
 	id     string
 	err    error
 	gotCfg dto.UpdateEventConfigRequest
+	gotBy  string // actor passed to Update
 
 	gotCreate dto.CreateEventRequest
 	calls     int // total Create + Update invocations
@@ -70,9 +71,10 @@ func (f *fakeAdminUC) Create(_ context.Context, r dto.CreateEventRequest) (strin
 	f.gotCreate = r
 	return f.id, f.err
 }
-func (f *fakeAdminUC) Update(_ context.Context, _ string, r dto.UpdateEventConfigRequest) error {
+func (f *fakeAdminUC) Update(_ context.Context, _, actor string, r dto.UpdateEventConfigRequest) error {
 	f.calls++
 	f.gotCfg = r
+	f.gotBy = actor
 	return f.err
 }
 
@@ -356,18 +358,44 @@ func TestAdminHandler_UploadImage(t *testing.T) {
 
 type fakePublish struct {
 	published []bool
+	actors    []string // actor of every publish, unpublish and cancel, in call order
 	err       error
 }
 
-func (f *fakePublish) Publish(context.Context, string) error {
+func (f *fakePublish) Publish(_ context.Context, _, actor string) error {
 	f.published = append(f.published, true)
+	f.actors = append(f.actors, actor)
 	return f.err
 }
-func (f *fakePublish) Unpublish(context.Context, string) error {
+func (f *fakePublish) Unpublish(_ context.Context, _, actor string) error {
 	f.published = append(f.published, false)
+	f.actors = append(f.actors, actor)
 	return f.err
 }
-func (f *fakePublish) Cancel(context.Context, string) error { return f.err }
+func (f *fakePublish) Cancel(_ context.Context, _, actor string) error {
+	f.actors = append(f.actors, actor)
+	return f.err
+}
+
+// subjectVerifier accepts every token and answers with the account id acct-9 (the token subject).
+type subjectVerifier struct{}
+
+func (subjectVerifier) VerifyAccess(string) (string, error) { return "acct-9", nil }
+
+// AC-C4.3 (F-actor): admin writes hand the token subject to the usecase as the actor.
+func TestAdminHandler_PassesTokenSubjectAsActor(t *testing.T) {
+	uc := &fakeAdminUC{id: "ev-1"}
+	pub := &fakePublish{}
+	h := bookinghttp.NewAdminHandler(uc, uc, subjectVerifier{}).WithPublication(pub, fakeAdminDetail{})
+	auth := map[string]string{"Authorization": "Bearer t"}
+
+	assert.Equal(t, http.StatusOK, do(t, h, http.MethodPatch, "/internal/v1/admin/events/ev-1", `{"paymentTtlSeconds":900}`, auth).Code)
+	assert.Equal(t, "acct-9", uc.gotBy, "PATCH")
+	for _, p := range []string{"/publish", "/unpublish", "/cancel"} {
+		assert.Equal(t, http.StatusOK, do(t, h, http.MethodPost, "/internal/v1/admin/events/ev-1"+p, "", auth).Code, p)
+	}
+	assert.Equal(t, []string{"acct-9", "acct-9", "acct-9"}, pub.actors, "publish, unpublish, cancel")
+}
 
 type fakeAdminDetail struct {
 	out dto.EventDetail

@@ -16,14 +16,15 @@ import (
 func TestUpdateEventConfig_Success(t *testing.T) {
 	repo := &fakeEventWriteRepo{}
 	uc := usecase.NewUpdateEventConfig(repo)
-	err := uc.Update(context.Background(), "ev-1", dto.UpdateEventConfigRequest{})
+	err := uc.Update(context.Background(), "ev-1", "acct-7", dto.UpdateEventConfigRequest{})
 	require.NoError(t, err)
+	assert.Equal(t, "acct-7", repo.updatedBy, "aktor diteruskan ke repo")
 }
 
 func TestUpdateEventConfig_RulesLocked(t *testing.T) {
 	repo := &fakeEventWriteRepo{updateErr: inbound.ErrRulesLocked}
 	uc := usecase.NewUpdateEventConfig(repo)
-	err := uc.Update(context.Background(), "ev-1", dto.UpdateEventConfigRequest{})
+	err := uc.Update(context.Background(), "ev-1", "acct-7", dto.UpdateEventConfigRequest{})
 	assert.ErrorIs(t, err, inbound.ErrRulesLocked)
 }
 
@@ -31,7 +32,7 @@ func TestUpdateEventConfig_NoOpIfEmpty(t *testing.T) {
 	repo := &fakeEventWriteRepo{}
 	uc := usecase.NewUpdateEventConfig(repo)
 	// empty request is valid (no-op)
-	err := uc.Update(context.Background(), "ev-1", dto.UpdateEventConfigRequest{})
+	err := uc.Update(context.Background(), "ev-1", "acct-7", dto.UpdateEventConfigRequest{})
 	assert.NoError(t, err)
 }
 
@@ -61,7 +62,7 @@ func TestUpdateEventConfig_CityGenres(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			repo := &fakeEventWriteRepo{}
-			err := usecase.NewUpdateEventConfig(repo).Update(context.Background(), "ev-1", tc.req)
+			err := usecase.NewUpdateEventConfig(repo).Update(context.Background(), "ev-1", "acct-7", tc.req)
 			if tc.wantField != "" {
 				assertValidationField(t, err, tc.wantField)
 				assert.Equal(t, 0, repo.updateCalls)

@@ -48,7 +48,7 @@ func TestRulesLock_StartsAtSalesStartRegardlessOfStatus(t *testing.T) {
 	assert.Equal(t, 0, f.n(t, `SELECT count(*) FROM booking.events WHERE id=$1::uuid AND rules_locked_at IS NOT NULL`, upcoming))
 
 	ttl := 240 // timers are not guarded: still editable after the sales window opened
-	require.NoError(t, NewEventWriteRepo(f.pool).UpdateConfig(ctx, started, dto.UpdateEventConfigRequest{SelectionTTLSeconds: &ttl}))
+	require.NoError(t, NewEventWriteRepo(f.pool).UpdateConfig(ctx, started, "acct-test", dto.UpdateEventConfigRequest{SelectionTTLSeconds: &ttl}))
 }
 
 // TC-CFG-02 (D-C4.1): migration 0013 backfills rules_locked_at for events whose sales window already opened, and

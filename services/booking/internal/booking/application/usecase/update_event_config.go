@@ -16,7 +16,7 @@ func NewUpdateEventConfig(repo outbound.IEventWriteRepo) *UpdateEventConfig {
 }
 
 // Update applies configuration changes; returns ErrRulesLocked if rules are frozen.
-func (uc *UpdateEventConfig) Update(ctx context.Context, eventID string, req dto.UpdateEventConfigRequest) error {
+func (uc *UpdateEventConfig) Update(ctx context.Context, eventID, actor string, req dto.UpdateEventConfigRequest) error {
 	if err := validateDescription(req.Description); err != nil {
 		return err
 	}
@@ -37,5 +37,5 @@ func (uc *UpdateEventConfig) Update(ctx context.Context, eventID string, req dto
 		}
 		req.Genres = &genres
 	}
-	return uc.repo.UpdateConfig(ctx, eventID, req)
+	return uc.repo.UpdateConfig(ctx, eventID, actor, req)
 }

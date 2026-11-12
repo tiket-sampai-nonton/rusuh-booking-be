@@ -25,7 +25,7 @@ func createPublishedEvent(t *testing.T, f fixture, slug string, req dto.CreateEv
 	req.MaxTicketsPerOrder, req.MaxTicketsPerBuyerNIK = 3, 3
 	w := NewEventWriteRepo(f.pool)
 	require.NoError(t, w.CreateEvent(ctx, id, req))
-	require.NoError(t, w.SetPublished(ctx, id, true))
+	require.NoError(t, w.SetPublished(ctx, id, "acct-test", true))
 	return id
 }
 

@@ -174,17 +174,17 @@ func (mr *MockIEventWriteRepoMockRecorder) SetImageURL(ctx, eventID, kind, url a
 }
 
 // UpdateConfig mocks base method.
-func (m *MockIEventWriteRepo) UpdateConfig(ctx context.Context, eventID string, req dto.UpdateEventConfigRequest) error {
+func (m *MockIEventWriteRepo) UpdateConfig(ctx context.Context, eventID, actor string, req dto.UpdateEventConfigRequest) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "UpdateConfig", ctx, eventID, req)
+	ret := m.ctrl.Call(m, "UpdateConfig", ctx, eventID, actor, req)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // UpdateConfig indicates an expected call of UpdateConfig.
-func (mr *MockIEventWriteRepoMockRecorder) UpdateConfig(ctx, eventID, req any) *gomock.Call {
+func (mr *MockIEventWriteRepoMockRecorder) UpdateConfig(ctx, eventID, actor, req any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateConfig", reflect.TypeOf((*MockIEventWriteRepo)(nil).UpdateConfig), ctx, eventID, req)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateConfig", reflect.TypeOf((*MockIEventWriteRepo)(nil).UpdateConfig), ctx, eventID, actor, req)
 }
 
 // MockIEventPublicationRepo is a mock of IEventPublicationRepo interface.
@@ -212,31 +212,31 @@ func (m *MockIEventPublicationRepo) EXPECT() *MockIEventPublicationRepoMockRecor
 }
 
 // Cancel mocks base method.
-func (m *MockIEventPublicationRepo) Cancel(ctx context.Context, eventID string) error {
+func (m *MockIEventPublicationRepo) Cancel(ctx context.Context, eventID, actor string) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Cancel", ctx, eventID)
+	ret := m.ctrl.Call(m, "Cancel", ctx, eventID, actor)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // Cancel indicates an expected call of Cancel.
-func (mr *MockIEventPublicationRepoMockRecorder) Cancel(ctx, eventID any) *gomock.Call {
+func (mr *MockIEventPublicationRepoMockRecorder) Cancel(ctx, eventID, actor any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Cancel", reflect.TypeOf((*MockIEventPublicationRepo)(nil).Cancel), ctx, eventID)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Cancel", reflect.TypeOf((*MockIEventPublicationRepo)(nil).Cancel), ctx, eventID, actor)
 }
 
 // SetPublished mocks base method.
-func (m *MockIEventPublicationRepo) SetPublished(ctx context.Context, eventID string, published bool) error {
+func (m *MockIEventPublicationRepo) SetPublished(ctx context.Context, eventID, actor string, published bool) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "SetPublished", ctx, eventID, published)
+	ret := m.ctrl.Call(m, "SetPublished", ctx, eventID, actor, published)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // SetPublished indicates an expected call of SetPublished.
-func (mr *MockIEventPublicationRepoMockRecorder) SetPublished(ctx, eventID, published any) *gomock.Call {
+func (mr *MockIEventPublicationRepoMockRecorder) SetPublished(ctx, eventID, actor, published any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetPublished", reflect.TypeOf((*MockIEventPublicationRepo)(nil).SetPublished), ctx, eventID, published)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetPublished", reflect.TypeOf((*MockIEventPublicationRepo)(nil).SetPublished), ctx, eventID, actor, published)
 }
 
 // MockIImageStore is a mock of IImageStore interface.

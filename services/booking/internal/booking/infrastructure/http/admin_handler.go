@@ -86,7 +86,7 @@ func (h *AdminHandler) updateEventConfig(w stdhttp.ResponseWriter, r *stdhttp.Re
 		httpx.WriteError(w, r, err)
 		return
 	}
-	if err := h.update.Update(r.Context(), r.PathValue("eventId"), req); err != nil {
+	if err := h.update.Update(r.Context(), r.PathValue("eventId"), accountIDFrom(r.Context()), req); err != nil {
 		httpx.WriteError(w, r, err)
 		return
 	}
@@ -131,10 +131,10 @@ func (h *AdminHandler) getEvent(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	httpx.WriteData(w, r, stdhttp.StatusOK, d)
 }
 
-// publishEvent adapts Publish/Unpublish to a handler; both are idempotent and answer 200 with an empty body.
-func (h *AdminHandler) publishEvent(action func(ctx context.Context, eventID string) error) stdhttp.HandlerFunc {
+// publishEvent adapts Publish/Unpublish/Cancel to a handler; all three answer 200 with an empty body.
+func (h *AdminHandler) publishEvent(action func(ctx context.Context, eventID, actor string) error) stdhttp.HandlerFunc {
 	return func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-		if err := action(r.Context(), r.PathValue("eventId")); err != nil {
+		if err := action(r.Context(), r.PathValue("eventId"), accountIDFrom(r.Context())); err != nil {
 			httpx.WriteError(w, r, err)
 			return
 		}

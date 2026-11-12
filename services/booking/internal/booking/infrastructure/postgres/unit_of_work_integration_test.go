@@ -481,7 +481,7 @@ func TestExpireSession_EditableAdmissionBecomesConverted(t *testing.T) {
 func TestUpdateConfig_OutOfRangeValueIsAValidationError(t *testing.T) {
 	f := seed(t)
 	ttl := 30 // payment TTL minimum is 120 s
-	err := NewEventWriteRepo(f.pool).UpdateConfig(context.Background(), f.eventID, dto.UpdateEventConfigRequest{PaymentTTLSeconds: &ttl})
+	err := NewEventWriteRepo(f.pool).UpdateConfig(context.Background(), f.eventID, "acct-test", dto.UpdateEventConfigRequest{PaymentTTLSeconds: &ttl})
 	var ae *apperror.Error
 	require.ErrorAs(t, err, &ae)
 	assert.Equal(t, http.StatusBadRequest, ae.HTTPStatus)

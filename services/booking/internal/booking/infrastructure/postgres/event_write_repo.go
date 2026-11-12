@@ -13,6 +13,7 @@ import (
 	pkgpg "github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/postgres"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/domain/dto"
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/domain/entity"
 	inbound "github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/port/inbound"
 )
 
@@ -77,29 +78,52 @@ func (r *EventWriteRepo) CreateEvent(ctx context.Context, id string, req dto.Cre
 
 // UpdateConfig applies mutable configuration changes to an event. Attempting to change a locked
 // rule (after sales open) trips the guard_event_rules trigger, mapped to inbound.ErrRulesLocked.
-func (r *EventWriteRepo) UpdateConfig(ctx context.Context, eventID string, req dto.UpdateEventConfigRequest) error {
+// A cancelled event refuses the change (inbound.ErrEventCancelled). actor is written to config_audit.changed_by.
+func (r *EventWriteRepo) UpdateConfig(ctx context.Context, eventID, actor string, req dto.UpdateEventConfigRequest) error {
 	sql, args := buildUpdateConfig(eventID, req)
-	if sql == "" {
-		// No-op: nothing to change. Still confirm the event exists.
-		var exists bool
-		err := r.pool.QueryRow(ctx, `SELECT true FROM booking.events WHERE id = $1::uuid`, eventID).Scan(&exists)
-		switch {
-		case errors.Is(err, pgx.ErrNoRows), pkgpg.IsCode(err, "22P02"):
-			return inbound.ErrNotFound
-		case err != nil:
+	return pkgpg.WithTx(ctx, r.pool, pgx.TxOptions{IsoLevel: pgx.ReadCommitted}, func(tx pgx.Tx) error {
+		status, err := lockEvent(ctx, tx, eventID)
+		if err != nil {
+			return err
+		}
+		if status == entity.EventCancelled {
+			return inbound.ErrEventCancelled
+		}
+		if err := setActor(ctx, tx, actor); err != nil {
 			return mapEventWriteErr(err, "events: update config")
 		}
+		if sql == "" {
+			return nil // no-op: nothing to change, the event exists
+		}
+		tag, err := tx.Exec(ctx, sql, args...)
+		if err != nil {
+			return mapEventWriteErr(err, "events: update config")
+		}
+		if tag.RowsAffected() == 0 {
+			return inbound.ErrNotFound
+		}
 		return nil
-	}
+	})
+}
 
-	tag, err := r.pool.Exec(ctx, sql, args...)
-	if err != nil {
-		return mapEventWriteErr(err, "events: update config")
+// lockEvent takes the event row lock (SELECT ... FOR UPDATE) and returns its status, so the check and the write that
+// follows in the same transaction see one status. An unknown event, or an id that is not a UUID, is ErrNotFound.
+func lockEvent(ctx context.Context, tx pgx.Tx, eventID string) (entity.EventStatus, error) {
+	var status string
+	err := tx.QueryRow(ctx, `SELECT status FROM booking.events WHERE id = $1::uuid FOR UPDATE`, eventID).Scan(&status)
+	switch {
+	case errors.Is(err, pgx.ErrNoRows), pkgpg.IsCode(err, "22P02"):
+		return "", inbound.ErrNotFound
+	case err != nil:
+		return "", mapEventWriteErr(err, "events: lock")
 	}
-	if tag.RowsAffected() == 0 {
-		return inbound.ErrNotFound
-	}
-	return nil
+	return entity.EventStatus(status), nil
+}
+
+// setActor records actor for the config_audit trigger of this transaction only (set_config with is_local = true).
+func setActor(ctx context.Context, tx pgx.Tx, actor string) error {
+	_, err := tx.Exec(ctx, `SELECT set_config('app.actor', $1, true)`, actor)
+	return err
 }
 
 // buildUpdateConfig returns the UPDATE statement and its args ($1 is the event id) for the fields set in req.
@@ -188,28 +212,43 @@ func (r *EventWriteRepo) SetImageURL(ctx context.Context, eventID, kind, url str
 }
 
 // SetPublished publishes the event (published_at is kept when already published) or turns it back into a draft.
-func (r *EventWriteRepo) SetPublished(ctx context.Context, eventID string, published bool) error {
-	tag, err := r.pool.Exec(ctx, `
-		UPDATE booking.events
-		   SET published_at = CASE WHEN $2 THEN COALESCE(published_at, now()) ELSE NULL END
-		 WHERE id = $1::uuid`, eventID, published)
-	if err != nil {
-		return mapEventWriteErr(err, "events: set published")
-	}
-	if tag.RowsAffected() == 0 {
-		return inbound.ErrNotFound
-	}
-	return nil
+// A cancelled event refuses the change (inbound.ErrEventCancelled). actor is written to config_audit.changed_by.
+func (r *EventWriteRepo) SetPublished(ctx context.Context, eventID, actor string, published bool) error {
+	return pkgpg.WithTx(ctx, r.pool, pgx.TxOptions{IsoLevel: pgx.ReadCommitted}, func(tx pgx.Tx) error {
+		status, err := lockEvent(ctx, tx, eventID)
+		if err != nil {
+			return err
+		}
+		if status == entity.EventCancelled {
+			return inbound.ErrEventCancelled
+		}
+		if err := setActor(ctx, tx, actor); err != nil {
+			return mapEventWriteErr(err, "events: set published")
+		}
+		_, err = tx.Exec(ctx, `
+			UPDATE booking.events
+			   SET published_at = CASE WHEN $2 THEN COALESCE(published_at, now()) ELSE NULL END
+			 WHERE id = $1::uuid`, eventID, published)
+		if err != nil {
+			return mapEventWriteErr(err, "events: set published")
+		}
+		return nil
+	})
 }
 
-// Cancel stores status CANCELLED (idempotent).
-func (r *EventWriteRepo) Cancel(ctx context.Context, eventID string) error {
-	tag, err := r.pool.Exec(ctx, `UPDATE booking.events SET status = 'CANCELLED' WHERE id = $1::uuid`, eventID)
-	if err != nil {
-		return mapEventWriteErr(err, "events: cancel")
-	}
-	if tag.RowsAffected() == 0 {
-		return inbound.ErrNotFound
-	}
-	return nil
+// Cancel stores status CANCELLED (idempotent: cancelling a cancelled event changes nothing and writes no audit row).
+// actor is written to config_audit.changed_by.
+func (r *EventWriteRepo) Cancel(ctx context.Context, eventID, actor string) error {
+	return pkgpg.WithTx(ctx, r.pool, pgx.TxOptions{IsoLevel: pgx.ReadCommitted}, func(tx pgx.Tx) error {
+		if _, err := lockEvent(ctx, tx, eventID); err != nil {
+			return err
+		}
+		if err := setActor(ctx, tx, actor); err != nil {
+			return mapEventWriteErr(err, "events: cancel")
+		}
+		if _, err := tx.Exec(ctx, `UPDATE booking.events SET status = 'CANCELLED' WHERE id = $1::uuid`, eventID); err != nil {
+			return mapEventWriteErr(err, "events: cancel")
+		}
+		return nil
+	})
 }

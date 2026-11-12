@@ -239,17 +239,17 @@ func (m *MockIUpdateEventConfigUsecase) EXPECT() *MockIUpdateEventConfigUsecaseM
 }
 
 // Update mocks base method.
-func (m *MockIUpdateEventConfigUsecase) Update(ctx context.Context, eventID string, req dto.UpdateEventConfigRequest) error {
+func (m *MockIUpdateEventConfigUsecase) Update(ctx context.Context, eventID, actor string, req dto.UpdateEventConfigRequest) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Update", ctx, eventID, req)
+	ret := m.ctrl.Call(m, "Update", ctx, eventID, actor, req)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // Update indicates an expected call of Update.
-func (mr *MockIUpdateEventConfigUsecaseMockRecorder) Update(ctx, eventID, req any) *gomock.Call {
+func (mr *MockIUpdateEventConfigUsecaseMockRecorder) Update(ctx, eventID, actor, req any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Update", reflect.TypeOf((*MockIUpdateEventConfigUsecase)(nil).Update), ctx, eventID, req)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Update", reflect.TypeOf((*MockIUpdateEventConfigUsecase)(nil).Update), ctx, eventID, actor, req)
 }
 
 // MockIPublishEventUsecase is a mock of IPublishEventUsecase interface.
@@ -277,45 +277,45 @@ func (m *MockIPublishEventUsecase) EXPECT() *MockIPublishEventUsecaseMockRecorde
 }
 
 // Cancel mocks base method.
-func (m *MockIPublishEventUsecase) Cancel(ctx context.Context, eventID string) error {
+func (m *MockIPublishEventUsecase) Cancel(ctx context.Context, eventID, actor string) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Cancel", ctx, eventID)
+	ret := m.ctrl.Call(m, "Cancel", ctx, eventID, actor)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // Cancel indicates an expected call of Cancel.
-func (mr *MockIPublishEventUsecaseMockRecorder) Cancel(ctx, eventID any) *gomock.Call {
+func (mr *MockIPublishEventUsecaseMockRecorder) Cancel(ctx, eventID, actor any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Cancel", reflect.TypeOf((*MockIPublishEventUsecase)(nil).Cancel), ctx, eventID)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Cancel", reflect.TypeOf((*MockIPublishEventUsecase)(nil).Cancel), ctx, eventID, actor)
 }
 
 // Publish mocks base method.
-func (m *MockIPublishEventUsecase) Publish(ctx context.Context, eventID string) error {
+func (m *MockIPublishEventUsecase) Publish(ctx context.Context, eventID, actor string) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Publish", ctx, eventID)
+	ret := m.ctrl.Call(m, "Publish", ctx, eventID, actor)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // Publish indicates an expected call of Publish.
-func (mr *MockIPublishEventUsecaseMockRecorder) Publish(ctx, eventID any) *gomock.Call {
+func (mr *MockIPublishEventUsecaseMockRecorder) Publish(ctx, eventID, actor any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Publish", reflect.TypeOf((*MockIPublishEventUsecase)(nil).Publish), ctx, eventID)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Publish", reflect.TypeOf((*MockIPublishEventUsecase)(nil).Publish), ctx, eventID, actor)
 }
 
 // Unpublish mocks base method.
-func (m *MockIPublishEventUsecase) Unpublish(ctx context.Context, eventID string) error {
+func (m *MockIPublishEventUsecase) Unpublish(ctx context.Context, eventID, actor string) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Unpublish", ctx, eventID)
+	ret := m.ctrl.Call(m, "Unpublish", ctx, eventID, actor)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // Unpublish indicates an expected call of Unpublish.
-func (mr *MockIPublishEventUsecaseMockRecorder) Unpublish(ctx, eventID any) *gomock.Call {
+func (mr *MockIPublishEventUsecaseMockRecorder) Unpublish(ctx, eventID, actor any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Unpublish", reflect.TypeOf((*MockIPublishEventUsecase)(nil).Unpublish), ctx, eventID)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Unpublish", reflect.TypeOf((*MockIPublishEventUsecase)(nil).Unpublish), ctx, eventID, actor)
 }
 
 // MockIAdminEventDetailGetter is a mock of IAdminEventDetailGetter interface.

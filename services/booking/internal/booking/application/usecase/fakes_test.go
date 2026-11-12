@@ -392,6 +392,7 @@ type fakeEventWriteRepo struct {
 	createdReq  dto.CreateEventRequest
 	updateCalls int
 	updatedReq  dto.UpdateEventConfigRequest
+	updatedBy   string
 }
 
 func (f *fakeEventWriteRepo) SetImageURL(_ context.Context, _, kind, url string) error {
@@ -404,9 +405,10 @@ func (f *fakeEventWriteRepo) CreateEvent(_ context.Context, _ string, req dto.Cr
 	f.createdReq = req
 	return f.createErr
 }
-func (f *fakeEventWriteRepo) UpdateConfig(_ context.Context, _ string, req dto.UpdateEventConfigRequest) error {
+func (f *fakeEventWriteRepo) UpdateConfig(_ context.Context, _, actor string, req dto.UpdateEventConfigRequest) error {
 	f.updateCalls++
 	f.updatedReq = req
+	f.updatedBy = actor
 	return f.updateErr
 }
 
