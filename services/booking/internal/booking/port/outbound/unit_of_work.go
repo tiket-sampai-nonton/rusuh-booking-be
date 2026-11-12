@@ -68,6 +68,7 @@ type ReplaceSpec struct {
 	NewAmountMinor  int64
 	Lines           []HoldLine
 	CorrelationID   string
+	Now             time.Time // app clock; zero falls back to the wall clock
 }
 
 // SettleSpec is everything IUnitOfWork.Settle needs for an idempotent settlement.
@@ -102,6 +103,7 @@ type PaymentLockSpec struct {
 	BookingID     string
 	AttemptKey    string
 	CorrelationID string
+	Now           time.Time // app clock; zero falls back to the wall clock
 }
 
 // PaymentLockResult is the outcome of the payment-lock operation.

@@ -51,6 +51,7 @@ func (u *UnitOfWork) Hold(ctx context.Context, spec outbound.HoldSpec) (outbound
 
 func (u *UnitOfWork) hold(ctx context.Context, tx pgx.Tx, spec outbound.HoldSpec) (outbound.HoldResult, error) {
 	n := len(spec.Lines)
+	now := clockOr(spec.Now)
 
 	// Step 1: lock the admission first (serialises every attempt on one session) and read its own counters.
 	var admStatus string
@@ -70,11 +71,11 @@ func (u *UnitOfWork) hold(ctx context.Context, tx pgx.Tx, spec outbound.HoldSpec
 		return outbound.HoldResult{}, inbound.ErrSessionExpired
 	}
 	grace := time.Duration(cfgGrace) * time.Second
-	if time.Now().UTC().After(admExpiresAt.Add(grace)) {
+	if now.After(admExpiresAt.Add(grace)) {
 		return outbound.HoldResult{}, inbound.ErrSessionExpired
 	}
 	// inGrace: request arrived after TTL but within the grace window.
-	inGrace := time.Now().UTC().After(admExpiresAt)
+	inGrace := now.After(admExpiresAt)
 	// The hold may take only this admission's own reserved units (F1): never another admission's.
 	if n < 1 || n > outstanding {
 		return outbound.HoldResult{}, inbound.ErrQuantityInvalid
@@ -292,7 +293,7 @@ func (u *UnitOfWork) replace(ctx context.Context, tx pgx.Tx, spec outbound.Repla
 		return 0, inbound.ErrSessionExpired
 	}
 	grace := time.Duration(cfgGrace) * time.Second
-	if time.Now().UTC().After(admExpiresAt.Add(grace)) {
+	if clockOr(spec.Now).After(admExpiresAt.Add(grace)) {
 		return 0, inbound.ErrSessionExpired
 	}
 	if editCount >= cfgMaxEdits {
@@ -931,7 +932,7 @@ func (u *UnitOfWork) paymentLock(ctx context.Context, tx pgx.Tx, spec outbound.P
 		return outbound.PaymentLockResult{}, err
 	}
 
-	now := time.Now().UTC()
+	now := clockOr(spec.Now)
 	// Payment window lapsed: not lockable regardless of status.
 	if now.After(paymentExpiresAt) {
 		return outbound.PaymentLockResult{Outcome: "PAYMENT_EXPIRED", AmountMinor: amountMinor, PaymentExpiresAt: paymentExpiresAt}, nil
@@ -1129,6 +1130,15 @@ func itemSnapshots(lines []outbound.HoldLine) []domevent.ItemSnapshot {
 
 func meta(correlationID string) map[string]string {
 	return map[string]string{"correlationId": correlationID, "actor": "booking-service"}
+}
+
+// clockOr is the app clock carried in a spec (D-C3.1); a zero Now falls back to the wall clock in UTC so internal
+// callers and older tests keep working.
+func clockOr(t time.Time) time.Time {
+	if t.IsZero() {
+		return time.Now().UTC()
+	}
+	return t
 }
 
 func mapHoldErr(err error) error {

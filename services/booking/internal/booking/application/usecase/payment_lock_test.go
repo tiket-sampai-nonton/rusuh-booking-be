@@ -42,6 +42,26 @@ func TestPaymentLock_Expired(t *testing.T) {
 	assert.Equal(t, "PAYMENT_EXPIRED", resp.Outcome)
 }
 
+// lockSpyUoW records the spec that PaymentLock hands to the unit of work.
+type lockSpyUoW struct {
+	*fakeUoW
+	spec outbound.PaymentLockSpec
+}
+
+func (f *lockSpyUoW) PaymentLock(ctx context.Context, spec outbound.PaymentLockSpec) (outbound.PaymentLockResult, error) {
+	f.spec = spec
+	return f.fakeUoW.PaymentLock(ctx, spec)
+}
+
+func TestPaymentLock_PassesClock(t *testing.T) {
+	at := time.Date(2026, 11, 13, 9, 0, 0, 0, time.UTC)
+	uow := &lockSpyUoW{fakeUoW: &fakeUoW{lockResult: outbound.PaymentLockResult{Outcome: "OK"}}}
+	uc := usecase.NewPaymentLock(uow, fixedClock{t: at})
+	_, err := uc.Lock(context.Background(), "bk-1", "attempt-key-abc123")
+	require.NoError(t, err)
+	assert.Equal(t, at, uow.spec.Now)
+}
+
 func TestPaymentLock_EmptyAttemptKey(t *testing.T) {
 	uc := usecase.NewPaymentLock(&fakeUoW{}, fixedClock{t: time.Now()})
 	_, err := uc.Lock(context.Background(), "bk-1", "")

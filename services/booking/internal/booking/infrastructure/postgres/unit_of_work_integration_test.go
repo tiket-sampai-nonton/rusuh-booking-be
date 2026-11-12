@@ -197,6 +197,20 @@ func TestHold_LockedAtOnceKeepsReadModelInStepWithTheStream(t *testing.T) {
 	assert.Equal(t, "OK", lock.Outcome)
 }
 
+// C3.1: hold reads the clock from the spec, so the caller's clock decides whether the admission is still open.
+func TestHold_UsesSpecClock(t *testing.T) {
+	f := seed(t)
+	ctx := context.Background()
+	before := f.stock(t)
+
+	id := f.q(t, `SELECT gen_random_uuid()::text`)
+	spec := f.holdSpec(id)
+	spec.Now = time.Now().Add(10 * time.Minute) // admission expires in 5 min, grace is 5 s
+	_, err := f.uow.Hold(ctx, spec)
+	assert.ErrorIs(t, err, inbound.ErrSessionExpired)
+	assert.Equal(t, before, f.stock(t), "stok tidak berubah ketika sesi habis menurut jam spec")
+}
+
 func (f fixture) status(t *testing.T, id string) string {
 	return f.q(t, `SELECT status FROM booking.bookings WHERE id=$1::uuid`, id)
 }
@@ -263,6 +277,20 @@ func TestPaymentLock_RefusesExpiredAndNonPayableBookings(t *testing.T) {
 	res, err = f.uow.PaymentLock(ctx, outbound.PaymentLockSpec{BookingID: id, AttemptKey: "k", CorrelationID: id})
 	require.NoError(t, err)
 	assert.Equal(t, "BOOKING_NOT_PAYABLE", res.Outcome)
+}
+
+// C3.1: payment-lock reads the clock from the spec; past payment_expires_at it refuses and stamps nothing.
+func TestPaymentLock_UsesSpecClock(t *testing.T) {
+	f := seed(t)
+	ctx := context.Background()
+	id := f.hold(t)
+	var paymentExpiresAt time.Time
+	require.NoError(t, f.pool.QueryRow(ctx, `SELECT payment_expires_at FROM booking.bookings WHERE id=$1::uuid`, id).Scan(&paymentExpiresAt))
+
+	res, err := f.uow.PaymentLock(ctx, outbound.PaymentLockSpec{BookingID: id, AttemptKey: "attempt-1", CorrelationID: id, Now: paymentExpiresAt.Add(time.Second)})
+	require.NoError(t, err)
+	assert.Equal(t, "PAYMENT_EXPIRED", res.Outcome)
+	assert.Equal(t, 0, f.n(t, `SELECT count(*) FROM booking.bookings WHERE id=$1::uuid AND payment_started_at IS NOT NULL`, id), "payment_started_at tidak diisi")
 }
 
 // The extension is recorded as an event and only once; a second request is refused (deadline_extended_at).

@@ -100,6 +100,27 @@ func TestReplaceItems_SwapsTheHeldLinesAndKeepsStockConsistent(t *testing.T) {
 	assert.ErrorIs(t, err, inbound.ErrBookingLocked)
 }
 
+// C3.1: replace reads the clock from the spec; past the admission's expires_at + grace the session is expired.
+func TestReplaceItems_UsesSpecClock(t *testing.T) {
+	f := seed(t)
+	ctx := context.Background()
+	id := f.hold(t)
+	var admExpiresAt time.Time
+	require.NoError(t, f.pool.QueryRow(ctx, `SELECT expires_at FROM booking.admissions WHERE id=$1::uuid`, f.admissionID).Scan(&admExpiresAt))
+
+	_, err := f.uow.ReplaceItems(ctx, outbound.ReplaceSpec{
+		BookingID: id, AdmissionID: f.admissionID, EventID: f.eventID, BuyerNIKHash: []byte(f.nikH), ExpectedVersion: 1,
+		NewAmountMinor: 150000, CorrelationID: id, Now: admExpiresAt.Add(time.Minute),
+		Lines: []outbound.HoldLine{{
+			CategoryID: f.categoryID, UnitPriceMinor: 150000, AttendeeNIKHash: []byte("attendee-2"), AttendeeNIKEnc: []byte("enc"),
+			AttendeeNIKMasked: "3174********0002", AttendeeName: "Siti",
+		}},
+	})
+	assert.ErrorIs(t, err, inbound.ErrSessionExpired)
+	assert.Equal(t, 1, f.n(t, `SELECT count(*) FROM booking.booking_items WHERE booking_id=$1::uuid AND item_status='HELD' AND attendee_name='Budi Santoso'`, id),
+		"item lama tetap HELD")
+}
+
 // TC-SES-09 (P8): hold after expires_at + grace is refused with no hold row and no stock change;
 // a hold inside the grace window succeeds. expires_at is backdated because Hold reads time.Now().
 func TestHold_DeadlineGraceEdges(t *testing.T) {

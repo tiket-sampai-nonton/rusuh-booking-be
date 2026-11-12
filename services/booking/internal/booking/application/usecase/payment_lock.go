@@ -28,6 +28,7 @@ func (uc *PaymentLock) Lock(ctx context.Context, bookingID, attemptKey string) (
 	res, err := uc.uow.PaymentLock(ctx, outbound.PaymentLockSpec{
 		BookingID:  bookingID,
 		AttemptKey: attemptKey,
+		Now:        uc.clock.Now(),
 	})
 	if err != nil {
 		return dto.PaymentLockResponse{}, err
