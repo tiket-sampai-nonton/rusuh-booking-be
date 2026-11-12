@@ -191,7 +191,7 @@ func (f fixture) stock(t *testing.T) [5]int {
 }
 
 func settleSpec(id string) outbound.SettleSpec {
-	return outbound.SettleSpec{BookingID: id, Method: "VA_BCA", CorrelationID: id, TicketCodeFn: func(item string) string { return "TK-" + item[:8] }}
+	return outbound.SettleSpec{BookingID: id, Method: "VA_BCA", CorrelationID: id, TicketCodeFn: func(item string) string { return "TK-" + item[24:] }} // ekor acak: pada UUIDv7 awalan 8 karakter adalah stempel waktu dan bentrok
 }
 
 func (f fixture) outboxPayload(t *testing.T, routingKey string) json.RawMessage {
