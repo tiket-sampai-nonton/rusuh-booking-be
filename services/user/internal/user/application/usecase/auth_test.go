@@ -265,13 +265,14 @@ func TestRequestOTP_Failures(t *testing.T) {
 }
 
 // expectSession sets up the happy path of openSession: tokens and session id are prepared BEFORE the commit.
-func expectSession(m mocks, rotateFrom string, email string) {
+// expiresAt is the absolute end the new session row must carry (now+RefreshTTL for a login, the original for a rotation).
+func expectSession(m mocks, rotateFrom string, email string, expiresAt time.Time) {
 	m.secrets.EXPECT().RefreshToken().Return("refresh-raw", nil)
 	m.secrets.EXPECT().SessionID().Return("sid-1", nil)
 	m.accounts.EXPECT().GetNIKHashByID(gomock.Any(), "acc-1").Return(nil, nil) // no NIK
 	m.tokens.EXPECT().IssueAccess("acc-1", "sid-1", email, nil, gomock.Any(), now).Return("access-jwt", now.Add(15*time.Minute), nil)
-	sess := entity.Session{ID: "sid-1", AccountID: "acc-1", ExpiresAt: now.Add(settings.RefreshTTL)}
-	next := entity.NewSession{ID: "sid-1", AccountID: "acc-1", RefreshTokenHash: []byte("h:refresh-raw"), UserAgent: "test", ExpiresAt: now.Add(settings.RefreshTTL)}
+	sess := entity.Session{ID: "sid-1", AccountID: "acc-1", ExpiresAt: expiresAt}
+	next := entity.NewSession{ID: "sid-1", AccountID: "acc-1", RefreshTokenHash: []byte("h:refresh-raw"), UserAgent: "test", ExpiresAt: expiresAt}
 	if rotateFrom == "" {
 		m.sessions.EXPECT().Create(gomock.Any(), next).Return(sess, nil)
 	} else {
@@ -291,7 +292,7 @@ func TestVerifyOTP_ExistingAccount(t *testing.T) {
 	expectMatched(m)
 	m.accounts.EXPECT().FindByEmailHash(gomock.Any(), emailH).Return(activeAcc, true, nil)
 	m.accounts.EXPECT().TouchLogin(gomock.Any(), "acc-1", now).Return(nil)
-	expectSession(m, "", "arnu@gmail.com")
+	expectSession(m, "", "arnu@gmail.com", now.Add(settings.RefreshTTL))
 
 	m.audit.EXPECT().Record(gomock.Any(), entity.LoginEvent{AccountID: "acc-1", EmailHash: emailH, Outcome: entity.AuditLoginOK, ClientIP: client.IP}).Return(nil)
 	resp, err := u.VerifyOTP(context.Background(), dto.VerifyOTPRequest{Email: "arnu@gmail.com", Code: "123456"}, client)
@@ -308,7 +309,7 @@ func TestVerifyOTP_FirstLoginCreatesAccount(t *testing.T) {
 	m.pii.EXPECT().SealEmail("arnu@gmail.com").Return([]byte("enc"), nil)
 	m.accounts.EXPECT().Create(gomock.Any(), entity.NewAccount{EmailHash: emailH, EmailEnc: []byte("enc"), EmailMasked: "ar***@gmail.com"}).Return(activeAcc, nil)
 	m.accounts.EXPECT().TouchLogin(gomock.Any(), "acc-1", now).Return(nil)
-	expectSession(m, "", "arnu@gmail.com")
+	expectSession(m, "", "arnu@gmail.com", now.Add(settings.RefreshTTL))
 
 	m.audit.EXPECT().Record(gomock.Any(), entity.LoginEvent{AccountID: "acc-1", EmailHash: emailH, Outcome: entity.AuditLoginOK, ClientIP: client.IP}).Return(nil)
 	_, err := u.VerifyOTP(context.Background(), dto.VerifyOTPRequest{Email: "arnu@gmail.com", Code: "123456"}, client)
@@ -499,14 +500,14 @@ func TestOpenSession_FailuresBeforeCommitLeaveNoSessionWrite(t *testing.T) {
 		t.Run("refresh generator/"+rotateFrom, func(t *testing.T) {
 			u, m := newAuth(t)
 			m.secrets.EXPECT().RefreshToken().Return("", errors.New("entropy"))
-			_, err := u.openSession(ctx, activeAcc, email, client, now, rotateFrom)
+			_, err := u.openSession(ctx, activeAcc, email, client, now, rotateFrom, time.Time{})
 			assert.Equal(t, apperror.CodeInternal, code(err))
 		})
 		t.Run("session id generator/"+rotateFrom, func(t *testing.T) {
 			u, m := newAuth(t)
 			m.secrets.EXPECT().RefreshToken().Return("r", nil)
 			m.secrets.EXPECT().SessionID().Return("", errors.New("entropy"))
-			_, err := u.openSession(ctx, activeAcc, email, client, now, rotateFrom)
+			_, err := u.openSession(ctx, activeAcc, email, client, now, rotateFrom, time.Time{})
 			assert.Equal(t, apperror.CodeInternal, code(err))
 		})
 		t.Run("get nik hash error/"+rotateFrom, func(t *testing.T) {
@@ -514,7 +515,7 @@ func TestOpenSession_FailuresBeforeCommitLeaveNoSessionWrite(t *testing.T) {
 			m.secrets.EXPECT().RefreshToken().Return("r", nil)
 			m.secrets.EXPECT().SessionID().Return("sid-1", nil)
 			m.accounts.EXPECT().GetNIKHashByID(gomock.Any(), "acc-1").Return(nil, errors.New("db"))
-			_, err := u.openSession(ctx, activeAcc, email, client, now, rotateFrom)
+			_, err := u.openSession(ctx, activeAcc, email, client, now, rotateFrom, time.Time{})
 			assert.Equal(t, apperror.CodeInternal, code(err))
 		})
 		t.Run("issue access error/"+rotateFrom, func(t *testing.T) {
@@ -523,7 +524,7 @@ func TestOpenSession_FailuresBeforeCommitLeaveNoSessionWrite(t *testing.T) {
 			m.secrets.EXPECT().SessionID().Return("sid-1", nil)
 			m.accounts.EXPECT().GetNIKHashByID(gomock.Any(), "acc-1").Return(nil, nil)
 			m.tokens.EXPECT().IssueAccess(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return("", time.Time{}, errors.New("sign"))
-			_, err := u.openSession(ctx, activeAcc, email, client, now, rotateFrom)
+			_, err := u.openSession(ctx, activeAcc, email, client, now, rotateFrom, time.Time{})
 			assert.Equal(t, apperror.CodeInternal, code(err))
 		})
 	}
@@ -534,7 +535,7 @@ func TestOpenSession_FailuresBeforeCommitLeaveNoSessionWrite(t *testing.T) {
 		m.accounts.EXPECT().GetNIKHashByID(gomock.Any(), "acc-1").Return(nil, entity.ErrNotFound)
 		m.tokens.EXPECT().IssueAccess(gomock.Any(), "sid-1", gomock.Any(), nil, gomock.Any(), now).Return("a", now, nil)
 		m.sessions.EXPECT().Create(gomock.Any(), gomock.Any()).Return(entity.Session{ID: "sid-1"}, nil)
-		_, err := u.openSession(ctx, activeAcc, email, client, now, "")
+		_, err := u.openSession(ctx, activeAcc, email, client, now, "", time.Time{})
 		assert.NoError(t, err)
 	})
 	t.Run("create error", func(t *testing.T) {
@@ -544,7 +545,7 @@ func TestOpenSession_FailuresBeforeCommitLeaveNoSessionWrite(t *testing.T) {
 		m.accounts.EXPECT().GetNIKHashByID(gomock.Any(), "acc-1").Return(nil, nil)
 		m.tokens.EXPECT().IssueAccess(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return("a", now, nil)
 		m.sessions.EXPECT().Create(gomock.Any(), gomock.Any()).Return(entity.Session{}, errors.New("db"))
-		_, err := u.openSession(ctx, activeAcc, email, client, now, "")
+		_, err := u.openSession(ctx, activeAcc, email, client, now, "", time.Time{})
 		assert.Equal(t, apperror.CodeInternal, code(err))
 	})
 	t.Run("rotate lost race has no side effects", func(t *testing.T) {
@@ -554,7 +555,7 @@ func TestOpenSession_FailuresBeforeCommitLeaveNoSessionWrite(t *testing.T) {
 		m.accounts.EXPECT().GetNIKHashByID(gomock.Any(), "acc-1").Return(nil, nil)
 		m.tokens.EXPECT().IssueAccess(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return("a", now, nil)
 		m.sessions.EXPECT().Rotate(gomock.Any(), "s-1", gomock.Any(), now).Return(entity.Session{}, entity.ErrRevoked)
-		_, err := u.openSession(ctx, activeAcc, email, client, now, "s-1")
+		_, err := u.openSession(ctx, activeAcc, email, client, now, "s-1", time.Time{})
 		assert.Equal(t, inbound.CodeSessionInvalid, code(err))
 	})
 }
@@ -575,11 +576,26 @@ func TestRefresh(t *testing.T) {
 	t.Run("rotates", func(t *testing.T) {
 		u, m := newAuth(t)
 		expectRefreshPrelude(m, active)
-		expectSession(m, "s-1", "arnu@gmail.com")
+		expectSession(m, "s-1", "arnu@gmail.com", active.ExpiresAt)
 		m.audit.EXPECT().Record(gomock.Any(), entity.LoginEvent{AccountID: "acc-1", Outcome: entity.AuditRefreshOK, ClientIP: client.IP}).Return(nil)
 		resp, err := u.Refresh(ctx, req, client)
 		require.NoError(t, err)
 		assert.Equal(t, "refresh-raw", resp.RefreshToken)
+	})
+
+	// P2-22: rotasi memindahkan batas akhir absolut sesi; refresh tidak memperpanjangnya dengan RefreshTTL baru.
+	t.Run("rotation keeps the original expiry", func(t *testing.T) {
+		u, m := newAuth(t)
+		expectRefreshPrelude(m, active)
+		m.secrets.EXPECT().RefreshToken().Return("refresh-raw", nil)
+		m.secrets.EXPECT().SessionID().Return("sid-1", nil)
+		m.accounts.EXPECT().GetNIKHashByID(gomock.Any(), "acc-1").Return(nil, nil)
+		m.tokens.EXPECT().IssueAccess("acc-1", "sid-1", "arnu@gmail.com", nil, gomock.Any(), now).Return("access-jwt", now.Add(15*time.Minute), nil)
+		keepsOriginalExpiry := gomock.Cond(func(next entity.NewSession) bool { return next.ExpiresAt.Equal(now.Add(time.Hour)) })
+		m.sessions.EXPECT().Rotate(gomock.Any(), "s-1", keepsOriginalExpiry, now).Return(entity.Session{ID: "sid-1", AccountID: "acc-1", ExpiresAt: now.Add(time.Hour)}, nil)
+		m.audit.EXPECT().Record(gomock.Any(), gomock.Any()).Return(nil)
+		_, err := u.Refresh(ctx, req, client)
+		require.NoError(t, err)
 	})
 
 	// TC-USR-15 / P-04: after a pre-commit failure the same token still works and nothing is revoked.
