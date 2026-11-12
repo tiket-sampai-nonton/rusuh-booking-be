@@ -70,6 +70,33 @@ func TestBearerVerifier_VerifyAccessFull_ReturnsNIKClaims(t *testing.T) {
 	assert.Nil(t, nikHash2)
 }
 
+func TestPII_SealerRoundTrip(t *testing.T) {
+	pii, err := security.NewPII(make([]byte, 32), make([]byte, 32))
+	require.NoError(t, err)
+	enc, err := pii.Sealer().Seal([]byte("x"), []byte("aad"))
+	require.NoError(t, err)
+	plain, err := pii.Sealer().Open(enc, []byte("aad"))
+	require.NoError(t, err)
+	assert.Equal(t, "x", string(plain))
+}
+
+func TestBearerVerifier_VerifyAccessFull_Refusals(t *testing.T) {
+	v, sign := signer(t)
+	buyer := security.NewBearerVerifier(v, time.Now, security.ScopeBuyer)
+	admin := security.NewAdminVerifier(v, time.Now, []string{"admin@example.test"})
+
+	_, _, _, err := (*security.BearerVerifier)(nil).VerifyAccessFull("t")
+	assert.Error(t, err, "verifier belum dikonfigurasi")
+	_, _, _, err = buyer.VerifyAccessFull("bukan-token")
+	assert.Error(t, err, "token rusak")
+	_, _, _, err = buyer.VerifyAccessFull(sign(token.Claims{Subject: "a", Scope: "visitor"}))
+	assert.Error(t, err, "scope salah")
+	_, _, _, err = buyer.VerifyAccessFull(sign(token.Claims{Subject: "a", Scope: "buyer", HasNIK: true, NIKHash: "zz"}))
+	assert.Error(t, err, "nik_hash bukan hex")
+	_, _, _, err = admin.VerifyAccessFull(sign(token.Claims{Subject: "a", Scope: "buyer", Email: "b@example.test"}))
+	assert.Error(t, err, "email bukan admin")
+}
+
 func TestAdmissionVerifier_NilVerifier(t *testing.T) {
 	v := security.NewAdmissionVerifier(nil, time.Now)
 	_, err := v.Verify("any.token.here")

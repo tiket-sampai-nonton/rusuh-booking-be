@@ -438,3 +438,54 @@ func TestHold_UnknownCategoryListsIDInMessage(t *testing.T) {
 	assert.Contains(t, err.Error(), "CATEGORY_UNAVAILABLE")
 	assert.Contains(t, err.Error(), unknown)
 }
+
+func TestHold_BuyerUseLoginNIK_UsesAccountNIK(t *testing.T) {
+	uow := &fakeUoW{holdRes: outbound.HoldResult{BookingID: "bk-1", PublicRef: "RB-1", Version: 1, Status: "PENDING_PAYMENT", AmountMinor: 1000}}
+	uc := newHoldUC(&fakeAdmissionRepo{admission: admission3()}, &fakeEventRepo{detail: detailWith(false, 3)}, &fakeIdem{}, uow)
+	cmd := holdCmd(oneItem())
+	cmd.Request.Buyer = dto.BuyerInput{UseLoginNIK: true, Email: email, EmailConfirmation: email, Consent: true}
+	cmd.LoginNIKHash, cmd.LoginNIKMasked = []byte("login-hash"), "3174********0001"
+
+	_, err := uc.Hold(context.Background(), cmd)
+	require.NoError(t, err)
+	assert.Equal(t, []byte("login-hash"), uow.heldSpec.BuyerNIKHash)
+	assert.Equal(t, "3174********0001", uow.heldSpec.BuyerNIKMasked)
+}
+
+func TestHold_AttendeeUseLoginNIK_Refusals(t *testing.T) {
+	loginItem := dto.HoldItem{CategoryID: catA, Attendee: dto.AttendeeInput{UseLoginNIK: true, FullName: "Alice"}}
+	tests := []struct {
+		name   string
+		client outbound.IUserNIKClient
+		edit   func(*inbound.HoldCommand)
+		want   error
+	}{
+		{"User Service tidak dikonfigurasi", nil, func(*inbound.HoldCommand) {}, inbound.ErrDependency},
+		{"akun belum menautkan NIK", &fakeUserNIKClient{err: inbound.ErrNIKNotLinked}, func(*inbound.HoldCommand) {}, inbound.ErrNIKNotLinked},
+		{"tanpa bearer", &fakeUserNIKClient{nikEnc: []byte("e")}, func(c *inbound.HoldCommand) { c.BearerToken = "" }, inbound.ErrUnauthorized},
+		{"tanpa klaim NIK", &fakeUserNIKClient{nikEnc: []byte("e")}, func(c *inbound.HoldCommand) { c.LoginNIKHash = nil }, inbound.ErrUnauthorized},
+		{"lebih dari satu item useLoginNik", &fakeUserNIKClient{nikEnc: []byte("e")}, func(c *inbound.HoldCommand) {
+			c.Request.Items = []dto.HoldItem{loginItem, loginItem}
+		}, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			uc := newHoldUC(&fakeAdmissionRepo{admission: admission3()}, &fakeEventRepo{detail: detailWith(false, 3)}, &fakeIdem{}, &fakeUoW{})
+			if tt.client != nil {
+				uc.WithUserNIKClient(tt.client)
+			}
+			cmd := holdCmd([]dto.HoldItem{loginItem})
+			cmd.AccountID, cmd.BearerToken = "acct-1", "tok"
+			cmd.LoginNIKHash, cmd.LoginNIKMasked = []byte("login-hash"), "3174********0001"
+			tt.edit(&cmd)
+
+			_, err := uc.Hold(context.Background(), cmd)
+			require.Error(t, err)
+			if tt.want != nil {
+				assert.ErrorIs(t, err, tt.want)
+			} else {
+				assert.Contains(t, err.Error(), "useLoginNik hanya boleh")
+			}
+		})
+	}
+}

@@ -114,3 +114,17 @@ func TestBookingHandler_HoldAttendeeOnlyUseLoginNIK(t *testing.T) {
 	w = serve(t, h, http.MethodPost, "/api/v1/bookings", body, map[string]string{"Idempotency-Key": "abc", "X-Visitor-Token": "v-1"})
 	assert.Equal(t, http.StatusUnauthorized, w.Code, "attendee useLoginNik tanpa bearer ditolak")
 }
+
+func TestBookingHandler_HoldBuyerUseLoginNIK_Refusals(t *testing.T) {
+	const body = `{"sessionId":"s","buyer":{"useLoginNik":true,"email":"b@example.test","emailConfirmation":"b@example.test","consent":true},"items":[]}`
+	h := map[string]string{"Idempotency-Key": "abc", "X-Visitor-Token": "v-1"}
+	bearer := map[string]string{"Idempotency-Key": "abc", "X-Visitor-Token": "v-1", "Authorization": "Bearer good"}
+	badBearer := map[string]string{"Idempotency-Key": "abc", "X-Visitor-Token": "v-1", "Authorization": "Bearer bad"}
+	newH := func(v bookinghttp.IUserTokenVerifier) *bookinghttp.BookingHandler {
+		return bookinghttp.NewBookingHandler(&fakeHold{}, fakeEdit{}, fakeTickets{}, fakeGet{}, fakeCancel{}).WithBuyerAuth(v)
+	}
+
+	assert.Equal(t, http.StatusUnauthorized, serve(t, newH(fakeNIKVerifier{fakeUserVerifier{id: "acc-1"}}), http.MethodPost, "/api/v1/bookings", body, h).Code, "tanpa bearer")
+	assert.Equal(t, http.StatusUnauthorized, serve(t, newH(fakeUserVerifier{id: "acc-1"}), http.MethodPost, "/api/v1/bookings", body, bearer).Code, "verifier tanpa klaim NIK")
+	assert.Equal(t, http.StatusUnauthorized, serve(t, newH(fakeNIKVerifier{fakeUserVerifier{id: "acc-1"}}), http.MethodPost, "/api/v1/bookings", body, badBearer).Code, "token ditolak")
+}
