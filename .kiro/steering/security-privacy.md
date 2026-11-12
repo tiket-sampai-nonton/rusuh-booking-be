@@ -5,6 +5,7 @@ inclusion: always
 # Keamanan dan Privasi
 
 - NIK hanya disimpan sebagai hash HMAC dan versi tersamar; tidak pernah ditulis ke log. Akun User menyimpan NIK dan email terenkripsi AES-256-GCM + hash HMAC (kunci `PII_*`).
+- Pengecualian: `GET /api/v1/me` mengembalikan email dan NIK asli hanya kepada pemilik akun (`no-store`); lihat ADR-033.
 - Login opsional: OTP email 6 digit tanpa password (TTL 5 menit, maks 5 percobaan, cooldown 60 detik, rate limit per email dan IP); kode OTP tidak pernah lewat broker atau log.
 - Refresh token dirotasi; token lama yang dipakai ulang mencabut semua sesi akun.
 - Akses detail dan payment wajib token yang hanya terbit lewat antrean (NFR-07).
