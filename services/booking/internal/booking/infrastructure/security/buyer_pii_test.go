@@ -27,7 +27,7 @@ func TestBuyerPII_HashEqualsKeyedHMAC(t *testing.T) {
 	require.NoError(t, err)
 	ref, err := crypto.NewHasher(h)
 	require.NoError(t, err)
-	assert.Equal(t, ref.Hash("3174010101010009"), p.HashNIK("3174010101010009"))
+	assert.Equal(t, ref.Hash("nik:3174010101010009"), p.HashNIK("3174010101010009"))
 }
 
 func TestBuyerPII_SealBuyerEmailOpensWithNotificationAAD(t *testing.T) {

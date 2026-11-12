@@ -40,7 +40,7 @@ func NewPII(hashKey, encKey []byte) (*PII, error) {
 }
 
 // HashNIK returns the HMAC lookup hash.
-func (p *PII) HashNIK(nik string) []byte { return p.hasher.Hash(nik) }
+func (p *PII) HashNIK(nik string) []byte { return p.hasher.Hash("nik:" + nik) }
 
 // SealNIK returns the AES-256-GCM ciphertext bound to the NIK column context.
 func (p *PII) SealNIK(nik string) ([]byte, error) { return p.sealer.Seal([]byte(nik), []byte(aadNIK)) }
