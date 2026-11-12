@@ -817,7 +817,11 @@ func (u *UnitOfWork) expire(ctx context.Context, tx pgx.Tx, spec outbound.Expire
 		}
 	}
 	expired := map[string]any{"bookingId": spec.BookingID, "publicRef": publicRef, "buyerEmailEnc": email, "reason": spec.Reason}
-	ended := map[string]any{"eventId": eventID, "queueEntryId": queueEntryID, "outcome": "EXPIRED"}
+	outcome := "EXPIRED"
+	if spec.Reason == "CANCELLED" {
+		outcome = "CANCELLED"
+	}
+	ended := map[string]any{"eventId": eventID, "queueEntryId": queueEntryID, "outcome": outcome}
 	if err := enqueueOutbox(ctx, tx, "booking.expired", spec.BookingID, expired); err != nil {
 		return false, err
 	}

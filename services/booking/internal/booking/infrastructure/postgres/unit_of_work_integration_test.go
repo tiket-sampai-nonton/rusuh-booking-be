@@ -503,6 +503,19 @@ func TestExpire_CancelAfterPaymentLockIsRefused(t *testing.T) {
 	assert.Equal(t, 0, f.n(t, `SELECT count(*) FROM booking.outbox_events WHERE routing_key='booking.expired'`))
 }
 
+// P3-4: a buyer cancel of an unpaid journey ends it with outcome CANCELLED, not EXPIRED, so Queue can tell them apart.
+func TestExpire_BuyerCancelEndsJourneyAsCancelled(t *testing.T) {
+	f := seed(t)
+	ctx := context.Background()
+	id := f.hold(t)
+
+	acted, err := f.uow.Expire(ctx, outbound.ExpireSpec{BookingID: id, Reason: "CANCELLED", CorrelationID: id})
+	require.NoError(t, err)
+	require.True(t, acted)
+	assert.Equal(t, "CANCELLED", f.status(t, id))
+	assert.Equal(t, "CANCELLED", f.q(t, `SELECT payload->>'outcome' FROM booking.outbox_events WHERE routing_key='booking.journey.ended'`))
+}
+
 // P2-8: a settlement whose amount differs from the booking's amount is treated like a late payment: REVIEW, held stock
 // released once, visitor freed once, and a redelivered payment.succeeded changes nothing.
 func TestSettle_AmountMismatchGoesToReviewOnce(t *testing.T) {

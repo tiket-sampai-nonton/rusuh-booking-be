@@ -148,6 +148,47 @@ func TestBookingRepo_GetListAndDue(t *testing.T) {
 	assert.Empty(t, other, "akun lain tidak melihat pesanan ini")
 }
 
+// P3-6: bookings that share created_at must all be listed across pages (keyset on created_at, id), and an old
+// timestamp-only cursor still pages from that timestamp.
+func TestBookingRepo_ListByAccountSameCreatedAtIsNotSkipped(t *testing.T) {
+	f := seed(t)
+	ctx := context.Background()
+	repo := NewBookingRepo(f.pool)
+	acct := "33333333-3333-3333-3333-333333333333"
+	created := time.Date(2026, 11, 12, 10, 0, 0, 0, time.UTC)
+	want := map[string]bool{}
+	for i := 0; i < 3; i++ {
+		id := f.insertBooking(t, "EXPIRED", time.Now().Add(time.Hour), nil)
+		_, err := f.pool.Exec(ctx, `UPDATE booking.bookings SET account_id=$2::uuid, created_at=$3, payment_expires_at=$4 WHERE id=$1::uuid`,
+			id, acct, created, created.Add(time.Hour))
+		require.NoError(t, err)
+		want[id] = true
+	}
+
+	page1, next, err := repo.ListByAccount(ctx, acct, "", 2)
+	require.NoError(t, err)
+	require.Len(t, page1, 2)
+	require.NotEmpty(t, next)
+	page2, next2, err := repo.ListByAccount(ctx, acct, next, 2)
+	require.NoError(t, err)
+	require.Len(t, page2, 1)
+	assert.Empty(t, next2)
+
+	seen := map[string]bool{}
+	for _, it := range append(page1, page2...) {
+		assert.False(t, seen[it.BookingID], "id berulang di halaman: %s", it.BookingID)
+		seen[it.BookingID] = true
+	}
+	assert.Equal(t, want, seen)
+
+	old, _, err := repo.ListByAccount(ctx, acct, created.Format(time.RFC3339Nano), 10)
+	require.NoError(t, err)
+	assert.Len(t, old, 3, "cursor format lama (tanpa id) tetap memuat semua booking pada stempel waktu itu")
+	junk, _, err := repo.ListByAccount(ctx, acct, created.Format(time.RFC3339Nano)+"_bukan-uuid", 10)
+	require.NoError(t, err, "cursor dengan id rusak tidak boleh menjadi error database")
+	assert.Len(t, junk, 3)
+}
+
 // insertBooking adds a booking in the given status without the hold path. admission_id is unique and an active
 // admission per visitor is unique too, so each booking gets its own terminal (EXPIRED) admission. A nil deadline is NULL.
 func (f fixture) insertBooking(t *testing.T, status string, paymentExpiresAt time.Time, verificationUntil *time.Time) string {
