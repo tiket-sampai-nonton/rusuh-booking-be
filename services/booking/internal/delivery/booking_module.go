@@ -23,6 +23,7 @@ import (
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/infrastructure/paymentclient"
 	bookingpg "github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/infrastructure/postgres"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/infrastructure/security"
+	usernik "github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/infrastructure/user"
 	bookingvalkey "github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/infrastructure/valkey"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/config"
 )
@@ -97,6 +98,9 @@ func newBookingModule(cfg config.Config, clients *Clients, logger *slog.Logger) 
 		ThrottleBase:  cfg.Hold.ThrottleBase,
 		ThrottleMax:   cfg.Hold.ThrottleMax,
 	})
+	if userSvcURL := os.Getenv("USER_SERVICE_URL"); userSvcURL != "" {
+		hold.WithUserNIKClient(usernik.NewNIKClient(userSvcURL, pii.Sealer()))
+	}
 	edit := usecase.NewEdit(bookingRepo, admissionRepo, eventRepo, uow, pii, clk)
 	links, err := buildTicketLinks()
 	if err != nil {

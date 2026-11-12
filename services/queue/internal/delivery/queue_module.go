@@ -89,7 +89,7 @@ func newQueueModule(cfg config.Config, clients *Clients, logger *slog.Logger) (*
 
 	store := queuevalkey.NewQueueStore(clients.VK.VK(), clients.VK, clk, cfg.Liveness.Shards)
 	limiter := queuevalkey.NewRateLimiter(clients.VK.VK(), clients.VK, clk.Now)
-	settingsRepo := queuepg.NewEventSettings(clients.PG.Pool())
+	settingsRepo := queuevalkey.NewEventSettingsCache(clients.VK.VK(), clients.VK, queuepg.NewEventSettings(clients.PG.Pool()))
 	settingsAdminRepo := queuepg.NewEventSettingsAdmin(clients.PG.Pool())
 	auditRepo := queuepg.NewEntryAudit(clients.PG.Pool())
 

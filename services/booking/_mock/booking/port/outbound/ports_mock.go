@@ -862,3 +862,42 @@ func (mr *MockIAvailabilitySourceMockRecorder) OnSaleAvailability(ctx, now any) 
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "OnSaleAvailability", reflect.TypeOf((*MockIAvailabilitySource)(nil).OnSaleAvailability), ctx, now)
 }
+
+// MockIUserNIKClient is a mock of IUserNIKClient interface.
+type MockIUserNIKClient struct {
+	ctrl     *gomock.Controller
+	recorder *MockIUserNIKClientMockRecorder
+	isgomock struct{}
+}
+
+// MockIUserNIKClientMockRecorder is the mock recorder for MockIUserNIKClient.
+type MockIUserNIKClientMockRecorder struct {
+	mock *MockIUserNIKClient
+}
+
+// NewMockIUserNIKClient creates a new mock instance.
+func NewMockIUserNIKClient(ctrl *gomock.Controller) *MockIUserNIKClient {
+	mock := &MockIUserNIKClient{ctrl: ctrl}
+	mock.recorder = &MockIUserNIKClientMockRecorder{mock}
+	return mock
+}
+
+// EXPECT returns an object that allows the caller to indicate expected use.
+func (m *MockIUserNIKClient) EXPECT() *MockIUserNIKClientMockRecorder {
+	return m.recorder
+}
+
+// GetNIKEnc mocks base method.
+func (m *MockIUserNIKClient) GetNIKEnc(ctx context.Context, accountID, bearerToken string) ([]byte, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetNIKEnc", ctx, accountID, bearerToken)
+	ret0, _ := ret[0].([]byte)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetNIKEnc indicates an expected call of GetNIKEnc.
+func (mr *MockIUserNIKClientMockRecorder) GetNIKEnc(ctx, accountID, bearerToken any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetNIKEnc", reflect.TypeOf((*MockIUserNIKClient)(nil).GetNIKEnc), ctx, accountID, bearerToken)
+}
