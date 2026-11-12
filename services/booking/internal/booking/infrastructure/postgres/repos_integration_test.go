@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -331,7 +332,7 @@ func TestAdmissionRepo_ReserveBatchGrantsInOrderThenRunsOutOfSupply(t *testing.T
 	assert.False(t, released, "melepas dua kali tidak mengubah apa pun")
 }
 
-func TestOutboxWriter_PendingFailPublish(t *testing.T) {
+func TestOutboxWriter_ClaimFailPublish(t *testing.T) {
 	f := seed(t)
 	ctx := context.Background()
 	id := f.hold(t)
@@ -339,17 +340,19 @@ func TestOutboxWriter_PendingFailPublish(t *testing.T) {
 	require.NoError(t, err)
 	w := NewOutboxWriter(f.pool)
 
-	rows, err := w.Pending(ctx, 50)
+	rows, err := w.Claim(ctx, 50, 30*time.Second)
 	require.NoError(t, err)
 	require.NotEmpty(t, rows)
 	first := rows[0]
 
 	require.NoError(t, w.MarkFailed(ctx, first.ID, 1, strings.Repeat("x", 600), time.Minute))
-	rows, err = w.Pending(ctx, 50)
+	// The claim leased every row for 30 s and the failed row now waits out its backoff: nothing is due again yet.
+	rows, err = w.Claim(ctx, 50, 30*time.Second)
 	require.NoError(t, err)
 	for _, r := range rows {
 		assert.NotEqual(t, first.ID, r.ID, "baris gagal ditunda sampai backoff lewat")
 	}
+	assert.Empty(t, rows, "baris yang sudah di-claim tidak diambil lagi sampai lease lewat")
 	var lastErr string
 	require.NoError(t, f.pool.QueryRow(ctx, `SELECT last_error FROM booking.outbox_events WHERE id=$1::uuid`, first.ID).Scan(&lastErr))
 	assert.Len(t, lastErr, 512, "pesan error dipotong")
@@ -358,6 +361,47 @@ func TestOutboxWriter_PendingFailPublish(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, w.MarkPublished(ctx, first.ID))
 	assert.Equal(t, 0, f.n(t, `SELECT count(*) FROM booking.outbox_events WHERE id=$1::uuid AND published_at IS NULL`, first.ID))
+}
+
+// Two relay replicas claiming at once never get the same row: the claim leases rows (available_at moves ahead) under
+// FOR UPDATE SKIP LOCKED, so the second claim skips what the first one took.
+func TestOutboxClaim_TwoRelaysNeverGetTheSameRow(t *testing.T) {
+	f := seed(t)
+	ctx := context.Background()
+	_, err := f.pool.Exec(ctx, `
+		INSERT INTO booking.outbox_events (routing_key, aggregate_id, schema_version, payload)
+		SELECT 'booking.test', gen_random_uuid(), 1, '{"a":1}'::jsonb FROM generate_series(1, 10)`)
+	require.NoError(t, err)
+	w := NewOutboxWriter(f.pool)
+
+	var wg sync.WaitGroup
+	var claimed [2][]string
+	var errs [2]error
+	for i := range claimed {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			rows, err := w.Claim(ctx, 10, 30*time.Second)
+			errs[i] = err
+			for _, r := range rows {
+				claimed[i] = append(claimed[i], r.ID)
+			}
+		}(i)
+	}
+	wg.Wait()
+	require.NoError(t, errs[0])
+	require.NoError(t, errs[1])
+
+	seen := map[string]int{}
+	for _, ids := range claimed {
+		for _, id := range ids {
+			seen[id]++
+		}
+	}
+	assert.Len(t, seen, 10, "kedua relay bersama-sama mendapat seluruh 10 baris")
+	for id, n := range seen {
+		assert.Equal(t, 1, n, "baris %s diambil dua relay", id)
+	}
 }
 
 func TestIdempotencyStore_BeginCompleteReplay(t *testing.T) {

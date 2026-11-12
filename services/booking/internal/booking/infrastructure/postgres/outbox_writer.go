@@ -17,15 +17,18 @@ type OutboxWriter struct{ pool *pgxpool.Pool }
 // NewOutboxWriter returns the writer.
 func NewOutboxWriter(pool *pgxpool.Pool) *OutboxWriter { return &OutboxWriter{pool: pool} }
 
-// Pending returns unpublished rows ordered by availability.
-func (w *OutboxWriter) Pending(ctx context.Context, limit int) ([]bookingrabbitmq.OutboxRow, error) {
+// Claim leases up to limit due rows: each one's available_at moves lease ahead, so another relay replica skips it.
+// A relay that crashes after claiming releases its rows once the lease passes. Duplicates from a republish are
+// absorbed downstream by the row id (message id).
+func (w *OutboxWriter) Claim(ctx context.Context, limit int, lease time.Duration) ([]bookingrabbitmq.OutboxRow, error) {
 	rows, err := w.pool.Query(ctx, `
-		SELECT id::text, routing_key, aggregate_id::text, schema_version, payload, publish_attempts
-		  FROM booking.outbox_events
-		 WHERE published_at IS NULL AND available_at <= now()
-		 ORDER BY available_at LIMIT $1`, limit)
+		UPDATE booking.outbox_events SET available_at = now() + make_interval(secs => $2)
+		 WHERE id IN (SELECT id FROM booking.outbox_events
+		               WHERE published_at IS NULL AND available_at <= now()
+		               ORDER BY available_at LIMIT $1 FOR UPDATE SKIP LOCKED)
+		RETURNING id::text, routing_key, aggregate_id::text, schema_version, payload, publish_attempts`, limit, lease.Seconds())
 	if err != nil {
-		return nil, fmt.Errorf("outbox: pending: %w", err)
+		return nil, fmt.Errorf("outbox: claim: %w", err)
 	}
 	defer rows.Close()
 	var out []bookingrabbitmq.OutboxRow
