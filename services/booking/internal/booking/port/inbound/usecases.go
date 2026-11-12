@@ -82,9 +82,15 @@ type IStreamSessionUsecase interface {
 
 // HoldCommand carries the hold request plus the ambient request identity.
 type HoldCommand struct {
-	Request        dto.HoldRequest
-	VisitorID      string
-	AccountID      string // from an optional User bearer; identifies the principal only, never binds a NIK
+	Request   dto.HoldRequest
+	VisitorID string
+	AccountID string // from an optional User bearer; identifies the principal only, never binds a NIK
+	// LoginNIKHash/LoginNIKMasked are the logged-in account's NIK from token claims, set when the buyer or an attendee
+	// uses useLoginNik. They are the account's NIK, not necessarily the buyer's.
+	LoginNIKHash   []byte
+	LoginNIKMasked string
+	// BearerToken is the buyer's raw access token; forwarded to User Service when items[].attendee.useLoginNik=true.
+	BearerToken    string
 	IdempotencyKey string
 	CorrelationID  string
 }
