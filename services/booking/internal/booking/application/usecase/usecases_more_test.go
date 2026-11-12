@@ -3,6 +3,7 @@ package usecase_test
 import (
 	"context"
 	"encoding/hex"
+	"errors"
 	"testing"
 	"time"
 
@@ -159,6 +160,47 @@ func TestExpire_NoPaymentStartedNeverCallsPayment(t *testing.T) {
 	repo := &fakeBookingRepo{booking: bkPending, second: bkVerifying}
 	require.NoError(t, usecase.NewExpire(repo, pay, &fakeUoW{expireActed: true, startVerifyActed: true}, 180, func(string) string { return "" }, nil).ExpireBooking(context.Background(), eventID))
 	assert.Empty(t, pay.modes)
+}
+
+// D-B5: an UNKNOWN or unreachable Payment answer pushes the next check of the VERIFYING booking 30 s ahead, so the
+// sweeper does not retry it on every tick. The original error is returned, joined with a failure to record the deferral.
+func TestExpireBooking_UnknownDefersNextCheck(t *testing.T) {
+	dbErr := errors.New("postgres: connection reset")
+	cases := map[string]struct {
+		pay      *fakePayments
+		deferErr error
+		wantErrs []error
+	}{
+		"UNKNOWN":                    {pay: &fakePayments{outcome: outbound.OutcomeUnknown}, wantErrs: []error{inbound.ErrDependency}},
+		"Payment tidak terjangkau":   {pay: &fakePayments{err: inbound.ErrDependency}, wantErrs: []error{inbound.ErrDependency}},
+		"UNKNOWN, catat gagal ganda": {pay: &fakePayments{outcome: outbound.OutcomeUnknown}, deferErr: dbErr, wantErrs: []error{inbound.ErrDependency, dbErr}},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			started := time.Now().UTC().Add(-5 * time.Minute)
+			verifyUntil := time.Now().UTC().Add(-1 * time.Second) // past grace: the sweeper has picked it up
+			bk := entity.Booking{
+				ID: eventID, Status: vo.BookingVerifying, PaymentStartedAt: &started,
+				PaymentExpiresAt: started.Add(5 * time.Minute), VerificationUntil: &verifyUntil,
+			}
+			repo := &fakeBookingRepo{booking: bk, deferErr: c.deferErr}
+			uow := &fakeUoW{}
+			uc := usecase.NewExpire(repo, c.pay, uow, 180, func(string) string { return "" }, nil)
+
+			before := time.Now()
+			err := uc.ExpireBooking(context.Background(), eventID)
+			after := time.Now()
+
+			for _, want := range c.wantErrs {
+				assert.ErrorIs(t, err, want)
+			}
+			require.Len(t, repo.deferred, 1, "satu penundaan per panggilan")
+			assert.Equal(t, eventID, repo.deferred[0].id)
+			assert.False(t, repo.deferred[0].until.Before(before.Add(30*time.Second)), "mundur 30 detik dari sekarang")
+			assert.False(t, repo.deferred[0].until.After(after.Add(30*time.Second)), "mundur 30 detik dari sekarang")
+			assert.Empty(t, uow.expireSpec.BookingID, "tidak diexpire: stok tetap ditahan")
+		})
+	}
 }
 
 func TestExpire_AlreadyTerminalNoop(t *testing.T) {

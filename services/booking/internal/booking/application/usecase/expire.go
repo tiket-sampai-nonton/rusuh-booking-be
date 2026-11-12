@@ -2,6 +2,7 @@ package usecase
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	vo "github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/domain/valueobject"
@@ -9,12 +10,16 @@ import (
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/port/outbound"
 )
 
+// verifyBackoff is how long a VERIFYING booking waits before the sweeper checks it again after Payment answered
+// UNKNOWN or could not be reached (D-B5). The stock stays held meanwhile.
+const verifyBackoff = 30 * time.Second
+
 // Expire expires or reviews a booking whose payment window lapsed. Design §7.2:
 //   - Phase A (in-tx): PENDING_PAYMENT past deadline → VERIFYING + verification_until.
 //   - Phase B (outside tx): call Payment resolve (CHECK_AND_CANCEL); outcome drives final state.
 //     SUCCEEDED → Settle directly (sweeper is the safety net for lost webhooks).
 //     NOT_PAID / NO_ATTEMPT → grace window then Expire.
-//     UNKNOWN / unreachable → keep held, retry next sweep.
+//     UNKNOWN / unreachable → keep held; verification_until moves verifyBackoff ahead (D-B5).
 type Expire struct {
 	bookings           outbound.IBookingRepo
 	payments           outbound.IPaymentClient
@@ -78,8 +83,8 @@ func (uc *Expire) ExpireBooking(ctx context.Context, bookingID string) error {
 	if booking.PaymentStartedAt != nil {
 		res, rerr := uc.payments.Resolve(ctx, bookingID, outbound.ResolveCheckAndCancel)
 		if rerr != nil {
-			// Payment service down → keep held, retry next sweep.
-			return rerr
+			// Payment service down → keep held, retry after the backoff.
+			return uc.deferCheck(ctx, bookingID, now, rerr)
 		}
 		switch res.Outcome {
 		case outbound.OutcomeSucceeded:
@@ -87,7 +92,7 @@ func (uc *Expire) ExpireBooking(ctx context.Context, bookingID string) error {
 			return settleFound(ctx, uc.uow, booking, res)
 		case outbound.OutcomeUnknown:
 			// Gateway cannot say yet — stock must stay held.
-			return inbound.ErrDependency
+			return uc.deferCheck(ctx, bookingID, now, inbound.ErrDependency)
 		case outbound.OutcomeNotPaid, outbound.OutcomeNoAttempt:
 			// Fall through to grace check below.
 		}
@@ -113,4 +118,13 @@ func (uc *Expire) ExpireBooking(ctx context.Context, bookingID string) error {
 		CorrelationID: bookingID,
 	})
 	return err
+}
+
+// deferCheck schedules the next check of a VERIFYING booking verifyBackoff ahead and returns cause. A failure to record
+// the deferral is joined to cause, so the caller sees both.
+func (uc *Expire) deferCheck(ctx context.Context, bookingID string, now time.Time, cause error) error {
+	if err := uc.bookings.DeferVerification(ctx, bookingID, now.Add(verifyBackoff)); err != nil {
+		return errors.Join(cause, err)
+	}
+	return cause
 }

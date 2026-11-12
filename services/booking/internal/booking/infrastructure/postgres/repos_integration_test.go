@@ -147,6 +147,78 @@ func TestBookingRepo_GetListAndDue(t *testing.T) {
 	assert.Empty(t, other, "akun lain tidak melihat pesanan ini")
 }
 
+// insertBooking adds a booking in the given status without the hold path. admission_id is unique and an active
+// admission per visitor is unique too, so each booking gets its own terminal (EXPIRED) admission. A nil deadline is NULL.
+func (f fixture) insertBooking(t *testing.T, status string, paymentExpiresAt time.Time, verificationUntil *time.Time) string {
+	t.Helper()
+	admission := f.q(t, `
+		INSERT INTO booking.admissions (event_id, queue_entry_id, queue_seq, visitor_id, buyer_nik_hash, buyer_email_enc, buyer_nik_masked,
+			units, status, cfg_selection_ttl_seconds, cfg_payment_ttl_seconds, cfg_submit_grace_seconds, cfg_edit_enabled, cfg_max_edits,
+			cfg_allow_mixed_categories, expires_at, ended_at, end_reason)
+		VALUES ($1::uuid, gen_random_uuid(), 1, $2::uuid, $3, 'c2VhbGVkLWVtYWls', '3174********0001',
+			1, 'EXPIRED', 300, 600, 5, true, 3, true, now() + interval '5 minutes', now(), 'SESSION_EXPIRED')
+		RETURNING id::text`, f.eventID, visitor, []byte(f.nikH))
+	return f.q(t, `
+		INSERT INTO booking.bookings (public_ref, event_id, admission_id, visitor_id, buyer_nik_hash, buyer_email_enc, status,
+			amount_minor, item_quantity, created_at, payment_expires_at, verification_until)
+		VALUES ('RB-' || substr(gen_random_uuid()::text, 1, 8), $1::uuid, $2::uuid, $3::uuid, $4, 'c2VhbGVkLWVtYWls', $5,
+			150000, 1, $6, $7, $8)
+		RETURNING id::text`, f.eventID, admission, visitor, []byte(f.nikH), status,
+		time.Now().Add(-2*time.Hour), paymentExpiresAt, verificationUntil)
+}
+
+// D-B5: a VERIFYING booking inside its grace window (verification_until is its next check) is not due, even when its
+// payment deadline lapsed long ago. The sweeper takes only the rows that are actually due.
+func TestBookingRepo_DueSkipsVerifyingInGrace(t *testing.T) {
+	f := seed(t)
+	ctx := context.Background()
+	repo := NewBookingRepo(f.pool)
+	now := time.Now()
+
+	for range 3 {
+		f.insertBooking(t, "VERIFYING", now.Add(-10*time.Minute), ptrTime(now.Add(time.Minute)))
+	}
+	pending := f.insertBooking(t, "PENDING_PAYMENT", now.Add(-time.Second), nil)
+
+	due, err := repo.DueBookingIDs(ctx, now, 2)
+	require.NoError(t, err)
+	assert.Equal(t, []string{pending}, due, "limit 2 tidak boleh habis oleh VERIFYING yang masih dalam grace")
+
+	// Once its grace window has passed, a VERIFYING booking is due again.
+	_, err = f.pool.Exec(ctx, `UPDATE booking.bookings SET verification_until = now() - interval '1 second' WHERE status='VERIFYING' AND id IN (
+		SELECT id FROM booking.bookings WHERE status='VERIFYING' LIMIT 1)`)
+	require.NoError(t, err)
+	due, err = repo.DueBookingIDs(ctx, time.Now(), 10)
+	require.NoError(t, err)
+	assert.Len(t, due, 2, "PENDING yang lewat batas bayar dan satu VERIFYING yang grace-nya sudah lewat")
+	assert.Contains(t, due, pending)
+}
+
+func ptrTime(t time.Time) *time.Time { return &t }
+
+// D-B5: DeferVerification moves only a VERIFYING booking's next check; the deferred row is then not due until that time.
+func TestBookingRepo_DeferVerificationOnlyMovesVerifying(t *testing.T) {
+	f := seed(t)
+	ctx := context.Background()
+	repo := NewBookingRepo(f.pool)
+	now := time.Now()
+	verifying := f.insertBooking(t, "VERIFYING", now.Add(-10*time.Minute), ptrTime(now.Add(-time.Second)))
+	pending := f.insertBooking(t, "PENDING_PAYMENT", now.Add(-time.Second), nil)
+
+	until := now.Add(30 * time.Second)
+	require.NoError(t, repo.DeferVerification(ctx, verifying, until))
+	require.NoError(t, repo.DeferVerification(ctx, pending, until), "bukan VERIFYING: dibiarkan")
+
+	var got time.Time
+	require.NoError(t, f.pool.QueryRow(ctx, `SELECT verification_until FROM booking.bookings WHERE id=$1::uuid`, verifying).Scan(&got))
+	assert.WithinDuration(t, until, got, time.Millisecond)
+	assert.Equal(t, 1, f.n(t, `SELECT count(*) FROM booking.bookings WHERE id=$1::uuid AND verification_until IS NULL`, pending))
+
+	due, err := repo.DueBookingIDs(ctx, now, 10)
+	require.NoError(t, err)
+	assert.Equal(t, []string{pending}, due, "VERIFYING yang ditunda belum jatuh tempo")
+}
+
 func TestAdmissionRepo_FindActivateReserveReleaseAndDue(t *testing.T) {
 	f := seed(t)
 	ctx := context.Background()

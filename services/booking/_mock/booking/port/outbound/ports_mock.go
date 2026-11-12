@@ -445,6 +445,20 @@ func (m *MockIBookingRepo) EXPECT() *MockIBookingRepoMockRecorder {
 	return m.recorder
 }
 
+// DeferVerification mocks base method.
+func (m *MockIBookingRepo) DeferVerification(ctx context.Context, bookingID string, until time.Time) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "DeferVerification", ctx, bookingID, until)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// DeferVerification indicates an expected call of DeferVerification.
+func (mr *MockIBookingRepoMockRecorder) DeferVerification(ctx, bookingID, until any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeferVerification", reflect.TypeOf((*MockIBookingRepo)(nil).DeferVerification), ctx, bookingID, until)
+}
+
 // GetByID mocks base method.
 func (m *MockIBookingRepo) GetByID(ctx context.Context, id string) (entity.Booking, error) {
 	m.ctrl.T.Helper()

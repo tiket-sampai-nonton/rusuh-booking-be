@@ -111,12 +111,14 @@ func (r *BookingRepo) ListByAccount(ctx context.Context, accountID, cursor strin
 	return items, next, nil
 }
 
-// DueBookingIDs returns ids of bookings whose payment window lapsed.
+// DueBookingIDs returns ids of bookings the expiry sweeper must look at now: PENDING_PAYMENT past its payment deadline,
+// and VERIFYING whose next check (verification_until, D-B5) has come. A VERIFYING booking still in grace is not due.
 func (r *BookingRepo) DueBookingIDs(ctx context.Context, now time.Time, limit int) ([]string, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT id::text FROM booking.bookings
-		 WHERE status IN ('PENDING_PAYMENT','VERIFYING') AND payment_expires_at < $1
-		 ORDER BY payment_expires_at LIMIT $2`, now, limit)
+		 WHERE (status='PENDING_PAYMENT' AND payment_expires_at < $1)
+		    OR (status='VERIFYING' AND verification_until <= $1)
+		 ORDER BY COALESCE(verification_until, payment_expires_at) LIMIT $2`, now, limit)
 	if err != nil {
 		return nil, fmt.Errorf("bookings: due: %w", err)
 	}
@@ -130,4 +132,15 @@ func (r *BookingRepo) DueBookingIDs(ctx context.Context, now time.Time, limit in
 		out = append(out, id)
 	}
 	return out, rows.Err()
+}
+
+// DeferVerification sets the next check of a VERIFYING booking to until (D-B5). It is scheduling state, so no event is
+// appended. A booking that already left VERIFYING is left unchanged.
+func (r *BookingRepo) DeferVerification(ctx context.Context, bookingID string, until time.Time) error {
+	if _, err := r.pool.Exec(ctx, `
+		UPDATE booking.bookings SET verification_until=$2, updated_at=now()
+		 WHERE id=$1::uuid AND status='VERIFYING'`, bookingID, until); err != nil {
+		return fmt.Errorf("bookings: defer verification: %w", err)
+	}
+	return nil
 }
