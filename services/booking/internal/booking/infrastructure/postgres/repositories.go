@@ -121,12 +121,18 @@ type IdempotencyStore struct{ pool *pgxpool.Pool }
 // NewIdempotencyStore returns the store.
 func NewIdempotencyStore(pool *pgxpool.Pool) *IdempotencyStore { return &IdempotencyStore{pool: pool} }
 
-// Begin inserts an IN_PROGRESS record, or returns the existing one (found=true).
+// Begin inserts an IN_PROGRESS record, or returns the existing one (found=true). An IN_PROGRESS record older than
+// 60 seconds, or any record past expires_at, is taken over: the upsert then affects one row and the caller proceeds
+// as a fresh request (found=false).
 func (s *IdempotencyStore) Begin(ctx context.Context, scope, ownerID, key string, requestHash []byte, ttl time.Duration) (outbound.IdempotencyRecord, bool, error) {
 	tag, err := s.pool.Exec(ctx, `
 		INSERT INTO booking.idempotency_records (scope, owner_id, idempotency_key, request_hash, state, expires_at)
 		VALUES ($1, $2::uuid, $3, $4, 'IN_PROGRESS', now() + $5::interval)
-		ON CONFLICT (scope, owner_id, idempotency_key) DO NOTHING`,
+		ON CONFLICT (scope, owner_id, idempotency_key) DO UPDATE
+		   SET request_hash=EXCLUDED.request_hash, state='IN_PROGRESS', response_status=NULL, response_body=NULL,
+		       created_at=now(), expires_at=EXCLUDED.expires_at
+		 WHERE booking.idempotency_records.expires_at <= now()
+		    OR (booking.idempotency_records.state='IN_PROGRESS' AND booking.idempotency_records.created_at < now() - interval '60 seconds')`,
 		scope, ownerID, key, requestHash, fmt.Sprintf("%d seconds", int(ttl.Seconds())))
 	if err != nil {
 		return outbound.IdempotencyRecord{}, false, fmt.Errorf("idem: begin: %w", err)

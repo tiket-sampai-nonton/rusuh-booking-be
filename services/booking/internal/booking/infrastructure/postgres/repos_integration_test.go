@@ -433,6 +433,61 @@ func TestIdempotencyStore_BeginCompleteReplay(t *testing.T) {
 	assert.False(t, found, "kunci berbeda adalah permintaan baru")
 }
 
+func TestIdempotencyBegin_StaleInProgressIsTakenOver(t *testing.T) {
+	f := seed(t)
+	ctx := context.Background()
+	s := NewIdempotencyStore(f.pool)
+	age := func(t *testing.T, key string) {
+		t.Helper()
+		_, err := f.pool.Exec(ctx, `
+			UPDATE booking.idempotency_records SET created_at = now() - interval '2 minutes'
+			 WHERE scope='hold' AND owner_id=$1::uuid AND idempotency_key=$2`, visitor, key)
+		require.NoError(t, err)
+	}
+
+	t.Run("IN_PROGRESS baru tetap dikunci", func(t *testing.T) {
+		const key = "key-baru-0123456789abcd"
+		_, found, err := s.Begin(ctx, "hold", visitor, key, []byte("h1"), time.Hour)
+		require.NoError(t, err)
+		assert.False(t, found)
+
+		rec, found, err := s.Begin(ctx, "hold", visitor, key, []byte("h2"), time.Hour)
+		require.NoError(t, err)
+		assert.True(t, found, "IN_PROGRESS kurang dari 60 detik tidak boleh diambil alih")
+		assert.Equal(t, "IN_PROGRESS", rec.State)
+	})
+
+	t.Run("IN_PROGRESS lebih dari 60 detik diambil alih", func(t *testing.T) {
+		const key = "key-stale-0123456789abc"
+		_, found, err := s.Begin(ctx, "hold", visitor, key, []byte("h1"), time.Hour)
+		require.NoError(t, err)
+		assert.False(t, found)
+		age(t, key)
+
+		rec, found, err := s.Begin(ctx, "hold", visitor, key, []byte("h2"), time.Hour)
+		require.NoError(t, err)
+		assert.False(t, found, "IN_PROGRESS basi dianggap permintaan baru")
+		assert.Equal(t, "IN_PROGRESS", rec.State)
+		assert.Equal(t, []byte("h2"), rec.RequestHash)
+	})
+
+	t.Run("COMPLETED basi tidak diambil alih", func(t *testing.T) {
+		const key = "key-selesai-0123456789ab"
+		_, found, err := s.Begin(ctx, "hold", visitor, key, []byte("h1"), time.Hour)
+		require.NoError(t, err)
+		assert.False(t, found)
+		require.NoError(t, s.Complete(ctx, "hold", visitor, key, 201, []byte(`{"ok":true}`)))
+		age(t, key)
+
+		rec, found, err := s.Begin(ctx, "hold", visitor, key, []byte("h2"), time.Hour)
+		require.NoError(t, err)
+		assert.True(t, found, "COMPLETED tidak pernah diambil alih oleh lease")
+		assert.Equal(t, "COMPLETED", rec.State)
+		assert.Equal(t, 201, rec.ResponseStatus)
+		assert.JSONEq(t, `{"ok":true}`, string(rec.ResponseBody))
+	})
+}
+
 func TestTicketQuotaAndAttendeeRepos(t *testing.T) {
 	f := seed(t)
 	ctx := context.Background()
