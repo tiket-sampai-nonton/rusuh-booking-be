@@ -43,6 +43,7 @@ type Hold struct {
 	idem       outbound.IIdempotencyStore
 	uow        outbound.IUnitOfWork
 	pii        outbound.IBuyerPII
+	userNIK    outbound.IUserNIKClient // optional; nil = useLoginNik for attendees unavailable
 	ids        IDGen
 	clock      clock.IClock
 	policy     HoldPolicy
@@ -56,6 +57,12 @@ func NewHold(admissions outbound.IAdmissionRepo, events outbound.IEventRepo, ide
 		admissions: admissions, events: events, idem: idem, uow: uow,
 		pii: pii, ids: ids, clock: clk, policy: policy, idemTTL: 24 * time.Hour,
 	}
+}
+
+// WithUserNIKClient enables the attendee useLoginNik path by providing the User Service NIK client.
+func (uc *Hold) WithUserNIKClient(c outbound.IUserNIKClient) *Hold {
+	uc.userNIK = c
+	return uc
 }
 
 // validated is the output of the pure validation step: no database or event read happened to produce it.
@@ -74,7 +81,7 @@ func (uc *Hold) Hold(ctx context.Context, cmd inbound.HoldCommand) (dto.Booking,
 	if err := validateIdempotencyKey(cmd.IdempotencyKey); err != nil {
 		return dto.Booking{}, err
 	}
-	v, err := uc.validate(cmd.Request)
+	v, err := uc.validate(ctx, cmd)
 	if err != nil {
 		return dto.Booking{}, err
 	}
@@ -183,10 +190,10 @@ func (uc *Hold) execute(ctx context.Context, cmd inbound.HoldCommand, v validate
 	}, nil
 }
 
-// validate performs the pure checks in the documented order. It does no I/O, so a malformed request never
-// creates an idempotency record and a replay never re-reads state. The max_tickets_per_order check lives in
-// plan(), because the limit sits on the event row.
-func (uc *Hold) validate(req dto.HoldRequest) (validated, error) {
+// validate performs the validation step. I/O is limited to attendee useLoginNik path (fetching NIK enc from
+// User Service). The max_tickets_per_order check lives in plan(), because the limit sits on the event row.
+func (uc *Hold) validate(ctx context.Context, cmd inbound.HoldCommand) (validated, error) {
+	req := cmd.Request
 	if !isUUID(req.SessionID) {
 		return validated{}, inbound.Validation("sessionId", "sessionId harus UUID")
 	}
@@ -199,12 +206,25 @@ func (uc *Hold) validate(req dto.HoldRequest) (validated, error) {
 		return validated{}, inbound.ErrQuantityInvalid
 	}
 	now := uc.clock.Now()
-	if err := pkgnik.Validate(req.Buyer.NIK, now); err != nil {
-		return validated{}, inbound.ErrNIKInvalid
-	}
-	buyerNIK, perr := vo.ParseNIKHashOnly(req.Buyer.NIK, uc.pii)
-	if perr != nil {
-		return validated{}, inbound.ErrNIKInvalid
+	var buyerNIK vo.NIK
+	if req.Buyer.UseLoginNIK {
+		// useLoginNik: token harus memuat NIK yang sudah di-hash oleh User Service.
+		if len(cmd.BuyerNIKHash) == 0 {
+			return validated{}, inbound.ErrUnauthorized
+		}
+		buyerNIK = vo.NIKFromHashAndMasked(cmd.BuyerNIKHash, cmd.BuyerNIKMasked)
+	} else if len(cmd.BuyerNIKHash) > 0 {
+		// Token bearer sudah memuat hash (dari session login lama).
+		buyerNIK = vo.NIKFromHashAndMasked(cmd.BuyerNIKHash, cmd.BuyerNIKMasked)
+	} else {
+		if err := pkgnik.Validate(req.Buyer.NIK, now); err != nil {
+			return validated{}, inbound.ErrNIKInvalid
+		}
+		var perr error
+		buyerNIK, perr = vo.ParseNIKHashOnly(req.Buyer.NIK, uc.pii)
+		if perr != nil {
+			return validated{}, inbound.ErrNIKInvalid
+		}
 	}
 	if !vo.EmailsMatch(req.Buyer.Email, req.Buyer.EmailConfirmation) {
 		return validated{}, inbound.ErrEmailMismatch
@@ -215,6 +235,16 @@ func (uc *Hold) validate(req dto.HoldRequest) (validated, error) {
 	}
 	if !req.Buyer.Consent {
 		return validated{}, inbound.ErrConsentRequired
+	}
+
+	loginNIKItems := 0
+	for _, it := range req.Items {
+		if it.Attendee.UseLoginNIK {
+			loginNIKItems++
+		}
+	}
+	if loginNIKItems > 1 {
+		return validated{}, inbound.Validation("items", "useLoginNik hanya boleh dipakai untuk 1 item per pesanan")
 	}
 
 	seenNIK := map[string]bool{}
@@ -228,12 +258,29 @@ func (uc *Hold) validate(req dto.HoldRequest) (validated, error) {
 		if len(name) < 2 || len(name) > 100 {
 			return validated{}, inbound.Validation("fullName", "fullName harus 2..100 karakter")
 		}
-		if err := pkgnik.Validate(it.Attendee.NIK, now); err != nil {
-			return validated{}, inbound.ErrNIKInvalid
-		}
-		nik, perr := vo.ParseNIK(it.Attendee.NIK, uc.pii)
-		if perr != nil {
-			return validated{}, inbound.ErrNIKInvalid
+		var nik vo.NIK
+		if it.Attendee.UseLoginNIK {
+			// useLoginNik attendee: hash/masked dari token claims (buyer adalah pemegang tiket).
+			if len(cmd.BuyerNIKHash) == 0 || cmd.BearerToken == "" {
+				return validated{}, inbound.ErrUnauthorized
+			}
+			if uc.userNIK == nil {
+				return validated{}, inbound.ErrDependency
+			}
+			nikEnc, nerr := uc.userNIK.GetNIKEnc(ctx, cmd.AccountID, cmd.BearerToken)
+			if nerr != nil {
+				return validated{}, nerr
+			}
+			nik = vo.NIKFromParts(cmd.BuyerNIKHash, cmd.BuyerNIKMasked, nikEnc)
+		} else {
+			if err := pkgnik.Validate(it.Attendee.NIK, now); err != nil {
+				return validated{}, inbound.ErrNIKInvalid
+			}
+			var perr error
+			nik, perr = vo.ParseNIK(it.Attendee.NIK, uc.pii)
+			if perr != nil {
+				return validated{}, inbound.ErrNIKInvalid
+			}
 		}
 		key := string(nik.Hash())
 		if seenNIK[key] {

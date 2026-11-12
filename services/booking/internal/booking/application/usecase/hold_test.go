@@ -2,6 +2,7 @@ package usecase_test
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"regexp"
 	"testing"
@@ -357,6 +358,59 @@ func TestHold_CancelledEventRefusesNewHolds(t *testing.T) {
 	_, err := uc.Hold(context.Background(), holdCmd(oneItem()))
 	assert.ErrorIs(t, err, inbound.ErrEventCancelled)
 	assert.Empty(t, uow.heldSpec.Lines, "tidak ada stok yang ditahan")
+}
+
+func TestHold_AttendeeUseLoginNIK_Success(t *testing.T) {
+	hashHex := "1e84a8b9c0d1e2f3a4b5c6d7e8f90a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7"
+	nikHash, _ := hex.DecodeString(hashHex)
+	nikEnc := []byte("e:sealed")
+	nikClient := &fakeUserNIKClient{nikEnc: nikEnc}
+	uow := &fakeUoW{holdRes: outbound.HoldResult{BookingID: "bk-1", PublicRef: "RB-1", Version: 1, Status: "PENDING_PAYMENT", AmountMinor: 1000}}
+	uc := newHoldUC(&fakeAdmissionRepo{admission: admission3()}, &fakeEventRepo{detail: detailWith(false, 3)}, &fakeIdem{}, uow).
+		WithUserNIKClient(nikClient)
+
+	cmd := inbound.HoldCommand{
+		Request: dto.HoldRequest{
+			SessionID: sessionID,
+			Buyer:     dto.BuyerInput{UseLoginNIK: true, Email: email, EmailConfirmation: email, Consent: true},
+			Items: []dto.HoldItem{
+				{CategoryID: catA, Attendee: dto.AttendeeInput{UseLoginNIK: true, FullName: "Alice"}},
+			},
+		},
+		VisitorID:      visitor,
+		AccountID:      "acct-1",
+		BuyerNIKHash:   nikHash,
+		BuyerNIKMasked: "3174********0001",
+		BearerToken:    "tok",
+		IdempotencyKey: idemKey,
+	}
+	res, err := uc.Hold(context.Background(), cmd)
+	require.NoError(t, err)
+	assert.NotEmpty(t, res.BookingID)
+}
+
+func TestHold_AttendeeUseLoginNIK_NoNIKOnToken(t *testing.T) {
+	nikClient := &fakeUserNIKClient{nikEnc: []byte("e:enc")}
+	uc := newHoldUC(&fakeAdmissionRepo{admission: admission3()}, &fakeEventRepo{detail: detailWith(false, 3)}, &fakeIdem{}, &fakeUoW{}).
+		WithUserNIKClient(nikClient)
+
+	cmd := inbound.HoldCommand{
+		Request: dto.HoldRequest{
+			SessionID: sessionID,
+			Buyer:     dto.BuyerInput{UseLoginNIK: true, Email: email, EmailConfirmation: email, Consent: true},
+			Items: []dto.HoldItem{
+				{CategoryID: catA, Attendee: dto.AttendeeInput{UseLoginNIK: true, FullName: "Alice"}},
+			},
+		},
+		VisitorID:      visitor,
+		AccountID:      "acct-1",
+		BuyerNIKHash:   nil, // no NIK in token
+		BearerToken:    "tok",
+		IdempotencyKey: idemKey,
+	}
+	_, err := uc.Hold(context.Background(), cmd)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "UNAUTHORIZED")
 }
 
 func TestHold_UnknownCategoryListsIDInMessage(t *testing.T) {

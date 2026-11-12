@@ -60,6 +60,19 @@ func (n NIK) MarshalJSON() ([]byte, error) {
 	return []byte(strconv.Quote(n.masked)), nil
 }
 
+// NIKFromHashAndMasked builds a NIK from pre-validated token claims. No plaintext, no enc.
+// Used when buyer opts to use their stored NIK via useLoginNik.
+func NIKFromHashAndMasked(hash []byte, masked string) NIK {
+	return NIK{hash: hash, masked: masked}
+}
+
+// NIKFromParts builds a NIK from pre-validated hash/masked/enc (all from User Service).
+// Used when attendee opts to use their stored NIK via useLoginNik: enc is fetched from User Service
+// and stored as attendee_nik_enc (keys are shared, so the ciphertext is portable, ADR-030).
+func NIKFromParts(hash []byte, masked string, enc []byte) NIK {
+	return NIK{hash: hash, masked: masked, enc: enc}
+}
+
 // ErrInvalidNIK is the sentinel returned when a NIK fails the structural check; the usecase maps it to
 // the domain.ErrNIKInvalid (422 NIK_INVALID).
 var ErrInvalidNIK = errNIK("NIK tidak valid")

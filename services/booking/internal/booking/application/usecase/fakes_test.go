@@ -315,6 +315,16 @@ func (f *fakePayments) Resolve(_ context.Context, _ string, mode outbound.Resolv
 	return outbound.ResolveResult{Outcome: o, SettlementTime: f.settledAt}, nil
 }
 
+// fakeUserNIKClient returns a canned re-sealed NIK ciphertext.
+type fakeUserNIKClient struct {
+	nikEnc []byte
+	err    error
+}
+
+func (f *fakeUserNIKClient) GetNIKEnc(_ context.Context, _, _ string) ([]byte, error) {
+	return f.nikEnc, f.err
+}
+
 // fakeTokenVerifier returns canned admission claims.
 type fakeTokenVerifier struct {
 	claims outbound.AdmissionClaims

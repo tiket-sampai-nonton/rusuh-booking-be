@@ -55,9 +55,31 @@ func (h *BookingHandler) createBooking(w stdhttp.ResponseWriter, r *stdhttp.Requ
 		httpx.WriteError(w, r, err)
 		return
 	}
-	// Optional bearer: identifies the account (principal) only. It never supplies or binds a NIK.
 	var accountID string
-	if tok, ok := httpx.BearerToken(r); ok && h.buyer != nil {
+	var buyerNIKHash []byte
+	var buyerNIKMasked string
+	if req.Buyer.UseLoginNIK {
+		// useLoginNik: wajib ada bearer token dengan NIK tersimpan.
+		tok, ok := httpx.BearerToken(r)
+		if !ok || h.buyer == nil {
+			w.Header().Set("WWW-Authenticate", `Bearer realm="rbt"`)
+			httpx.WriteError(w, r, inbound.ErrUnauthorized)
+			return
+		}
+		full, canFull := h.buyer.(IBuyerNIKVerifier)
+		if !canFull {
+			httpx.WriteError(w, r, inbound.ErrUnauthorized)
+			return
+		}
+		id, nikHash, nikMasked, verr := full.VerifyAccessFull(tok)
+		if verr != nil || id == "" || len(nikHash) == 0 {
+			w.Header().Set("WWW-Authenticate", `Bearer realm="rbt", error="invalid_token"`)
+			httpx.WriteError(w, r, inbound.ErrUnauthorized)
+			return
+		}
+		accountID, buyerNIKHash, buyerNIKMasked = id, nikHash, nikMasked
+	} else if tok, ok := httpx.BearerToken(r); ok && h.buyer != nil {
+		// Optional bearer: identifies the account (principal) only. It never supplies or binds a NIK.
 		id, verr := h.buyer.VerifyAccess(tok)
 		if verr != nil || id == "" {
 			w.Header().Set("WWW-Authenticate", `Bearer realm="rbt", error="invalid_token"`)
@@ -66,10 +88,15 @@ func (h *BookingHandler) createBooking(w stdhttp.ResponseWriter, r *stdhttp.Requ
 		}
 		accountID = id
 	}
+	// bearerRaw is kept for forwarding to User Service when items have useLoginNik=true for attendees.
+	bearerRaw, _ := httpx.BearerToken(r)
 	resp, err := h.hold.Hold(r.Context(), inbound.HoldCommand{
 		Request:        req,
 		VisitorID:      VisitorID(r),
 		AccountID:      accountID,
+		BuyerNIKHash:   buyerNIKHash,
+		BuyerNIKMasked: buyerNIKMasked,
+		BearerToken:    bearerRaw,
 		IdempotencyKey: r.Header.Get("Idempotency-Key"),
 		CorrelationID:  httpx.RequestIDFrom(r.Context()),
 	})

@@ -44,6 +44,32 @@ func TestPII_HashAndSeal(t *testing.T) {
 	assert.Equal(t, hash, hash2)
 }
 
+func TestBearerVerifier_VerifyAccessFull_ReturnsNIKClaims(t *testing.T) {
+	v, sign := signer(t)
+	bv := security.NewBearerVerifier(v, time.Now, security.ScopeBuyer)
+
+	hashHex := "4c9e03854d02bfe29b23e7fe7734ef1d0d7cb37e65d650200ecf09b30e167326"
+	tok := sign(token.Claims{
+		Subject:   "acct-1",
+		Scope:     "buyer",
+		HasNIK:    true,
+		NIKHash:   hashHex,
+		NIKMasked: "3174********0001",
+	})
+	id, nikHash, nikMasked, err := bv.VerifyAccessFull(tok)
+	require.NoError(t, err)
+	assert.Equal(t, "acct-1", id)
+	assert.Equal(t, "3174********0001", nikMasked)
+	assert.Len(t, nikHash, 32)
+
+	// Token tanpa NIK: nikHash harus nil
+	tokNoNIK := sign(token.Claims{Subject: "acct-2", Scope: "buyer", HasNIK: false})
+	id2, nikHash2, _, err2 := bv.VerifyAccessFull(tokNoNIK)
+	require.NoError(t, err2)
+	assert.Equal(t, "acct-2", id2)
+	assert.Nil(t, nikHash2)
+}
+
 func TestAdmissionVerifier_NilVerifier(t *testing.T) {
 	v := security.NewAdmissionVerifier(nil, time.Now)
 	_, err := v.Verify("any.token.here")

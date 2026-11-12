@@ -118,6 +118,21 @@ func (mr *MockIAccountRepositoryMockRecorder) GetNIKHashByID(ctx, id any) *gomoc
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetNIKHashByID", reflect.TypeOf((*MockIAccountRepository)(nil).GetNIKHashByID), ctx, id)
 }
 
+// GetNIKEncByID mocks base method.
+func (m *MockIAccountRepository) GetNIKEncByID(ctx context.Context, id string) ([]byte, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetNIKEncByID", ctx, id)
+	ret0, _ := ret[0].([]byte)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetNIKEncByID indicates an expected call of GetNIKEncByID.
+func (mr *MockIAccountRepositoryMockRecorder) GetNIKEncByID(ctx, id any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetNIKEncByID", reflect.TypeOf((*MockIAccountRepository)(nil).GetNIKEncByID), ctx, id)
+}
+
 // TouchLogin mocks base method.
 func (m *MockIAccountRepository) TouchLogin(ctx context.Context, id string, at time.Time) error {
 	m.ctrl.T.Helper()

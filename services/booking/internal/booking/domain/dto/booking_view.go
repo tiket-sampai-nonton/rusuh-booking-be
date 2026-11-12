@@ -5,6 +5,7 @@ import "time"
 // AttendeeInput is the attendee portion of a hold/replace item.
 type AttendeeInput struct {
 	NIK            string `json:"nik,omitempty"`
+	UseLoginNIK    bool   `json:"useLoginNik,omitempty"`
 	FullName       string `json:"fullName,omitempty"`
 	KeepFromItemID string `json:"keepFromItemId,omitempty"`
 }
@@ -24,8 +25,10 @@ type HoldRequest struct {
 
 // BuyerInput is the buyer block of the hold request (ADR-030): validated and bound to the admission at hold.
 // The plaintext never leaves the usecase; it is hashed/sealed before anything is persisted.
+// When UseLoginNIK=true the NIK field is ignored; the hash is taken from the bearer token claims instead.
 type BuyerInput struct {
-	NIK               string `json:"nik"`
+	NIK               string `json:"nik,omitempty"`
+	UseLoginNIK       bool   `json:"useLoginNik,omitempty"`
 	Email             string `json:"email"`
 	EmailConfirmation string `json:"emailConfirmation"`
 	Consent           bool   `json:"consent"`
