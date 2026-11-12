@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/domain/dto"
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/domain/mapper"
 	vo "github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/domain/valueobject"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/port/inbound"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/port/outbound"
@@ -817,4 +818,39 @@ func TestEventRepo_CancelledEventLeavesTheListButStaysReadable(t *testing.T) {
 	assert.Equal(t, "NO_SUPPLY_NOW", out[0].Outcome, "tidak ada admission baru untuk event dibatalkan")
 
 	assert.ErrorIs(t, write.Cancel(ctx, "00000000-0000-0000-0000-000000000000"), inbound.ErrNotFound)
+}
+
+// AC-C4.2 (F-status): SOLD_OUT in the catalog comes from supply (held + sold >= total) inside the sales window, not
+// from the stored events.status, which stays untouched.
+func TestEventRepo_ListAndFilterDeriveSoldOutFromSupply(t *testing.T) {
+	f := seed(t)
+	ctx := context.Background()
+	repo := NewEventRepo(f.pool)
+	count := func(status string) int {
+		got, err := repo.ListEvents(ctx, dto.EventListQuery{Status: status})
+		require.NoError(t, err)
+		return len(got)
+	}
+	assert.Equal(t, 1, count("AVAILABLE"), "stok masih ada")
+
+	_, err := f.pool.Exec(ctx, `UPDATE booking.event_supply SET allocated_units=0, held_units=6, sold_units=4 WHERE event_id=$1::uuid`, f.eventID)
+	require.NoError(t, err)
+	_, err = f.pool.Exec(ctx, `UPDATE booking.category_inventories SET held_quantity=6, sold_quantity=4 WHERE event_id=$1::uuid`, f.eventID)
+	require.NoError(t, err)
+
+	assert.Equal(t, 1, count("SOLD_OUT"), "held + sold = total dalam masa jual")
+	assert.Equal(t, 0, count("AVAILABLE"), "tidak lagi tersedia")
+	all, err := repo.ListEvents(ctx, dto.EventListQuery{Status: "ALL"})
+	require.NoError(t, err)
+	require.Len(t, all, 1)
+	assert.True(t, all[0].StockSoldOut)
+
+	detail, err := repo.GetDetail(ctx, f.eventID)
+	require.NoError(t, err)
+	assert.True(t, detail.Event.StockSoldOut)
+	assert.Equal(t, "SOLD_OUT", mapper.ToEventDetail(detail, time.Now()).Event.Status, "detail sejalan dengan daftar")
+
+	var stored string
+	require.NoError(t, f.pool.QueryRow(ctx, `SELECT status FROM booking.events WHERE id=$1::uuid`, f.eventID).Scan(&stored))
+	assert.Equal(t, "AVAILABLE", stored, "events.status tidak diubah oleh turunan stok")
 }

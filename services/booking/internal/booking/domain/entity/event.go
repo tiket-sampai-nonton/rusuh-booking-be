@@ -63,6 +63,10 @@ type Event struct {
 
 	// MinPriceMinor is the catalog minimum price across categories (derived, not a column).
 	MinPriceMinor int64
+
+	// StockSoldOut is derived from supply (held + sold >= total capacity, total > 0), not stored. It only decides the
+	// SOLD_OUT status inside the sales window (AC-C4.2).
+	StockSoldOut bool
 }
 
 // Category is a ticket tier (ticket_categories table).

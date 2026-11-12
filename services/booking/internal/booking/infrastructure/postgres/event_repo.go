@@ -33,7 +33,14 @@ const eventCols = `e.id::text, e.slug, e.name, e.venue, e.city, e.genre,
 	e.max_tickets_per_order, e.max_tickets_per_buyer_nik, e.allow_mixed_categories,
 	e.selection_ttl_seconds, e.payment_ttl_seconds, e.claim_window_seconds,
 	e.max_attendee_checks_per_session, e.selection_edit_enabled, e.max_selection_edits, e.selection_submit_grace_seconds,
-	(e.published_at IS NOT NULL)`
+	(e.published_at IS NOT NULL),
+	` + stockSoldOutSQL
+
+// stockSoldOutSQL derives SOLD_OUT from supply (AC-C4.2, D-C4.2): every unit is held or sold. It is the same rule as the
+// detail's categories (sum of capacity - held - sold = total - held - sold), so list, filter and detail agree.
+// It has no $n placeholder, so filterWhereAt can renumber eventFilterWhere around it.
+const stockSoldOutSQL = `EXISTS (SELECT 1 FROM booking.event_supply s
+		WHERE s.event_id = e.id AND s.total_capacity > 0 AND s.held_units + s.sold_units >= s.total_capacity)`
 
 // scanEvent scans eventCols, then minPrice when given, then any extra destinations (columns appended to the query).
 func scanEvent(row pgx.Row, minPrice *int64, extra ...any) (entity.Event, error) {
@@ -45,7 +52,7 @@ func scanEvent(row pgx.Row, minPrice *int64, extra ...any) (entity.Event, error)
 		&e.MaxTicketsPerOrder, &e.MaxTicketsPerBuyerNik, &e.AllowMixedCategories,
 		&e.SelectionTTLSeconds, &e.PaymentTTLSeconds, &e.ClaimWindowSeconds,
 		&e.MaxAttendeeChecks, &e.SelectionEditEnabled, &e.MaxSelectionEdits, &e.SubmitGraceSeconds,
-		&e.Published,
+		&e.Published, &e.StockSoldOut,
 	}
 	if minPrice != nil {
 		dest = append(dest, minPrice)
@@ -64,6 +71,7 @@ const eventFilterWhere = `
 		 WHERE ($1 = 'ALL' OR (CASE WHEN e.status IN ('SOLD_OUT','CLOSED','CANCELLED') THEN e.status
 		                            WHEN now() < e.sales_starts_at THEN 'NOT_STARTED'
 		                            WHEN now() > e.sales_ends_at THEN 'CLOSED'
+		                            WHEN ` + stockSoldOutSQL + ` THEN 'SOLD_OUT'
 		                            ELSE 'AVAILABLE' END) = $1)
 		   AND ($2 = '' OR lower(e.city) = lower($2))
 		   AND ($3 = 'ALL'

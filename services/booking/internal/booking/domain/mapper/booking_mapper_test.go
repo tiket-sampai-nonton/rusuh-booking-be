@@ -84,8 +84,30 @@ func TestEventStatusFollowsTheSalesWindowAndStock(t *testing.T) {
 		assert.Equal(t, c.want, mapper.ToEventList([]entity.Event{c.e}, now).Events[0].Status, name)
 	}
 
-	soldOut := entity.EventDetail{Event: ev(entity.EventDraft, -time.Hour, time.Hour), Categories: []entity.CategoryDetail{{Available: 0}, {Available: 0}}}
-	assert.Equal(t, "SOLD_OUT", mapper.ToEventDetail(soldOut, now).Event.Status, "tanpa sisa stok di semua kategori")
+	// SOLD_OUT inside the window comes from supply (StockSoldOut, derived by the repo), never from the stored status.
+	stockSoldOut := func(st entity.EventStatus, from, to time.Duration) entity.Event {
+		e := ev(st, from, to)
+		e.StockSoldOut = true
+		return e
+	}
+	for name, c := range map[string]struct {
+		e    entity.Event
+		want string
+	}{
+		"stock sold out in sale":        {stockSoldOut(entity.EventAvailable, -time.Hour, time.Hour), "SOLD_OUT"},
+		"stock sold out before sale":    {stockSoldOut(entity.EventAvailable, time.Hour, 2*time.Hour), "NOT_STARTED"},
+		"stock sold out after sale":     {stockSoldOut(entity.EventAvailable, -2*time.Hour, -time.Hour), "CLOSED"},
+		"stock sold out, stored cancel": {stockSoldOut(entity.EventCancelled, -time.Hour, time.Hour), "CANCELLED"},
+		"stock sold out, stored closed": {stockSoldOut(entity.EventClosed, -time.Hour, time.Hour), "CLOSED"},
+		"stored sold out (legacy row)":  {ev(entity.EventSoldOut, -time.Hour, time.Hour), "SOLD_OUT"},
+	} {
+		assert.Equal(t, c.want, mapper.ToEventList([]entity.Event{c.e}, now).Events[0].Status, name)
+	}
+
+	soldOut := entity.EventDetail{Event: stockSoldOut(entity.EventDraft, -time.Hour, time.Hour)}
+	assert.Equal(t, "SOLD_OUT", mapper.ToEventDetail(soldOut, now).Event.Status, "detail uses the same supply-derived status as the list")
+	available := entity.EventDetail{Event: ev(entity.EventDraft, -time.Hour, time.Hour), Categories: []entity.CategoryDetail{{Available: 0}}}
+	assert.Equal(t, "AVAILABLE", mapper.ToEventDetail(available, now).Event.Status, "zero categories left is not SOLD_OUT without StockSoldOut")
 }
 
 func TestToBooking_OnlyActiveItemsAndLock(t *testing.T) {

@@ -524,8 +524,8 @@ func TestSoldOut_OnlyWhenNothingCanReturn(t *testing.T) {
 	})
 }
 
-// P1-6: the sold-out announcement is written with the status change and survives the per-entry savepoint rollback,
-// and it is written at most once per batch.
+// P1-6: the sold-out announcement (booking.sold_out outbox row) survives the per-entry savepoint rollback, and it is
+// written at most once per batch. The catalog derives SOLD_OUT from supply, so events.status is not changed (AC-C4.2).
 func TestReserveBatch_SoldOutIsAnnouncedOnce(t *testing.T) {
 	f := newAcctFixture(t, suffixFor(t), 1)
 	ctx := context.Background()
@@ -543,6 +543,6 @@ func TestReserveBatch_SoldOutIsAnnouncedOnce(t *testing.T) {
 
 	var status string
 	require.NoError(t, f.pool.QueryRow(ctx, `SELECT status FROM booking.events WHERE id=$1::uuid`, f.eventID).Scan(&status))
-	assert.Equal(t, "SOLD_OUT", status, "the status change survives the entry rollback")
+	assert.Equal(t, "AVAILABLE", status, "the stored status is not changed; SOLD_OUT is derived from supply")
 	assert.Equal(t, 1, soldOutRows(t, f), "booking.sold_out is announced exactly once per batch")
 }

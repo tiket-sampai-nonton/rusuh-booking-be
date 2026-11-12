@@ -258,14 +258,10 @@ func (r *AdmissionRepo) reserveOne(ctx context.Context, tx pgx.Tx, eventID strin
 	return res
 }
 
-// announceSoldOutTx marks the event SOLD_OUT and writes the booking.sold_out row. The row is written only while
-// *announced is false, so a batch announces at most once; it is set only after the row is written.
+// announceSoldOutTx writes the booking.sold_out outbox row. The row is written only while *announced is false, so a
+// batch announces at most once; it is set only after the row is written. events.status is not changed: the catalog
+// derives SOLD_OUT from supply (AC-C4.2).
 func announceSoldOutTx(ctx context.Context, tx pgx.Tx, eventID string, announced *bool) error {
-	if _, err := tx.Exec(ctx, `
-		UPDATE booking.events SET status='SOLD_OUT'
-		 WHERE id=$1::uuid AND status='AVAILABLE'`, eventID); err != nil {
-		return err
-	}
 	if *announced {
 		return nil
 	}
