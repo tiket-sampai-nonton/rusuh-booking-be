@@ -75,6 +75,23 @@ func TestEdit_Success(t *testing.T) {
 	assert.Equal(t, 2, resp.Version)
 }
 
+// P2-10: the edit reads the mixed-category rule from the admission snapshot, not the event's live flag.
+func TestEdit_MixedRuleComesFromAdmissionSnapshot(t *testing.T) {
+	bk := entity.Booking{ID: bookingID, EventID: eventID, AdmissionID: sessionID, VisitorID: visitor, Status: vo.BookingPendingPayment, Version: 1}
+	uow := &fakeUoW{}
+	uc := usecase.NewEdit(
+		&fakeBookingRepo{booking: bk},
+		&fakeAdmissionRepo{admission: activeAdmission(false)},
+		&fakeEventRepo{detail: detailWith(true, 3)},
+		uow, fakeNIK{}, fixedClock{t: time.Now()},
+	)
+	cmd := editCmd(1)
+	cmd.Request.Items = append(cmd.Request.Items, dto.HoldItem{CategoryID: catB, Attendee: dto.AttendeeInput{NIK: nik2, FullName: "Bob"}})
+	_, err := uc.ReplaceItems(context.Background(), cmd)
+	assert.ErrorIs(t, err, inbound.ErrMixedNotAllowed)
+	assert.Equal(t, 0, uow.replaceCalls, "UoW must not be called")
+}
+
 func TestSession_CreateTokenInvalid(t *testing.T) {
 	uc := usecase.NewSession(&fakeAdmissionRepo{}, &fakeEventRepo{}, &fakeTokenVerifier{err: assertErr{}}, fixedClock{t: time.Now()})
 	_, err := uc.CreateSession(context.Background(), dto.CreateSessionRequest{AdmissionToken: "x"}, visitor)

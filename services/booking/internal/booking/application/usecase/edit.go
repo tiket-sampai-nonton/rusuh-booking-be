@@ -71,7 +71,7 @@ func (uc *Edit) ReplaceItems(ctx context.Context, cmd inbound.EditCommand) (dto.
 	if err != nil {
 		return dto.Booking{}, err
 	}
-	lines, amount, err := uc.buildLines(cmd.Request, detail, booking.Items)
+	lines, amount, err := uc.buildLines(cmd.Request, detail, booking.Items, admission.CfgAllowMixedCategories)
 	if err != nil {
 		return dto.Booking{}, err
 	}
@@ -98,7 +98,7 @@ func (uc *Edit) ReplaceItems(ctx context.Context, cmd inbound.EditCommand) (dto.
 	return mapper.ToBooking(updated, admission.EditsRemaining()-1, uc.clock.Now()), nil
 }
 
-func (uc *Edit) buildLines(req dto.ReplaceItemsRequest, detail entity.EventDetail, items []entity.BookingItem) ([]outbound.HoldLine, int64, error) {
+func (uc *Edit) buildLines(req dto.ReplaceItemsRequest, detail entity.EventDetail, items []entity.BookingItem, allowMixed bool) ([]outbound.HoldLine, int64, error) {
 	if len(req.Items) > detail.Event.MaxTicketsPerOrder {
 		return nil, 0, inbound.ErrQuantityExceeds
 	}
@@ -136,7 +136,7 @@ func (uc *Edit) buildLines(req dto.ReplaceItemsRequest, detail entity.EventDetai
 		})
 		amount += price
 	}
-	if !detail.Event.AllowMixedCategories && len(seenCat) > 1 {
+	if !allowMixed && len(seenCat) > 1 {
 		return nil, 0, inbound.ErrMixedNotAllowed
 	}
 	return lines, amount, nil

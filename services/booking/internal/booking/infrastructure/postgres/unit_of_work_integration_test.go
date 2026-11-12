@@ -135,11 +135,9 @@ func seed(t *testing.T) fixture {
 	return f
 }
 
-// hold makes a PENDING_PAYMENT booking through the real unit of work and returns its id.
-func (f fixture) hold(t *testing.T) string {
-	t.Helper()
-	id := f.q(t, `SELECT gen_random_uuid()::text`)
-	_, err := f.uow.Hold(context.Background(), outbound.HoldSpec{
+// holdSpec is the one-line hold of the seeded admission, for booking id.
+func (f fixture) holdSpec(id string) outbound.HoldSpec {
+	return outbound.HoldSpec{
 		BookingID: id, PublicRef: "RB-7F3A9C21", EventID: f.eventID, AdmissionID: f.admissionID, VisitorID: visitor,
 		BuyerNIKHash: []byte(f.nikH), BuyerEmailEnc: sealedEmail, AmountMinor: 150000, CfgEditEnabled: true, PaymentExpiresAt: time.Now().Add(10 * time.Minute),
 		Lines: []outbound.HoldLine{{
@@ -147,9 +145,32 @@ func (f fixture) hold(t *testing.T) string {
 			AttendeeNIKMasked: "3174********0001", AttendeeName: "Budi Santoso",
 		}},
 		CorrelationID: id,
-	})
+	}
+}
+
+// hold makes a PENDING_PAYMENT booking through the real unit of work and returns its id.
+func (f fixture) hold(t *testing.T) string {
+	t.Helper()
+	id := f.q(t, `SELECT gen_random_uuid()::text`)
+	_, err := f.uow.Hold(context.Background(), f.holdSpec(id))
 	require.NoError(t, err)
 	return id
+}
+
+// P2-9: the event can be cancelled after the usecase has read it. The hold transaction re-reads the status after
+// the supply lock and refuses, without touching stock.
+func TestHold_EventCancelledInsideTransaction(t *testing.T) {
+	f := seed(t)
+	ctx := context.Background()
+	_, err := f.pool.Exec(ctx, `UPDATE booking.events SET status = 'CANCELLED' WHERE id = $1::uuid`, f.eventID)
+	require.NoError(t, err)
+	before := f.stock(t)
+
+	id := f.q(t, `SELECT gen_random_uuid()::text`)
+	_, err = f.uow.Hold(ctx, f.holdSpec(id))
+	assert.ErrorIs(t, err, inbound.ErrEventCancelled)
+	assert.Equal(t, before, f.stock(t), "stok tidak berubah ketika event dibatalkan")
+	assert.Equal(t, 0, f.n(t, `SELECT count(*) FROM booking.bookings WHERE id=$1::uuid`, id), "tidak ada booking yang dibuat")
 }
 
 // Regression: a hold that locks at once (edit disabled) appends BookingHeld + BookingLocked, so the read model must
@@ -185,8 +206,8 @@ func (f fixture) stock(t *testing.T) [5]int {
 	var s [5]int
 	require.NoError(t, f.pool.QueryRow(context.Background(), `
 		SELECT s.allocated_units, s.held_units, s.sold_units,
-		       (SELECT held_quantity FROM booking.category_inventories WHERE event_id=s.event_id),
-		       (SELECT paid_quantity FROM booking.buyer_quotas WHERE event_id=s.event_id)
+		       COALESCE((SELECT held_quantity FROM booking.category_inventories WHERE event_id=s.event_id), 0),
+		       COALESCE((SELECT paid_quantity FROM booking.buyer_quotas WHERE event_id=s.event_id), 0)
 		  FROM booking.event_supply s`).Scan(&s[0], &s[1], &s[2], &s[3], &s[4]))
 	return s
 }

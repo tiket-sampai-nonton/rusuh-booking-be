@@ -84,6 +84,14 @@ func (u *UnitOfWork) hold(ctx context.Context, tx pgx.Tx, spec outbound.HoldSpec
 	if _, err := tx.Exec(ctx, `SELECT 1 FROM booking.event_supply WHERE event_id=$1::uuid FOR UPDATE`, spec.EventID); err != nil {
 		return outbound.HoldResult{}, err
 	}
+	// The usecase read the event before this transaction; a cancel in between must still stop the hold (P2-9).
+	var evStatus string
+	if err := tx.QueryRow(ctx, `SELECT status FROM booking.events WHERE id=$1::uuid`, spec.EventID).Scan(&evStatus); err != nil {
+		return outbound.HoldResult{}, err
+	}
+	if evStatus == "CANCELLED" {
+		return outbound.HoldResult{}, inbound.ErrEventCancelled
+	}
 
 	// Step 3: QUOTA row — upsert (cap from the event) then lock; read held/paid/max.
 	if _, err := tx.Exec(ctx, `
