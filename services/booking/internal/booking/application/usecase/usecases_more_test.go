@@ -67,6 +67,19 @@ func TestCheckAttendee_AvailableAndRegistered(t *testing.T) {
 	assert.Equal(t, "ALREADY_REGISTERED", res2.Result)
 }
 
+func TestCheckAttendee_InGraceIsAccepted(t *testing.T) {
+	now := time.Now()
+	adm := activeAdmission(true)
+	adm.ExpiresAt = now.Add(-5 * time.Second)
+	adm.CfgSubmitGraceSeconds = 10
+	ev := &fakeEventRepo{event: entity.Event{ID: eventID, MaxAttendeeChecks: 10}}
+
+	uc := usecase.NewCheckAttendee(&fakeAdmissionRepo{admission: adm}, ev, &fakeAttendeeChecker{counted: true}, fakeNIK{}, fixedClock{t: now})
+	res, err := uc.CheckAttendee(context.Background(), sessionID, visitor, dto.AttendeeCheckRequest{NIK: nik1})
+	require.NoError(t, err)
+	assert.Equal(t, "AVAILABLE", res.Result)
+}
+
 func TestSettle_DelegatesToUoW(t *testing.T) {
 	uow := &fakeUoW{settled: true}
 	uc := usecase.NewSettle(uow, func(id string) string { return "link-for-" + id })

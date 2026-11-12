@@ -269,7 +269,7 @@ func (uc *Hold) plan(ctx context.Context, cmd inbound.HoldCommand, v validated) 
 	if admission.VisitorID != cmd.VisitorID {
 		return entity.Admission{}, nil, 0, inbound.ErrVisitorMismatch
 	}
-	if admission.IsExpired(uc.clock.Now()) || !admission.IsActive() {
+	if admission.PastGrace(uc.clock.Now()) || !admission.IsActive() {
 		return entity.Admission{}, nil, 0, inbound.ErrSessionExpired
 	}
 	detail, err := uc.events.GetDetail(ctx, admission.EventID)
