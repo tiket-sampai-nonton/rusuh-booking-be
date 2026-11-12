@@ -2,11 +2,13 @@ package postgres
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/stretchr/testify/assert"
 
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/eventstore"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/port/inbound"
 )
 
@@ -45,4 +47,25 @@ func TestUnionAndOutcomes(t *testing.T) {
 	assert.Len(t, u, 2)
 	assert.Equal(t, "SOLD_OUT", supplyOutcome(pgErr("23514", "event_supply_check")))
 	assert.Equal(t, "NO_SUPPLY_NOW", supplyOutcome(errors.New("timeout")))
+}
+
+// Transaksi stok diulang bila gagal karena konflik event store, serialisasi, atau deadlock; error lain tidak.
+func TestRetryable(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"konflik event store", eventstore.ErrConcurrency, true},
+		{"serialization failure", &pgconn.PgError{Code: "40001"}, true},
+		{"deadlock", &pgconn.PgError{Code: "40P01"}, true},
+		{"deadlock terbungkus", fmt.Errorf("x: %w", &pgconn.PgError{Code: "40P01"}), true},
+		{"unique violation", &pgconn.PgError{Code: "23505"}, false},
+		{"error biasa", errors.New("db"), false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, retryable(tt.err))
+		})
+	}
 }

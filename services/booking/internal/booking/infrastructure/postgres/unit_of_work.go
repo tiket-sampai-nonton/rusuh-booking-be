@@ -1032,7 +1032,7 @@ func (u *UnitOfWork) StartVerifying(ctx context.Context, bookingID string, verif
 	return acted, err
 }
 
-// retry runs fn in a transaction, retrying on event-store concurrency up to maxRetries.
+// retry runs fn in a transaction, retrying up to maxRetries while retryable reports the error as transient.
 func (u *UnitOfWork) retry(ctx context.Context, fn func(pgx.Tx) error) error {
 	var err error
 	for attempt := 0; attempt < maxRetries; attempt++ {
@@ -1040,12 +1040,19 @@ func (u *UnitOfWork) retry(ctx context.Context, fn func(pgx.Tx) error) error {
 		if err == nil {
 			return nil
 		}
-		if errors.Is(err, eventstore.ErrConcurrency) {
-			continue
+		if !retryable(err) {
+			return err
 		}
-		return err
 	}
 	return err
+}
+
+// retryable reports whether a failed stock transaction may run again: an event-store version conflict,
+// a serialization failure (40001), or a deadlock (40P01). Anything else is returned to the caller as is.
+func retryable(err error) bool {
+	return errors.Is(err, eventstore.ErrConcurrency) ||
+		pkgpg.IsCode(err, pkgpg.CodeSerialization) ||
+		pkgpg.IsCode(err, pkgpg.CodeDeadlock)
 }
 
 func heldByCategory(ctx context.Context, tx pgx.Tx, bookingID string) (map[string]int, error) {
