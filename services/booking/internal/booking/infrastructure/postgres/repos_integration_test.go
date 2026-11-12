@@ -563,12 +563,59 @@ func TestTicketQuotaAndAttendeeRepos(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, reg)
 
-	counted, err := att.RecordCheck(ctx, f.admissionID, []byte("nik-dicek"))
+	rec, err := att.RecordCheck(ctx, f.admissionID, []byte("nik-dicek"), 3)
 	require.NoError(t, err)
-	assert.True(t, counted)
-	counted, err = att.RecordCheck(ctx, f.admissionID, []byte("nik-dicek"))
+	assert.True(t, rec.Counted)
+	assert.Equal(t, 1, rec.Used)
+	rec, err = att.RecordCheck(ctx, f.admissionID, []byte("nik-dicek"), 3)
 	require.NoError(t, err)
-	assert.False(t, counted, "NIK yang sama dalam sesi tidak dihitung dua kali")
+	assert.False(t, rec.Counted, "NIK yang sama dalam sesi tidak dihitung dua kali")
+	assert.Equal(t, 1, rec.Used)
+}
+
+// Ten distinct NIKs race for a limit of three: the admission counter and the dedupe rows must stop at exactly three.
+func TestRecordCheck_ConcurrentNeverExceedsMax(t *testing.T) {
+	f := seed(t)
+	ctx := context.Background()
+	att := NewAttendeeCheckRepo(f.pool)
+	const maxChecks, attempts = 3, 10
+
+	var wg sync.WaitGroup
+	recs := make(chan outbound.AttendeeCheckRecord, attempts)
+	errs := make(chan error, attempts)
+	for i := 0; i < attempts; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			rec, err := att.RecordCheck(ctx, f.admissionID, []byte{'c', byte('0' + i)}, maxChecks)
+			if err != nil {
+				errs <- err
+				return
+			}
+			recs <- rec
+		}(i)
+	}
+	wg.Wait()
+	close(recs)
+	close(errs)
+	for err := range errs {
+		require.NoError(t, err)
+	}
+
+	counted, limited := 0, 0
+	for rec := range recs {
+		switch {
+		case rec.Counted:
+			counted++
+		case rec.LimitReached:
+			limited++
+			assert.Equal(t, maxChecks, rec.Used)
+		}
+	}
+	assert.Equal(t, maxChecks, counted)
+	assert.Equal(t, attempts-maxChecks, limited)
+	assert.Equal(t, maxChecks, f.n(t, `SELECT attendee_checks FROM booking.admissions WHERE id = $1::uuid`, f.admissionID))
+	assert.Equal(t, maxChecks, f.n(t, `SELECT count(*)::int FROM booking.attendee_checks WHERE admission_id = $1::uuid`, f.admissionID))
 }
 
 func TestEventWriteRepo_CreateAndUpdateConfig(t *testing.T) {

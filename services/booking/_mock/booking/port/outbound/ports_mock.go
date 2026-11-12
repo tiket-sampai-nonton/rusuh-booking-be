@@ -649,18 +649,18 @@ func (mr *MockIAttendeeCheckerMockRecorder) IsRegistered(ctx, eventID, nikHash a
 }
 
 // RecordCheck mocks base method.
-func (m *MockIAttendeeChecker) RecordCheck(ctx context.Context, admissionID string, nikHash []byte) (bool, error) {
+func (m *MockIAttendeeChecker) RecordCheck(ctx context.Context, admissionID string, nikHash []byte, maxChecks int) (outbound.AttendeeCheckRecord, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "RecordCheck", ctx, admissionID, nikHash)
-	ret0, _ := ret[0].(bool)
+	ret := m.ctrl.Call(m, "RecordCheck", ctx, admissionID, nikHash, maxChecks)
+	ret0, _ := ret[0].(outbound.AttendeeCheckRecord)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // RecordCheck indicates an expected call of RecordCheck.
-func (mr *MockIAttendeeCheckerMockRecorder) RecordCheck(ctx, admissionID, nikHash any) *gomock.Call {
+func (mr *MockIAttendeeCheckerMockRecorder) RecordCheck(ctx, admissionID, nikHash, maxChecks any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RecordCheck", reflect.TypeOf((*MockIAttendeeChecker)(nil).RecordCheck), ctx, admissionID, nikHash)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RecordCheck", reflect.TypeOf((*MockIAttendeeChecker)(nil).RecordCheck), ctx, admissionID, nikHash, maxChecks)
 }
 
 // MockIPaymentClient is a mock of IPaymentClient interface.

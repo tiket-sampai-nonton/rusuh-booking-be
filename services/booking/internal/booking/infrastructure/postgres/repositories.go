@@ -92,9 +92,15 @@ func (r *AttendeeCheckRepo) IsRegistered(ctx context.Context, eventID string, ni
 	return true, nil
 }
 
-// RecordCheck inserts a dedupe row and bumps the admission counter when the NIK is new this session.
-func (r *AttendeeCheckRepo) RecordCheck(ctx context.Context, admissionID string, nikHash []byte) (bool, error) {
-	var counted bool
+// errAttendeeLimit aborts the RecordCheck transaction when the session cap is already full, which also rolls back
+// the dedupe row inserted for the NIK.
+var errAttendeeLimit = errors.New("attendee: session check limit reached")
+
+// RecordCheck dedupes a NIK within the admission and, when it is new, consumes one of maxChecks checks in the same
+// transaction. The conditional UPDATE serialises concurrent checks on the admission row, so the counter never
+// exceeds maxChecks.
+func (r *AttendeeCheckRepo) RecordCheck(ctx context.Context, admissionID string, nikHash []byte, maxChecks int) (outbound.AttendeeCheckRecord, error) {
+	var rec outbound.AttendeeCheckRecord
 	err := pkgpg.WithTx(ctx, r.pool, pgx.TxOptions{IsoLevel: pgx.ReadCommitted}, func(tx pgx.Tx) error {
 		tag, err := tx.Exec(ctx, `
 			INSERT INTO booking.attendee_checks (admission_id, attendee_nik_hash)
@@ -103,16 +109,29 @@ func (r *AttendeeCheckRepo) RecordCheck(ctx context.Context, admissionID string,
 			return err
 		}
 		if tag.RowsAffected() == 0 {
-			return nil // already checked; not counted
+			// Already checked this session; not counted again.
+			return tx.QueryRow(ctx, `SELECT attendee_checks FROM booking.admissions WHERE id = $1::uuid`, admissionID).Scan(&rec.Used)
 		}
-		counted = true
-		_, err = tx.Exec(ctx, `UPDATE booking.admissions SET attendee_checks = attendee_checks + 1 WHERE id = $1::uuid`, admissionID)
-		return err
+		err = tx.QueryRow(ctx, `
+			UPDATE booking.admissions SET attendee_checks = attendee_checks + 1
+			 WHERE id = $1::uuid AND attendee_checks < $2
+			RETURNING attendee_checks`, admissionID, maxChecks).Scan(&rec.Used)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return errAttendeeLimit
+		}
+		if err != nil {
+			return err
+		}
+		rec.Counted = true
+		return nil
 	})
-	if err != nil {
-		return false, fmt.Errorf("attendee: record: %w", err)
+	if errors.Is(err, errAttendeeLimit) {
+		return outbound.AttendeeCheckRecord{LimitReached: true, Used: maxChecks}, nil
 	}
-	return counted, nil
+	if err != nil {
+		return outbound.AttendeeCheckRecord{}, fmt.Errorf("attendee: record: %w", err)
+	}
+	return rec, nil
 }
 
 // IdempotencyStore deduplicates mutating requests.

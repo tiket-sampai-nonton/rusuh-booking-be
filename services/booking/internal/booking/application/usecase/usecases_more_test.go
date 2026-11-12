@@ -52,19 +52,28 @@ func TestCheckAttendee_InvalidNIKNoQuotaBurn(t *testing.T) {
 
 func TestCheckAttendee_AvailableAndRegistered(t *testing.T) {
 	adm := activeAdmission(true)
-	adm.AttendeeChecks = 2
 	ev := &fakeEventRepo{event: entity.Event{ID: eventID, MaxAttendeeChecks: 10}}
 
-	uc := usecase.NewCheckAttendee(&fakeAdmissionRepo{admission: adm}, ev, &fakeAttendeeChecker{counted: true, registered: false}, fakeNIK{}, fixedClock{t: time.Now()})
+	uc := usecase.NewCheckAttendee(&fakeAdmissionRepo{admission: adm}, ev, &fakeAttendeeChecker{counted: true, used: 3, registered: false}, fakeNIK{}, fixedClock{t: time.Now()})
 	res, err := uc.CheckAttendee(context.Background(), sessionID, visitor, dto.AttendeeCheckRequest{NIK: nik1})
 	require.NoError(t, err)
 	assert.Equal(t, "AVAILABLE", res.Result)
-	assert.Equal(t, 7, res.ChecksRemaining) // 10 - (2+1)
+	assert.Equal(t, 7, res.ChecksRemaining) // 10 - 3 used after this check
 
-	uc2 := usecase.NewCheckAttendee(&fakeAdmissionRepo{admission: adm}, ev, &fakeAttendeeChecker{counted: false, registered: true}, fakeNIK{}, fixedClock{t: time.Now()})
+	uc2 := usecase.NewCheckAttendee(&fakeAdmissionRepo{admission: adm}, ev, &fakeAttendeeChecker{counted: false, used: 3, registered: true}, fakeNIK{}, fixedClock{t: time.Now()})
 	res2, err := uc2.CheckAttendee(context.Background(), sessionID, visitor, dto.AttendeeCheckRequest{NIK: nik1})
 	require.NoError(t, err)
 	assert.Equal(t, "ALREADY_REGISTERED", res2.Result)
+}
+
+func TestCheckAttendee_LimitFromRepository(t *testing.T) {
+	checker := &fakeAttendeeChecker{limitReached: true, used: 3}
+	uc := usecase.NewCheckAttendee(&fakeAdmissionRepo{admission: activeAdmission(true)}, &fakeEventRepo{event: entity.Event{ID: eventID, MaxAttendeeChecks: 3}}, checker, fakeNIK{}, fixedClock{t: time.Now()})
+	res, err := uc.CheckAttendee(context.Background(), sessionID, visitor, dto.AttendeeCheckRequest{NIK: nik1})
+	require.NoError(t, err)
+	assert.Equal(t, "CHECK_LIMIT_REACHED", res.Result)
+	assert.Equal(t, 0, res.ChecksRemaining)
+	assert.Equal(t, 1, checker.calls, "only RecordCheck runs; IsRegistered must not be called once the limit is reached")
 }
 
 func TestCheckAttendee_InGraceIsAccepted(t *testing.T) {

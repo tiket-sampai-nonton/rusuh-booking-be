@@ -296,22 +296,24 @@ func (f *fakeTicketRepo) ListByBookingID(context.Context, string) ([]entity.Tick
 	return f.tickets, f.err
 }
 
-// fakeAttendeeChecker is controllable.
+// fakeAttendeeChecker is controllable. used is the post-call check count reported by RecordCheck.
 type fakeAttendeeChecker struct {
-	registered bool
-	regErr     error
-	counted    bool
-	recErr     error
-	calls      int
+	registered   bool
+	regErr       error
+	counted      bool
+	limitReached bool
+	used         int
+	recErr       error
+	calls        int
 }
 
 func (f *fakeAttendeeChecker) IsRegistered(context.Context, string, []byte) (bool, error) {
 	f.calls++
 	return f.registered, f.regErr
 }
-func (f *fakeAttendeeChecker) RecordCheck(context.Context, string, []byte) (bool, error) {
+func (f *fakeAttendeeChecker) RecordCheck(context.Context, string, []byte, int) (outbound.AttendeeCheckRecord, error) {
 	f.calls++
-	return f.counted, f.recErr
+	return outbound.AttendeeCheckRecord{Counted: f.counted, LimitReached: f.limitReached, Used: f.used}, f.recErr
 }
 
 // fakePayments resolves a canned result; the zero value answers NOT_PAID. It records the modes it was asked with.

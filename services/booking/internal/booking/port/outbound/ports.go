@@ -115,8 +115,16 @@ type IQuotaRepo interface {
 // IAttendeeChecker probes whether an attendee NIK is already registered (HELD/PAID) for an event.
 type IAttendeeChecker interface {
 	IsRegistered(ctx context.Context, eventID string, nikHash []byte) (bool, error)
-	// RecordCheck inserts a dedupe row; counted=false means the NIK was already checked this session.
-	RecordCheck(ctx context.Context, admissionID string, nikHash []byte) (counted bool, err error)
+	// RecordCheck counts a NIK against the session limit atomically. maxChecks is the event's per-session cap.
+	RecordCheck(ctx context.Context, admissionID string, nikHash []byte, maxChecks int) (AttendeeCheckRecord, error)
+}
+
+// AttendeeCheckRecord is the outcome of RecordCheck. Counted is true only when this call consumed a check;
+// LimitReached is true when the session cap was already full and the NIK was not recorded. Used is the number
+// of checks consumed after the call.
+type AttendeeCheckRecord struct {
+	Counted, LimitReached bool
+	Used                  int
 }
 
 // IPaymentClient asks the Payment Service what happened to a booking's payment (expiry sweeper, buyer cancel).
