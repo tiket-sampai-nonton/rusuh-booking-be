@@ -111,15 +111,17 @@ func (Secrets) RefreshToken() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(b), nil
 }
 
-// SessionID returns a random UUIDv4, supaya access token (claim sid) bisa diterbitkan sebelum baris sesi di-commit.
+// SessionID returns a UUIDv7 (RFC 9562, ADR-032), so the access token (claim sid) can be issued before the session row is
+// committed and session ids sort by creation time.
 func (Secrets) SessionID() (string, error) {
-	var b [16]byte
-	if _, err := rand.Read(b[:]); err != nil {
+	var r [10]byte // 4 version + 12 random, 2 variant + 14 random, 48 random
+	if _, err := rand.Read(r[:]); err != nil {
 		return "", fmt.Errorf("security: session id: %w", err)
 	}
-	b[6] = (b[6] & 0x0f) | 0x40
-	b[8] = (b[8] & 0x3f) | 0x80
-	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16]), nil
+	r[0] = (r[0] & 0x0f) | 0x70
+	r[2] = (r[2] & 0x3f) | 0x80
+	ts := fmt.Sprintf("%012x", time.Now().UnixMilli()&0xffffffffffff) // printed as hex: no integer conversion to overflow
+	return fmt.Sprintf("%s-%s-%x-%x-%x", ts[:8], ts[8:], r[0:2], r[2:4], r[4:10]), nil
 }
 
 // Tokens implements outbound.ITokenIssuer and inbound.IAccessTokenVerifier.

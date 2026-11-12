@@ -12,6 +12,7 @@ services:
   queue-api:
     environment:
       RATE_LIMIT_JOIN_PER_IP: "100000"
+      ADMIN_EMAILS: "@example.test" # PUT queue-settings untuk event uji (lihat createEvent)
   user-api:
     environment:
       OTP_MAX_PER_IP_HOUR: "1000"

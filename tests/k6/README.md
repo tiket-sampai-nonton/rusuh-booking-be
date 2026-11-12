@@ -68,6 +68,8 @@ Variabel lingkungan:
 | `TEST_ENV` | `local` (bawaan), `dev`, `prod`. Prod butuh `CONFIRM_PROD=yes` |
 | `BASE_URL` | domain API untuk dev/prod |
 | `ADMIN_URL` | API admin booking lewat tunnel (dev: `deployments/dev/dev-tunnel.sh`, prod: `aws-admin-tunnel.sh`), bawaan `http://127.0.0.1:18082` |
+| `QUEUE_ADMIN_URL` | API admin queue untuk `PUT queue-settings` event uji (lokal otomatis `:8081`; dev/prod bawaan `http://127.0.0.1:18081`, tunnel bawaan hanya meneruskan booking sehingga perlu `-L` tambahan ke port queue) |
+| `QUEUE_ACTIVE_SLOTS` | `activeSlotCapacity` event uji (bawaan 1000) |
 | `AUTH_TOKEN` | token akun admin untuk dev/prod (di lokal login OTP otomatis lewat Mailpit) |
 | `LOAD_FACTOR` | pengali semua level beban (mis. `0.5`) |
 | `SLO_P95_MS`, `SLO_P99_MS`, `SLO_ERROR_RATE`, `SLO_CHECK_RATE` | SLO untuk PASS/WARNING/FAIL |

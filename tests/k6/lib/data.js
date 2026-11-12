@@ -48,6 +48,11 @@ export function createEvent(bearer, label, categories) {
   if (!c.data) throw new Error(`gagal membuat event uji: ${c.res.status} ${c.res.body}`);
   const id = c.data.eventId;
   call('admin', 'POST', `/internal/v1/admin/events/${id}/publish`, { name: 'admin.publish', bearer, expect: [200] });
+  // Queue ketat (QSA-6): tanpa pengaturan antrean, join menjawab 409 QUEUE_NOT_CONFIGURED. Event terbit dulu, baru PUT.
+  const q = call('queueAdmin', 'PUT', `/internal/v1/admin/events/${id}/queue-settings`, {
+    name: 'admin.queue-settings', bearer, body: { activeSlotCapacity: Number(__ENV.QUEUE_ACTIVE_SLOTS || 1000) }, expect: [200, 201],
+  });
+  if (!q.ok) throw new Error(`gagal mengonfigurasi antrean event uji: ${q.res.status} ${q.res.body}`);
   return id;
 }
 

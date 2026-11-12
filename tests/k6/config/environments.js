@@ -9,11 +9,13 @@ const local = {
   notification: 'http://localhost:8084',
   user: 'http://localhost:8085',
   admin: 'http://localhost:8082',
+  queueAdmin: 'http://localhost:8081',
   mailpit: 'http://localhost:8025',
 };
 
 function remote(base, admin) {
-  return { queue: base, booking: base, payment: base, notification: base, user: base, admin, mailpit: '' };
+  // queueAdmin: /internal queue tidak ikut tunnel bawaan (hanya booking); set QUEUE_ADMIN_URL bila event uji dibuat baru.
+  return { queue: base, booking: base, payment: base, notification: base, user: base, admin, queueAdmin: __ENV.QUEUE_ADMIN_URL || 'http://127.0.0.1:18081', mailpit: '' };
 }
 
 const TARGETS = {
