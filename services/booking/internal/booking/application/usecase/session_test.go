@@ -46,7 +46,7 @@ func TestCreateSession_Success(t *testing.T) {
 
 	admRepo := &fakeAdmissionRepo{activated: activated}
 	evRepo := &fakeEventRepo{}
-	verifier := &fakeTokenVerifier{claims: outbound.AdmissionClaims{JTI: "alloc-1", EventID: "event-1"}}
+	verifier := &fakeTokenVerifier{claims: outbound.AdmissionClaims{JTI: "sess-1", EventID: "event-1"}}
 	clk := fixedClock{t: time.Now()}
 
 	uc := newSessionUC(admRepo, evRepo, verifier, clk)
@@ -92,6 +92,7 @@ func TestCreateSession_ReclaimOfActiveSessionReturnsIt(t *testing.T) {
 
 			uc := newSessionUC(admRepo, &fakeEventRepo{}, verifier, fixedClock{t: time.Now()})
 			sess, err := uc.CreateSession(context.Background(), dto.CreateSessionRequest{AdmissionToken: "tok"}, "v-1")
+			assert.Equal(t, admissionID, admRepo.gotID, "re-claim must look the admission up by its id (jti)")
 			if tt.wantErr != nil {
 				assert.ErrorIs(t, err, tt.wantErr)
 				return
@@ -113,7 +114,7 @@ func TestCreateSession_ReclaimRecovery(t *testing.T) {
 		admission: a, // GetByID returns the live ACTIVE admission
 	}
 	evRepo := &fakeEventRepo{}
-	verifier := &fakeTokenVerifier{claims: outbound.AdmissionClaims{JTI: "alloc-1", EventID: "event-1"}}
+	verifier := &fakeTokenVerifier{claims: outbound.AdmissionClaims{JTI: "sess-1", EventID: "event-1"}}
 	clk := fixedClock{t: time.Now()}
 
 	uc := newSessionUC(admRepo, evRepo, verifier, clk)
@@ -134,7 +135,7 @@ func TestCreateSession_ReclaimRecovery_ExpiredSession(t *testing.T) {
 		admission: a, // GetByID returns expired admission
 	}
 	evRepo := &fakeEventRepo{}
-	verifier := &fakeTokenVerifier{claims: outbound.AdmissionClaims{JTI: "alloc-1", EventID: "event-1"}}
+	verifier := &fakeTokenVerifier{claims: outbound.AdmissionClaims{JTI: "sess-1", EventID: "event-1"}}
 	clk := fixedClock{t: time.Now()}
 
 	uc := newSessionUC(admRepo, evRepo, verifier, clk)
@@ -151,7 +152,7 @@ func TestCreateSession_ReclaimRecovery_WrongVisitor(t *testing.T) {
 		admission: a, // admission belongs to "owner-visitor"
 	}
 	evRepo := &fakeEventRepo{}
-	verifier := &fakeTokenVerifier{claims: outbound.AdmissionClaims{JTI: "alloc-1", EventID: "event-1"}}
+	verifier := &fakeTokenVerifier{claims: outbound.AdmissionClaims{JTI: "sess-1", EventID: "event-1"}}
 	clk := fixedClock{t: time.Now()}
 
 	uc := newSessionUC(admRepo, evRepo, verifier, clk)
