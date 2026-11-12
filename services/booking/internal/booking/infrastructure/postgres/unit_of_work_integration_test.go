@@ -244,6 +244,75 @@ func TestPaymentLock_RefusesExpiredAndNonPayableBookings(t *testing.T) {
 	assert.Equal(t, "BOOKING_NOT_PAYABLE", res.Outcome)
 }
 
+// The extension is recorded as an event and only once; a second request is refused (deadline_extended_at).
+func TestExtendDeadline_RecordsEventAndRefusesSecondExtension(t *testing.T) {
+	f := seed(t)
+	ctx := context.Background()
+	id := f.hold(t)
+	var before time.Time
+	require.NoError(t, f.pool.QueryRow(ctx, `SELECT payment_expires_at FROM booking.bookings WHERE id=$1::uuid`, id).Scan(&before))
+
+	require.NoError(t, f.uow.ExtendDeadline(ctx, outbound.DeadlineSpec{BookingID: id, Reason: "PAYMENT_PENDING", Seconds: 120, CorrelationID: id}))
+	var after time.Time
+	require.NoError(t, f.pool.QueryRow(ctx, `SELECT payment_expires_at FROM booking.bookings WHERE id=$1::uuid`, id).Scan(&after))
+	assert.Equal(t, 120*time.Second, after.Sub(before))
+	assert.Equal(t, 1, f.n(t, `SELECT count(*) FROM booking.booking_events WHERE stream_id=$1::uuid AND event_type='BookingDeadlineExtended'`, id))
+	assert.Equal(t, 2, f.n(t, `SELECT version FROM booking.bookings WHERE id=$1::uuid`, id), "BookingHeld v1, BookingDeadlineExtended v2: read model mengikuti stream")
+
+	err := f.uow.ExtendDeadline(ctx, outbound.DeadlineSpec{BookingID: id, Reason: "PAYMENT_PENDING", Seconds: 120, CorrelationID: id})
+	assert.ErrorIs(t, err, inbound.ErrDeadlineAlreadyExtended)
+	assert.Equal(t, 1, f.n(t, `SELECT count(*) FROM booking.booking_events WHERE stream_id=$1::uuid AND event_type='BookingDeadlineExtended'`, id), "tidak ada event ganda")
+}
+
+// D-B3: a VERIFYING booking is already past its deadline and must go through the sweeper, not be extended.
+func TestExtendDeadline_RefusesVerifyingBooking(t *testing.T) {
+	f := seed(t)
+	ctx := context.Background()
+	id := f.hold(t)
+	_, err := f.pool.Exec(ctx, `UPDATE booking.bookings SET created_at = now() - interval '10 minutes', payment_expires_at = now() - interval '1 second' WHERE id=$1::uuid`, id)
+	require.NoError(t, err)
+	acted, err := f.uow.StartVerifying(ctx, id, 180)
+	require.NoError(t, err)
+	require.True(t, acted)
+
+	err = f.uow.ExtendDeadline(ctx, outbound.DeadlineSpec{BookingID: id, Reason: "PAYMENT_PENDING", Seconds: 120, CorrelationID: id})
+	assert.ErrorIs(t, err, inbound.ErrNotPayable)
+	assert.Equal(t, 0, f.n(t, `SELECT count(*) FROM booking.booking_events WHERE stream_id=$1::uuid AND event_type='BookingDeadlineExtended'`, id))
+	assert.Equal(t, 0, f.n(t, `SELECT count(*) FROM booking.bookings WHERE id=$1::uuid AND deadline_extended_at IS NOT NULL`, id))
+}
+
+func TestExtendDeadline_RefusesMissingAndLapsedBookings(t *testing.T) {
+	f := seed(t)
+	ctx := context.Background()
+
+	err := f.uow.ExtendDeadline(ctx, outbound.DeadlineSpec{BookingID: "00000000-0000-0000-0000-000000000000", Reason: "PAYMENT_PENDING", Seconds: 120})
+	assert.ErrorIs(t, err, inbound.ErrNotFound)
+
+	id := f.hold(t)
+	_, err = f.pool.Exec(ctx, `UPDATE booking.bookings SET created_at = now() - interval '10 minutes', payment_expires_at = now() - interval '1 second' WHERE id=$1::uuid`, id)
+	require.NoError(t, err)
+	err = f.uow.ExtendDeadline(ctx, outbound.DeadlineSpec{BookingID: id, Reason: "PAYMENT_PENDING", Seconds: 120, CorrelationID: id})
+	assert.ErrorIs(t, err, inbound.ErrPaymentExpired)
+	assert.Equal(t, 0, f.n(t, `SELECT count(*) FROM booking.booking_events WHERE stream_id=$1::uuid AND event_type='BookingDeadlineExtended'`, id))
+}
+
+// P1-5: a VERIFYING booking without payment_started_at is stamped by payment-lock (not returned as an idempotent no-op).
+func TestPaymentLock_StampsAVerifyingBookingWithoutStamp(t *testing.T) {
+	f := seed(t)
+	ctx := context.Background()
+	id := f.hold(t)
+	_, err := f.pool.Exec(ctx, `UPDATE booking.bookings
+		SET status='VERIFYING', verification_until = now() + interval '1 minute', payment_started_at = NULL,
+		    payment_expires_at = now() + interval '1 minute'
+		WHERE id=$1::uuid`, id)
+	require.NoError(t, err)
+
+	res, err := f.uow.PaymentLock(ctx, outbound.PaymentLockSpec{BookingID: id, AttemptKey: "attempt-1", CorrelationID: id})
+	require.NoError(t, err)
+	assert.Equal(t, "OK", res.Outcome)
+	assert.Equal(t, 1, f.n(t, `SELECT count(*) FROM booking.bookings WHERE id=$1::uuid AND payment_started_at IS NOT NULL`, id))
+}
+
 // F5: booking.paid must carry everything the e-ticket email needs and follow the contract.
 func TestSettle_PublishesATicketPayloadThatFollowsTheContract(t *testing.T) {
 	f := seed(t)

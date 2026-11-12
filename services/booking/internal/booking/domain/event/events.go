@@ -5,13 +5,14 @@ package event
 
 // Type names (must match ^[A-Z][A-Za-z]+$ enforced by the event store and the DB CHECK).
 const (
-	TypeBookingHeld          = "BookingHeld"
-	TypeBookingItemsReplaced = "BookingItemsReplaced"
-	TypeBookingLocked        = "BookingLocked"
-	TypePaymentVerifying     = "PaymentVerifying" // Phase A of expiry: PENDING_PAYMENT → VERIFYING (design §7.2)
-	TypeBookingPaid          = "BookingPaid"
-	TypeBookingExpired       = "BookingExpired"
-	TypeBookingReview        = "BookingReview"
+	TypeBookingHeld             = "BookingHeld"
+	TypeBookingItemsReplaced    = "BookingItemsReplaced"
+	TypeBookingLocked           = "BookingLocked"
+	TypePaymentVerifying        = "PaymentVerifying" // Phase A of expiry: PENDING_PAYMENT → VERIFYING (design §7.2)
+	TypeBookingPaid             = "BookingPaid"
+	TypeBookingExpired          = "BookingExpired"
+	TypeBookingReview           = "BookingReview"
+	TypeBookingDeadlineExtended = "BookingDeadlineExtended"
 )
 
 // ItemSnapshot describes one held ticket line without any PII plaintext.
@@ -42,6 +43,13 @@ type BookingItemsReplaced struct {
 // BookingLocked is appended when payment starts (order becomes immutable).
 type BookingLocked struct {
 	BookingID string `json:"bookingId"`
+	Reason    string `json:"reason"`
+}
+
+// BookingDeadlineExtended is appended when the payment deadline is extended once (gateway degradation).
+type BookingDeadlineExtended struct {
+	BookingID string `json:"bookingId"`
+	Seconds   int    `json:"seconds"`
 	Reason    string `json:"reason"`
 }
 

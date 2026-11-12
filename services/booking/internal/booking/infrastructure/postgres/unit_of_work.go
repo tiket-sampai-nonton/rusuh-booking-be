@@ -807,7 +807,8 @@ func (u *UnitOfWork) expire(ctx context.Context, tx pgx.Tx, spec outbound.Expire
 	return true, enqueueOutbox(ctx, tx, "booking.journey.ended", spec.BookingID, ended)
 }
 
-// ExtendDeadline extends payment_expires_at once per booking.
+// ExtendDeadline extends payment_expires_at once per booking, only while it is PENDING_PAYMENT and before the
+// deadline (D-B3). The extension is recorded as a BookingDeadlineExtended event in the same transaction.
 func (u *UnitOfWork) ExtendDeadline(ctx context.Context, spec outbound.DeadlineSpec) error {
 	return u.retry(ctx, func(tx pgx.Tx) error {
 		return u.extendDeadline(ctx, tx, spec)
@@ -815,28 +816,53 @@ func (u *UnitOfWork) ExtendDeadline(ctx context.Context, spec outbound.DeadlineS
 }
 
 func (u *UnitOfWork) extendDeadline(ctx context.Context, tx pgx.Tx, spec outbound.DeadlineSpec) error {
-	tag, err := tx.Exec(ctx, `
+	// Step 1: lock the booking and read the state each refusal depends on.
+	var status vo.BookingStatus
+	var version int
+	var paymentExpiresAt time.Time
+	var extendedAt *time.Time
+	if err := tx.QueryRow(ctx, `
+		SELECT status, version, payment_expires_at, deadline_extended_at
+		  FROM booking.bookings WHERE id=$1::uuid FOR UPDATE`, spec.BookingID).
+		Scan(&status, &version, &paymentExpiresAt, &extendedAt); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return inbound.ErrNotFound
+		}
+		return err
+	}
+	if extendedAt != nil {
+		return inbound.ErrDeadlineAlreadyExtended
+	}
+	if status != vo.BookingPendingPayment {
+		return inbound.ErrNotPayable
+	}
+	if !time.Now().UTC().Before(paymentExpiresAt) {
+		return inbound.ErrPaymentExpired
+	}
+
+	// Step 2: extend the deadline and advance the read model to the next stream version.
+	if _, err := tx.Exec(ctx, `
 		UPDATE booking.bookings
 		   SET payment_expires_at = payment_expires_at + make_interval(secs => $2),
 		       deadline_extended_at = now(),
+		       version = version + 1,
 		       updated_at = now()
-		 WHERE id = $1::uuid
-		   AND deadline_extended_at IS NULL
-		   AND status IN ('PENDING_PAYMENT', 'VERIFYING')`,
-		spec.BookingID, spec.Seconds)
-	if err != nil {
+		 WHERE id = $1::uuid`, spec.BookingID, spec.Seconds); err != nil {
 		return err
 	}
-	if tag.RowsAffected() == 0 {
-		return inbound.ErrDeadlineAlreadyExtended
-	}
-	return nil
+	// Step 3: append the audit event (no PII: the payload carries only the booking id, seconds and reason).
+	_, err := u.store.Append(ctx, tx, spec.BookingID, version, eventstore.NewEvent{
+		Type: domevent.TypeBookingDeadlineExtended, SchemaVersion: 1,
+		Payload:  domevent.BookingDeadlineExtended{BookingID: spec.BookingID, Seconds: spec.Seconds, Reason: spec.Reason},
+		Metadata: meta(spec.BookingID),
+	})
+	return err
 }
 
-// PaymentLock transitions a payable booking to VERIFYING and stamps payment_started_at, locking the
-// order against edits before a payment attempt (v4.4). It is idempotent: a booking already VERIFYING
-// returns OK with no new event. Returns PAYMENT_EXPIRED when the window lapsed and BOOKING_NOT_PAYABLE
-// when the booking is in any non-payable state. Retries on event-store concurrency (max 3).
+// PaymentLock stamps payment_started_at, locking the order against edits before a payment attempt (v4.4).
+// It is idempotent: a booking already stamped returns OK with no new event. A VERIFYING booking without a
+// stamp is stamped like a PENDING_PAYMENT one (P1-5). Returns PAYMENT_EXPIRED when the window lapsed and
+// BOOKING_NOT_PAYABLE when the booking is in any non-payable state. Retries on event-store concurrency (max 3).
 func (u *UnitOfWork) PaymentLock(ctx context.Context, spec outbound.PaymentLockSpec) (outbound.PaymentLockResult, error) {
 	var res outbound.PaymentLockResult
 	err := u.retry(ctx, func(tx pgx.Tx) error {
@@ -892,8 +918,8 @@ func (u *UnitOfWork) paymentLock(ctx context.Context, tx pgx.Tx, spec outbound.P
 	if !status.IsPayable() {
 		return outbound.PaymentLockResult{Outcome: "BOOKING_NOT_PAYABLE", AmountMinor: amountMinor, PaymentExpiresAt: paymentExpiresAt}, nil
 	}
-	// Idempotent: already locked by a previous call (status stays PENDING_PAYMENT; payment_started_at marks the lock).
-	if status == vo.BookingVerifying || paymentStarted != nil {
+	// Idempotent: already locked by a previous call (payment_started_at marks the lock; status is not the marker).
+	if paymentStarted != nil {
 		return outbound.PaymentLockResult{Outcome: "OK", Version: version, AmountMinor: amountMinor, PaymentExpiresAt: paymentExpiresAt}, nil
 	}
 
