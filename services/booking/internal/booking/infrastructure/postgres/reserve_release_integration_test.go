@@ -523,3 +523,26 @@ func TestSoldOut_OnlyWhenNothingCanReturn(t *testing.T) {
 		assert.Equal(t, "SOLD_OUT", out[0].Outcome)
 	})
 }
+
+// P1-6: the sold-out announcement is written with the status change and survives the per-entry savepoint rollback,
+// and it is written at most once per batch.
+func TestReserveBatch_SoldOutIsAnnouncedOnce(t *testing.T) {
+	f := newAcctFixture(t, suffixFor(t), 1)
+	ctx := context.Background()
+	_, err := f.pool.Exec(ctx, `UPDATE booking.event_supply SET sold_units=total_capacity WHERE event_id=$1::uuid`, f.eventID)
+	require.NoError(t, err)
+	_, err = f.pool.Exec(ctx, `UPDATE booking.category_inventories SET sold_quantity=capacity WHERE event_id=$1::uuid`, f.eventID)
+	require.NoError(t, err)
+
+	out, err := NewAdmissionRepo(f.pool).ReserveBatch(ctx, f.eventID,
+		[]outbound.ReserveEntry{anonEntry(1, 1), anonEntry(2, 1)}, time.Now())
+	require.NoError(t, err)
+	require.Len(t, out, 2)
+	assert.Equal(t, "SOLD_OUT", out[0].Outcome)
+	assert.Equal(t, "SOLD_OUT", out[1].Outcome)
+
+	var status string
+	require.NoError(t, f.pool.QueryRow(ctx, `SELECT status FROM booking.events WHERE id=$1::uuid`, f.eventID).Scan(&status))
+	assert.Equal(t, "SOLD_OUT", status, "the status change survives the entry rollback")
+	assert.Equal(t, 1, soldOutRows(t, f), "booking.sold_out is announced exactly once per batch")
+}
