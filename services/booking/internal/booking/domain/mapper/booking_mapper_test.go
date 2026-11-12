@@ -73,13 +73,15 @@ func TestEventStatusFollowsTheSalesWindowAndStock(t *testing.T) {
 		e    entity.Event
 		want string
 	}{
-		"draft before sale":     {ev(entity.EventDraft, time.Hour, 2*time.Hour), "NOT_STARTED"},
-		"draft during sale":     {ev(entity.EventDraft, -time.Hour, time.Hour), "AVAILABLE"},
-		"available after sale":  {ev(entity.EventAvailable, -2*time.Hour, -time.Hour), "CLOSED"},
-		"stored sold out wins":  {ev(entity.EventSoldOut, -time.Hour, time.Hour), "SOLD_OUT"},
-		"stored closed wins":    {ev(entity.EventClosed, -time.Hour, time.Hour), "CLOSED"},
-		"stored cancelled wins": {ev(entity.EventCancelled, -time.Hour, time.Hour), "CANCELLED"},
-		"cancelled before sale": {ev(entity.EventCancelled, time.Hour, 2*time.Hour), "CANCELLED"},
+		"draft before sale":                    {ev(entity.EventDraft, time.Hour, 2*time.Hour), "NOT_STARTED"},
+		"draft during sale":                    {ev(entity.EventDraft, -time.Hour, time.Hour), "AVAILABLE"},
+		"available after sale":                 {ev(entity.EventAvailable, -2*time.Hour, -time.Hour), "CLOSED"},
+		"stored sold out ignored (stock left)": {ev(entity.EventSoldOut, -time.Hour, time.Hour), "AVAILABLE"},
+		"stored sold out before sale":          {ev(entity.EventSoldOut, time.Hour, 2*time.Hour), "NOT_STARTED"},
+		"stored sold out after sale":           {ev(entity.EventSoldOut, -2*time.Hour, -time.Hour), "CLOSED"},
+		"stored closed wins":                   {ev(entity.EventClosed, -time.Hour, time.Hour), "CLOSED"},
+		"stored cancelled wins":                {ev(entity.EventCancelled, -time.Hour, time.Hour), "CANCELLED"},
+		"cancelled before sale":                {ev(entity.EventCancelled, time.Hour, 2*time.Hour), "CANCELLED"},
 	} {
 		assert.Equal(t, c.want, mapper.ToEventList([]entity.Event{c.e}, now).Events[0].Status, name)
 	}
@@ -94,12 +96,12 @@ func TestEventStatusFollowsTheSalesWindowAndStock(t *testing.T) {
 		e    entity.Event
 		want string
 	}{
-		"stock sold out in sale":        {stockSoldOut(entity.EventAvailable, -time.Hour, time.Hour), "SOLD_OUT"},
-		"stock sold out before sale":    {stockSoldOut(entity.EventAvailable, time.Hour, 2*time.Hour), "NOT_STARTED"},
-		"stock sold out after sale":     {stockSoldOut(entity.EventAvailable, -2*time.Hour, -time.Hour), "CLOSED"},
-		"stock sold out, stored cancel": {stockSoldOut(entity.EventCancelled, -time.Hour, time.Hour), "CANCELLED"},
-		"stock sold out, stored closed": {stockSoldOut(entity.EventClosed, -time.Hour, time.Hour), "CLOSED"},
-		"stored sold out (legacy row)":  {ev(entity.EventSoldOut, -time.Hour, time.Hour), "SOLD_OUT"},
+		"stock sold out in sale":          {stockSoldOut(entity.EventAvailable, -time.Hour, time.Hour), "SOLD_OUT"},
+		"stock sold out before sale":      {stockSoldOut(entity.EventAvailable, time.Hour, 2*time.Hour), "NOT_STARTED"},
+		"stock sold out after sale":       {stockSoldOut(entity.EventAvailable, -2*time.Hour, -time.Hour), "CLOSED"},
+		"stock sold out, stored cancel":   {stockSoldOut(entity.EventCancelled, -time.Hour, time.Hour), "CANCELLED"},
+		"stock sold out, stored closed":   {stockSoldOut(entity.EventClosed, -time.Hour, time.Hour), "CLOSED"},
+		"stock sold out, stored sold out": {stockSoldOut(entity.EventSoldOut, -time.Hour, time.Hour), "SOLD_OUT"},
 	} {
 		assert.Equal(t, c.want, mapper.ToEventList([]entity.Event{c.e}, now).Events[0].Status, name)
 	}

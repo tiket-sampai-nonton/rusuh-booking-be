@@ -854,3 +854,34 @@ func TestEventRepo_ListAndFilterDeriveSoldOutFromSupply(t *testing.T) {
 	require.NoError(t, f.pool.QueryRow(ctx, `SELECT status FROM booking.events WHERE id=$1::uuid`, f.eventID).Scan(&stored))
 	assert.Equal(t, "AVAILABLE", stored, "events.status tidak diubah oleh turunan stok")
 }
+
+// AC-C4.2 / R13: a stored SOLD_OUT (written before this change) is ignored. The status comes from stock alone, so a
+// released hold shows AVAILABLE again in list, filter and detail.
+func TestEventRepo_StoredSoldOutIsDerivedFromStock(t *testing.T) {
+	f := seed(t)
+	ctx := context.Background()
+	repo := NewEventRepo(f.pool)
+	count := func(status string) int {
+		got, err := repo.ListEvents(ctx, dto.EventListQuery{Status: status})
+		require.NoError(t, err)
+		return len(got)
+	}
+	_, err := f.pool.Exec(ctx, `UPDATE booking.events SET status='SOLD_OUT' WHERE id=$1::uuid`, f.eventID)
+	require.NoError(t, err)
+
+	assert.Equal(t, 1, count("AVAILABLE"), "stored SOLD_OUT, stok masih ada: AVAILABLE")
+	assert.Equal(t, 0, count("SOLD_OUT"))
+	detail, err := repo.GetDetail(ctx, f.eventID)
+	require.NoError(t, err)
+	assert.Equal(t, "AVAILABLE", mapper.ToEventDetail(detail, time.Now()).Event.Status)
+
+	_, err = f.pool.Exec(ctx, `UPDATE booking.event_supply SET allocated_units=0, held_units=6, sold_units=4 WHERE event_id=$1::uuid`, f.eventID)
+	require.NoError(t, err)
+	_, err = f.pool.Exec(ctx, `UPDATE booking.category_inventories SET held_quantity=6, sold_quantity=4 WHERE event_id=$1::uuid`, f.eventID)
+	require.NoError(t, err)
+	assert.Equal(t, 1, count("SOLD_OUT"), "stored SOLD_OUT dan stok habis: SOLD_OUT")
+	assert.Equal(t, 0, count("AVAILABLE"))
+	detail, err = repo.GetDetail(ctx, f.eventID)
+	require.NoError(t, err)
+	assert.Equal(t, "SOLD_OUT", mapper.ToEventDetail(detail, time.Now()).Event.Status)
+}

@@ -68,7 +68,7 @@ func scanEvent(row pgx.Row, minPrice *int64, extra ...any) (entity.Event, error)
 // The published + non-cancelled floor is always applied. Callers that want a drill-down facet zero out the
 // dimension being listed (city="" or genres=nil) via filterArgs before binding.
 const eventFilterWhere = `
-		 WHERE ($1 = 'ALL' OR (CASE WHEN e.status IN ('SOLD_OUT','CLOSED','CANCELLED') THEN e.status
+		 WHERE ($1 = 'ALL' OR (CASE WHEN e.status IN ('CLOSED','CANCELLED') THEN e.status
 		                            WHEN now() < e.sales_starts_at THEN 'NOT_STARTED'
 		                            WHEN now() > e.sales_ends_at THEN 'CLOSED'
 		                            WHEN ` + stockSoldOutSQL + ` THEN 'SOLD_OUT'
@@ -119,8 +119,9 @@ func (r *EventRepo) ListEvents(ctx context.Context, q dto.EventListQuery) ([]ent
 	case "PRICE_DESC":
 		order = "min_price_minor DESC, e.id"
 	}
-	// status follows the sales window like the status the API shows (stored SOLD_OUT/CLOSED win); timeframe applies to
-	// startsAt in WIB: THIS_WEEK Monday-Sunday, THIS_MONTH the calendar month, UPCOMING today onwards (SRS-F-28-03).
+	// status follows the sales window and stock like the status the API shows (stored CLOSED/CANCELLED win, a stored
+	// SOLD_OUT is ignored, AC-C4.2 R13); timeframe applies to startsAt in WIB: THIS_WEEK Monday-Sunday, THIS_MONTH
+	// the calendar month, UPCOMING today onwards (SRS-F-28-03).
 	sql := fmt.Sprintf(`
 		SELECT %s, COALESCE(MIN(c.price_minor), 0) AS min_price_minor
 		  FROM booking.events e

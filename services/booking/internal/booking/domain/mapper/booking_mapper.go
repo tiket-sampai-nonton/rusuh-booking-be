@@ -10,11 +10,12 @@ import (
 	vo "github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/domain/valueobject"
 )
 
-// eventStatus is the status the API shows. A stored SOLD_OUT, CLOSED, or CANCELLED wins. Otherwise NOT_STARTED and CLOSED
-// follow the sales window, and inside the window SOLD_OUT comes from supply (StockSoldOut), not from a stored status.
+// eventStatus is the status the API shows. A stored CLOSED or CANCELLED wins. A stored SOLD_OUT is ignored (rows written
+// before AC-C4.2 are derived like AVAILABLE). Otherwise NOT_STARTED and CLOSED follow the sales window, and inside the
+// window SOLD_OUT comes from supply (StockSoldOut) and AVAILABLE otherwise.
 func eventStatus(e entity.Event, now time.Time) string {
 	switch e.Status {
-	case entity.EventSoldOut, entity.EventClosed, entity.EventCancelled:
+	case entity.EventClosed, entity.EventCancelled:
 		return string(e.Status)
 	}
 	switch {
