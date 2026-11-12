@@ -479,8 +479,12 @@ func (u *UnitOfWork) settle(ctx context.Context, tx pgx.Tx, spec outbound.Settle
 	// Design §9.5, Property 7: a settlement time known to be after payment_expires_at is late → REVIEW (release held
 	// stock). An unknown time (zero: the consumer could not parse it) is timely (decision D1): the booking is still
 	// payable, so its stock is still held, and the charge expires at the same deadline.
-	if !spec.SettlementTime.IsZero() && spec.SettlementTime.After(paymentExpiresAt) {
-		// Late settlement: release held stock and mark REVIEW — no tickets issued.
+	// P2-8: a charge whose amount differs from the booking's amount is not the sale we hold stock for, so it takes the
+	// same REVIEW path. A zero spec.AmountMinor means the amount is unknown and is not checked.
+	late := !spec.SettlementTime.IsZero() && spec.SettlementTime.After(paymentExpiresAt)
+	mismatch := spec.AmountMinor > 0 && spec.AmountMinor != amount
+	if late || mismatch {
+		// Release held stock and mark REVIEW — no tickets issued.
 		if _, err := u.store.Append(ctx, tx, spec.BookingID, version, eventstore.NewEvent{
 			Type: domevent.TypeBookingReview, SchemaVersion: 1,
 			Payload:  domevent.BookingReview{BookingID: spec.BookingID, AmountMinor: amount},
@@ -491,9 +495,14 @@ func (u *UnitOfWork) settle(ctx context.Context, tx pgx.Tx, spec outbound.Settle
 		if err := releaseHeldItems(ctx, tx, spec.BookingID, eventID, buyerHash); err != nil {
 			return false, err
 		}
+		// settlement_time stays NULL when the gateway gave no time (mismatch without a settlement time).
+		var settlementTime *time.Time
+		if !spec.SettlementTime.IsZero() {
+			settlementTime = &spec.SettlementTime
+		}
 		if _, err := tx.Exec(ctx, `
 			UPDATE booking.bookings SET status='REVIEW', settlement_time=$2, version=$3, updated_at=now()
-			 WHERE id=$1::uuid`, spec.BookingID, spec.SettlementTime, version+1); err != nil {
+			 WHERE id=$1::uuid`, spec.BookingID, settlementTime, version+1); err != nil {
 			return false, err
 		}
 		review := map[string]any{"bookingId": spec.BookingID, "buyerEmailEnc": email, "amountMinor": amount}

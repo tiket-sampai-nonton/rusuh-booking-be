@@ -482,6 +482,33 @@ func TestExpire_CancelAfterPaymentLockIsRefused(t *testing.T) {
 	assert.Equal(t, 0, f.n(t, `SELECT count(*) FROM booking.outbox_events WHERE routing_key='booking.expired'`))
 }
 
+// P2-8: a settlement whose amount differs from the booking's amount is treated like a late payment: REVIEW, held stock
+// released once, visitor freed once, and a redelivered payment.succeeded changes nothing.
+func TestSettle_AmountMismatchGoesToReviewOnce(t *testing.T) {
+	f := seed(t)
+	ctx := context.Background()
+	id := f.hold(t)
+	amount := f.n(t, `SELECT amount_minor FROM booking.bookings WHERE id=$1::uuid`, id)
+
+	wrong := settleSpec(id)
+	wrong.AmountMinor = int64(amount) + 1
+	settled, err := f.uow.Settle(ctx, wrong)
+	require.NoError(t, err)
+	assert.False(t, settled)
+	assert.Equal(t, "REVIEW", f.status(t, id))
+	assert.Equal(t, 0, f.n(t, `SELECT count(*) FROM booking.tickets`), "tanpa tiket")
+	assert.Equal(t, [5]int{0, 0, 0, 0, 0}, f.stock(t), "stok dilepas")
+	assert.Equal(t, 0, f.n(t, `SELECT count(*) FROM booking.bookings WHERE id=$1::uuid AND settlement_time IS NOT NULL`, id), "tanpa waktu settlement: NULL, bukan nol")
+
+	again, err := f.uow.Settle(ctx, wrong)
+	require.NoError(t, err)
+	assert.False(t, again)
+	assert.Equal(t, "REVIEW", f.status(t, id))
+	assert.Equal(t, 1, f.n(t, `SELECT count(*) FROM booking.outbox_events WHERE routing_key='booking.review'`))
+	assert.Equal(t, 1, f.n(t, `SELECT count(*) FROM booking.outbox_events WHERE routing_key='booking.journey.ended'`), "pengunjung dibebaskan sekali")
+	assert.Equal(t, [5]int{0, 0, 0, 0, 0}, f.stock(t), "stok tidak berubah")
+}
+
 // AC-4 (audit P0-4): the payment provider confirmed the charge but gave no settlement time. The booking is still
 // payable, so it is treated as on time: PAID, tickets issued, held stock becomes sold, settlement_time is recorded.
 func TestSettle_UnknownSettlementTimeIsTimely(t *testing.T) {

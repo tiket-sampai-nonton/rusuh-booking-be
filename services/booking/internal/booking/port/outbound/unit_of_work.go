@@ -75,6 +75,7 @@ type SettleSpec struct {
 	BookingID         string
 	Method            string
 	SettlementTime    time.Time                     // gateway settlement time from payment.succeeded (R9.1, R9.3)
+	AmountMinor       int64                         // amount the gateway charged; 0 = unknown, skip the check (P2-8)
 	TicketCodeFn      func(itemID string) string    // supplies a public ticket code per item
 	TicketLinkTokenFn func(bookingID string) string // supplies the ticket-link token (may be nil → empty)
 	CorrelationID     string

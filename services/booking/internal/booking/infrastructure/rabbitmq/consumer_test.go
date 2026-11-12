@@ -3,6 +3,7 @@ package rabbitmq_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"testing"
@@ -76,4 +77,26 @@ func TestConsumer_MissingBookingIDPermanent(t *testing.T) {
 	err := deliver(t, c, "payment.succeeded", map[string]any{"attemptId": "a1"})
 	require.Error(t, err)
 	assert.True(t, pkgrabbitmq.IsPermanent(err))
+}
+
+// P2-8: an unknown or malformed booking will never settle, so retrying it only delays the DLQ. Other failures stay
+// retryable.
+func TestPaymentConsumer_UnknownOrMalformedBookingIsPermanent(t *testing.T) {
+	tests := []struct {
+		name      string
+		settleErr error
+		permanent bool
+	}{
+		{name: "unknown booking", settleErr: inbound.ErrNotFound, permanent: true},
+		{name: "malformed booking id", settleErr: inbound.Validation("bookingId", "bookingId harus UUID"), permanent: true},
+		{name: "transient failure", settleErr: errors.New("db"), permanent: false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			c := bookingrabbitmq.NewPaymentConsumer(&fakeSettle{err: tc.settleErr}, logger())
+			err := deliver(t, c, "payment.succeeded", map[string]any{"bookingId": "b1", "attemptId": "a1", "amountMinor": 1000, "method": "card"})
+			require.Error(t, err)
+			assert.Equal(t, tc.permanent, pkgrabbitmq.IsPermanent(err))
+		})
+	}
 }

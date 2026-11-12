@@ -4,10 +4,12 @@ package rabbitmq
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
 
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/apperror"
 	pkgrabbitmq "github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/rabbitmq"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/port/inbound"
@@ -59,7 +61,7 @@ func (c *PaymentConsumer) handle(ctx context.Context, d pkgrabbitmq.Delivery) er
 		if p.BookingID == "" {
 			return pkgrabbitmq.Permanent(fmt.Errorf("payment.succeeded tanpa bookingId"))
 		}
-		return c.settle.Settle(ctx, inbound.SettleCommand{
+		err := c.settle.Settle(ctx, inbound.SettleCommand{
 			BookingID:      p.BookingID,
 			AttemptID:      p.AttemptID,
 			AmountMinor:    p.AmountMinor,
@@ -67,6 +69,7 @@ func (c *PaymentConsumer) handle(ctx context.Context, d pkgrabbitmq.Delivery) er
 			Method:         p.Method,
 			CorrelationID:  d.Envelope.CorrelationID,
 		})
+		return permanentSettleError(err)
 	case routingPaymentFailed:
 		// Log only; the booking waits for its TTL (AC9.3).
 		c.logger.Info("payment.failed diterima", "messageId", d.Envelope.MessageID)
@@ -74,6 +77,19 @@ func (c *PaymentConsumer) handle(ctx context.Context, d pkgrabbitmq.Delivery) er
 	default:
 		return nil
 	}
+}
+
+// permanentSettleError marks a Settle failure that a retry cannot fix: an unknown booking (ErrNotFound) or a malformed
+// booking id (VALIDATION_ERROR). Anything else (database, dependency) stays retryable.
+func permanentSettleError(err error) error {
+	if err == nil {
+		return nil
+	}
+	var ae *apperror.Error
+	if errors.Is(err, inbound.ErrNotFound) || (errors.As(err, &ae) && ae.Code == inbound.CodeValidation) {
+		return pkgrabbitmq.Permanent(err)
+	}
+	return err
 }
 
 // outboxLease is how long a claimed row stays out of reach of other relay replicas. A relay that crashes mid-batch
