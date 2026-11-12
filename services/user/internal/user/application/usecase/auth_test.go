@@ -607,13 +607,68 @@ func TestRefresh(t *testing.T) {
 		require.NoError(t, err)
 	})
 
+	// D-U1: logout meninggalkan replaced_by NULL; token seperti ini tidak pernah memicu pencabutan massal.
+	t.Run("logged-out token does not revoke other sessions", func(t *testing.T) {
+		u, m := newAuth(t)
+		at := now.Add(-time.Hour)
+		loggedOut := active
+		loggedOut.RevokedAt = &at
+		expectSessionLimit(m)
+		m.sessions.EXPECT().FindByTokenHash(gomock.Any(), gomock.Any()).Return(loggedOut, true, nil)
+		_, err := u.Refresh(ctx, req, client)
+		assert.Equal(t, inbound.CodeSessionInvalid, code(err))
+	})
+	// D-U1: token yang dirotasi <= refreshGrace lalu adalah refresh bersamaan, bukan pencurian.
+	t.Run("concurrent refresh within grace", func(t *testing.T) {
+		u, m := newAuth(t)
+		at := now.Add(-5 * time.Second)
+		next := "s-2"
+		raced := active
+		raced.RevokedAt = &at
+		raced.ReplacedBy = &next
+		expectSessionLimit(m)
+		m.sessions.EXPECT().FindByTokenHash(gomock.Any(), gomock.Any()).Return(raced, true, nil)
+		_, err := u.Refresh(ctx, req, client)
+		assert.Equal(t, inbound.CodeSessionInvalid, code(err))
+	})
+	t.Run("exactly at the grace boundary is still a concurrent refresh", func(t *testing.T) {
+		u, m := newAuth(t)
+		at := now.Add(-refreshGrace)
+		next := "s-2"
+		raced := active
+		raced.RevokedAt = &at
+		raced.ReplacedBy = &next
+		expectSessionLimit(m)
+		m.sessions.EXPECT().FindByTokenHash(gomock.Any(), gomock.Any()).Return(raced, true, nil)
+		_, err := u.Refresh(ctx, req, client)
+		assert.Equal(t, inbound.CodeSessionInvalid, code(err))
+	})
+	// D-U1: token yang dirotasi lebih dari refreshGrace lalu dipakai lagi adalah pencurian.
+	t.Run("reuse after grace revokes all", func(t *testing.T) {
+		u, m := newAuth(t)
+		at := now.Add(-time.Minute)
+		next := "s-2"
+		reused := active
+		reused.RevokedAt = &at
+		reused.ReplacedBy = &next
+		expectSessionLimit(m)
+		m.sessions.EXPECT().FindByTokenHash(gomock.Any(), gomock.Any()).Return(reused, true, nil)
+		m.sessions.EXPECT().RevokeAllForAccount(gomock.Any(), "acc-1", now, gomock.Any()).Return([]string{"s-1", "s-2"}, nil).Times(1)
+		m.audit.EXPECT().Record(gomock.Any(), entity.LoginEvent{AccountID: "acc-1", Outcome: entity.AuditRefreshReused, ClientIP: client.IP}).Return(nil).Times(1)
+		_, err := u.Refresh(ctx, req, client)
+		assert.Equal(t, inbound.CodeSessionInvalid, code(err))
+	})
+
 	// TC-USR-19 / P-10
 	t.Run("reuse revokes everything and denylists every returned sid", func(t *testing.T) {
 		u, m := newAuth(t)
 		deny := &fakeDenylist{}
 		u.d.Denylist = deny
 		revoked := active
-		revoked.RevokedAt = &now
+		at := now.Add(-time.Minute)
+		next := "s-2"
+		revoked.RevokedAt = &at
+		revoked.ReplacedBy = &next
 		expectSessionLimit(m)
 		m.sessions.EXPECT().FindByTokenHash(gomock.Any(), gomock.Any()).Return(revoked, true, nil)
 		m.sessions.EXPECT().RevokeAllForAccount(gomock.Any(), "acc-1", now, now.Add(-(15*time.Minute+revocation.Leeway))).Return([]string{"s-1", "s-2", "s-3"}, nil)
@@ -630,7 +685,10 @@ func TestRefresh(t *testing.T) {
 		deny := &fakeDenylist{failOn: map[string]int{"s-2": 1}}
 		u.d.Denylist = deny
 		revoked := active
-		revoked.RevokedAt = &now
+		at := now.Add(-time.Minute)
+		next := "s-2"
+		revoked.RevokedAt = &at
+		revoked.ReplacedBy = &next
 		expectSessionLimit(m)
 		expectSessionLimit(m)
 		m.sessions.EXPECT().FindByTokenHash(gomock.Any(), gomock.Any()).Return(revoked, true, nil).Times(2)
@@ -645,7 +703,10 @@ func TestRefresh(t *testing.T) {
 	t.Run("reuse with nil denylist still revokes sessions", func(t *testing.T) {
 		u, m := newAuth(t)
 		revoked := active
-		revoked.RevokedAt = &now
+		at := now.Add(-time.Minute)
+		next := "s-2"
+		revoked.RevokedAt = &at
+		revoked.ReplacedBy = &next
 		expectSessionLimit(m)
 		m.sessions.EXPECT().FindByTokenHash(gomock.Any(), gomock.Any()).Return(revoked, true, nil)
 		m.sessions.EXPECT().RevokeAllForAccount(gomock.Any(), "acc-1", now, gomock.Any()).Return([]string{"s-1"}, nil)
@@ -689,7 +750,10 @@ func TestRefresh(t *testing.T) {
 		{"reuse revoke error", req, func(m mocks) {
 			expectSessionLimit(m)
 			r := active
-			r.RevokedAt = &now
+			at := now.Add(-time.Minute)
+			next := "s-2"
+			r.RevokedAt = &at
+			r.ReplacedBy = &next
 			m.sessions.EXPECT().FindByTokenHash(gomock.Any(), gomock.Any()).Return(r, true, nil)
 			m.sessions.EXPECT().RevokeAllForAccount(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, errors.New("db"))
 		}, apperror.CodeInternal},

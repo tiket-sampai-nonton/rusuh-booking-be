@@ -68,7 +68,10 @@ func TestLogSafety_NewFailureBranches(t *testing.T) {
 		{"reuse with denylist failure", func(t *testing.T, u *Auth, m mocks) {
 			u.d.Denylist = &fakeDenylist{err: boom}
 			revoked := active
-			revoked.RevokedAt = &now
+			at := now.Add(-time.Minute)
+			next := "s-2"
+			revoked.RevokedAt = &at
+			revoked.ReplacedBy = &next
 			expectSessionLimit(m)
 			m.sessions.EXPECT().FindByTokenHash(gomock.Any(), gomock.Any()).Return(revoked, true, nil)
 			m.sessions.EXPECT().RevokeAllForAccount(gomock.Any(), "acc-1", now, gomock.Any()).Return([]string{"s-1"}, nil)

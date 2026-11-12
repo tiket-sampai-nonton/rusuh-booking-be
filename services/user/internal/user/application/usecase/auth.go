@@ -21,6 +21,10 @@ import (
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/user/internal/user/port/outbound"
 )
 
+// refreshGrace is the window in which a rotated refresh token that is presented again is treated as a concurrent
+// refresh (two tabs or devices racing), not as theft (D-U1). Past it, reuse revokes every session of the account.
+const refreshGrace = 20 * time.Second
+
 // AuthSettings are the OTP and session limits (dari config OTP_* dan TOKEN_*).
 type AuthSettings struct {
 	OTPTTL          time.Duration
@@ -269,8 +273,12 @@ func (u *Auth) Refresh(ctx context.Context, req dto.RefreshRequest, client inbou
 	}
 	now := u.d.Clock.Now()
 	if sess.Revoked() {
-		if err := u.handleReuse(ctx, sess.AccountID, now, client); err != nil {
-			return dto.TokenResponse{}, err
+		// Reuse hanya bila token dirotasi (bukan logout) dan dipakai lagi setelah refreshGrace; di dalam jeda
+		// ini adalah refresh bersamaan, dan logout tidak mencabut apa pun.
+		if sess.Rotated() && now.Sub(*sess.RevokedAt) > refreshGrace {
+			if err := u.handleReuse(ctx, sess.AccountID, now, client); err != nil {
+				return dto.TokenResponse{}, err
+			}
 		}
 		return dto.TokenResponse{}, inbound.ErrSessionInvalid
 	}

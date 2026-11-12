@@ -139,11 +139,11 @@ type Sessions struct{ pool *pgxpool.Pool }
 // NewSessions returns the repository.
 func NewSessions(pool *pgxpool.Pool) *Sessions { return &Sessions{pool: pool} }
 
-const sessionCols = `id::text, account_id::text, expires_at, revoked_at`
+const sessionCols = `id::text, account_id::text, expires_at, revoked_at, replaced_by::text`
 
 func scanSession(row pgx.Row) (entity.Session, error) {
 	var s entity.Session
-	err := row.Scan(&s.ID, &s.AccountID, &s.ExpiresAt, &s.RevokedAt)
+	err := row.Scan(&s.ID, &s.AccountID, &s.ExpiresAt, &s.RevokedAt, &s.ReplacedBy)
 	return s, err
 }
 
