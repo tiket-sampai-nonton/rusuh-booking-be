@@ -50,12 +50,6 @@ func (r *AdmissionRepo) GetByID(ctx context.Context, id string) (entity.Admissio
 	return mapAdmissionErr(a, err)
 }
 
-// FindByJTI returns the admission bound to a one-time jti.
-func (r *AdmissionRepo) FindByJTI(ctx context.Context, jti string) (entity.Admission, error) {
-	a, err := scanAdmission(r.pool.QueryRow(ctx, `SELECT `+admissionCols+` FROM booking.admissions WHERE admission_jti = $1::uuid`, jti))
-	return mapAdmissionErr(a, err)
-}
-
 // FindActiveByVisitor returns the active admission for a visitor on an event.
 func (r *AdmissionRepo) FindActiveByVisitor(ctx context.Context, eventID, visitorID string) (entity.Admission, error) {
 	a, err := scanAdmission(r.pool.QueryRow(ctx, `SELECT `+admissionCols+`

@@ -48,7 +48,6 @@ type IImageStore interface {
 
 // IAdmissionRepo manages admissions (allocations + sessions).
 type IAdmissionRepo interface {
-	FindByJTI(ctx context.Context, jti string) (entity.Admission, error)
 	FindActiveByVisitor(ctx context.Context, eventID, visitorID string) (entity.Admission, error)
 	FindActiveByEvent(ctx context.Context, eventID, visitorID string) (entity.Admission, error)
 	GetByID(ctx context.Context, id string) (entity.Admission, error)

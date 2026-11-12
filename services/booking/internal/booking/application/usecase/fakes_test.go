@@ -120,9 +120,6 @@ type fakeAdmissionRepo struct {
 	releaseReasons []vo.EndReason
 }
 
-func (f *fakeAdmissionRepo) FindByJTI(context.Context, string) (entity.Admission, error) {
-	return f.admission, f.getErr
-}
 func (f *fakeAdmissionRepo) FindActiveByVisitor(context.Context, string, string) (entity.Admission, error) {
 	return f.admission, f.getErr
 }

@@ -43,8 +43,8 @@ func (uc *Session) CreateSession(ctx context.Context, req dto.CreateSessionReque
 	if errors.Is(err, inbound.ErrAdmissionToken) {
 		// Idempotent re-claim: buyer returned to waiting room and re-claimed an already-ACTIVE session.
 		// claim.lua answers OK/ALREADY with the same allocationID, so a new JWT is issued with the same
-		// JTI. Activate fails because the admission is no longer RESERVED; recover the live session.
-		if existing, ferr := uc.admissions.FindByJTI(ctx, claims.JTI); ferr == nil && existing.IsActive() {
+		// JTI (the admission id). Activate fails because the admission is no longer RESERVED; recover the live session.
+		if existing, ferr := uc.admissions.GetByID(ctx, claims.JTI); ferr == nil && existing.IsActive() {
 			if visitorID == "" || existing.VisitorID == visitorID {
 				return uc.view(ctx, existing)
 			}

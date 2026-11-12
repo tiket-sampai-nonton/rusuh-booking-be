@@ -376,21 +376,6 @@ func (mr *MockIAdmissionRepoMockRecorder) FindActiveByVisitor(ctx, eventID, visi
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FindActiveByVisitor", reflect.TypeOf((*MockIAdmissionRepo)(nil).FindActiveByVisitor), ctx, eventID, visitorID)
 }
 
-// FindByJTI mocks base method.
-func (m *MockIAdmissionRepo) FindByJTI(ctx context.Context, jti string) (entity.Admission, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "FindByJTI", ctx, jti)
-	ret0, _ := ret[0].(entity.Admission)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// FindByJTI indicates an expected call of FindByJTI.
-func (mr *MockIAdmissionRepoMockRecorder) FindByJTI(ctx, jti any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FindByJTI", reflect.TypeOf((*MockIAdmissionRepo)(nil).FindByJTI), ctx, jti)
-}
-
 // GetByID mocks base method.
 func (m *MockIAdmissionRepo) GetByID(ctx context.Context, id string) (entity.Admission, error) {
 	m.ctrl.T.Helper()

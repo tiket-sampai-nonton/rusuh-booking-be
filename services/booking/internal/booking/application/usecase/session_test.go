@@ -70,15 +70,47 @@ func TestCreateSession_InvalidToken(t *testing.T) {
 	assert.ErrorIs(t, err, inbound.ErrAdmissionToken)
 }
 
+// TestCreateSession_ReclaimOfActiveSessionReturnsIt: the re-issued token's jti is the admission id (allocationId),
+// so an already-ACTIVE session is found by id and returned only to its owner.
+func TestCreateSession_ReclaimOfActiveSessionReturnsIt(t *testing.T) {
+	const admissionID = "5f1c2b7e-6a1d-4c3e-9b2a-0d4e8f7a1b2c"
+	tests := []struct {
+		name    string
+		ownerID string
+		wantErr error
+	}{
+		{name: "owner re-claims active session", ownerID: "v-1"},
+		{name: "other visitor is rejected", ownerID: "v-2", wantErr: inbound.ErrAdmissionToken},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			admRepo := &fakeAdmissionRepo{
+				activErr:  inbound.ErrAdmissionToken, // Activate fails: admission is ACTIVE, not RESERVED
+				admission: activeAdmissionForSession(admissionID, tt.ownerID, "event-1"),
+			}
+			verifier := &fakeTokenVerifier{claims: outbound.AdmissionClaims{JTI: admissionID, VisitorID: "v-1"}}
+
+			uc := newSessionUC(admRepo, &fakeEventRepo{}, verifier, fixedClock{t: time.Now()})
+			sess, err := uc.CreateSession(context.Background(), dto.CreateSessionRequest{AdmissionToken: "tok"}, "v-1")
+			if tt.wantErr != nil {
+				assert.ErrorIs(t, err, tt.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, admissionID, sess.SessionID)
+		})
+	}
+}
+
 // TestCreateSession_ReclaimRecovery covers the re-entry scenario (TC-Q-REENTRY-01):
 // buyer returns to waiting room → frontend re-claims → new JWT with same allocationID →
-// Activate fails (admission already ACTIVE) → recovery via FindByJTI returns live session.
+// Activate fails (admission already ACTIVE) → recovery via GetByID(jti) returns live session.
 func TestCreateSession_ReclaimRecovery(t *testing.T) {
 	a := activeAdmissionForSession("sess-1", "visitor-1", "event-1")
 	// Activate fails: admission is already ACTIVE, not RESERVED
 	admRepo := &fakeAdmissionRepo{
 		activErr:  inbound.ErrAdmissionToken,
-		admission: a, // FindByJTI returns the live ACTIVE admission
+		admission: a, // GetByID returns the live ACTIVE admission
 	}
 	evRepo := &fakeEventRepo{}
 	verifier := &fakeTokenVerifier{claims: outbound.AdmissionClaims{JTI: "alloc-1", EventID: "event-1"}}
@@ -99,7 +131,7 @@ func TestCreateSession_ReclaimRecovery_ExpiredSession(t *testing.T) {
 
 	admRepo := &fakeAdmissionRepo{
 		activErr:  inbound.ErrAdmissionToken,
-		admission: a, // FindByJTI returns expired admission
+		admission: a, // GetByID returns expired admission
 	}
 	evRepo := &fakeEventRepo{}
 	verifier := &fakeTokenVerifier{claims: outbound.AdmissionClaims{JTI: "alloc-1", EventID: "event-1"}}
