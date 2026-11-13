@@ -10,6 +10,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	pkgrabbitmq "github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/rabbitmq"
+
 	bookingrabbitmq "github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/infrastructure/rabbitmq"
 )
 
@@ -23,7 +25,7 @@ type fakeOutboxStore struct {
 	failErr    error
 }
 
-func (f *fakeOutboxStore) Pending(_ context.Context, _ int) ([]bookingrabbitmq.OutboxRow, error) {
+func (f *fakeOutboxStore) Claim(_ context.Context, _ int, _ time.Duration) ([]bookingrabbitmq.OutboxRow, error) {
 	return f.rows, f.pendingErr
 }
 
@@ -35,6 +37,29 @@ func (f *fakeOutboxStore) MarkPublished(_ context.Context, id string) error {
 func (f *fakeOutboxStore) MarkFailed(_ context.Context, id string, _ int, _ string, _ time.Duration) error {
 	f.failed = append(f.failed, id)
 	return f.failErr
+}
+
+// fakeOutboxPublisher records every envelope the relay hands to the broker.
+type fakeOutboxPublisher struct {
+	envelopes []pkgrabbitmq.Envelope
+}
+
+func (f *fakeOutboxPublisher) Publish(_ context.Context, _ string, env pkgrabbitmq.Envelope) error {
+	f.envelopes = append(f.envelopes, env)
+	return nil
+}
+
+func TestOutboxRelay_MessageIDIsRowID(t *testing.T) {
+	// The row id is the message id, so a republish after a crash carries the same id and Notification dedupes it.
+	store := &fakeOutboxStore{rows: []bookingrabbitmq.OutboxRow{
+		{ID: "0190f3c2-7a51-7d2e-9b1a-3c4d5e6f7a8b", RoutingKey: "booking.expired", AggregateID: "b1", SchemaVersion: 1, Payload: json.RawMessage(`{"bookingId":"b1"}`)},
+	}}
+	pub := &fakeOutboxPublisher{}
+	relay := bookingrabbitmq.NewOutboxRelay(store, pub, time.Now, logger())
+	require.NoError(t, relay.RunOnce(context.Background()))
+	require.Len(t, pub.envelopes, 1)
+	assert.Equal(t, "0190f3c2-7a51-7d2e-9b1a-3c4d5e6f7a8b", pub.envelopes[0].MessageID)
+	assert.Equal(t, []string{"0190f3c2-7a51-7d2e-9b1a-3c4d5e6f7a8b"}, store.published)
 }
 
 func TestOutboxRelay_NoPendingRows(t *testing.T) {

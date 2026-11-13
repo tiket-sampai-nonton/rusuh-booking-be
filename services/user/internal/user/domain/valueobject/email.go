@@ -4,7 +4,6 @@ import (
 	"errors"
 	"regexp"
 	"strings"
-	"unicode"
 )
 
 // ErrInvalidEmail is returned for malformed email addresses.
@@ -23,7 +22,7 @@ func NewEmail(s string) (Email, error) {
 		return Email{}, ErrInvalidEmail
 	}
 	local, _, _ := strings.Cut(v, "@")
-	if len(local) > 64 || strings.IndexFunc(local, unicode.IsControl) >= 0 {
+	if len(local) > 64 || !isPrintableASCII(local) {
 		return Email{}, ErrInvalidEmail
 	}
 	return Email{value: v}, nil
@@ -31,3 +30,14 @@ func NewEmail(s string) (Email, error) {
 
 // String returns the normalized address.
 func (e Email) String() string { return e.value }
+
+// isPrintableASCII: setiap byte local part harus 0x21..0x7E (tanpa spasi, kontrol, atau UTF-8 multibyte).
+// Plus-addressing (a+b@) tetap diterima karena '+' berada dalam rentang ini.
+func isPrintableASCII(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if c := s[i]; c < 0x21 || c > 0x7e {
+			return false
+		}
+	}
+	return true
+}

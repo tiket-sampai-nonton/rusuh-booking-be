@@ -48,7 +48,6 @@ type IImageStore interface {
 
 // IAdmissionRepo manages admissions (allocations + sessions).
 type IAdmissionRepo interface {
-	FindByJTI(ctx context.Context, jti string) (entity.Admission, error)
 	FindActiveByVisitor(ctx context.Context, eventID, visitorID string) (entity.Admission, error)
 	FindActiveByEvent(ctx context.Context, eventID, visitorID string) (entity.Admission, error)
 	GetByID(ctx context.Context, id string) (entity.Admission, error)
@@ -94,6 +93,8 @@ type ReserveOutcome struct {
 type IBookingRepo interface {
 	GetByID(ctx context.Context, id string) (entity.Booking, error)
 	ListByAccount(ctx context.Context, accountID, cursor string, limit int) ([]dto.MyBookingItem, string, error)
+	// DeferVerification sets the next expiry check of a VERIFYING booking to until (scheduling state, no event).
+	DeferVerification(ctx context.Context, bookingID string, until time.Time) error
 }
 
 // IBookingDueScanner finds bookings whose payment window has lapsed (expiry sweeper).

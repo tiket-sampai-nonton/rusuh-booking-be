@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/crypto"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/httpx"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/revocation"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/token"
@@ -42,6 +43,19 @@ func TestPII_HashAndSeal(t *testing.T) {
 	// Same input → same hash
 	hash2 := pii.HashNIK("3174010101900001")
 	assert.Equal(t, hash, hash2)
+}
+
+// The User service stores the same NIK with the same HMAC key as hash("nik:"+nik) (pkg/crypto). Booking's buyer_quotas
+// and attendee lookups match only if Booking produces the same bytes, so this pins the format without importing User.
+func TestHashNIK_MatchesUserFormat(t *testing.T) {
+	key := []byte("0123456789abcdef0123456789abcdef")
+	pii, err := security.NewPII(key, make([]byte, 32))
+	require.NoError(t, err)
+	userHasher, err := crypto.NewHasher(key)
+	require.NoError(t, err)
+
+	const nik = "3201010101900001"
+	assert.Equal(t, userHasher.Hash("nik:"+nik), pii.HashNIK(nik))
 }
 
 func TestAdmissionVerifier_NilVerifier(t *testing.T) {

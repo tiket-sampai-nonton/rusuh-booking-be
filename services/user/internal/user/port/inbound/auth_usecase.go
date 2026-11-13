@@ -25,10 +25,11 @@ type IAuthUsecase interface {
 // IProfileUsecase reads and updates the logged-in buyer's profile.
 type IProfileUsecase interface {
 	GetProfile(ctx context.Context, accountID string) (dto.ProfileResponse, error)
-	UpdateProfile(ctx context.Context, accountID string, req dto.UpdateProfileRequest) (dto.ProfileResponse, error)
+	// sessionID is the session of the access token; a NIK change revokes it.
+	UpdateProfile(ctx context.Context, accountID, sessionID string, req dto.UpdateProfileRequest) (dto.ProfileResponse, error)
 }
 
-// IAccessTokenVerifier validates the Bearer token and returns the account id.
+// IAccessTokenVerifier validates the Bearer token and returns the account id and the session id.
 type IAccessTokenVerifier interface {
-	VerifyAccess(token string) (accountID string, err error)
+	VerifyAccess(token string) (accountID, sessionID string, err error)
 }

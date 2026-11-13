@@ -48,6 +48,7 @@
 | ADR-031 | Pengaturan antrean per event: PUT admin eksplisit, join ketat, audit di `queue.event_settings_audit` | 2026-11-06 | CN-03, CN-04 | SRS-F-26-07, SRS-F-26-08, SRS-D-08, QSA-1..10 |
 | ADR-030 | Join antrean anonim, jaminan kuantitas, NIK pembeli diikat saat hold, tanpa pemeriksaan bot di klien | 2026-11-04 | CN-03, CN-04 | SRS-F-01-01..09, SRS-F-04-03, SRS-F-05-07, SRS-F-09-01, SRS-F-11-02 |
 | ADR-032 | UUIDv7 untuk ID baru; v4 lama tetap valid | 2026-11-11 | CN-03 | SRS-D (kunci primer) |
+| ADR-033 | GET /me mengembalikan email dan NIK asli kepada pemilik akun | 2026-11-13 | CN-06 | NFR-07, SRS-Q-SEC-05 |
 
 ---
 
@@ -951,3 +952,15 @@ Pola yang diadopsi dari usulan BE-2: **satu image banyak verb** (`api`, `worker`
 | **Tahap 1 (diterapkan)** | `pkg/rabbitmq.NewID` menghasilkan v7: `MessageID` envelope, ID booking dan event, JTI admisi, Message-ID email, ID token sesi pembayaran. Payment migrasi `0005_outbox_uuid_v7`: default `outbox_events.id` = `uuid_generate_v7()`. Event store tidak punya UUID sendiri (kunci `stream_id, version`). Bukti: `pkg/rabbitmq/id_test.go`; 2000 ID dari fungsi SQL di PostgreSQL 16 semuanya versi 7, varian 10, unik, dengan stempel waktu selisih ≤ 6 ms; integration test payment memeriksa ID outbox hasil aplikasi. |
 | **Tahap 2 (diterapkan 2026-11-12)** | Migrasi default kolom `id` ke `uuid_generate_v7()`: booking `0012` (7 tabel, fungsi dibuat di schema booking), notification `0002` (`deliveries`), user `0003` (`accounts`, `sessions`), payment `0006` (`payment_attempts`, `payment_callbacks`, `refund_cases`; fungsi dari `0005`). Aplikasi: `queue/valueobject.NewUUID` dan `user/security.SessionID` menghasilkan v7 dengan stdlib saja (depguard melarang domain queue mengimpor `pkg`, dan user tidak perlu menarik `pkg/rabbitmq`), dua `INSERT sessions` memakai `uuid_generate_v7()` sebagai cadangan. Tes: format v7, unik, stempel waktu sama dengan jam (queue), `SessionID` mewajibkan versi 7 (sebelumnya 4), `embed_test` tiap service memeriksa migrasi baru. |
 | **Sisa** | Tidak ada pembuat ID v4 yang tertinggal di kode aplikasi; ID v4 lama sengaja tidak dimigrasi. Naik ke PG 18: ganti `uuid_generate_v7()` dengan `uuidv7()` bawaan. |
+
+---
+
+## ADR-033: GET /me mengembalikan email dan NIK asli kepada pemilik akun
+
+| Field | Isi |
+|---|---|
+| **Status** | Accepted (2026-11-13), keputusan pemilik. Pengecualian terhadap `security-privacy.md` dan SRS, dicatat di `docs/evidence/2026-11-12-me-plaintext-pii.md`. |
+| **Konteks** | Audit anomali 2026-11-12 (P2-23). Commit `d04cf0d` membuat `GET /api/v1/me` mengembalikan `email` dan `nik` (16 digit) dalam bentuk asli. Sebelumnya User Service hanya mengirim bentuk tersamar, dan `security-privacy.md` menyatakan NIK hanya disimpan tersamar. Perubahan ini belum tercermin di steering maupun SRS. |
+| **Opsi** | (A) Tersamar untuk semua respons. (B) Tersamar secara default; asli hanya bila FE benar-benar perlu (mis. prefill) dan setelah login baru. (C) Asli kepada pemilik akun di `GET /api/v1/me`, endpoint lain tetap tersamar. |
+| **Keputusan** | **C.** Pemilik akun melihat email dan NIK miliknya sendiri. Respons tetap `Cache-Control: no-store` (`auth_handler.go:108`). Kontrak `user.yaml` tidak diubah (keputusan pemilik: tanpa perubahan kontrak). Endpoint lain, event, dan log tidak berubah. Akun nonaktif ditolak dengan `ACCOUNT_DISABLED` sebelum data dibuka (`profile.go`, U3 commit `5112350`). |
+| **Konsekuensi** | (a) Risiko: access token yang dicuri, XSS, perangkat bersama, atau proxy/APM yang merekam body respons memperoleh NIK 16 digit lengkap. (b) Mitigasi: `no-store`; access token berumur pendek (`TOKEN_ACCESS_TTL`, default 15 menit, `config/load.go:59`); akun nonaktif ditolak. (c) Tidak ada body logging: `httpx.AccessLog` (`pkg/httpx/accesslog.go:79-100`) hanya mencatat method, route, status, duration_ms, dan bytes; query string dan header tidak dicatat (`accesslog.go:76-78`); tidak ada middleware yang membaca body respons, dan `r.Body` hanya didekode untuk request (`pkg/httpx/request.go:27`). (d) Bila kelak ada kebutuhan masking default, dibuat ADR baru yang menggantikan ADR ini. |

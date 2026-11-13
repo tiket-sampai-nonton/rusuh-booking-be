@@ -226,7 +226,7 @@ paths:
       operationId: updateMe
       security:
       - userBearer: []
-      description: NIK disimpan terenkripsi (AES-256-GCM) dan unik antar akun; respons hanya memuat NIK tersamar.
+      description: NIK disimpan terenkripsi (AES-256-GCM) dan unik antar akun; respons hanya memuat NIK tersamar. Setelah NIK berubah, access token yang dipakai dicabut; panggil POST /auth/refresh untuk token dengan NIK baru.
       requestBody:
         required: true
         content:
@@ -262,6 +262,12 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
         '409':
           description: 'NIK sudah tertaut ke akun lain — errorCode: `NIK_ALREADY_LINKED`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '429':
+          description: 'Pergantian NIK lebih dari 3 kali per 24 jam — errorCode: `RATE_LIMITED`'
           content:
             application/json:
               schema:

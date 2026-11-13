@@ -376,21 +376,6 @@ func (mr *MockIAdmissionRepoMockRecorder) FindActiveByVisitor(ctx, eventID, visi
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FindActiveByVisitor", reflect.TypeOf((*MockIAdmissionRepo)(nil).FindActiveByVisitor), ctx, eventID, visitorID)
 }
 
-// FindByJTI mocks base method.
-func (m *MockIAdmissionRepo) FindByJTI(ctx context.Context, jti string) (entity.Admission, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "FindByJTI", ctx, jti)
-	ret0, _ := ret[0].(entity.Admission)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// FindByJTI indicates an expected call of FindByJTI.
-func (mr *MockIAdmissionRepoMockRecorder) FindByJTI(ctx, jti any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FindByJTI", reflect.TypeOf((*MockIAdmissionRepo)(nil).FindByJTI), ctx, jti)
-}
-
 // GetByID mocks base method.
 func (m *MockIAdmissionRepo) GetByID(ctx context.Context, id string) (entity.Admission, error) {
 	m.ctrl.T.Helper()
@@ -458,6 +443,20 @@ func NewMockIBookingRepo(ctrl *gomock.Controller) *MockIBookingRepo {
 // EXPECT returns an object that allows the caller to indicate expected use.
 func (m *MockIBookingRepo) EXPECT() *MockIBookingRepoMockRecorder {
 	return m.recorder
+}
+
+// DeferVerification mocks base method.
+func (m *MockIBookingRepo) DeferVerification(ctx context.Context, bookingID string, until time.Time) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "DeferVerification", ctx, bookingID, until)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// DeferVerification indicates an expected call of DeferVerification.
+func (mr *MockIBookingRepoMockRecorder) DeferVerification(ctx, bookingID, until any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeferVerification", reflect.TypeOf((*MockIBookingRepo)(nil).DeferVerification), ctx, bookingID, until)
 }
 
 // GetByID mocks base method.

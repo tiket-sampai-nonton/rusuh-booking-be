@@ -21,6 +21,10 @@ import (
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/user/internal/user/port/outbound"
 )
 
+// refreshGrace is the window in which a rotated refresh token that is presented again is treated as a concurrent
+// refresh (two tabs or devices racing), not as theft (D-U1). Past it, reuse revokes every session of the account.
+const refreshGrace = 20 * time.Second
+
 // AuthSettings are the OTP and session limits (dari config OTP_* dan TOKEN_*).
 type AuthSettings struct {
 	OTPTTL          time.Duration
@@ -229,7 +233,7 @@ func (u *Auth) VerifyOTP(ctx context.Context, req dto.VerifyOTPRequest, client i
 	if err := u.d.Accounts.TouchLogin(ctx, acc.ID, now); err != nil {
 		return dto.TokenResponse{}, apperror.Internal(err)
 	}
-	resp, err := u.openSession(ctx, acc, email.String(), client, now, "")
+	resp, err := u.openSession(ctx, acc, email.String(), client, now, "", time.Time{})
 	if err != nil {
 		return dto.TokenResponse{}, err
 	}
@@ -269,8 +273,12 @@ func (u *Auth) Refresh(ctx context.Context, req dto.RefreshRequest, client inbou
 	}
 	now := u.d.Clock.Now()
 	if sess.Revoked() {
-		if err := u.handleReuse(ctx, sess.AccountID, now, client); err != nil {
-			return dto.TokenResponse{}, err
+		// Reuse hanya bila token dirotasi (bukan logout) dan dipakai lagi setelah refreshGrace; di dalam jeda
+		// ini adalah refresh bersamaan, dan logout tidak mencabut apa pun.
+		if sess.Rotated() && now.Sub(*sess.RevokedAt) > refreshGrace {
+			if err := u.handleReuse(ctx, sess.AccountID, now, client); err != nil {
+				return dto.TokenResponse{}, err
+			}
 		}
 		return dto.TokenResponse{}, inbound.ErrSessionInvalid
 	}
@@ -298,7 +306,8 @@ func (u *Auth) Refresh(ctx context.Context, req dto.RefreshRequest, client inbou
 		return dto.TokenResponse{}, apperror.Internal(fmt.Errorf("unseal email: %w", err))
 	}
 
-	resp, err := u.openSession(ctx, acc, email, client, now, sess.ID)
+	// Rotasi mewarisi batas akhir absolut sesi: refresh tidak memperpanjang login dari RefreshTTL.
+	resp, err := u.openSession(ctx, acc, email, client, now, sess.ID, sess.ExpiresAt)
 	if err != nil {
 		return dto.TokenResponse{}, err
 	}
@@ -377,7 +386,11 @@ func (u *Auth) Logout(ctx context.Context, req dto.RefreshRequest, client inboun
 // openSession issues a refresh token (baru, atau rotasi dari rotateFrom) and an access token.
 // Semua yang bisa gagal tanpa efek samping (token, claim, id sesi) disiapkan SEBELUM commit sesi, sehingga
 // kegagalan setelahnya tidak menghanguskan refresh token lama (HRD-003). email dibutuhkan untuk klaim token.
-func (u *Auth) openSession(ctx context.Context, acc entity.Account, email string, client inbound.ClientInfo, now time.Time, rotateFrom string) (dto.TokenResponse, error) {
+// expiresAt adalah batas akhir sesi; nol berarti now+RefreshTTL (login baru). Rotasi meneruskan batas asli (P2-22).
+func (u *Auth) openSession(ctx context.Context, acc entity.Account, email string, client inbound.ClientInfo, now time.Time, rotateFrom string, expiresAt time.Time) (dto.TokenResponse, error) {
+	if expiresAt.IsZero() {
+		expiresAt = now.Add(u.s.RefreshTTL)
+	}
 	raw, err := u.d.Secrets.RefreshToken()
 	if err != nil {
 		return dto.TokenResponse{}, apperror.Internal(err)
@@ -396,7 +409,7 @@ func (u *Auth) openSession(ctx context.Context, acc entity.Account, email string
 		return dto.TokenResponse{}, apperror.Internal(err)
 	}
 
-	next := entity.NewSession{ID: sid, AccountID: acc.ID, RefreshTokenHash: u.d.PII.HashRefreshToken(raw), UserAgent: client.UserAgent, ExpiresAt: now.Add(u.s.RefreshTTL)}
+	next := entity.NewSession{ID: sid, AccountID: acc.ID, RefreshTokenHash: u.d.PII.HashRefreshToken(raw), UserAgent: client.UserAgent, ExpiresAt: expiresAt}
 	var sess entity.Session
 	if rotateFrom == "" {
 		sess, err = u.d.Sessions.Create(ctx, next)

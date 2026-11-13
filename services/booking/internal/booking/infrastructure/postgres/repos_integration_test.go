@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -147,6 +148,140 @@ func TestBookingRepo_GetListAndDue(t *testing.T) {
 	assert.Empty(t, other, "akun lain tidak melihat pesanan ini")
 }
 
+// P3-6: bookings that share created_at must all be listed across pages (keyset on created_at, id), and an old
+// timestamp-only cursor still pages from that timestamp.
+func TestBookingRepo_ListByAccountSameCreatedAtIsNotSkipped(t *testing.T) {
+	f := seed(t)
+	ctx := context.Background()
+	repo := NewBookingRepo(f.pool)
+	acct := "33333333-3333-3333-3333-333333333333"
+	created := time.Date(2026, 11, 12, 10, 0, 0, 0, time.UTC)
+	want := map[string]bool{}
+	for i := 0; i < 3; i++ {
+		id := f.insertBooking(t, "EXPIRED", time.Now().Add(time.Hour), nil)
+		_, err := f.pool.Exec(ctx, `UPDATE booking.bookings SET account_id=$2::uuid, created_at=$3, payment_expires_at=$4 WHERE id=$1::uuid`,
+			id, acct, created, created.Add(time.Hour))
+		require.NoError(t, err)
+		want[id] = true
+	}
+
+	page1, next, err := repo.ListByAccount(ctx, acct, "", 2)
+	require.NoError(t, err)
+	require.Len(t, page1, 2)
+	require.NotEmpty(t, next)
+	page2, next2, err := repo.ListByAccount(ctx, acct, next, 2)
+	require.NoError(t, err)
+	require.Len(t, page2, 1)
+	assert.Empty(t, next2)
+
+	seen := map[string]bool{}
+	for _, it := range append(page1, page2...) {
+		assert.False(t, seen[it.BookingID], "id berulang di halaman: %s", it.BookingID)
+		seen[it.BookingID] = true
+	}
+	assert.Equal(t, want, seen)
+
+	old, _, err := repo.ListByAccount(ctx, acct, created.Format(time.RFC3339Nano), 10)
+	require.NoError(t, err)
+	assert.Len(t, old, 3, "cursor format lama (tanpa id) tetap memuat semua booking pada stempel waktu itu")
+	junk, _, err := repo.ListByAccount(ctx, acct, created.Format(time.RFC3339Nano)+"_bukan-uuid", 10)
+	require.NoError(t, err, "cursor dengan id rusak tidak boleh menjadi error database")
+	assert.Len(t, junk, 3)
+}
+
+// insertBooking adds a booking in the given status without the hold path. admission_id is unique and an active
+// admission per visitor is unique too, so each booking gets its own terminal (EXPIRED) admission. A nil deadline is NULL.
+func (f fixture) insertBooking(t *testing.T, status string, paymentExpiresAt time.Time, verificationUntil *time.Time) string {
+	t.Helper()
+	admission := f.q(t, `
+		INSERT INTO booking.admissions (event_id, queue_entry_id, queue_seq, visitor_id, buyer_nik_hash, buyer_email_enc, buyer_nik_masked,
+			units, status, cfg_selection_ttl_seconds, cfg_payment_ttl_seconds, cfg_submit_grace_seconds, cfg_edit_enabled, cfg_max_edits,
+			cfg_allow_mixed_categories, expires_at, ended_at, end_reason)
+		VALUES ($1::uuid, gen_random_uuid(), 1, $2::uuid, $3, 'c2VhbGVkLWVtYWls', '3174********0001',
+			1, 'EXPIRED', 300, 600, 5, true, 3, true, now() + interval '5 minutes', now(), 'SESSION_EXPIRED')
+		RETURNING id::text`, f.eventID, visitor, []byte(f.nikH))
+	return f.q(t, `
+		INSERT INTO booking.bookings (public_ref, event_id, admission_id, visitor_id, buyer_nik_hash, buyer_email_enc, status,
+			amount_minor, item_quantity, created_at, payment_expires_at, verification_until)
+		VALUES ('RB-' || substr(gen_random_uuid()::text, 1, 8), $1::uuid, $2::uuid, $3::uuid, $4, 'c2VhbGVkLWVtYWls', $5,
+			150000, 1, $6, $7, $8)
+		RETURNING id::text`, f.eventID, admission, visitor, []byte(f.nikH), status,
+		time.Now().Add(-2*time.Hour), paymentExpiresAt, verificationUntil)
+}
+
+// D-B5: a VERIFYING booking inside its grace window (verification_until is its next check) is not due, even when its
+// payment deadline lapsed long ago. The sweeper takes only the rows that are actually due.
+func TestBookingRepo_DueSkipsVerifyingInGrace(t *testing.T) {
+	f := seed(t)
+	ctx := context.Background()
+	repo := NewBookingRepo(f.pool)
+	now := time.Now()
+
+	for range 3 {
+		f.insertBooking(t, "VERIFYING", now.Add(-10*time.Minute), ptrTime(now.Add(time.Minute)))
+	}
+	pending := f.insertBooking(t, "PENDING_PAYMENT", now.Add(-time.Second), nil)
+
+	due, err := repo.DueBookingIDs(ctx, now, 2)
+	require.NoError(t, err)
+	assert.Equal(t, []string{pending}, due, "limit 2 tidak boleh habis oleh VERIFYING yang masih dalam grace")
+
+	// Once its grace window has passed, a VERIFYING booking is due again.
+	_, err = f.pool.Exec(ctx, `UPDATE booking.bookings SET verification_until = now() - interval '1 second' WHERE status='VERIFYING' AND id IN (
+		SELECT id FROM booking.bookings WHERE status='VERIFYING' LIMIT 1)`)
+	require.NoError(t, err)
+	due, err = repo.DueBookingIDs(ctx, time.Now(), 10)
+	require.NoError(t, err)
+	assert.Len(t, due, 2, "PENDING yang lewat batas bayar dan satu VERIFYING yang grace-nya sudah lewat")
+	assert.Contains(t, due, pending)
+}
+
+func ptrTime(t time.Time) *time.Time { return &t }
+
+// D-B5: DeferVerification moves only a VERIFYING booking's next check; the deferred row is then not due until that time.
+func TestBookingRepo_DeferVerificationOnlyMovesVerifying(t *testing.T) {
+	f := seed(t)
+	ctx := context.Background()
+	repo := NewBookingRepo(f.pool)
+	now := time.Now()
+	verifying := f.insertBooking(t, "VERIFYING", now.Add(-10*time.Minute), ptrTime(now.Add(-time.Second)))
+	pending := f.insertBooking(t, "PENDING_PAYMENT", now.Add(-time.Second), nil)
+
+	until := now.Add(30 * time.Second)
+	require.NoError(t, repo.DeferVerification(ctx, verifying, until))
+	require.NoError(t, repo.DeferVerification(ctx, pending, until), "bukan VERIFYING: dibiarkan")
+
+	var got time.Time
+	require.NoError(t, f.pool.QueryRow(ctx, `SELECT verification_until FROM booking.bookings WHERE id=$1::uuid`, verifying).Scan(&got))
+	assert.WithinDuration(t, until, got, time.Millisecond)
+	assert.Equal(t, 1, f.n(t, `SELECT count(*) FROM booking.bookings WHERE id=$1::uuid AND verification_until IS NULL`, pending))
+
+	due, err := repo.DueBookingIDs(ctx, now, 10)
+	require.NoError(t, err)
+	assert.Equal(t, []string{pending}, due, "VERIFYING yang ditunda belum jatuh tempo")
+}
+
+// Deferral only moves the next check later: a check already scheduled further out (the grace end) is kept, so a
+// backoff after UNKNOWN cannot shorten the grace window that protects late webhooks.
+func TestDeferVerification_NeverMovesTheCheckEarlier(t *testing.T) {
+	f := seed(t)
+	ctx := context.Background()
+	repo := NewBookingRepo(f.pool)
+	now := time.Now()
+	id := f.insertBooking(t, "VERIFYING", now.Add(-10*time.Minute), ptrTime(now.Add(3*time.Minute)))
+	untilOf := func() time.Time {
+		var got time.Time
+		require.NoError(t, f.pool.QueryRow(ctx, `SELECT verification_until FROM booking.bookings WHERE id=$1::uuid`, id).Scan(&got))
+		return got
+	}
+
+	require.NoError(t, repo.DeferVerification(ctx, id, now.Add(30*time.Second)))
+	assert.WithinDuration(t, now.Add(3*time.Minute), untilOf(), time.Millisecond, "penundaan yang lebih awal dari akhir grace diabaikan")
+
+	require.NoError(t, repo.DeferVerification(ctx, id, now.Add(10*time.Minute)))
+	assert.WithinDuration(t, now.Add(10*time.Minute), untilOf(), time.Millisecond, "pemeriksaan yang lebih jauh diterapkan")
+}
+
 func TestAdmissionRepo_FindActivateReserveReleaseAndDue(t *testing.T) {
 	f := seed(t)
 	ctx := context.Background()
@@ -169,9 +304,6 @@ func TestAdmissionRepo_FindActivateReserveReleaseAndDue(t *testing.T) {
 	jti := f.q(t, `SELECT gen_random_uuid()::text`)
 	_, err = f.pool.Exec(ctx, `UPDATE booking.admissions SET status='RESERVED', admission_jti=$2::uuid, claimed_at=NULL WHERE id=$1::uuid`, f.admissionID, jti)
 	require.NoError(t, err)
-	byJTI, err := repo.FindByJTI(ctx, jti)
-	require.NoError(t, err)
-	assert.Equal(t, f.admissionID, byJTI.ID)
 	activated, err := repo.Activate(ctx, f.admissionID, time.Now()) // the token's jti is the admission id (allocationId)
 	require.NoError(t, err)
 	assert.Equal(t, "ACTIVE", string(activated.Status))
@@ -241,7 +373,7 @@ func TestAdmissionRepo_ReserveBatchGrantsInOrderThenRunsOutOfSupply(t *testing.T
 	assert.False(t, released, "melepas dua kali tidak mengubah apa pun")
 }
 
-func TestOutboxWriter_PendingFailPublish(t *testing.T) {
+func TestOutboxWriter_ClaimFailPublish(t *testing.T) {
 	f := seed(t)
 	ctx := context.Background()
 	id := f.hold(t)
@@ -249,17 +381,19 @@ func TestOutboxWriter_PendingFailPublish(t *testing.T) {
 	require.NoError(t, err)
 	w := NewOutboxWriter(f.pool)
 
-	rows, err := w.Pending(ctx, 50)
+	rows, err := w.Claim(ctx, 50, 30*time.Second)
 	require.NoError(t, err)
 	require.NotEmpty(t, rows)
 	first := rows[0]
 
 	require.NoError(t, w.MarkFailed(ctx, first.ID, 1, strings.Repeat("x", 600), time.Minute))
-	rows, err = w.Pending(ctx, 50)
+	// The claim leased every row for 30 s and the failed row now waits out its backoff: nothing is due again yet.
+	rows, err = w.Claim(ctx, 50, 30*time.Second)
 	require.NoError(t, err)
 	for _, r := range rows {
 		assert.NotEqual(t, first.ID, r.ID, "baris gagal ditunda sampai backoff lewat")
 	}
+	assert.Empty(t, rows, "baris yang sudah di-claim tidak diambil lagi sampai lease lewat")
 	var lastErr string
 	require.NoError(t, f.pool.QueryRow(ctx, `SELECT last_error FROM booking.outbox_events WHERE id=$1::uuid`, first.ID).Scan(&lastErr))
 	assert.Len(t, lastErr, 512, "pesan error dipotong")
@@ -268,6 +402,47 @@ func TestOutboxWriter_PendingFailPublish(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, w.MarkPublished(ctx, first.ID))
 	assert.Equal(t, 0, f.n(t, `SELECT count(*) FROM booking.outbox_events WHERE id=$1::uuid AND published_at IS NULL`, first.ID))
+}
+
+// Two relay replicas claiming at once never get the same row: the claim leases rows (available_at moves ahead) under
+// FOR UPDATE SKIP LOCKED, so the second claim skips what the first one took.
+func TestOutboxClaim_TwoRelaysNeverGetTheSameRow(t *testing.T) {
+	f := seed(t)
+	ctx := context.Background()
+	_, err := f.pool.Exec(ctx, `
+		INSERT INTO booking.outbox_events (routing_key, aggregate_id, schema_version, payload)
+		SELECT 'booking.test', gen_random_uuid(), 1, '{"a":1}'::jsonb FROM generate_series(1, 10)`)
+	require.NoError(t, err)
+	w := NewOutboxWriter(f.pool)
+
+	var wg sync.WaitGroup
+	var claimed [2][]string
+	var errs [2]error
+	for i := range claimed {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			rows, err := w.Claim(ctx, 10, 30*time.Second)
+			errs[i] = err
+			for _, r := range rows {
+				claimed[i] = append(claimed[i], r.ID)
+			}
+		}(i)
+	}
+	wg.Wait()
+	require.NoError(t, errs[0])
+	require.NoError(t, errs[1])
+
+	seen := map[string]int{}
+	for _, ids := range claimed {
+		for _, id := range ids {
+			seen[id]++
+		}
+	}
+	assert.Len(t, seen, 10, "kedua relay bersama-sama mendapat seluruh 10 baris")
+	for id, n := range seen {
+		assert.Equal(t, 1, n, "baris %s diambil dua relay", id)
+	}
 }
 
 func TestIdempotencyStore_BeginCompleteReplay(t *testing.T) {
@@ -297,6 +472,61 @@ func TestIdempotencyStore_BeginCompleteReplay(t *testing.T) {
 	_, found, err = s.Begin(ctx, "hold", visitor, "key-lain-0123456789ab", hash, time.Hour)
 	require.NoError(t, err)
 	assert.False(t, found, "kunci berbeda adalah permintaan baru")
+}
+
+func TestIdempotencyBegin_StaleInProgressIsTakenOver(t *testing.T) {
+	f := seed(t)
+	ctx := context.Background()
+	s := NewIdempotencyStore(f.pool)
+	age := func(t *testing.T, key string) {
+		t.Helper()
+		_, err := f.pool.Exec(ctx, `
+			UPDATE booking.idempotency_records SET created_at = now() - interval '2 minutes'
+			 WHERE scope='hold' AND owner_id=$1::uuid AND idempotency_key=$2`, visitor, key)
+		require.NoError(t, err)
+	}
+
+	t.Run("IN_PROGRESS baru tetap dikunci", func(t *testing.T) {
+		const key = "key-baru-0123456789abcd"
+		_, found, err := s.Begin(ctx, "hold", visitor, key, []byte("h1"), time.Hour)
+		require.NoError(t, err)
+		assert.False(t, found)
+
+		rec, found, err := s.Begin(ctx, "hold", visitor, key, []byte("h2"), time.Hour)
+		require.NoError(t, err)
+		assert.True(t, found, "IN_PROGRESS kurang dari 60 detik tidak boleh diambil alih")
+		assert.Equal(t, "IN_PROGRESS", rec.State)
+	})
+
+	t.Run("IN_PROGRESS lebih dari 60 detik diambil alih", func(t *testing.T) {
+		const key = "key-stale-0123456789abc"
+		_, found, err := s.Begin(ctx, "hold", visitor, key, []byte("h1"), time.Hour)
+		require.NoError(t, err)
+		assert.False(t, found)
+		age(t, key)
+
+		rec, found, err := s.Begin(ctx, "hold", visitor, key, []byte("h2"), time.Hour)
+		require.NoError(t, err)
+		assert.False(t, found, "IN_PROGRESS basi dianggap permintaan baru")
+		assert.Equal(t, "IN_PROGRESS", rec.State)
+		assert.Equal(t, []byte("h2"), rec.RequestHash)
+	})
+
+	t.Run("COMPLETED basi tidak diambil alih", func(t *testing.T) {
+		const key = "key-selesai-0123456789ab"
+		_, found, err := s.Begin(ctx, "hold", visitor, key, []byte("h1"), time.Hour)
+		require.NoError(t, err)
+		assert.False(t, found)
+		require.NoError(t, s.Complete(ctx, "hold", visitor, key, 201, []byte(`{"ok":true}`)))
+		age(t, key)
+
+		rec, found, err := s.Begin(ctx, "hold", visitor, key, []byte("h2"), time.Hour)
+		require.NoError(t, err)
+		assert.True(t, found, "COMPLETED tidak pernah diambil alih oleh lease")
+		assert.Equal(t, "COMPLETED", rec.State)
+		assert.Equal(t, 201, rec.ResponseStatus)
+		assert.JSONEq(t, `{"ok":true}`, string(rec.ResponseBody))
+	})
 }
 
 func TestTicketQuotaAndAttendeeRepos(t *testing.T) {

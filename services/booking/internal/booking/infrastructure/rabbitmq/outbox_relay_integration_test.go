@@ -25,7 +25,7 @@ type recordingStore struct {
 	failed    map[string]time.Duration
 }
 
-func (s *recordingStore) Pending(context.Context, int) ([]bookingrabbitmq.OutboxRow, error) {
+func (s *recordingStore) Claim(context.Context, int, time.Duration) ([]bookingrabbitmq.OutboxRow, error) {
 	return s.rows, nil
 }
 func (s *recordingStore) MarkPublished(_ context.Context, id string) error {

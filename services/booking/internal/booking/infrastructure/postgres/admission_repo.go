@@ -50,12 +50,6 @@ func (r *AdmissionRepo) GetByID(ctx context.Context, id string) (entity.Admissio
 	return mapAdmissionErr(a, err)
 }
 
-// FindByJTI returns the admission bound to a one-time jti.
-func (r *AdmissionRepo) FindByJTI(ctx context.Context, jti string) (entity.Admission, error) {
-	a, err := scanAdmission(r.pool.QueryRow(ctx, `SELECT `+admissionCols+` FROM booking.admissions WHERE admission_jti = $1::uuid`, jti))
-	return mapAdmissionErr(a, err)
-}
-
 // FindActiveByVisitor returns the active admission for a visitor on an event.
 func (r *AdmissionRepo) FindActiveByVisitor(ctx context.Context, eventID, visitorID string) (entity.Admission, error) {
 	a, err := scanAdmission(r.pool.QueryRow(ctx, `SELECT `+admissionCols+`
@@ -91,8 +85,10 @@ func (r *AdmissionRepo) Activate(ctx context.Context, jti string, at time.Time) 
 func (r *AdmissionRepo) ReserveBatch(ctx context.Context, eventID string, entries []outbound.ReserveEntry, at time.Time) ([]outbound.ReserveOutcome, error) {
 	out := make([]outbound.ReserveOutcome, 0, len(entries))
 	err := pkgpg.WithTx(ctx, r.pool, pgx.TxOptions{IsoLevel: pgx.ReadCommitted}, func(tx pgx.Tx) error {
+		// Per batch: the booking.sold_out row is written once, by the first entry that finds nothing left.
+		soldOutAnnounced := false
 		for _, e := range entries {
-			out = append(out, r.reserveOne(ctx, tx, eventID, e, at))
+			out = append(out, r.reserveOne(ctx, tx, eventID, e, at, &soldOutAnnounced))
 		}
 		return nil
 	})
@@ -102,7 +98,7 @@ func (r *AdmissionRepo) ReserveBatch(ctx context.Context, eventID string, entrie
 	return out, nil
 }
 
-func (r *AdmissionRepo) reserveOne(ctx context.Context, tx pgx.Tx, eventID string, e outbound.ReserveEntry, at time.Time) outbound.ReserveOutcome {
+func (r *AdmissionRepo) reserveOne(ctx context.Context, tx pgx.Tx, eventID string, e outbound.ReserveEntry, at time.Time, soldOutAnnounced *bool) outbound.ReserveOutcome {
 	res := outbound.ReserveOutcome{QueueEntryID: e.QueueEntryID, Units: e.Units}
 	// Use a savepoint so a per-entry failure does not abort the whole batch transaction.
 	if _, err := tx.Exec(ctx, "SAVEPOINT entry"); err != nil {
@@ -175,12 +171,16 @@ func (r *AdmissionRepo) reserveOne(ctx context.Context, tx pgx.Tx, eventID strin
 
 	// Step 4 (§9.1): supply checks.
 	if freeUnits+allocUnits+heldUnits == 0 {
-		// Fully sold out (free=0, alloc=0, held=0): mark event SOLD_OUT and write outbox.
-		_, _ = tx.Exec(ctx, `
-			UPDATE booking.events SET status='SOLD_OUT'
-			 WHERE id=$1::uuid AND status='AVAILABLE'`, eventID)
-		_ = enqueueOutboxTx(ctx, tx, "booking.sold_out", eventID, map[string]any{"eventId": eventID})
+		// Fully sold out (free=0, alloc=0, held=0). Roll this entry back first, then announce in its own savepoint:
+		// announcing before the entry rollback let ROLLBACK TO SAVEPOINT entry erase the status and the outbox row.
 		_, _ = tx.Exec(ctx, "ROLLBACK TO SAVEPOINT entry")
+		if _, err := tx.Exec(ctx, "SAVEPOINT sold_out"); err == nil {
+			if err := announceSoldOutTx(ctx, tx, eventID, soldOutAnnounced); err != nil {
+				_, _ = tx.Exec(ctx, "ROLLBACK TO SAVEPOINT sold_out")
+			} else {
+				_, _ = tx.Exec(ctx, "RELEASE SAVEPOINT sold_out")
+			}
+		}
 		res.Outcome = "SOLD_OUT"
 		return res
 	}
@@ -256,6 +256,24 @@ func (r *AdmissionRepo) reserveOne(ctx context.Context, tx pgx.Tx, eventID strin
 	d := expiresAt
 	res.ClaimDeadline = &d
 	return res
+}
+
+// announceSoldOutTx marks the event SOLD_OUT and writes the booking.sold_out row. The row is written only while
+// *announced is false, so a batch announces at most once; it is set only after the row is written.
+func announceSoldOutTx(ctx context.Context, tx pgx.Tx, eventID string, announced *bool) error {
+	if _, err := tx.Exec(ctx, `
+		UPDATE booking.events SET status='SOLD_OUT'
+		 WHERE id=$1::uuid AND status='AVAILABLE'`, eventID); err != nil {
+		return err
+	}
+	if *announced {
+		return nil
+	}
+	if err := enqueueOutboxTx(ctx, tx, "booking.sold_out", eventID, map[string]any{"eventId": eventID}); err != nil {
+		return err
+	}
+	*announced = true
+	return nil
 }
 
 // existingOutcome resolves a unique-violation to the right idempotent outcome.

@@ -48,6 +48,12 @@ func (a Admission) IsActive() bool { return a.Status.IsActive() }
 // IsExpired reports whether now is past the admission's expiry.
 func (a Admission) IsExpired(now time.Time) bool { return !now.Before(a.ExpiresAt) }
 
+// PastGrace reports whether now is past the submit grace that follows expiry. Hold and attendee checks use it so a
+// buyer who submits inside the grace window is still accepted (the DB-side hold uses the same grace).
+func (a Admission) PastGrace(now time.Time) bool {
+	return !now.Before(a.ExpiresAt.Add(time.Duration(a.CfgSubmitGraceSeconds) * time.Second))
+}
+
 // ChecksRemaining returns how many more unique attendee checks the session allows.
 func (a Admission) ChecksRemaining(maxChecks int) int {
 	r := maxChecks - a.AttendeeChecks

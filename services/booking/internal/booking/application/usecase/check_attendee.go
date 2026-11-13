@@ -54,7 +54,7 @@ func (uc *CheckAttendee) CheckAttendee(ctx context.Context, sessionID, visitorID
 	if admission.VisitorID != visitorID {
 		return dto.AttendeeCheck{}, inbound.ErrVisitorMismatch
 	}
-	if admission.IsExpired(uc.clock.Now()) || !admission.IsActive() {
+	if admission.PastGrace(uc.clock.Now()) || !admission.IsActive() {
 		return dto.AttendeeCheck{}, inbound.ErrSessionExpired
 	}
 	event, err := uc.events.GetByID(ctx, admission.EventID)

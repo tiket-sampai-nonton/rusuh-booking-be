@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	pkgpg "github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/postgres"
@@ -75,19 +77,33 @@ func (r *BookingRepo) items(ctx context.Context, bookingID string) ([]entity.Boo
 	return out, rows.Err()
 }
 
-// ListByAccount returns the buyer's bookings with keyset pagination on created_at (newest first).
+// maxBookingID is the id part of an old timestamp-only cursor: it sorts after every UUID, so no row at that timestamp is
+// skipped.
+const maxBookingID = "ffffffff-ffff-ffff-ffff-ffffffffffff"
+
+// ListByAccount returns the buyer's bookings with keyset pagination on (created_at, id), newest first. The next cursor
+// is "<created_at RFC3339Nano>_<booking id>" of the last item; bookings that share a created_at are not skipped.
 func (r *BookingRepo) ListByAccount(ctx context.Context, accountID, cursor string, limit int) ([]dto.MyBookingItem, string, error) {
 	before := time.Now().UTC().Add(24 * time.Hour)
+	afterID := maxBookingID
 	if cursor != "" {
-		if t, err := time.Parse(time.RFC3339Nano, cursor); err == nil {
+		ts := cursor
+		if i := strings.LastIndex(cursor, "_"); i >= 0 {
+			ts, afterID = cursor[:i], cursor[i+1:]
+			var probe pgtype.UUID
+			if probe.Scan(afterID) != nil {
+				afterID = maxBookingID
+			}
+		}
+		if t, err := time.Parse(time.RFC3339Nano, ts); err == nil {
 			before = t
 		}
 	}
 	rows, err := r.pool.Query(ctx, `
 		SELECT b.id::text, b.public_ref, e.name, b.status, b.amount_minor, b.created_at
 		  FROM booking.bookings b JOIN booking.events e ON e.id = b.event_id
-		 WHERE b.account_id = $1::uuid AND b.created_at < $2
-		 ORDER BY b.created_at DESC LIMIT $3`, accountID, before, limit+1)
+		 WHERE b.account_id = $1::uuid AND (b.created_at, b.id) < ($2, $3::uuid)
+		 ORDER BY b.created_at DESC, b.id DESC LIMIT $4`, accountID, before, afterID, limit+1)
 	if err != nil {
 		return nil, "", fmt.Errorf("bookings: list by account: %w", err)
 	}
@@ -105,18 +121,21 @@ func (r *BookingRepo) ListByAccount(ctx context.Context, accountID, cursor strin
 	}
 	next := ""
 	if len(items) > limit {
-		next = items[limit-1].CreatedAt.Format(time.RFC3339Nano)
+		last := items[limit-1]
+		next = last.CreatedAt.Format(time.RFC3339Nano) + "_" + last.BookingID
 		items = items[:limit]
 	}
 	return items, next, nil
 }
 
-// DueBookingIDs returns ids of bookings whose payment window lapsed.
+// DueBookingIDs returns ids of bookings the expiry sweeper must look at now: PENDING_PAYMENT past its payment deadline,
+// and VERIFYING whose next check (verification_until, D-B5) has come. A VERIFYING booking still in grace is not due.
 func (r *BookingRepo) DueBookingIDs(ctx context.Context, now time.Time, limit int) ([]string, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT id::text FROM booking.bookings
-		 WHERE status IN ('PENDING_PAYMENT','VERIFYING') AND payment_expires_at < $1
-		 ORDER BY payment_expires_at LIMIT $2`, now, limit)
+		 WHERE (status='PENDING_PAYMENT' AND payment_expires_at < $1)
+		    OR (status='VERIFYING' AND verification_until <= $1)
+		 ORDER BY COALESCE(verification_until, payment_expires_at) LIMIT $2`, now, limit)
 	if err != nil {
 		return nil, fmt.Errorf("bookings: due: %w", err)
 	}
@@ -130,4 +149,16 @@ func (r *BookingRepo) DueBookingIDs(ctx context.Context, now time.Time, limit in
 		out = append(out, id)
 	}
 	return out, rows.Err()
+}
+
+// DeferVerification moves the next check of a VERIFYING booking to until, but never earlier (D-B5): GREATEST keeps a
+// later check already scheduled, such as the grace end set when the payment window lapsed. It is scheduling state, so
+// no event is appended. A booking that already left VERIFYING is left unchanged.
+func (r *BookingRepo) DeferVerification(ctx context.Context, bookingID string, until time.Time) error {
+	if _, err := r.pool.Exec(ctx, `
+		UPDATE booking.bookings SET verification_until=GREATEST(verification_until, $2), updated_at=now()
+		 WHERE id=$1::uuid AND status='VERIFYING'`, bookingID, until); err != nil {
+		return fmt.Errorf("bookings: defer verification: %w", err)
+	}
+	return nil
 }

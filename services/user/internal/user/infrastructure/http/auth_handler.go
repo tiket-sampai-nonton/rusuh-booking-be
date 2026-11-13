@@ -115,7 +115,7 @@ func (h *AuthHandler) patchMe(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		httpx.WriteError(w, r, err)
 		return
 	}
-	resp, err := h.profile.UpdateProfile(r.Context(), accountIDFrom(r.Context()), req)
+	resp, err := h.profile.UpdateProfile(r.Context(), accountIDFrom(r.Context()), sessionIDFrom(r.Context()), req)
 	if err != nil {
 		httpx.WriteError(w, r, err)
 		return
@@ -125,13 +125,19 @@ func (h *AuthHandler) patchMe(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 }
 
 type accountKey struct{}
+type sessionKey struct{}
 
 func accountIDFrom(ctx context.Context) string {
 	id, _ := ctx.Value(accountKey{}).(string)
 	return id
 }
 
-// requireAuth verifies the Bearer access token and stores the account id in the context.
+func sessionIDFrom(ctx context.Context) string {
+	id, _ := ctx.Value(sessionKey{}).(string)
+	return id
+}
+
+// requireAuth verifies the Bearer access token and stores the account id and session id in the context.
 func (h *AuthHandler) requireAuth(next stdhttp.HandlerFunc) stdhttp.Handler {
 	return stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		tok, ok := httpx.BearerToken(r)
@@ -140,12 +146,14 @@ func (h *AuthHandler) requireAuth(next stdhttp.HandlerFunc) stdhttp.Handler {
 			httpx.WriteError(w, r, inbound.ErrUnauthorized)
 			return
 		}
-		id, err := h.verifier.VerifyAccess(tok)
+		id, sid, err := h.verifier.VerifyAccess(tok)
 		if err != nil {
 			w.Header().Set("WWW-Authenticate", `Bearer realm="rbt", error="invalid_token"`)
 			httpx.WriteError(w, r, inbound.ErrUnauthorized)
 			return
 		}
-		next(w, r.WithContext(context.WithValue(r.Context(), accountKey{}, id)))
+		ctx := context.WithValue(r.Context(), accountKey{}, id)
+		ctx = context.WithValue(ctx, sessionKey{}, sid)
+		next(w, r.WithContext(ctx))
 	})
 }

@@ -174,11 +174,11 @@ func (t *Tokens) IssueAccess(accountID, sessionID, email string, nikHash []byte,
 	return tok, exp, err
 }
 
-// VerifyAccess validates a Bearer token.
-func (t *Tokens) VerifyAccess(tok string) (string, error) {
+// VerifyAccess validates a Bearer token and returns its account id and session id.
+func (t *Tokens) VerifyAccess(tok string) (string, string, error) {
 	c, err := t.verifier.Verify(tok, t.now())
 	if err != nil || revocation.Check(t.denylist, c) != nil {
-		return "", inbound.ErrUnauthorized
+		return "", "", inbound.ErrUnauthorized
 	}
-	return c.Subject, nil
+	return c.Subject, c.SessionID, nil
 }

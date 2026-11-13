@@ -192,6 +192,39 @@ func TestSessions_RotateIsSingleWinner(t *testing.T) {
 	assert.False(t, ok)
 }
 
+// D-U1: replaced_by is set by rotation only; logout leaves it NULL.
+func TestSessions_ReplacedByTracksRotationOnly(t *testing.T) {
+	ctx := context.Background()
+	pool := setup(t)
+	acc, err := NewAccounts(pool).Create(ctx, entity.NewAccount{EmailHash: []byte("h"), EmailEnc: []byte("e"), EmailMasked: "m"})
+	require.NoError(t, err)
+	repo := NewSessions(pool)
+	exp := time.Now().Add(time.Hour)
+
+	old, err := repo.Create(ctx, entity.NewSession{AccountID: acc.ID, RefreshTokenHash: []byte("old"), ExpiresAt: exp})
+	require.NoError(t, err)
+	assert.Nil(t, old.ReplacedBy)
+
+	next, err := repo.Rotate(ctx, old.ID, entity.NewSession{AccountID: acc.ID, RefreshTokenHash: []byte("new"), ExpiresAt: exp}, time.Now())
+	require.NoError(t, err)
+	rotated, ok, err := repo.FindByTokenHash(ctx, []byte("old"))
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.NotNil(t, rotated.ReplacedBy)
+	assert.Equal(t, next.ID, *rotated.ReplacedBy)
+	assert.True(t, rotated.Rotated())
+
+	loggedOut, err := repo.Create(ctx, entity.NewSession{AccountID: acc.ID, RefreshTokenHash: []byte("out"), ExpiresAt: exp})
+	require.NoError(t, err)
+	require.NoError(t, repo.Revoke(ctx, loggedOut.ID, time.Now()))
+	out, ok, err := repo.FindByTokenHash(ctx, []byte("out"))
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.True(t, out.Revoked())
+	assert.Nil(t, out.ReplacedBy, "logout tidak mengisi replaced_by")
+	assert.False(t, out.Rotated())
+}
+
 func TestSessions_CreateWithPregeneratedID(t *testing.T) {
 	ctx := context.Background()
 	pool := setup(t)

@@ -4,10 +4,12 @@ package rabbitmq
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
 
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/apperror"
 	pkgrabbitmq "github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/rabbitmq"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/port/inbound"
@@ -59,7 +61,7 @@ func (c *PaymentConsumer) handle(ctx context.Context, d pkgrabbitmq.Delivery) er
 		if p.BookingID == "" {
 			return pkgrabbitmq.Permanent(fmt.Errorf("payment.succeeded tanpa bookingId"))
 		}
-		return c.settle.Settle(ctx, inbound.SettleCommand{
+		err := c.settle.Settle(ctx, inbound.SettleCommand{
 			BookingID:      p.BookingID,
 			AttemptID:      p.AttemptID,
 			AmountMinor:    p.AmountMinor,
@@ -67,6 +69,7 @@ func (c *PaymentConsumer) handle(ctx context.Context, d pkgrabbitmq.Delivery) er
 			Method:         p.Method,
 			CorrelationID:  d.Envelope.CorrelationID,
 		})
+		return permanentSettleError(err)
 	case routingPaymentFailed:
 		// Log only; the booking waits for its TTL (AC9.3).
 		c.logger.Info("payment.failed diterima", "messageId", d.Envelope.MessageID)
@@ -76,10 +79,27 @@ func (c *PaymentConsumer) handle(ctx context.Context, d pkgrabbitmq.Delivery) er
 	}
 }
 
+// permanentSettleError marks a Settle failure that a retry cannot fix: an unknown booking (ErrNotFound) or a malformed
+// booking id (VALIDATION_ERROR). Anything else (database, dependency) stays retryable.
+func permanentSettleError(err error) error {
+	if err == nil {
+		return nil
+	}
+	var ae *apperror.Error
+	if errors.Is(err, inbound.ErrNotFound) || (errors.As(err, &ae) && ae.Code == inbound.CodeValidation) {
+		return pkgrabbitmq.Permanent(err)
+	}
+	return err
+}
+
+// outboxLease is how long a claimed row stays out of reach of other relay replicas. A relay that crashes mid-batch
+// releases its rows when the lease passes.
+const outboxLease = 30 * time.Second
+
 // OutboxRelay publishes pending outbox rows to the exchange with confirms (transactional outbox).
 type OutboxRelay struct {
 	store  OutboxStore
-	pub    *pkgrabbitmq.Publisher
+	pub    OutboxPublisher
 	now    func() time.Time
 	logger *slog.Logger
 	batch  int
@@ -87,9 +107,14 @@ type OutboxRelay struct {
 
 // OutboxStore is the persistence the relay needs (implemented by the postgres OutboxWriter).
 type OutboxStore interface {
-	Pending(ctx context.Context, limit int) ([]OutboxRow, error)
+	Claim(ctx context.Context, limit int, lease time.Duration) ([]OutboxRow, error)
 	MarkPublished(ctx context.Context, id string) error
 	MarkFailed(ctx context.Context, id string, attempts int, errMsg string, backoff time.Duration) error
+}
+
+// OutboxPublisher is the broker side of the relay (implemented by pkg/rabbitmq.Publisher).
+type OutboxPublisher interface {
+	Publish(ctx context.Context, routingKey string, env pkgrabbitmq.Envelope) error
 }
 
 // OutboxRow is one pending outbox event.
@@ -103,13 +128,13 @@ type OutboxRow struct {
 }
 
 // NewOutboxRelay wires the relay.
-func NewOutboxRelay(store OutboxStore, pub *pkgrabbitmq.Publisher, now func() time.Time, logger *slog.Logger) *OutboxRelay {
+func NewOutboxRelay(store OutboxStore, pub OutboxPublisher, now func() time.Time, logger *slog.Logger) *OutboxRelay {
 	return &OutboxRelay{store: store, pub: pub, now: now, logger: logger, batch: 100}
 }
 
-// RunOnce publishes one batch of pending rows. Called every WORKER_INTERVAL.
+// RunOnce claims and publishes one batch of due rows. Called every WORKER_INTERVAL.
 func (r *OutboxRelay) RunOnce(ctx context.Context) error {
-	rows, err := r.store.Pending(ctx, r.batch)
+	rows, err := r.store.Claim(ctx, r.batch, outboxLease)
 	if err != nil {
 		return err
 	}
@@ -119,6 +144,9 @@ func (r *OutboxRelay) RunOnce(ctx context.Context) error {
 			_ = r.store.MarkFailed(ctx, row.ID, row.Attempts+1, err.Error(), backoff(row.Attempts))
 			continue
 		}
+		// The row id is the message id: a republish after a lost confirm carries the same id, and Notification
+		// deduplicates on it.
+		env.MessageID = row.ID
 		env.SchemaVersion = row.SchemaVersion
 		if env.SchemaVersion < 1 {
 			env.SchemaVersion = 1

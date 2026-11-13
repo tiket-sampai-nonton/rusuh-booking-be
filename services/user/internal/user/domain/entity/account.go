@@ -42,14 +42,18 @@ type ProfileUpdate struct {
 
 // Session is a refresh-token session.
 type Session struct {
-	ID        string
-	AccountID string
-	ExpiresAt time.Time
-	RevokedAt *time.Time
+	ID         string
+	AccountID  string
+	ExpiresAt  time.Time
+	RevokedAt  *time.Time
+	ReplacedBy *string // id sesi pengganti; nil bila dicabut karena logout
 }
 
 // Revoked reports whether the session was revoked (logout atau rotasi).
 func (s Session) Revoked() bool { return s.RevokedAt != nil }
+
+// Rotated reports whether the session was revoked by a refresh rotation (bukan logout).
+func (s Session) Rotated() bool { return s.ReplacedBy != nil }
 
 // Expired reports whether the session expired at now.
 func (s Session) Expired(now time.Time) bool { return !now.Before(s.ExpiresAt) }

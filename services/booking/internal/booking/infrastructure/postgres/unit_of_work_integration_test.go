@@ -22,6 +22,7 @@ import (
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/domain/dto"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/deployments/migrations"
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/port/inbound"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/port/outbound"
 )
 
@@ -134,11 +135,9 @@ func seed(t *testing.T) fixture {
 	return f
 }
 
-// hold makes a PENDING_PAYMENT booking through the real unit of work and returns its id.
-func (f fixture) hold(t *testing.T) string {
-	t.Helper()
-	id := f.q(t, `SELECT gen_random_uuid()::text`)
-	_, err := f.uow.Hold(context.Background(), outbound.HoldSpec{
+// holdSpec is the one-line hold of the seeded admission, for booking id.
+func (f fixture) holdSpec(id string) outbound.HoldSpec {
+	return outbound.HoldSpec{
 		BookingID: id, PublicRef: "RB-7F3A9C21", EventID: f.eventID, AdmissionID: f.admissionID, VisitorID: visitor,
 		BuyerNIKHash: []byte(f.nikH), BuyerEmailEnc: sealedEmail, AmountMinor: 150000, CfgEditEnabled: true, PaymentExpiresAt: time.Now().Add(10 * time.Minute),
 		Lines: []outbound.HoldLine{{
@@ -146,9 +145,32 @@ func (f fixture) hold(t *testing.T) string {
 			AttendeeNIKMasked: "3174********0001", AttendeeName: "Budi Santoso",
 		}},
 		CorrelationID: id,
-	})
+	}
+}
+
+// hold makes a PENDING_PAYMENT booking through the real unit of work and returns its id.
+func (f fixture) hold(t *testing.T) string {
+	t.Helper()
+	id := f.q(t, `SELECT gen_random_uuid()::text`)
+	_, err := f.uow.Hold(context.Background(), f.holdSpec(id))
 	require.NoError(t, err)
 	return id
+}
+
+// P2-9: the event can be cancelled after the usecase has read it. The hold transaction re-reads the status after
+// the supply lock and refuses, without touching stock.
+func TestHold_EventCancelledInsideTransaction(t *testing.T) {
+	f := seed(t)
+	ctx := context.Background()
+	_, err := f.pool.Exec(ctx, `UPDATE booking.events SET status = 'CANCELLED' WHERE id = $1::uuid`, f.eventID)
+	require.NoError(t, err)
+	before := f.stock(t)
+
+	id := f.q(t, `SELECT gen_random_uuid()::text`)
+	_, err = f.uow.Hold(ctx, f.holdSpec(id))
+	assert.ErrorIs(t, err, inbound.ErrEventCancelled)
+	assert.Equal(t, before, f.stock(t), "stok tidak berubah ketika event dibatalkan")
+	assert.Equal(t, 0, f.n(t, `SELECT count(*) FROM booking.bookings WHERE id=$1::uuid`, id), "tidak ada booking yang dibuat")
 }
 
 // Regression: a hold that locks at once (edit disabled) appends BookingHeld + BookingLocked, so the read model must
@@ -184,8 +206,8 @@ func (f fixture) stock(t *testing.T) [5]int {
 	var s [5]int
 	require.NoError(t, f.pool.QueryRow(context.Background(), `
 		SELECT s.allocated_units, s.held_units, s.sold_units,
-		       (SELECT held_quantity FROM booking.category_inventories WHERE event_id=s.event_id),
-		       (SELECT paid_quantity FROM booking.buyer_quotas WHERE event_id=s.event_id)
+		       COALESCE((SELECT held_quantity FROM booking.category_inventories WHERE event_id=s.event_id), 0),
+		       COALESCE((SELECT paid_quantity FROM booking.buyer_quotas WHERE event_id=s.event_id), 0)
 		  FROM booking.event_supply s`).Scan(&s[0], &s[1], &s[2], &s[3], &s[4]))
 	return s
 }
@@ -241,6 +263,75 @@ func TestPaymentLock_RefusesExpiredAndNonPayableBookings(t *testing.T) {
 	res, err = f.uow.PaymentLock(ctx, outbound.PaymentLockSpec{BookingID: id, AttemptKey: "k", CorrelationID: id})
 	require.NoError(t, err)
 	assert.Equal(t, "BOOKING_NOT_PAYABLE", res.Outcome)
+}
+
+// The extension is recorded as an event and only once; a second request is refused (deadline_extended_at).
+func TestExtendDeadline_RecordsEventAndRefusesSecondExtension(t *testing.T) {
+	f := seed(t)
+	ctx := context.Background()
+	id := f.hold(t)
+	var before time.Time
+	require.NoError(t, f.pool.QueryRow(ctx, `SELECT payment_expires_at FROM booking.bookings WHERE id=$1::uuid`, id).Scan(&before))
+
+	require.NoError(t, f.uow.ExtendDeadline(ctx, outbound.DeadlineSpec{BookingID: id, Reason: "PAYMENT_PENDING", Seconds: 120, CorrelationID: id}))
+	var after time.Time
+	require.NoError(t, f.pool.QueryRow(ctx, `SELECT payment_expires_at FROM booking.bookings WHERE id=$1::uuid`, id).Scan(&after))
+	assert.Equal(t, 120*time.Second, after.Sub(before))
+	assert.Equal(t, 1, f.n(t, `SELECT count(*) FROM booking.booking_events WHERE stream_id=$1::uuid AND event_type='BookingDeadlineExtended'`, id))
+	assert.Equal(t, 2, f.n(t, `SELECT version FROM booking.bookings WHERE id=$1::uuid`, id), "BookingHeld v1, BookingDeadlineExtended v2: read model mengikuti stream")
+
+	err := f.uow.ExtendDeadline(ctx, outbound.DeadlineSpec{BookingID: id, Reason: "PAYMENT_PENDING", Seconds: 120, CorrelationID: id})
+	assert.ErrorIs(t, err, inbound.ErrDeadlineAlreadyExtended)
+	assert.Equal(t, 1, f.n(t, `SELECT count(*) FROM booking.booking_events WHERE stream_id=$1::uuid AND event_type='BookingDeadlineExtended'`, id), "tidak ada event ganda")
+}
+
+// D-B3: a VERIFYING booking is already past its deadline and must go through the sweeper, not be extended.
+func TestExtendDeadline_RefusesVerifyingBooking(t *testing.T) {
+	f := seed(t)
+	ctx := context.Background()
+	id := f.hold(t)
+	_, err := f.pool.Exec(ctx, `UPDATE booking.bookings SET created_at = now() - interval '10 minutes', payment_expires_at = now() - interval '1 second' WHERE id=$1::uuid`, id)
+	require.NoError(t, err)
+	acted, err := f.uow.StartVerifying(ctx, id, 180)
+	require.NoError(t, err)
+	require.True(t, acted)
+
+	err = f.uow.ExtendDeadline(ctx, outbound.DeadlineSpec{BookingID: id, Reason: "PAYMENT_PENDING", Seconds: 120, CorrelationID: id})
+	assert.ErrorIs(t, err, inbound.ErrNotPayable)
+	assert.Equal(t, 0, f.n(t, `SELECT count(*) FROM booking.booking_events WHERE stream_id=$1::uuid AND event_type='BookingDeadlineExtended'`, id))
+	assert.Equal(t, 0, f.n(t, `SELECT count(*) FROM booking.bookings WHERE id=$1::uuid AND deadline_extended_at IS NOT NULL`, id))
+}
+
+func TestExtendDeadline_RefusesMissingAndLapsedBookings(t *testing.T) {
+	f := seed(t)
+	ctx := context.Background()
+
+	err := f.uow.ExtendDeadline(ctx, outbound.DeadlineSpec{BookingID: "00000000-0000-0000-0000-000000000000", Reason: "PAYMENT_PENDING", Seconds: 120})
+	assert.ErrorIs(t, err, inbound.ErrNotFound)
+
+	id := f.hold(t)
+	_, err = f.pool.Exec(ctx, `UPDATE booking.bookings SET created_at = now() - interval '10 minutes', payment_expires_at = now() - interval '1 second' WHERE id=$1::uuid`, id)
+	require.NoError(t, err)
+	err = f.uow.ExtendDeadline(ctx, outbound.DeadlineSpec{BookingID: id, Reason: "PAYMENT_PENDING", Seconds: 120, CorrelationID: id})
+	assert.ErrorIs(t, err, inbound.ErrPaymentExpired)
+	assert.Equal(t, 0, f.n(t, `SELECT count(*) FROM booking.booking_events WHERE stream_id=$1::uuid AND event_type='BookingDeadlineExtended'`, id))
+}
+
+// P1-5: a VERIFYING booking without payment_started_at is stamped by payment-lock (not returned as an idempotent no-op).
+func TestPaymentLock_StampsAVerifyingBookingWithoutStamp(t *testing.T) {
+	f := seed(t)
+	ctx := context.Background()
+	id := f.hold(t)
+	_, err := f.pool.Exec(ctx, `UPDATE booking.bookings
+		SET status='VERIFYING', verification_until = now() + interval '1 minute', payment_started_at = NULL,
+		    payment_expires_at = now() + interval '1 minute'
+		WHERE id=$1::uuid`, id)
+	require.NoError(t, err)
+
+	res, err := f.uow.PaymentLock(ctx, outbound.PaymentLockSpec{BookingID: id, AttemptKey: "attempt-1", CorrelationID: id})
+	require.NoError(t, err)
+	assert.Equal(t, "OK", res.Outcome)
+	assert.Equal(t, 1, f.n(t, `SELECT count(*) FROM booking.bookings WHERE id=$1::uuid AND payment_started_at IS NOT NULL`, id))
 }
 
 // F5: booking.paid must carry everything the e-ticket email needs and follow the contract.
@@ -366,4 +457,125 @@ func TestUpdateConfig_OutOfRangeValueIsAValidationError(t *testing.T) {
 	var ae *apperror.Error
 	require.ErrorAs(t, err, &ae)
 	assert.Equal(t, http.StatusBadRequest, ae.HTTPStatus)
+}
+
+// AC-1..3 (audit P0-5): a late payment found while expiring goes to REVIEW and must give the held stock back exactly
+// once, free the visitor (journey.ended), and a repeated expiry must do nothing.
+func TestExpire_ReviewReleasesHeldStockOnce(t *testing.T) {
+	f := seed(t)
+	ctx := context.Background()
+	id := f.hold(t)
+
+	acted, err := f.uow.Expire(ctx, outbound.ExpireSpec{BookingID: id, Reason: "PAYMENT_TIMEOUT", Review: true, CorrelationID: id})
+	require.NoError(t, err)
+	require.True(t, acted)
+	assert.Equal(t, "REVIEW", f.status(t, id))
+	assert.Equal(t, [5]int{0, 0, 0, 0, 0}, f.stock(t), "stok ditahan dikembalikan saat REVIEW")
+	assert.Equal(t, 0, f.n(t, `SELECT held_quantity FROM booking.buyer_quotas WHERE event_id=$1::uuid`, f.eventID), "kuota ditahan dikembalikan")
+	assert.Equal(t, 0, f.n(t, `SELECT count(*) FROM booking.booking_items WHERE booking_id=$1::uuid AND item_status='HELD'`, id))
+	assert.Equal(t, 1, f.n(t, `SELECT count(*) FROM booking.outbox_events WHERE routing_key='booking.journey.ended'`), "pengunjung dibebaskan")
+
+	again, err := f.uow.Expire(ctx, outbound.ExpireSpec{BookingID: id, Reason: "PAYMENT_TIMEOUT", Review: true, CorrelationID: id})
+	require.NoError(t, err)
+	assert.False(t, again, "expiry kedua tidak boleh mengerjakan apa-apa")
+	assert.Equal(t, [5]int{0, 0, 0, 0, 0}, f.stock(t), "stok tidak dilepas dua kali")
+	assert.Equal(t, 1, f.n(t, `SELECT count(*) FROM booking.outbox_events WHERE routing_key='booking.review'`))
+	assert.Equal(t, 1, f.n(t, `SELECT count(*) FROM booking.outbox_events WHERE routing_key='booking.journey.ended'`))
+}
+
+// P1-4: once payment has started (payment_started_at stamped by payment-lock), a cancel must be refused under the row
+// lock: the booking stays PENDING_PAYMENT, no stock moves, and no expired event or outbox message is written.
+func TestExpire_CancelAfterPaymentLockIsRefused(t *testing.T) {
+	f := seed(t)
+	ctx := context.Background()
+	id := f.hold(t)
+	held := f.stock(t)
+
+	lock, err := f.uow.PaymentLock(ctx, outbound.PaymentLockSpec{BookingID: id, CorrelationID: id})
+	require.NoError(t, err)
+	require.Equal(t, "OK", lock.Outcome)
+
+	acted, err := f.uow.Expire(ctx, outbound.ExpireSpec{BookingID: id, Reason: "CANCELLED", CorrelationID: id})
+	require.ErrorIs(t, err, inbound.ErrBookingLocked)
+	assert.False(t, acted)
+	assert.Equal(t, "PENDING_PAYMENT", f.status(t, id))
+	assert.Equal(t, held, f.stock(t), "stok tidak berubah saat pembatalan ditolak")
+	assert.Equal(t, 0, f.n(t, `SELECT count(*) FROM booking.outbox_events WHERE routing_key='booking.expired'`))
+}
+
+// P3-4: a buyer cancel of an unpaid journey ends it with outcome CANCELLED, not EXPIRED, so Queue can tell them apart.
+func TestExpire_BuyerCancelEndsJourneyAsCancelled(t *testing.T) {
+	f := seed(t)
+	ctx := context.Background()
+	id := f.hold(t)
+
+	acted, err := f.uow.Expire(ctx, outbound.ExpireSpec{BookingID: id, Reason: "CANCELLED", CorrelationID: id})
+	require.NoError(t, err)
+	require.True(t, acted)
+	assert.Equal(t, "CANCELLED", f.status(t, id))
+	assert.Equal(t, "CANCELLED", f.q(t, `SELECT payload->>'outcome' FROM booking.outbox_events WHERE routing_key='booking.journey.ended'`))
+}
+
+// P2-8: a settlement whose amount differs from the booking's amount is treated like a late payment: REVIEW, held stock
+// released once, visitor freed once, and a redelivered payment.succeeded changes nothing.
+func TestSettle_AmountMismatchGoesToReviewOnce(t *testing.T) {
+	f := seed(t)
+	ctx := context.Background()
+	id := f.hold(t)
+	amount := f.n(t, `SELECT amount_minor FROM booking.bookings WHERE id=$1::uuid`, id)
+
+	wrong := settleSpec(id)
+	wrong.AmountMinor = int64(amount) + 1
+	settled, err := f.uow.Settle(ctx, wrong)
+	require.NoError(t, err)
+	assert.False(t, settled)
+	assert.Equal(t, "REVIEW", f.status(t, id))
+	assert.Equal(t, 0, f.n(t, `SELECT count(*) FROM booking.tickets`), "tanpa tiket")
+	assert.Equal(t, [5]int{0, 0, 0, 0, 0}, f.stock(t), "stok dilepas")
+	assert.Equal(t, 0, f.n(t, `SELECT count(*) FROM booking.bookings WHERE id=$1::uuid AND settlement_time IS NOT NULL`, id), "tanpa waktu settlement: NULL, bukan nol")
+
+	again, err := f.uow.Settle(ctx, wrong)
+	require.NoError(t, err)
+	assert.False(t, again)
+	assert.Equal(t, "REVIEW", f.status(t, id))
+	assert.Equal(t, 1, f.n(t, `SELECT count(*) FROM booking.outbox_events WHERE routing_key='booking.review'`))
+	assert.Equal(t, 1, f.n(t, `SELECT count(*) FROM booking.outbox_events WHERE routing_key='booking.journey.ended'`), "pengunjung dibebaskan sekali")
+	assert.Equal(t, [5]int{0, 0, 0, 0, 0}, f.stock(t), "stok tidak berubah")
+}
+
+// AC-4 (audit P0-4): the payment provider confirmed the charge but gave no settlement time. The booking is still
+// payable, so it is treated as on time: PAID, tickets issued, held stock becomes sold, settlement_time is recorded.
+func TestSettle_UnknownSettlementTimeIsTimely(t *testing.T) {
+	f := seed(t)
+	ctx := context.Background()
+	id := f.hold(t)
+	_, err := f.pool.Exec(ctx, `UPDATE booking.bookings SET created_at = now() - interval '20 minutes', payment_expires_at = now() - interval '1 minute' WHERE id=$1::uuid`, id)
+	require.NoError(t, err)
+
+	settled, err := f.uow.Settle(ctx, settleSpec(id)) // SettlementTime is zero: unknown
+	require.NoError(t, err)
+	assert.True(t, settled)
+	assert.Equal(t, "PAID", f.status(t, id))
+	assert.Equal(t, 1, f.n(t, `SELECT count(*) FROM booking.tickets`))
+	assert.Equal(t, 1, f.n(t, `SELECT count(*) FROM booking.bookings WHERE id=$1::uuid AND settlement_time IS NOT NULL AND settlement_time > '2000-01-01'`, id))
+	assert.Equal(t, [5]int{0, 0, 1, 0, 1}, f.stock(t), "ditahan menjadi terjual: allocated 0, held 0, sold 1, kategori held 0, kuota paid 1")
+}
+
+// AC-5 regression: a settlement time that is known and after the deadline still goes to REVIEW and releases the stock.
+func TestSettle_KnownLateSettlementGoesToReviewAndReleases(t *testing.T) {
+	f := seed(t)
+	ctx := context.Background()
+	id := f.hold(t)
+	_, err := f.pool.Exec(ctx, `UPDATE booking.bookings SET created_at = now() - interval '20 minutes', payment_expires_at = now() - interval '2 minutes' WHERE id=$1::uuid`, id)
+	require.NoError(t, err)
+
+	late := settleSpec(id)
+	late.SettlementTime = time.Now().Add(-1 * time.Minute)
+	settled, err := f.uow.Settle(ctx, late)
+	require.NoError(t, err)
+	assert.False(t, settled)
+	assert.Equal(t, "REVIEW", f.status(t, id))
+	assert.Equal(t, 0, f.n(t, `SELECT count(*) FROM booking.tickets`))
+	assert.Equal(t, [5]int{0, 0, 0, 0, 0}, f.stock(t), "stok dilepas")
+	assert.Equal(t, 1, f.n(t, `SELECT count(*) FROM booking.outbox_events WHERE routing_key='booking.journey.ended'`))
 }

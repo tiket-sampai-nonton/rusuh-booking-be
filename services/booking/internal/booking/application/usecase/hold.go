@@ -269,7 +269,7 @@ func (uc *Hold) plan(ctx context.Context, cmd inbound.HoldCommand, v validated) 
 	if admission.VisitorID != cmd.VisitorID {
 		return entity.Admission{}, nil, 0, inbound.ErrVisitorMismatch
 	}
-	if admission.IsExpired(uc.clock.Now()) || !admission.IsActive() {
+	if admission.PastGrace(uc.clock.Now()) || !admission.IsActive() {
 		return entity.Admission{}, nil, 0, inbound.ErrSessionExpired
 	}
 	detail, err := uc.events.GetDetail(ctx, admission.EventID)
@@ -304,7 +304,8 @@ func (uc *Hold) plan(ctx context.Context, cmd inbound.HoldCommand, v validated) 
 		lines = append(lines, h)
 		amount += price
 	}
-	if !detail.Event.AllowMixedCategories && len(seenCat) > 1 {
+	// The rule is the admission's snapshot (P2-10): the event's live flag may have changed since the session was issued.
+	if !admission.CfgAllowMixedCategories && len(seenCat) > 1 {
 		return entity.Admission{}, nil, 0, inbound.ErrMixedNotAllowed
 	}
 	return admission, lines, amount, nil

@@ -107,7 +107,8 @@ func boolPtr(b bool) *bool { return &b }
 type fakeAdmissionRepo struct {
 	admission      entity.Admission
 	getErr         error
-	getCalls       int // number of GetByID calls (REQ-4: assert malformed ids never reach the repo)
+	getCalls       int    // number of GetByID calls (REQ-4: assert malformed ids never reach the repo)
+	gotID          string // id passed to the most recent GetByID call
 	activated      entity.Admission
 	activErr       error
 	reserve        []outbound.ReserveOutcome
@@ -120,18 +121,24 @@ type fakeAdmissionRepo struct {
 	releaseReasons []vo.EndReason
 }
 
-func (f *fakeAdmissionRepo) FindByJTI(context.Context, string) (entity.Admission, error) {
-	return f.admission, f.getErr
-}
 func (f *fakeAdmissionRepo) FindActiveByVisitor(context.Context, string, string) (entity.Admission, error) {
 	return f.admission, f.getErr
 }
 func (f *fakeAdmissionRepo) FindActiveByEvent(context.Context, string, string) (entity.Admission, error) {
 	return f.admission, f.getErr
 }
-func (f *fakeAdmissionRepo) GetByID(context.Context, string) (entity.Admission, error) {
+
+// GetByID honours the id it is asked for: once a fixture admission is set, any other id is a miss, as in the DB.
+func (f *fakeAdmissionRepo) GetByID(_ context.Context, id string) (entity.Admission, error) {
 	f.getCalls++
-	return f.admission, f.getErr
+	f.gotID = id
+	if f.getErr != nil {
+		return f.admission, f.getErr
+	}
+	if f.admission.ID != "" && id != f.admission.ID {
+		return entity.Admission{}, inbound.ErrNotFound
+	}
+	return f.admission, nil
 }
 func (f *fakeAdmissionRepo) Activate(context.Context, string, time.Time) (entity.Admission, error) {
 	return f.activated, f.activErr
@@ -251,6 +258,14 @@ type fakeBookingRepo struct {
 	next    string
 	listErr error
 	due     []string
+	// deferred records each DeferVerification call; deferErr is what it returns.
+	deferred []deferCall
+	deferErr error
+}
+
+type deferCall struct {
+	id    string
+	until time.Time
 }
 
 func (f *fakeBookingRepo) GetByID(context.Context, string) (entity.Booking, error) {
@@ -265,6 +280,10 @@ func (f *fakeBookingRepo) ListByAccount(context.Context, string, string, int) ([
 }
 func (f *fakeBookingRepo) DueBookingIDs(context.Context, time.Time, int) ([]string, error) {
 	return f.due, nil
+}
+func (f *fakeBookingRepo) DeferVerification(_ context.Context, bookingID string, until time.Time) error {
+	f.deferred = append(f.deferred, deferCall{id: bookingID, until: until})
+	return f.deferErr
 }
 
 // fakeTicketRepo returns fixed tickets.

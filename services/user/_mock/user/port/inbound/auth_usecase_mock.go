@@ -141,18 +141,18 @@ func (mr *MockIProfileUsecaseMockRecorder) GetProfile(ctx, accountID any) *gomoc
 }
 
 // UpdateProfile mocks base method.
-func (m *MockIProfileUsecase) UpdateProfile(ctx context.Context, accountID string, req dto.UpdateProfileRequest) (dto.ProfileResponse, error) {
+func (m *MockIProfileUsecase) UpdateProfile(ctx context.Context, accountID, sessionID string, req dto.UpdateProfileRequest) (dto.ProfileResponse, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "UpdateProfile", ctx, accountID, req)
+	ret := m.ctrl.Call(m, "UpdateProfile", ctx, accountID, sessionID, req)
 	ret0, _ := ret[0].(dto.ProfileResponse)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // UpdateProfile indicates an expected call of UpdateProfile.
-func (mr *MockIProfileUsecaseMockRecorder) UpdateProfile(ctx, accountID, req any) *gomock.Call {
+func (mr *MockIProfileUsecaseMockRecorder) UpdateProfile(ctx, accountID, sessionID, req any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateProfile", reflect.TypeOf((*MockIProfileUsecase)(nil).UpdateProfile), ctx, accountID, req)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateProfile", reflect.TypeOf((*MockIProfileUsecase)(nil).UpdateProfile), ctx, accountID, sessionID, req)
 }
 
 // MockIAccessTokenVerifier is a mock of IAccessTokenVerifier interface.
@@ -180,12 +180,13 @@ func (m *MockIAccessTokenVerifier) EXPECT() *MockIAccessTokenVerifierMockRecorde
 }
 
 // VerifyAccess mocks base method.
-func (m *MockIAccessTokenVerifier) VerifyAccess(token string) (string, error) {
+func (m *MockIAccessTokenVerifier) VerifyAccess(token string) (string, string, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "VerifyAccess", token)
 	ret0, _ := ret[0].(string)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
+	ret1, _ := ret[1].(string)
+	ret2, _ := ret[2].(error)
+	return ret0, ret1, ret2
 }
 
 // VerifyAccess indicates an expected call of VerifyAccess.

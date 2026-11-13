@@ -25,14 +25,20 @@ type Keyer interface {
 
 // verifyLua counts one attempt and compares in a single step. Hasil: {verdict, attempts}; verdict 0 NotFound,
 // 1 Matched, 2 Mismatch, 3 Locked. Counter tidak pernah hidup lebih lama dari kode (PEXPIRE ke PTTL kode).
+// Setelah terkunci, kode dihapus tetapi counter dibiarkan: kode yang tersisa tetap dijawab Locked sampai startLua
+// memulai kode baru (yang menghapus counter). Counter hilang bersama kode, jadi tidak ada kunci yang lebih lama.
 const verifyLua = `
 local stored = redis.call('GET', KEYS[1])
-if not stored then return {0, 0} end
+if not stored then
+  local n = tonumber(redis.call('GET', KEYS[2]) or '0')
+  if n > tonumber(ARGV[2]) then return {3, n} end
+  return {0, 0}
+end
 local n = redis.call('INCR', KEYS[2])
 local ttl = redis.call('PTTL', KEYS[1])
 if ttl > 0 then redis.call('PEXPIRE', KEYS[2], ttl) end
 if n > tonumber(ARGV[2]) then
-  redis.call('DEL', KEYS[1], KEYS[2])
+  redis.call('DEL', KEYS[1])
   return {3, n}
 end
 if stored == ARGV[1] then

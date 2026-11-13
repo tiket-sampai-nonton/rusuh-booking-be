@@ -224,6 +224,21 @@ func TestHold_MixedNotAllowed(t *testing.T) {
 	assert.ErrorIs(t, err, inbound.ErrMixedNotAllowed)
 }
 
+// P2-10: the mixed-category rule is the admission's snapshot. The event now allows mixing, but the admission was
+// issued without it, so the hold is still refused.
+func TestHold_MixedRuleComesFromAdmissionSnapshot(t *testing.T) {
+	adm := admission3()
+	adm.CfgAllowMixedCategories = false
+	uow := &fakeUoW{}
+	uc := newHoldUC(&fakeAdmissionRepo{admission: adm}, &fakeEventRepo{detail: detailWith(true, 3)}, &fakeIdem{}, uow)
+	_, err := uc.Hold(context.Background(), holdCmd([]dto.HoldItem{
+		{CategoryID: catA, Attendee: dto.AttendeeInput{NIK: nik1, FullName: "Alice"}},
+		{CategoryID: catB, Attendee: dto.AttendeeInput{NIK: nik2, FullName: "Bob"}},
+	}))
+	assert.ErrorIs(t, err, inbound.ErrMixedNotAllowed)
+	assert.Empty(t, uow.heldSpec.Lines, "tidak ada stok yang ditahan")
+}
+
 func TestHold_DuplicateNIKInOrder(t *testing.T) {
 	uc := newHoldUC(&fakeAdmissionRepo{admission: admission3()}, &fakeEventRepo{detail: detailWith(true, 3)}, &fakeIdem{}, &fakeUoW{})
 	_, err := uc.Hold(context.Background(), holdCmd([]dto.HoldItem{
@@ -249,6 +264,21 @@ func TestHold_SessionExpired(t *testing.T) {
 	_, err := uc.Hold(context.Background(), holdCmd(oneItem()))
 	assert.ErrorIs(t, err, inbound.ErrSessionExpired)
 	assert.Equal(t, 1, idem.aborted)
+}
+
+// The submit grace is reachable over HTTP: a hold submitted after ExpiresAt but inside the grace window is accepted.
+func TestHold_InGraceIsAccepted(t *testing.T) {
+	now := time.Now()
+	adm := admission3()
+	adm.ExpiresAt = now.Add(-5 * time.Second)
+	adm.CfgSubmitGraceSeconds = 10
+	uow := &fakeUoW{holdRes: outbound.HoldResult{BookingID: "bk-1", PublicRef: "RB-1", Version: 1, Status: "PENDING_PAYMENT", AmountMinor: 1000, PaymentExpiresAt: now.Add(time.Hour)}}
+	uc := usecase.NewHold(&fakeAdmissionRepo{admission: adm}, &fakeEventRepo{detail: detailWith(true, 3)}, &fakeIdem{}, uow, fakeNIK{}, &fakeIDs{id: "bk-1", ref: "RB-1"}, fixedClock{t: now}, testPolicy)
+
+	resp, err := uc.Hold(context.Background(), holdCmd(oneItem()))
+	require.NoError(t, err)
+	assert.Equal(t, "bk-1", resp.BookingID)
+	assert.Len(t, uow.heldSpec.Lines, 1, "uow.Hold must be reached inside the grace window")
 }
 
 func TestHold_BuyerNikAtCapKeepsAdmissionAndAbortsRecord(t *testing.T) {

@@ -28,6 +28,7 @@ func (uc *Settle) Settle(ctx context.Context, cmd inbound.SettleCommand) error {
 		BookingID:         cmd.BookingID,
 		Method:            cmd.Method,
 		SettlementTime:    cmd.SettlementTime,
+		AmountMinor:       cmd.AmountMinor,
 		TicketCodeFn:      func(string) string { return NewTicketCode() },
 		TicketLinkTokenFn: uc.linkToken,
 		CorrelationID:     cmd.CorrelationID,
