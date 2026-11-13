@@ -169,7 +169,7 @@ func (u *JoinQueue) Join(ctx context.Context, in inbound.JoinInput) (dto.QueueEn
 	respAt := now
 	if res.Outcome == outbound.JoinCreated {
 		u.audit(ctx, in.EventID, ent, "JOINED", now)
-		if admittedAt, ok := u.tryDirectAdmission(ctx, in.EventID, &ent, settings, now); ok {
+		if admittedAt, ok := u.tryDirectAdmission(ctx, in.EventID, &ent, settings); ok {
 			u.audit(ctx, in.EventID, ent, "ADMITTED", admittedAt)
 			respAt = admittedAt
 		}
@@ -308,7 +308,7 @@ func (u *JoinQueue) rateLimit(ctx context.Context, in inbound.JoinInput) error {
 // verified BEFORE any Booking call, so an ordinary deferral (slot busy, not head, lease busy) leaves no RESERVED row
 // that could later age into a permanent ALREADY_ACTIVE for a live buyer. The returned time is the admission instant
 // (the clock read after the Booking call); it is meaningful only when admitted is true.
-func (u *JoinQueue) tryDirectAdmission(ctx context.Context, eventID string, ent *entity.Entry, settings entity.EventSettings, now time.Time) (admittedAt time.Time, admitted bool) {
+func (u *JoinQueue) tryDirectAdmission(ctx context.Context, eventID string, ent *entity.Entry, settings entity.EventSettings) (admittedAt time.Time, admitted bool) {
 	if settings.ActiveSlotCapacity <= 0 {
 		return time.Time{}, false
 	}
@@ -347,7 +347,7 @@ func (u *JoinQueue) tryDirectAdmission(ctx context.Context, eventID string, ent 
 		return time.Time{}, false
 	}
 	// The reservation took time: every instant below (fallback deadline, Promote nowMs, ADMITTED) is read after it.
-	now = u.d.Clock.Now()
+	now := u.d.Clock.Now()
 	deadline := now.Add(u.s.ClaimWindow)
 	if dl, derr := time.Parse(time.RFC3339, a.ClaimDeadline); derr == nil {
 		deadline = dl
