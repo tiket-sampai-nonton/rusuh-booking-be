@@ -3,6 +3,7 @@ package http
 import (
 	stdhttp "net/http"
 	"regexp"
+	"time"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/httpx"
 	inbound "github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/port/inbound"
@@ -44,6 +45,9 @@ func (h *SSEHandler) streamSession(w stdhttp.ResponseWriter, r *stdhttp.Request)
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Accel-Buffering", "no")
+	// The server's WriteTimeout is set per response and would cut a stream that is meant to outlive it, so clear the
+	// deadline for this response only (C7.5). A writer without deadline support returns an error, which is ignored.
+	_ = stdhttp.NewResponseController(w).SetWriteDeadline(time.Time{})
 	w.WriteHeader(stdhttp.StatusOK)
 	flusher.Flush() // commit the headers before the first frame
 	// Once headers are sent we cannot change the status, so stream errors just end the stream.

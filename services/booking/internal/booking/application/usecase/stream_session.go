@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"os"
+	"sync/atomic"
 	"time"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/clock"
@@ -14,18 +14,20 @@ import (
 )
 
 // StreamSession implements IStreamSessionUsecase. It pushes availability + timer frames over SSE
-// until the request context is cancelled (client disconnect) or the session expires.
+// until the request context is cancelled (client disconnect), a frame write fails, or the session is
+// past its submit grace.
 type StreamSession struct {
 	admissions outbound.IAdmissionRepo
 	cache      outbound.IAvailabilityCache
 	clock      clock.IClock
 	heartbeat  time.Duration
 	maxConn    int
-	instance   string
+	// conns counts the streams open in this process. The cap is per process, one API process per
+	// container (D-C7.5), so it needs no shared store and cannot drift when a process dies.
+	conns atomic.Int64
 }
 
-// NewStreamSession wires the SSE usecase. instance is this process's hostname, used to key the
-// per-instance connection counter so the cap applies per container (invariant: protect the backend).
+// NewStreamSession wires the SSE usecase. The connection cap applies per process (invariant: protect the backend).
 func NewStreamSession(
 	admissions outbound.IAdmissionRepo,
 	cache outbound.IAvailabilityCache,
@@ -33,23 +35,19 @@ func NewStreamSession(
 	heartbeat time.Duration,
 	maxConn int,
 ) *StreamSession {
-	host, _ := os.Hostname()
-	if host == "" {
-		host = "default"
-	}
 	return &StreamSession{
 		admissions: admissions,
 		cache:      cache,
 		clock:      clk,
 		heartbeat:  heartbeat,
 		maxConn:    maxConn,
-		instance:   host,
 	}
 }
 
-// Stream opens an SSE loop that emits availability + timer frames until ctx is cancelled.
-// The session is verified once up front (owner + not expired); the connection cap is enforced
-// per instance, and the counter is always decremented on exit.
+// Stream opens an SSE loop that emits availability + timer frames until ctx is cancelled, a frame
+// write fails, or the session is past its submit grace (after one last timer frame). The session is
+// verified once up front (owner + not expired); the connection cap is enforced per process, and the
+// slot is released on every exit path.
 func (uc *StreamSession) Stream(ctx context.Context, sessionID, visitorID string, w io.Writer, flush func()) error {
 	// (0) Validate the path id up front: a malformed sessionId is a 400, not a 404 (REQ-4).
 	if !isUUID(sessionID) {
@@ -67,13 +65,10 @@ func (uc *StreamSession) Stream(ctx context.Context, sessionID, visitorID string
 		return inbound.ErrSessionExpired
 	}
 
-	// (2) Connection cap (per instance). IncrConn failing is a dependency outage → 503.
-	n, err := uc.cache.IncrConn(ctx, uc.instance)
-	if err != nil {
-		return inbound.ErrDependency
-	}
-	defer func() { _ = uc.cache.DecrConn(context.Background(), uc.instance) }()
-	if n > uc.maxConn {
+	// (2) Connection cap (per process). The slot is taken before the check so a refused stream releases it too.
+	open := uc.conns.Add(1)
+	defer uc.conns.Add(-1)
+	if open > int64(uc.maxConn) {
 		return inbound.ErrDependency
 	}
 
@@ -98,7 +93,9 @@ func (uc *StreamSession) Stream(ctx context.Context, sessionID, visitorID string
 			"categories": cats,
 			"serverTime": now.Format(time.RFC3339),
 		})
-		_, _ = fmt.Fprintf(w, "event: availability\ndata: %s\n\n", availData)
+		if _, err := fmt.Fprintf(w, "event: availability\ndata: %s\n\n", availData); err != nil {
+			return err
+		}
 
 		// timer frame — phase is LOCKED once payment has been locked in, else SELECTING.
 		phase := "SELECTING"
@@ -110,9 +107,16 @@ func (uc *StreamSession) Stream(ctx context.Context, sessionID, visitorID string
 			"serverTime": now.Format(time.RFC3339),
 			"phase":      phase,
 		})
-		_, _ = fmt.Fprintf(w, "event: timer\ndata: %s\n\n", timerData)
+		if _, err := fmt.Fprintf(w, "event: timer\ndata: %s\n\n", timerData); err != nil {
+			return err
+		}
 
 		flush()
+
+		// Past the submit grace no hold is accepted any more: the timer frame just sent is the last one.
+		if adm.PastGrace(now) {
+			return nil
+		}
 
 		select {
 		case <-ctx.Done():

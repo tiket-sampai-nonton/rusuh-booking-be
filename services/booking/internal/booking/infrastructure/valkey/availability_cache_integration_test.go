@@ -17,7 +17,7 @@ import (
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/port/outbound"
 )
 
-func TestAvailabilityCache_ReadsSnapshotAndCountsConnections(t *testing.T) {
+func TestAvailabilityCache_ReadsAndWritesSnapshot(t *testing.T) {
 	server := os.Getenv("TEST_VALKEY_SERVER")
 	if server == "" {
 		t.Skip("TEST_VALKEY_SERVER tidak diset")
@@ -29,9 +29,9 @@ func TestAvailabilityCache_ReadsSnapshotAndCountsConnections(t *testing.T) {
 	cache := NewAvailabilityCache(c.VK())
 	// The cache uses unprefixed keys: make them unique per run and remove them afterwards.
 	run := fmt.Sprint(time.Now().UnixNano())
-	ev1, bad, inst := "ev1-"+run, "bad-"+run, "inst-"+run
+	ev1, bad := "ev1-"+run, "bad-"+run
 	t.Cleanup(func() {
-		for _, k := range []string{"booking:avail:" + ev1, "booking:avail:" + bad, "booking:sse:conn:" + inst} {
+		for _, k := range []string{"booking:avail:" + ev1, "booking:avail:" + bad} {
 			_ = c.VK().Do(context.Background(), c.VK().B().Del().Key(k).Build()).Error()
 		}
 	})
@@ -54,15 +54,4 @@ func TestAvailabilityCache_ReadsSnapshotAndCountsConnections(t *testing.T) {
 	got, err = cache.GetAvailability(ctx, ev1)
 	require.NoError(t, err)
 	assert.Equal(t, outbound.AvailabilitySnapshot{EventFree: 2, Categories: []outbound.CategoryAvailabilitySnap{{CategoryID: "c9", Available: 2}}}, got, "snapshot ditulis lalu terbaca")
-
-	n, err := cache.IncrConn(ctx, inst)
-	require.NoError(t, err)
-	assert.Equal(t, 1, n)
-	n, err = cache.IncrConn(ctx, inst)
-	require.NoError(t, err)
-	assert.Equal(t, 2, n)
-	require.NoError(t, cache.DecrConn(ctx, inst))
-	n, err = cache.IncrConn(ctx, inst)
-	require.NoError(t, err)
-	assert.Equal(t, 2, n)
 }

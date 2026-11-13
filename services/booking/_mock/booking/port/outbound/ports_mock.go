@@ -765,20 +765,6 @@ func (m *MockIAvailabilityCache) EXPECT() *MockIAvailabilityCacheMockRecorder {
 	return m.recorder
 }
 
-// DecrConn mocks base method.
-func (m *MockIAvailabilityCache) DecrConn(ctx context.Context, instance string) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "DecrConn", ctx, instance)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// DecrConn indicates an expected call of DecrConn.
-func (mr *MockIAvailabilityCacheMockRecorder) DecrConn(ctx, instance any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DecrConn", reflect.TypeOf((*MockIAvailabilityCache)(nil).DecrConn), ctx, instance)
-}
-
 // GetAvailability mocks base method.
 func (m *MockIAvailabilityCache) GetAvailability(ctx context.Context, eventID string) (outbound.AvailabilitySnapshot, error) {
 	m.ctrl.T.Helper()
@@ -792,21 +778,6 @@ func (m *MockIAvailabilityCache) GetAvailability(ctx context.Context, eventID st
 func (mr *MockIAvailabilityCacheMockRecorder) GetAvailability(ctx, eventID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAvailability", reflect.TypeOf((*MockIAvailabilityCache)(nil).GetAvailability), ctx, eventID)
-}
-
-// IncrConn mocks base method.
-func (m *MockIAvailabilityCache) IncrConn(ctx context.Context, instance string) (int, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "IncrConn", ctx, instance)
-	ret0, _ := ret[0].(int)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// IncrConn indicates an expected call of IncrConn.
-func (mr *MockIAvailabilityCacheMockRecorder) IncrConn(ctx, instance any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IncrConn", reflect.TypeOf((*MockIAvailabilityCache)(nil).IncrConn), ctx, instance)
 }
 
 // SetAvailability mocks base method.

@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -20,8 +22,7 @@ import (
 func TestStreamSession_EmitsAvailabilityAndTimer(t *testing.T) {
 	adm := activeAdmission(true)
 	cache := &fakeAvailCache{
-		snap:  outbound.AvailabilitySnapshot{EventFree: 5, Categories: []outbound.CategoryAvailabilitySnap{{CategoryID: catA, Available: 5}}},
-		connN: 1,
+		snap: outbound.AvailabilitySnapshot{EventFree: 5, Categories: []outbound.CategoryAvailabilitySnap{{CategoryID: catA, Available: 5}}},
 	}
 	uc := usecase.NewStreamSession(
 		&fakeAdmissionRepo{admission: adm},
@@ -57,8 +58,7 @@ func TestStream_AvailabilityAddsOwnReservedUnits(t *testing.T) {
 			adm := activeAdmission(true)
 			adm.OutstandingUnits = tt.outstanding
 			cache := &fakeAvailCache{
-				snap:  outbound.AvailabilitySnapshot{EventFree: 0, Categories: []outbound.CategoryAvailabilitySnap{{CategoryID: catA, Available: 5}}},
-				connN: 1,
+				snap: outbound.AvailabilitySnapshot{EventFree: 0, Categories: []outbound.CategoryAvailabilitySnap{{CategoryID: catA, Available: 5}}},
 			}
 			uc := usecase.NewStreamSession(&fakeAdmissionRepo{admission: adm}, cache, fixedClock{t: time.Now()}, 80*time.Millisecond, 100)
 			ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
@@ -94,13 +94,12 @@ func firstAvailabilityFrame(t *testing.T, stream string) availabilityFrame {
 
 func TestStreamSession_CapExceeded(t *testing.T) {
 	adm := activeAdmission(true)
-	cache := &fakeAvailCache{connN: 101}
 	uc := usecase.NewStreamSession(
 		&fakeAdmissionRepo{admission: adm},
-		cache,
+		&fakeAvailCache{},
 		fixedClock{t: time.Now()},
 		80*time.Millisecond,
-		100, // maxConn=100, connN=101 → over cap
+		0, // maxConn=0: the first stream is already over the cap
 	)
 	err := uc.Stream(context.Background(), sessionID, visitor, &bytes.Buffer{}, func() {})
 	assert.ErrorIs(t, err, inbound.ErrDependency)
@@ -109,7 +108,7 @@ func TestStreamSession_CapExceeded(t *testing.T) {
 func TestStreamSession_SessionExpired(t *testing.T) {
 	adm := activeAdmission(true)
 	adm.ExpiresAt = time.Now().Add(-time.Minute)
-	cache := &fakeAvailCache{connN: 1}
+	cache := &fakeAvailCache{}
 	uc := usecase.NewStreamSession(
 		&fakeAdmissionRepo{admission: adm},
 		cache,
@@ -123,7 +122,7 @@ func TestStreamSession_SessionExpired(t *testing.T) {
 
 func TestStreamSession_VisitorMismatch(t *testing.T) {
 	adm := activeAdmission(true)
-	cache := &fakeAvailCache{connN: 1}
+	cache := &fakeAvailCache{}
 	uc := usecase.NewStreamSession(
 		&fakeAdmissionRepo{admission: adm},
 		cache,
@@ -151,7 +150,7 @@ func TestStreamSession_PathUUIDValidation(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			repo := &fakeAdmissionRepo{getErr: tt.repoErr}
-			uc := usecase.NewStreamSession(repo, &fakeAvailCache{connN: 1}, fixedClock{t: time.Now()}, 80*time.Millisecond, 100)
+			uc := usecase.NewStreamSession(repo, &fakeAvailCache{}, fixedClock{t: time.Now()}, 80*time.Millisecond, 100)
 			err := uc.Stream(context.Background(), tt.sessionID, visitor, &bytes.Buffer{}, func() {})
 			require.Error(t, err)
 			if tt.wantField != "" {
@@ -164,4 +163,110 @@ func TestStreamSession_PathUUIDValidation(t *testing.T) {
 			assert.Positive(t, repo.getCalls, "valid uuid must reach the repo")
 		})
 	}
+}
+
+// steppingClock reads first, except on its second call, which reads later. The usecase checks expiry on its first call and
+// its first frame loop on the second, so the session starts live and is past its grace by the first frame.
+type steppingClock struct {
+	first, later time.Time
+	calls        int
+}
+
+func (c *steppingClock) Now() time.Time {
+	c.calls++
+	if c.calls == 2 {
+		return c.later
+	}
+	return c.first
+}
+
+// failingWriter rejects every write, as a client that has gone away does.
+type failingWriter struct{ err error }
+
+func (w failingWriter) Write([]byte) (int, error) { return 0, w.err }
+
+// signalWriter reports the first write, so a test knows the stream holds its connection slot.
+type signalWriter struct {
+	wrote chan struct{}
+	once  sync.Once
+}
+
+func (w *signalWriter) Write(p []byte) (int, error) {
+	w.once.Do(func() { close(w.wrote) })
+	return len(p), nil
+}
+
+// assertSlotFree checks that no connection is still counted: a new stream on the same usecase with a cap of 1 is admitted.
+func assertSlotFree(t *testing.T, uc *usecase.StreamSession) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	assert.NoError(t, uc.Stream(ctx, sessionID, visitor, &bytes.Buffer{}, func() {}), "a leaked connection slot would refuse this stream")
+}
+
+// C7.5: a frame write that fails ends the stream at once (not at the next tick) and releases its connection slot.
+func TestStream_ExitsOnWriteError(t *testing.T) {
+	uc := usecase.NewStreamSession(&fakeAdmissionRepo{admission: activeAdmission(true)}, &fakeAvailCache{},
+		fixedClock{t: time.Now()}, time.Hour, 1)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	start := time.Now()
+	err := uc.Stream(ctx, sessionID, visitor, failingWriter{err: io.ErrClosedPipe}, func() {})
+
+	assert.ErrorIs(t, err, io.ErrClosedPipe)
+	assert.Less(t, time.Since(start), time.Second, "the stream must end on the failed write, not wait for the heartbeat")
+	assertSlotFree(t, uc)
+}
+
+// C7.5: once the session is past its submit grace, the stream sends one last timer frame and ends by itself.
+func TestStream_ExitsAfterSessionExpiry(t *testing.T) {
+	base := time.Now()
+	adm := activeAdmission(true)
+	adm.ExpiresAt = base.Add(time.Minute)
+	adm.CfgSubmitGraceSeconds = 30
+	clk := &steppingClock{first: base, later: base.Add(time.Hour)}
+	uc := usecase.NewStreamSession(&fakeAdmissionRepo{admission: adm}, &fakeAvailCache{}, clk, time.Hour, 1)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	var buf bytes.Buffer
+	start := time.Now()
+	require.NoError(t, uc.Stream(ctx, sessionID, visitor, &buf, func() {}))
+
+	assert.Less(t, time.Since(start), time.Second, "the heartbeat is one hour: only the expiry can end this stream")
+	assert.Contains(t, buf.String(), "event: timer")
+	assertSlotFree(t, uc)
+}
+
+// C7.5: the connection cap is per process. With a cap of 1 a second concurrent stream is refused while the first runs,
+// and once both have ended the slot is free again.
+func TestStream_ConnectionCapPerInstance(t *testing.T) {
+	uc := usecase.NewStreamSession(&fakeAdmissionRepo{admission: activeAdmission(true)}, &fakeAvailCache{},
+		fixedClock{t: time.Now()}, 10*time.Millisecond, 1)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	w := &signalWriter{wrote: make(chan struct{})}
+	first := make(chan error, 1)
+	go func() { first <- uc.Stream(ctx, sessionID, visitor, w, func() {}) }()
+	select {
+	case <-w.wrote:
+	case <-time.After(5 * time.Second):
+		t.Fatal("first stream never wrote a frame")
+	}
+
+	refusedCtx, refusedCancel := context.WithTimeout(context.Background(), time.Second)
+	defer refusedCancel()
+	err := uc.Stream(refusedCtx, sessionID, visitor, &bytes.Buffer{}, func() {})
+	assert.ErrorIs(t, err, inbound.ErrDependency, "second concurrent stream must be refused by the cap")
+
+	cancel()
+	select {
+	case err := <-first:
+		assert.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("first stream did not end after its client went away")
+	}
+	assertSlotFree(t, uc)
 }

@@ -357,8 +357,6 @@ type fakeAvailCache struct {
 	snapErr error
 	setErr  error
 	written map[string]outbound.AvailabilitySnapshot
-	connN   int
-	connErr error
 }
 
 func (f *fakeAvailCache) GetAvailability(_ context.Context, _ string) (outbound.AvailabilitySnapshot, error) {
@@ -374,10 +372,6 @@ func (f *fakeAvailCache) SetAvailability(_ context.Context, id string, snap outb
 	f.written[id] = snap
 	return nil
 }
-func (f *fakeAvailCache) IncrConn(_ context.Context, _ string) (int, error) {
-	return f.connN, f.connErr
-}
-func (f *fakeAvailCache) DecrConn(_ context.Context, _ string) error { return nil }
 
 // fakeEventWriteRepo records admin event writes and returns canned errors.
 type fakeEventWriteRepo struct {

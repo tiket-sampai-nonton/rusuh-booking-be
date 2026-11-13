@@ -192,12 +192,10 @@ type AvailabilitySnapshot struct {
 }
 
 // IAvailabilityCache reads live category availability from Valkey (written by the stock projection
-// after each hold/settle/expire) and tracks SSE connection count per instance.
+// after each hold/settle/expire).
 type IAvailabilityCache interface {
 	GetAvailability(ctx context.Context, eventID string) (AvailabilitySnapshot, error)
 	SetAvailability(ctx context.Context, eventID string, snap AvailabilitySnapshot, ttl time.Duration) error
-	IncrConn(ctx context.Context, instance string) (int, error)
-	DecrConn(ctx context.Context, instance string) error
 }
 
 // IAvailabilitySource lists the live availability of every event whose sales window is open at now and that is

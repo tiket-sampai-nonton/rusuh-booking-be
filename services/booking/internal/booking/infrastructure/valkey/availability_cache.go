@@ -14,13 +14,9 @@ import (
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/port/outbound"
 )
 
-const (
-	availKeyFmt = "booking:avail:%s"
-	connKeyFmt  = "booking:sse:conn:%s"
-	connTTLSec  = int64(60)
-)
+const availKeyFmt = "booking:avail:%s"
 
-// AvailabilityCache reads SSE availability data and tracks the per-instance connection count.
+// AvailabilityCache reads and writes the SSE availability snapshot.
 type AvailabilityCache struct{ c vk.Client }
 
 // NewAvailabilityCache wires the cache on the raw valkey-go client.
@@ -55,22 +51,4 @@ func (a *AvailabilityCache) SetAvailability(ctx context.Context, eventID string,
 		return fmt.Errorf("valkey: set availability: %w", err)
 	}
 	return nil
-}
-
-// IncrConn increments the per-instance SSE connection counter and refreshes its TTL (self-healing
-// against leaked counts if a process dies). It returns the post-increment count.
-func (a *AvailabilityCache) IncrConn(ctx context.Context, instance string) (int, error) {
-	key := fmt.Sprintf(connKeyFmt, instance)
-	n, err := a.c.Do(ctx, a.c.B().Incr().Key(key).Build()).ToInt64()
-	if err != nil {
-		return 0, fmt.Errorf("valkey: incr sse conn: %w", err)
-	}
-	_ = a.c.Do(ctx, a.c.B().Expire().Key(key).Seconds(connTTLSec).Build())
-	return int(n), nil
-}
-
-// DecrConn decrements the per-instance SSE connection counter on disconnect.
-func (a *AvailabilityCache) DecrConn(ctx context.Context, instance string) error {
-	key := fmt.Sprintf(connKeyFmt, instance)
-	return a.c.Do(ctx, a.c.B().Decr().Key(key).Build()).Error()
 }
