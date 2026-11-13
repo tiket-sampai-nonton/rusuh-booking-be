@@ -117,3 +117,34 @@ func benchAdmissions(b *testing.B, pool *pgxpool.Pool, eventID string, n int) []
 	require.Len(b, out, n)
 	return out
 }
+
+// BenchmarkReserveBatch_100 measures one 100-entry reservation batch per op on one event. Every entry is granted
+// (3 units each), so the op is the full grant path: one supply lock, one aggregate supply update, one bulk insert (C7.2).
+// Run: go.sh test -tags integration -run '^$' -bench BenchmarkReserveBatch_100 -benchtime 50x ./internal/booking/infrastructure/postgres/
+func BenchmarkReserveBatch_100(b *testing.B) {
+	pool := setup(b)
+	eventID, _ := benchSeedEvent(b, pool, 300*b.N)
+	// benchSeedEvent marks every unit allocated (the hold benchmark needs that); the batch starts with all of it free.
+	_, err := pool.Exec(context.Background(), `UPDATE booking.event_supply SET allocated_units=0 WHERE event_id=$1::uuid`, eventID)
+	require.NoError(b, err)
+	repo := NewAdmissionRepo(pool)
+	batches := make([][]outbound.ReserveEntry, b.N)
+	for i := range batches {
+		batch := make([]outbound.ReserveEntry, 0, 100)
+		for j := 0; j < 100; j++ {
+			batch = append(batch, outbound.ReserveEntry{
+				QueueEntryID: newTestUUID(), Seq: int64(i*100 + j + 1), VisitorID: newTestUUID(), Units: 3, AdmissionJTI: newTestUUID(),
+			})
+		}
+		batches[i] = batch
+	}
+	ctx := context.Background()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		out, err := repo.ReserveBatch(ctx, eventID, batches[i], time.Now())
+		require.NoError(b, err)
+		if out[len(out)-1].Outcome != "GRANTED" {
+			b.Fatalf("batch %d: last entry %s, want GRANTED", i, out[len(out)-1].Outcome)
+		}
+	}
+}

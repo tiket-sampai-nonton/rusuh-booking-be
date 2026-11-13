@@ -81,9 +81,49 @@ func (r *AdmissionRepo) Activate(ctx context.Context, jti string, at time.Time) 
 	return mapAdmissionErr(a, err)
 }
 
-// ReserveBatch reserves one admission per entry in a single transaction (invariant #2).
+// batchRow is an admission of the batch that already exists. It is read under the batch lock (R18), so it is stable.
+type batchRow struct {
+	id, status, endReason string
+	units                 int
+	expiresAt             time.Time
+}
+
+// lapsedUnclaimed reports a RESERVED row that lapsed unclaimed: Queue never admitted its entry, so it is granted again
+// (D-C6.6). Every other existing row is replayed.
+func (row batchRow) lapsedUnclaimed() bool {
+	return row.status == "EXPIRED" && row.endReason == "UNCLAIMED"
+}
+
+// pendingEntry is an entry of the batch that needs a new grant decision. regrantID is the lapsed row it re-grants.
+type pendingEntry struct {
+	entry     int
+	regrantID string
+}
+
+// batchGrant is a granted entry of the batch with its units and the lapsed row it re-grants, if any.
+type batchGrant struct {
+	entry     int
+	units     int
+	regrantID string
+}
+
+// landedRow is an admission written by the batch: its id and claim deadline.
+type landedRow struct {
+	id        string
+	expiresAt time.Time
+}
+
+// supplyCounters is the event_supply row as read under its lock, with the sales limit of the event.
+type supplyCounters struct {
+	total, alloc, held, sold, maxPerOrder int
+}
+
+// ReserveBatch reserves one admission per entry in a single transaction (invariant #2). The batch locks the event_supply
+// row once (C7.2): the grants are computed in Go, in entry order, against that locked row, then written with one aggregate
+// supply update and one bulk insert. An entry that still carries a buyer NIK hash keeps its per-entry quota check under the
+// same lock, in its own savepoint.
 func (r *AdmissionRepo) ReserveBatch(ctx context.Context, eventID string, entries []outbound.ReserveEntry, at time.Time) ([]outbound.ReserveOutcome, error) {
-	out := make([]outbound.ReserveOutcome, 0, len(entries))
+	var out []outbound.ReserveOutcome
 	err := pkgpg.WithTx(ctx, r.pool, pgx.TxOptions{IsoLevel: pgx.ReadCommitted}, func(tx pgx.Tx) error {
 		// The sales window and cancellation are read once per batch, before any entry can be granted (AC-C4.4).
 		gate, ended, err := saleGate(ctx, tx, eventID, at)
@@ -91,23 +131,20 @@ func (r *AdmissionRepo) ReserveBatch(ctx context.Context, eventID string, entrie
 			return err
 		}
 		if gate != "" {
+			out = make([]outbound.ReserveOutcome, 0, len(entries))
 			for _, e := range entries {
 				out = append(out, outbound.ReserveOutcome{QueueEntryID: e.QueueEntryID, Units: e.Units, Outcome: gate})
 			}
 			return nil
 		}
-		// R18: the existing admissions of the batch are locked once, in id order, before any supply lock. Release and
-		// ExpireSession lock admission then supply; a batch that took supply first could wait for an admission while it
-		// held supply (the reverse order, 40P01).
-		if err := lockBatchAdmissions(ctx, tx, entries); err != nil {
+		// R18: the existing admissions of the batch are locked once, in id order, before any supply lock. The same read is
+		// the replay lookup, so it needs no second round trip.
+		existing, err := lockBatchAdmissions(ctx, tx, entries)
+		if err != nil {
 			return err
 		}
-		// Per batch: the booking.sold_out row is written once, by the first entry that finds nothing left.
-		soldOutAnnounced := false
-		for _, e := range entries {
-			out = append(out, r.reserveOne(ctx, tx, eventID, e, at, ended, &soldOutAnnounced))
-		}
-		return nil
+		out, err = decideBatch(ctx, tx, eventID, entries, existing, ended, at)
+		return err
 	})
 	if err != nil {
 		return nil, fmt.Errorf("admissions: reserve batch: %w", err)
@@ -115,199 +152,313 @@ func (r *AdmissionRepo) ReserveBatch(ctx context.Context, eventID string, entrie
 	return out, nil
 }
 
-func (r *AdmissionRepo) reserveOne(ctx context.Context, tx pgx.Tx, eventID string, e outbound.ReserveEntry, at time.Time, ended bool, soldOutAnnounced *bool) outbound.ReserveOutcome {
-	res := outbound.ReserveOutcome{QueueEntryID: e.QueueEntryID, Units: e.Units}
-	// Use a savepoint so a per-entry failure does not abort the whole batch transaction.
-	if _, err := tx.Exec(ctx, "SAVEPOINT entry"); err != nil {
-		res.Outcome = "NO_SUPPLY_NOW"
-		return res
-	}
-
-	// Idempotent replay: an entry that already holds a reservation gets that same grant back, even when the
-	// stock it holds is the reason nothing is free now (the Promotor may have failed to promote it last tick).
-	// The row is already locked by lockBatchAdmissions (R18), so this read takes no lock.
-	var prevID, prevStatus, prevEndReason string
-	var prevUnits int
-	var prevExpires time.Time
-	var regrantID string
-	if err := tx.QueryRow(ctx, `SELECT id::text, status, COALESCE(end_reason, ''), units, expires_at FROM booking.admissions
-		WHERE queue_entry_id = $1::uuid`, e.QueueEntryID).
-		Scan(&prevID, &prevStatus, &prevEndReason, &prevUnits, &prevExpires); err == nil {
-		// D-C6.6: a RESERVED row that lapsed as UNCLAIMED was never admitted by Queue, so it is granted again below as a
-		// new grant (same row, fresh stock). Every other terminal row is replayed as ALREADY_ACTIVE.
-		if prevStatus != "EXPIRED" || prevEndReason != "UNCLAIMED" {
-			_, _ = tx.Exec(ctx, "RELEASE SAVEPOINT entry")
-			res.AllocationID = prevID
-			if prevStatus == "RESERVED" {
-				res.Outcome, res.Units = "GRANTED", prevUnits
-				res.ClaimDeadline = &prevExpires
-			} else {
-				res.Outcome = "ALREADY_ACTIVE"
-			}
-			return res
+// decideBatch answers the entries of a batch in order, inside tx after the admission rows are locked. A queue entry that
+// repeats in the batch gets the outcome of its first occurrence, as a replay would.
+func decideBatch(ctx context.Context, tx pgx.Tx, eventID string, entries []outbound.ReserveEntry, existing map[string]batchRow, ended bool, at time.Time) ([]outbound.ReserveOutcome, error) {
+	out := make([]outbound.ReserveOutcome, len(entries))
+	first := make(map[string]int, len(entries))
+	var pending []pendingEntry
+	for i, e := range entries {
+		out[i] = outbound.ReserveOutcome{QueueEntryID: e.QueueEntryID, Units: e.Units}
+		if _, dup := first[e.QueueEntryID]; dup {
+			continue
 		}
-		regrantID = prevID
+		first[e.QueueEntryID] = i
+		row, exists := existing[e.QueueEntryID]
+		switch {
+		case exists && !row.lapsedUnclaimed():
+			out[i] = replayOutcome(out[i], row)
+		case ended:
+			// Only a new grant is refused after sales_ends_at (D-C4.4a); a replay above has already returned its own grant.
+			// A re-grant of a lapsed row is a new grant of stock, so it is refused here too.
+			out[i].Outcome = "SOLD_OUT"
+		default:
+			p := pendingEntry{entry: i}
+			if exists {
+				p.regrantID = row.id
+			}
+			pending = append(pending, p)
+		}
 	}
-
-	// Only a new grant is refused after sales_ends_at (D-C4.4a); a replay above has already returned its own grant.
-	// A re-grant of a lapsed row is a new grant of stock, so it is refused here too.
-	if ended {
-		_, _ = tx.Exec(ctx, "ROLLBACK TO SAVEPOINT entry")
-		res.Outcome = "SOLD_OUT"
-		return res
+	if len(pending) > 0 {
+		if err := grantPending(ctx, tx, eventID, entries, pending, out, at); err != nil {
+			return nil, err
+		}
 	}
+	for i, e := range entries {
+		if j := first[e.QueueEntryID]; j != i {
+			out[i] = out[j]
+		}
+	}
+	return out, nil
+}
 
-	// Step 1 (§9.1): lock event_supply FOR UPDATE and read stock counters.
-	var totalCap, allocUnits, heldUnits, soldUnits, maxPerOrder int
-	if err := tx.QueryRow(ctx, `
+// replayOutcome answers an entry that already holds an admission: its own grant while it is still reserved, otherwise
+// ALREADY_ACTIVE, so a released, activated or expired admission is never granted again (D-C6.6).
+func replayOutcome(o outbound.ReserveOutcome, row batchRow) outbound.ReserveOutcome {
+	o.AllocationID = row.id
+	if row.status != "RESERVED" {
+		o.Outcome = "ALREADY_ACTIVE"
+		return o
+	}
+	o.Outcome, o.Units = "GRANTED", row.units
+	deadline := row.expiresAt
+	o.ClaimDeadline = &deadline
+	return o
+}
+
+// grantPending decides the new grants of a batch against the one locked event_supply row, in entry order. Each decision
+// sees the stock the earlier entries of the batch left, and the batch writes the result once (see writeGrants).
+func grantPending(ctx context.Context, tx pgx.Tx, eventID string, entries []outbound.ReserveEntry, pending []pendingEntry, out []outbound.ReserveOutcome, at time.Time) error {
+	sup, found, err := lockSupply(ctx, tx, eventID)
+	if err != nil {
+		return err
+	}
+	alloc := sup.alloc
+	free := sup.total - sup.alloc - sup.held - sup.sold
+	soldOutAnnounced := false
+	var grants []batchGrant
+	for _, p := range pending {
+		e := entries[p.entry]
+		o := &out[p.entry]
+		if !found {
+			o.Outcome = "NO_SUPPLY_NOW"
+			continue
+		}
+
+		// Buyer quota: only an entry that still carries a NIK hash (legacy; ADR-030 moved the check to hold).
+		remaining := sup.maxPerOrder
+		if len(e.BuyerNIKHash) > 0 {
+			left, ok := buyerRemaining(ctx, tx, eventID, e.BuyerNIKHash)
+			if !ok {
+				o.Outcome = "NO_SUPPLY_NOW"
+				continue
+			}
+			if left <= 0 {
+				o.Outcome = "BUYER_QUOTA_EXHAUSTED"
+				continue
+			}
+			remaining = left
+		}
+
+		// Sold out only when nothing is free, allocated or held (F4): reserved units can still come back.
+		if free+alloc+sup.held == 0 {
+			o.Outcome = "SOLD_OUT"
+			announceSoldOutSafe(ctx, tx, eventID, &soldOutAnnounced)
+			continue
+		}
+		if free == 0 {
+			// free=0 but alloc+held > 0: stock is reserved but not yet held, a temporary unavailability.
+			o.Outcome = "NO_SUPPLY_NOW"
+			continue
+		}
+
+		units := e.Units
+		if units > sup.maxPerOrder {
+			units = sup.maxPerOrder
+		}
+		if units > remaining {
+			units = remaining
+		}
+		if units > free {
+			units = free
+		}
+		if units < 1 {
+			// The admission CHECK (units BETWEEN 1 AND 3) refused a zero grant before the batch; keep that answer.
+			o.Outcome = "SOLD_OUT"
+			continue
+		}
+		alloc += units
+		free -= units
+		o.Outcome, o.Units = "GRANTED", units
+		grants = append(grants, batchGrant{entry: p.entry, units: units, regrantID: p.regrantID})
+	}
+	return writeGrants(ctx, tx, eventID, entries, grants, out, at)
+}
+
+// lockSupply locks the event_supply row once for the batch and reads its counters. found is false when the event has no
+// supply row or is not on sale; every new grant of the batch then waits.
+func lockSupply(ctx context.Context, tx pgx.Tx, eventID string) (sup supplyCounters, found bool, err error) {
+	err = tx.QueryRow(ctx, `
 		SELECT s.total_capacity, s.allocated_units, s.held_units, s.sold_units, ev.max_tickets_per_order
 		  FROM booking.event_supply s
 		  JOIN booking.events ev ON ev.id = s.event_id AND ev.published_at IS NOT NULL AND ev.status <> 'CANCELLED'
 		 WHERE s.event_id=$1::uuid FOR UPDATE OF s`, eventID).
-		Scan(&totalCap, &allocUnits, &heldUnits, &soldUnits, &maxPerOrder); err != nil {
-		_, _ = tx.Exec(ctx, "ROLLBACK TO SAVEPOINT entry")
-		res.Outcome = "NO_SUPPLY_NOW"
-		return res
+		Scan(&sup.total, &sup.alloc, &sup.held, &sup.sold, &sup.maxPerOrder)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return sup, false, nil
 	}
-	freeUnits := totalCap - allocUnits - heldUnits - soldUnits
+	if err != nil {
+		return sup, false, fmt.Errorf("admissions: lock supply: %w", err)
+	}
+	return sup, true, nil
+}
 
-	// Steps 2-3 (buyer_quotas upsert, remaining clamp) run only when the entry carries a buyer NIK. In the
-	// anonymous flow (ADR-030) the buyer quota is checked at hold, so reserve never touches buyer_quotas.
-	remaining := maxPerOrder
-	if len(e.BuyerNIKHash) > 0 {
+// buyerRemaining returns the buyer's remaining quota on the event for an entry that carries a NIK hash. It runs in its own
+// savepoint: a failure rolls back to it and reports !ok, so that entry gets NO_SUPPLY_NOW and the batch goes on.
+func buyerRemaining(ctx context.Context, tx pgx.Tx, eventID string, nikHash []byte) (remaining int, ok bool) {
+	if _, err := tx.Exec(ctx, "SAVEPOINT quota"); err != nil {
+		return 0, false
+	}
+	var heldQ, paidQ, maxQ int
+	err := func() error {
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO booking.buyer_quotas (event_id, buyer_nik_hash, max_quantity)
 			SELECT $1::uuid, $2, ev.max_tickets_per_buyer_nik
 			  FROM booking.events ev WHERE ev.id=$1::uuid
-			ON CONFLICT (event_id, buyer_nik_hash) DO NOTHING`, eventID, e.BuyerNIKHash); err != nil {
-			_, _ = tx.Exec(ctx, "ROLLBACK TO SAVEPOINT entry")
-			res.Outcome = "NO_SUPPLY_NOW"
-			return res
+			ON CONFLICT (event_id, buyer_nik_hash) DO NOTHING`, eventID, nikHash); err != nil {
+			return err
 		}
-		var heldQ, paidQ, maxQ int
-		if err := tx.QueryRow(ctx, `
+		return tx.QueryRow(ctx, `
 			SELECT held_quantity, paid_quantity, max_quantity
 			  FROM booking.buyer_quotas
-			 WHERE event_id=$1::uuid AND buyer_nik_hash=$2 FOR UPDATE`, eventID, e.BuyerNIKHash).
-			Scan(&heldQ, &paidQ, &maxQ); err != nil {
-			_, _ = tx.Exec(ctx, "ROLLBACK TO SAVEPOINT entry")
-			res.Outcome = "NO_SUPPLY_NOW"
-			return res
-		}
-		remaining = maxQ - (heldQ + paidQ)
-		if remaining <= 0 {
-			_, _ = tx.Exec(ctx, "ROLLBACK TO SAVEPOINT entry")
-			res.Outcome = "BUYER_QUOTA_EXHAUSTED"
-			return res
-		}
+			 WHERE event_id=$1::uuid AND buyer_nik_hash=$2 FOR UPDATE`, eventID, nikHash).
+			Scan(&heldQ, &paidQ, &maxQ)
+	}()
+	if err != nil {
+		_, _ = tx.Exec(ctx, "ROLLBACK TO SAVEPOINT quota")
+		return 0, false
 	}
+	_, _ = tx.Exec(ctx, "RELEASE SAVEPOINT quota")
+	return maxQ - (heldQ + paidQ), true
+}
 
-	// Step 4 (§9.1): supply checks.
-	if freeUnits+allocUnits+heldUnits == 0 {
-		// Fully sold out (free=0, alloc=0, held=0). Roll this entry back first, then announce in its own savepoint:
-		// announcing before the entry rollback let ROLLBACK TO SAVEPOINT entry erase the status and the outbox row.
-		_, _ = tx.Exec(ctx, "ROLLBACK TO SAVEPOINT entry")
-		if _, err := tx.Exec(ctx, "SAVEPOINT sold_out"); err == nil {
-			if err := announceSoldOutTx(ctx, tx, eventID, soldOutAnnounced); err != nil {
-				_, _ = tx.Exec(ctx, "ROLLBACK TO SAVEPOINT sold_out")
-			} else {
-				_, _ = tx.Exec(ctx, "RELEASE SAVEPOINT sold_out")
-			}
+// writeGrants writes the granted units of the batch: the supply counter once, the lapsed rows it re-grants (D-C6.6) in
+// one update, and the new admissions in one bulk insert. Every statement runs in the batch transaction, so a failure
+// rolls the whole batch back and Queue retries it.
+func writeGrants(ctx context.Context, tx pgx.Tx, eventID string, entries []outbound.ReserveEntry, grants []batchGrant, out []outbound.ReserveOutcome, at time.Time) error {
+	if len(grants) == 0 {
+		return nil
+	}
+	total := 0
+	var fresh, regrants []batchGrant
+	for _, g := range grants {
+		total += g.units
+		if g.regrantID != "" {
+			regrants = append(regrants, g)
+		} else {
+			fresh = append(fresh, g)
 		}
-		res.Outcome = "SOLD_OUT"
-		return res
 	}
-	if freeUnits == 0 {
-		// free=0 but alloc+held > 0: stock is reserved but not yet held → temporary unavailability.
-		_, _ = tx.Exec(ctx, "ROLLBACK TO SAVEPOINT entry")
-		res.Outcome = "NO_SUPPLY_NOW"
-		return res
-	}
-
-	// Step 5: compute units to allocate (min of what's free, what's requested, what's remaining on quota).
-	units := e.Units
-	if units > maxPerOrder {
-		units = maxPerOrder
-	}
-	if units > remaining {
-		units = remaining
-	}
-	if units > freeUnits {
-		units = freeUnits
-	}
-
-	// Step 6: allocate in event_supply.
 	if _, err := tx.Exec(ctx, `
 		UPDATE booking.event_supply
 		   SET allocated_units = allocated_units + $2, version = version + 1, updated_at = $3
-		 WHERE event_id = $1::uuid`, eventID, units, at); err != nil {
-		_, _ = tx.Exec(ctx, "ROLLBACK TO SAVEPOINT entry")
-		res.Outcome = supplyOutcome(err)
-		return res
+		 WHERE event_id = $1::uuid`, eventID, total, at); err != nil {
+		return fmt.Errorf("admissions: allocate supply: %w", err)
 	}
 
-	// Step 7 (F4, SRS-F-09-05): never mark SOLD_OUT here. The units just reserved can still come back (cancel,
-	// unclaimed, expiry), so free + allocated + held > 0 after this step; only step 4 or the settle path, when that
-	// sum is 0, may announce the sell-out.
-
-	// Step 8: insert the admission row, or (D-C6.6) reuse the lapsed UNCLAIMED row of this entry in place.
-	var allocationID string
-	var expiresAt time.Time
-	var err error
-	if regrantID != "" {
-		err = tx.QueryRow(ctx, `
+	landed := make(map[string]landedRow, len(grants))
+	if len(regrants) > 0 {
+		ids := make([]string, 0, len(regrants))
+		units := make([]int, 0, len(regrants))
+		for _, g := range regrants {
+			ids = append(ids, g.regrantID)
+			units = append(units, g.units)
+		}
+		rows, err := tx.Query(ctx, `
 			UPDATE booking.admissions a
-			   SET status = 'RESERVED', units = $2, outstanding_units = $2,
+			   SET status = 'RESERVED', units = g.units, outstanding_units = g.units,
 			       reserved_at = $3::timestamptz,
 			       expires_at = $3::timestamptz + make_interval(secs => ev.claim_window_seconds),
 			       ended_at = NULL, end_reason = NULL
-			  FROM booking.events ev
-			 WHERE a.id = $1::uuid AND a.status = 'EXPIRED' AND ev.id = a.event_id
-			RETURNING a.id::text, a.expires_at`,
-			regrantID, units, at).Scan(&allocationID, &expiresAt)
-	} else {
-		err = tx.QueryRow(ctx, `
+			  FROM unnest($1::text[], $2::int[]) AS g(id, units), booking.events ev
+			 WHERE a.id = g.id::uuid AND a.status = 'EXPIRED' AND ev.id = a.event_id
+			RETURNING a.queue_entry_id::text, a.id::text, a.expires_at`, ids, units, at)
+		if err != nil {
+			return fmt.Errorf("admissions: regrant: %w", err)
+		}
+		if err := scanLanded(rows, landed); err != nil {
+			return fmt.Errorf("admissions: regrant: %w", err)
+		}
+	}
+	if len(fresh) > 0 {
+		var qids, visitors, jtis, accounts, emails, maskeds []string
+		var seqs []int64
+		var nikHashes [][]byte
+		var units []int
+		for _, g := range fresh {
+			e := entries[g.entry]
+			qids = append(qids, e.QueueEntryID)
+			seqs = append(seqs, e.Seq)
+			visitors = append(visitors, e.VisitorID)
+			nikHashes = append(nikHashes, e.BuyerNIKHash)
+			emails = append(emails, e.BuyerEmailEnc)
+			maskeds = append(maskeds, e.BuyerNIKMasked)
+			units = append(units, g.units)
+			jtis = append(jtis, e.AdmissionJTI)
+			accounts = append(accounts, e.AccountID)
+		}
+		rows, err := tx.Query(ctx, `
 			INSERT INTO booking.admissions (
 				event_id, queue_entry_id, queue_seq, visitor_id, buyer_nik_hash, buyer_email_enc, buyer_nik_masked,
 				units, outstanding_units, status, admission_jti, attendee_checks, edit_count,
 				cfg_selection_ttl_seconds, cfg_payment_ttl_seconds, cfg_submit_grace_seconds,
 				cfg_edit_enabled, cfg_max_edits, cfg_allow_mixed_categories,
 				reserved_at, expires_at, account_id)
-			SELECT $1::uuid, $2::uuid, $3, $4::uuid, $5, NULLIF($6,''), NULLIF($7,''),
-				$8, $8, 'RESERVED', $9::uuid, 0, 0,
+			SELECT $1::uuid, g.queue_entry_id::uuid, g.seq, g.visitor_id::uuid, g.nik_hash, NULLIF(g.email_enc,''), NULLIF(g.nik_masked,''),
+				g.units, g.units, 'RESERVED', g.admission_jti::uuid, 0, 0,
 				ev.selection_ttl_seconds, ev.payment_ttl_seconds, ev.selection_submit_grace_seconds,
 				ev.selection_edit_enabled, ev.max_selection_edits, ev.allow_mixed_categories,
-				$10::timestamptz, $10::timestamptz + make_interval(secs => ev.claim_window_seconds),
-				NULLIF($11,'')::uuid
-			  FROM booking.events ev WHERE ev.id = $1::uuid
-			RETURNING id::text, expires_at`,
-			eventID, e.QueueEntryID, e.Seq, e.VisitorID, e.BuyerNIKHash, e.BuyerEmailEnc, e.BuyerNIKMasked,
-			units, e.AdmissionJTI, at, e.AccountID).Scan(&allocationID, &expiresAt)
-	}
-	if err != nil {
-		_, _ = tx.Exec(ctx, "ROLLBACK TO SAVEPOINT entry")
-		if pkgpg.IsCode(err, pkgpg.CodeUniqueViolation) {
-			return r.existingOutcome(ctx, tx, eventID, e)
+				$2::timestamptz, $2::timestamptz + make_interval(secs => ev.claim_window_seconds),
+				NULLIF(g.account_id,'')::uuid
+			  FROM unnest($3::text[], $4::bigint[], $5::text[], $6::bytea[], $7::text[], $8::text[], $9::int[], $10::text[], $11::text[])
+				AS g(queue_entry_id, seq, visitor_id, nik_hash, email_enc, nik_masked, units, admission_jti, account_id)
+			  CROSS JOIN booking.events ev
+			 WHERE ev.id = $1::uuid
+			RETURNING queue_entry_id::text, id::text, expires_at`,
+			eventID, at, qids, seqs, visitors, nikHashes, emails, maskeds, units, jtis, accounts)
+		if err != nil {
+			return fmt.Errorf("admissions: bulk insert: %w", err)
 		}
-		if pkgpg.IsCode(err, pkgpg.CodeCheckViolation) {
-			res.Outcome = "SOLD_OUT"
-			return res
+		if err := scanLanded(rows, landed); err != nil {
+			return fmt.Errorf("admissions: bulk insert: %w", err)
 		}
-		res.Outcome = "NO_SUPPLY_NOW"
-		return res
 	}
-	_, _ = tx.Exec(ctx, "RELEASE SAVEPOINT entry")
-	res.Outcome = "GRANTED"
-	res.AllocationID = allocationID
-	res.Units = units
-	d := expiresAt
-	res.ClaimDeadline = &d
-	return res
+
+	for _, g := range grants {
+		qid := entries[g.entry].QueueEntryID
+		row, ok := landed[qid]
+		if !ok {
+			return fmt.Errorf("admissions: batch wrote no row for queue entry %s", qid)
+		}
+		o := &out[g.entry]
+		o.AllocationID = row.id
+		deadline := row.expiresAt
+		o.ClaimDeadline = &deadline
+	}
+	return nil
+}
+
+// scanLanded reads the (queue_entry_id, id, expires_at) rows a batch statement returned, and closes them.
+func scanLanded(rows pgx.Rows, landed map[string]landedRow) error {
+	defer rows.Close()
+	for rows.Next() {
+		var qid string
+		var row landedRow
+		if err := rows.Scan(&qid, &row.id, &row.expiresAt); err != nil {
+			return err
+		}
+		landed[qid] = row
+	}
+	return rows.Err()
+}
+
+// announceSoldOutSafe writes the batch's booking.sold_out row inside a savepoint, so a failed announcement does not abort
+// the batch. The row is written at most once per batch (see announceSoldOutTx).
+func announceSoldOutSafe(ctx context.Context, tx pgx.Tx, eventID string, announced *bool) {
+	if _, err := tx.Exec(ctx, "SAVEPOINT sold_out"); err != nil {
+		return
+	}
+	if err := announceSoldOutTx(ctx, tx, eventID, announced); err != nil {
+		_, _ = tx.Exec(ctx, "ROLLBACK TO SAVEPOINT sold_out")
+		return
+	}
+	_, _ = tx.Exec(ctx, "RELEASE SAVEPOINT sold_out")
 }
 
 // saleGate reads the event once per batch. It returns the outcome every entry gets before any replay lookup ("" when the
 // batch may proceed): a cancelled event answers SOLD_OUT, and an event that is missing, unpublished or not yet open
-// answers NO_SUPPLY_NOW. ended reports at >= sales_ends_at; reserveOne applies it to new grants only, after the replay
+// answers NO_SUPPLY_NOW. ended reports at >= sales_ends_at; decideBatch applies it to new grants only, after the replay
 // lookup (R14). A SOLD_OUT for a cancelled event writes no booking.sold_out row (D-C4.4a).
 func saleGate(ctx context.Context, tx pgx.Tx, eventID string, at time.Time) (gate string, ended bool, err error) {
 	var status string
@@ -332,20 +483,35 @@ func saleGate(ctx context.Context, tx pgx.Tx, eventID string, at time.Time) (gat
 	return "", !at.Before(endsAt), nil
 }
 
-// lockBatchAdmissions locks the existing admission rows of the batch's entries, once, in id order (R18). It runs after
-// saleGate and before any event_supply lock, so the batch follows the admission-then-supply order that Release and
-// ExpireSession use. Locking by queue_entry_id matches the replay lookup in reserveOne.
-func lockBatchAdmissions(ctx context.Context, tx pgx.Tx, entries []outbound.ReserveEntry) error {
+// lockBatchAdmissions locks the existing admission rows of the batch's entries once, in id order (R18), and returns them
+// keyed by queue_entry_id. It runs after saleGate and before any event_supply lock, so the batch follows the
+// admission-then-supply order that Release and ExpireSession use. Locking by queue_entry_id matches the replay lookup.
+func lockBatchAdmissions(ctx context.Context, tx pgx.Tx, entries []outbound.ReserveEntry) (map[string]batchRow, error) {
 	ids := make([]string, 0, len(entries))
 	for _, e := range entries {
 		ids = append(ids, e.QueueEntryID)
 	}
-	_, err := tx.Exec(ctx, `SELECT id FROM booking.admissions
-		WHERE queue_entry_id = ANY($1::uuid[]) ORDER BY id FOR UPDATE`, ids)
+	rows, err := tx.Query(ctx, `
+		SELECT queue_entry_id::text, id::text, status, COALESCE(end_reason, ''), units, expires_at
+		  FROM booking.admissions
+		 WHERE queue_entry_id = ANY($1::uuid[]) ORDER BY id FOR UPDATE`, ids)
 	if err != nil {
-		return fmt.Errorf("admissions: lock batch: %w", err)
+		return nil, fmt.Errorf("admissions: lock batch: %w", err)
 	}
-	return nil
+	defer rows.Close()
+	existing := make(map[string]batchRow, len(ids))
+	for rows.Next() {
+		var qid string
+		var row batchRow
+		if err := rows.Scan(&qid, &row.id, &row.status, &row.endReason, &row.units, &row.expiresAt); err != nil {
+			return nil, fmt.Errorf("admissions: lock batch: %w", err)
+		}
+		existing[qid] = row
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("admissions: lock batch: %w", err)
+	}
+	return existing, nil
 }
 
 // announceSoldOutTx writes the booking.sold_out outbox row. The row is written only while *announced is false, so a
@@ -360,20 +526,6 @@ func announceSoldOutTx(ctx context.Context, tx pgx.Tx, eventID string, announced
 	}
 	*announced = true
 	return nil
-}
-
-// existingOutcome resolves a unique-violation to the right idempotent outcome.
-func (r *AdmissionRepo) existingOutcome(ctx context.Context, tx pgx.Tx, eventID string, e outbound.ReserveEntry) outbound.ReserveOutcome {
-	res := outbound.ReserveOutcome{QueueEntryID: e.QueueEntryID, Units: e.Units}
-	var id string
-	err := tx.QueryRow(ctx, `SELECT id::text FROM booking.admissions WHERE queue_entry_id = $1::uuid`, e.QueueEntryID).Scan(&id)
-	if err == nil {
-		res.Outcome = "ALREADY_ACTIVE"
-		res.AllocationID = id
-		return res
-	}
-	res.Outcome = "ALREADY_ACTIVE"
-	return res
 }
 
 func supplyOutcome(err error) string {
@@ -555,7 +707,7 @@ func mapAdmissionErr(a entity.Admission, err error) (entity.Admission, error) {
 	return a, nil
 }
 
-// enqueueOutboxTx writes one outbox row inside an existing transaction (used by reserveOne).
+// enqueueOutboxTx writes one outbox row inside an existing transaction (used by announceSoldOutTx).
 func enqueueOutboxTx(ctx context.Context, tx pgx.Tx, routingKey, aggregateID string, payload any) error {
 	raw, err := json.Marshal(payload)
 	if err != nil {

@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/apperror"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/application/usecase"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/domain/dto"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/domain/entity"
@@ -296,4 +297,24 @@ func TestSweepExpiries_DelegatesEach(t *testing.T) {
 	uc := usecase.NewSweepExpiries(&fakeBookingRepo{due: []string{"b1", "b2"}}, exp, fixedClock{t: time.Now()})
 	require.NoError(t, uc.SweepExpiries(context.Background()))
 	assert.Equal(t, []string{"b1", "b2"}, exp.ids)
+}
+
+// C7.2 (D-C7.2): one allocation batch carries at most 100 entries; more is a 400 that names the field.
+func TestAllocateBatch_MoreThan100Is400(t *testing.T) {
+	entries := func(n int) []dto.AllocationEntry {
+		out := make([]dto.AllocationEntry, 0, n)
+		for i := 0; i < n; i++ {
+			out = append(out, dto.AllocationEntry{QueueEntryID: "q", VisitorID: visitor, Units: 1})
+		}
+		return out
+	}
+	uc := usecase.NewAllocateBatch(&fakeAdmissionRepo{}, &fakeIDs{}, fixedClock{t: time.Now()})
+
+	_, err := uc.AllocateBatch(context.Background(), dto.AllocationBatchRequest{EventID: eventID, Entries: entries(101)})
+	require.Error(t, err)
+	assert.Equal(t, apperror.CodeValidationFailed, codeOf(t, err))
+	assert.Equal(t, "entries", validationField(t, err))
+
+	_, err = uc.AllocateBatch(context.Background(), dto.AllocationBatchRequest{EventID: eventID, Entries: entries(100)})
+	assert.NoError(t, err, "exactly 100 entries is allowed")
 }

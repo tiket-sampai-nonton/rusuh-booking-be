@@ -33,12 +33,12 @@ func TestLoad_QueueExtras(t *testing.T) {
 	setBase(t)
 	t.Setenv("TOKEN_ADMISSION_TTL", "60s")
 	t.Setenv("QUEUE_PROMOTOR_INTERVAL_MS", "100ms")
-	t.Setenv("QUEUE_PROMOTE_BATCH_MAX", "200")
+	t.Setenv("QUEUE_PROMOTE_BATCH_MAX", "100")
 	t.Setenv("RATE_LIMIT_JOIN_PER_IP", "150")
 	cfg, err := Load()
 	require.NoError(t, err)
 	assert.Equal(t, "http://booking:8082", cfg.Booking.BaseURL)
-	assert.Equal(t, 200, cfg.WorkerTuning.PromoteBatchMax)
+	assert.Equal(t, 100, cfg.WorkerTuning.PromoteBatchMax)
 	assert.Equal(t, 150, cfg.RateLimit.JoinPerIP)
 	assert.Equal(t, int64(100), cfg.WorkerTuning.PromotorInterval.Milliseconds())
 	assert.Equal(t, int64(60), int64(cfg.Token.AdmissionTTL.Seconds()))
@@ -311,6 +311,31 @@ func TestLoad_TrustedProxyHops(t *testing.T) {
 			}
 			require.Error(t, err)
 			assert.ErrorContains(t, err, tt.want)
+		})
+	}
+}
+
+// C7.2 (D-C7.2): Booking takes at most 100 entries per batch, so the promoter's batch is validated to 1..100.
+func TestLoad_PromoteBatchMaxCappedAt100(t *testing.T) {
+	setBase(t)
+	cfg, err := Load()
+	require.NoError(t, err)
+	assert.Equal(t, 100, cfg.WorkerTuning.PromoteBatchMax, "default batch size")
+
+	for _, tc := range []struct {
+		value string
+		ok    bool
+	}{{"1", true}, {"100", true}, {"0", false}, {"101", false}} {
+		t.Run("QUEUE_PROMOTE_BATCH_MAX="+tc.value, func(t *testing.T) {
+			setBase(t)
+			t.Setenv("QUEUE_PROMOTE_BATCH_MAX", tc.value)
+			_, err := Load()
+			if tc.ok {
+				require.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
+			assert.ErrorContains(t, err, "QUEUE_PROMOTE_BATCH_MAX")
 		})
 	}
 }

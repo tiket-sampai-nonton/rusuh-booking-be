@@ -7,10 +7,13 @@ import (
 	cryptorand "crypto/rand"
 	"fmt"
 	"math/rand"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -830,4 +833,133 @@ func TestReserveBatch_ConcurrentReleaseKeepsStockAndLockOrder(t *testing.T) {
 			f.eventID).Scan(&sum))
 		assert.Equal(t, sum, f.ledger(t).alloc, "iteration %d: allocated_units = sum of RESERVED outstanding units", i)
 	}
+}
+
+// stmtCounter records the SQL of every statement a pool runs (C7.2 tracer).
+type stmtCounter struct {
+	mu   sync.Mutex
+	sqls []string
+}
+
+func (c *stmtCounter) TraceQueryStart(ctx context.Context, _ *pgx.Conn, data pgx.TraceQueryStartData) context.Context {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.sqls = append(c.sqls, strings.Join(strings.Fields(data.SQL), " "))
+	return ctx
+}
+
+func (c *stmtCounter) TraceQueryEnd(context.Context, *pgx.Conn, pgx.TraceQueryEndData) {}
+
+// countPrefix returns how many recorded statements start with prefix.
+func (c *stmtCounter) countPrefix(prefix string) int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	n := 0
+	for _, s := range c.sqls {
+		if strings.HasPrefix(s, prefix) {
+			n++
+		}
+	}
+	return n
+}
+
+// tracedAdmissionRepo is an admission repository over a second pool of the same database that records its statements.
+func tracedAdmissionRepo(t *testing.T, pool *pgxpool.Pool) (*AdmissionRepo, *stmtCounter) {
+	t.Helper()
+	counter := &stmtCounter{}
+	cfg := pool.Config().Copy()
+	cfg.ConnConfig.Tracer = counter
+	traced, err := pgxpool.NewWithConfig(context.Background(), cfg)
+	require.NoError(t, err)
+	t.Cleanup(traced.Close)
+	return NewAdmissionRepo(traced), counter
+}
+
+// C7.2 (AC-C7.2 PF-P1-1): a 100-entry batch locks event_supply once and writes its admissions in one statement. Free 150
+// units: the first 50 entries (3 units each) are GRANTED, the rest find no supply (NO_SUPPLY_NOW).
+func TestReserveBatch_HundredEntriesOneSupplyUpdate(t *testing.T) {
+	ctx := context.Background()
+	f := newAcctFixture(t, suffixFor(t), 150)
+	repo, counter := tracedAdmissionRepo(t, f.pool)
+	entries := make([]outbound.ReserveEntry, 0, 100)
+	for i := 1; i <= 100; i++ {
+		entries = append(entries, anonEntry(i, 3))
+	}
+
+	out, err := repo.ReserveBatch(ctx, f.eventID, entries, time.Now())
+	require.NoError(t, err)
+	require.Len(t, out, 100)
+	for i, o := range out {
+		if i < 50 {
+			assert.Equal(t, "GRANTED", o.Outcome, "entry %d", i)
+			assert.Equal(t, 3, o.Units, "entry %d", i)
+			assert.NotEmpty(t, o.AllocationID, "entry %d", i)
+		} else {
+			assert.Equal(t, "NO_SUPPLY_NOW", o.Outcome, "entry %d", i)
+		}
+	}
+	assert.Equal(t, 150, f.ledger(t).alloc, "allocated_units = 150")
+	assert.Equal(t, 1, counter.countPrefix("UPDATE booking.event_supply"), "one supply update for the whole batch")
+	assert.Equal(t, 1, counter.countPrefix("INSERT INTO booking.admissions"), "one bulk insert for the whole batch")
+}
+
+// C7.2: 10 holds run in parallel with a 100-entry batch on the same event. No statement fails (40P01 or otherwise), and
+// the ledger still matches the admissions and the HELD items.
+func TestReserveBatch_ConcurrentWithHoldsKeepsLedger(t *testing.T) {
+	ctx := context.Background()
+	f := newAcctFixture(t, suffixFor(t), 100)
+	repo := NewAdmissionRepo(f.pool)
+	type reserved struct{ id, vis string }
+	var admissions []reserved
+	for i := 0; i < 10; i++ {
+		id, vis := f.reserve(t, i, 1, true)
+		admissions = append(admissions, reserved{id, vis})
+	}
+	entries := make([]outbound.ReserveEntry, 0, 100)
+	for i := 1; i <= 100; i++ {
+		entries = append(entries, anonEntry(100+i, 3))
+	}
+
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	holdErrs := make([]error, len(admissions))
+	var out []outbound.ReserveOutcome
+	var batchErr error
+	for i, a := range admissions {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			_, holdErrs[i] = f.uow.Hold(ctx, f.spec(i, 1, a.id, a.vis, true))
+		}()
+	}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		<-start
+		out, batchErr = repo.ReserveBatch(ctx, f.eventID, entries, time.Now())
+	}()
+	close(start)
+	wg.Wait()
+
+	for i, err := range holdErrs {
+		require.NoError(t, err, "hold %d", i)
+	}
+	require.NoError(t, batchErr, "batch must not fail while holds run")
+	require.Len(t, out, 100)
+	granted := 0
+	for _, o := range out {
+		if o.Outcome == "GRANTED" {
+			granted++
+		}
+	}
+	assert.Equal(t, 30, granted, "90 free units in 3-unit grants")
+
+	var sumOut, heldItems int
+	require.NoError(t, f.pool.QueryRow(ctx, `SELECT COALESCE(sum(outstanding_units),0) FROM booking.admissions WHERE event_id=$1::uuid`, f.eventID).Scan(&sumOut))
+	require.NoError(t, f.pool.QueryRow(ctx, `SELECT count(*) FROM booking.booking_items WHERE event_id=$1::uuid AND item_status='HELD'`, f.eventID).Scan(&heldItems))
+	l := f.ledger(t)
+	assert.Equal(t, sumOut, l.alloc, "allocated_units = sum(outstanding_units)")
+	assert.Equal(t, heldItems, l.held, "held_units = HELD items")
+	assert.LessOrEqual(t, l.alloc+l.held+l.sold, l.total)
 }

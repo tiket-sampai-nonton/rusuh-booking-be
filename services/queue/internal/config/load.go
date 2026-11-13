@@ -100,7 +100,7 @@ func Load() (Config, error) {
 		PromotorInterval: r.Duration("QUEUE_PROMOTOR_INTERVAL_MS", 100*time.Millisecond),
 		SweeperInterval:  r.Duration("QUEUE_SWEEPER_INTERVAL_MS", 10*time.Second),
 		StatusInterval:   r.Duration("QUEUE_STATUS_INTERVAL_MS", time.Second),
-		PromoteBatchMax:  r.Int("QUEUE_PROMOTE_BATCH_MAX", 200),
+		PromoteBatchMax:  r.Int("QUEUE_PROMOTE_BATCH_MAX", 100),
 
 		StatusTTLMultiplier: r.Int("QUEUE_STATUS_TTL_MULTIPLIER", 4),
 

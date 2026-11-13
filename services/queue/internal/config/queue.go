@@ -129,6 +129,7 @@ const (
 	minLeaseTTL        = 2 * time.Second
 	maxLeaseTTL        = 30 * time.Second
 	maxSweepBatch      = 5000
+	maxPromoteBatch    = 100 // Booking takes at most 100 entries per allocation batch (D-C7.2)
 	minSuspectTicks    = 2
 	minRateLimitWindow = time.Millisecond
 	minStatusTTLMult   = 3
@@ -157,6 +158,9 @@ func (w WorkerTuning) Validate(bookingTimeout time.Duration) error {
 		errs = append(errs, fmt.Errorf("QUEUE_PROMOTER_LEASE_TTL_MS %s di luar rentang [%s, %s]", w.PromoterLeaseTTL, minLeaseTTL, maxLeaseTTL))
 	case w.PromoterLeaseTTL <= 2*bookingTimeout:
 		errs = append(errs, fmt.Errorf("QUEUE_PROMOTER_LEASE_TTL_MS %s harus > 2x BOOKING_TIMEOUT (%s)", w.PromoterLeaseTTL, 2*bookingTimeout))
+	}
+	if w.PromoteBatchMax < 1 || w.PromoteBatchMax > maxPromoteBatch {
+		errs = append(errs, fmt.Errorf("QUEUE_PROMOTE_BATCH_MAX %d di luar rentang 1..%d", w.PromoteBatchMax, maxPromoteBatch))
 	}
 	if w.SweepBatchMax < 1 || w.SweepBatchMax > maxSweepBatch {
 		errs = append(errs, fmt.Errorf("QUEUE_SWEEP_BATCH_MAX %d di luar rentang 1..%d", w.SweepBatchMax, maxSweepBatch))
