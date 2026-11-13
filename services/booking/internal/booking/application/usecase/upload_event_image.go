@@ -55,8 +55,9 @@ func (uc *UploadEventImage) Upload(ctx context.Context, eventID, kind string, da
 		return "", inbound.Validation("file", "harus JPEG, PNG, atau WebP")
 	}
 	// A no-op config update confirms the event exists (and that eventID is a UUID), so the key below is safe
-	// and no orphan file is stored for an unknown event.
-	if err := uc.repo.UpdateConfig(ctx, eventID, dto.UpdateEventConfigRequest{}); err != nil {
+	// and no orphan file is stored for an unknown event. The empty request changes no config, so no audit row is written
+	// and no actor is needed.
+	if err := uc.repo.UpdateConfig(ctx, eventID, "", dto.UpdateEventConfigRequest{}); err != nil {
 		return "", err
 	}
 	suffix := make([]byte, 8)

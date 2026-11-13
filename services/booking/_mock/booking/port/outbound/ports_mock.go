@@ -174,17 +174,17 @@ func (mr *MockIEventWriteRepoMockRecorder) SetImageURL(ctx, eventID, kind, url a
 }
 
 // UpdateConfig mocks base method.
-func (m *MockIEventWriteRepo) UpdateConfig(ctx context.Context, eventID string, req dto.UpdateEventConfigRequest) error {
+func (m *MockIEventWriteRepo) UpdateConfig(ctx context.Context, eventID, actor string, req dto.UpdateEventConfigRequest) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "UpdateConfig", ctx, eventID, req)
+	ret := m.ctrl.Call(m, "UpdateConfig", ctx, eventID, actor, req)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // UpdateConfig indicates an expected call of UpdateConfig.
-func (mr *MockIEventWriteRepoMockRecorder) UpdateConfig(ctx, eventID, req any) *gomock.Call {
+func (mr *MockIEventWriteRepoMockRecorder) UpdateConfig(ctx, eventID, actor, req any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateConfig", reflect.TypeOf((*MockIEventWriteRepo)(nil).UpdateConfig), ctx, eventID, req)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateConfig", reflect.TypeOf((*MockIEventWriteRepo)(nil).UpdateConfig), ctx, eventID, actor, req)
 }
 
 // MockIEventPublicationRepo is a mock of IEventPublicationRepo interface.
@@ -212,31 +212,31 @@ func (m *MockIEventPublicationRepo) EXPECT() *MockIEventPublicationRepoMockRecor
 }
 
 // Cancel mocks base method.
-func (m *MockIEventPublicationRepo) Cancel(ctx context.Context, eventID string) error {
+func (m *MockIEventPublicationRepo) Cancel(ctx context.Context, eventID, actor string) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Cancel", ctx, eventID)
+	ret := m.ctrl.Call(m, "Cancel", ctx, eventID, actor)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // Cancel indicates an expected call of Cancel.
-func (mr *MockIEventPublicationRepoMockRecorder) Cancel(ctx, eventID any) *gomock.Call {
+func (mr *MockIEventPublicationRepoMockRecorder) Cancel(ctx, eventID, actor any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Cancel", reflect.TypeOf((*MockIEventPublicationRepo)(nil).Cancel), ctx, eventID)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Cancel", reflect.TypeOf((*MockIEventPublicationRepo)(nil).Cancel), ctx, eventID, actor)
 }
 
 // SetPublished mocks base method.
-func (m *MockIEventPublicationRepo) SetPublished(ctx context.Context, eventID string, published bool) error {
+func (m *MockIEventPublicationRepo) SetPublished(ctx context.Context, eventID, actor string, published bool) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "SetPublished", ctx, eventID, published)
+	ret := m.ctrl.Call(m, "SetPublished", ctx, eventID, actor, published)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // SetPublished indicates an expected call of SetPublished.
-func (mr *MockIEventPublicationRepoMockRecorder) SetPublished(ctx, eventID, published any) *gomock.Call {
+func (mr *MockIEventPublicationRepoMockRecorder) SetPublished(ctx, eventID, actor, published any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetPublished", reflect.TypeOf((*MockIEventPublicationRepo)(nil).SetPublished), ctx, eventID, published)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetPublished", reflect.TypeOf((*MockIEventPublicationRepo)(nil).SetPublished), ctx, eventID, actor, published)
 }
 
 // MockIImageStore is a mock of IImageStore interface.
@@ -317,19 +317,19 @@ func (mr *MockIAdmissionRepoMockRecorder) Activate(ctx, jti, at any) *gomock.Cal
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Activate", reflect.TypeOf((*MockIAdmissionRepo)(nil).Activate), ctx, jti, at)
 }
 
-// DueSessions mocks base method.
-func (m *MockIAdmissionRepo) DueSessions(ctx context.Context, now time.Time, limit int) ([]entity.Admission, error) {
+// ClaimDueSessions mocks base method.
+func (m *MockIAdmissionRepo) ClaimDueSessions(ctx context.Context, now time.Time, limit int) ([]entity.Admission, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "DueSessions", ctx, now, limit)
+	ret := m.ctrl.Call(m, "ClaimDueSessions", ctx, now, limit)
 	ret0, _ := ret[0].([]entity.Admission)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
-// DueSessions indicates an expected call of DueSessions.
-func (mr *MockIAdmissionRepoMockRecorder) DueSessions(ctx, now, limit any) *gomock.Call {
+// ClaimDueSessions indicates an expected call of ClaimDueSessions.
+func (mr *MockIAdmissionRepoMockRecorder) ClaimDueSessions(ctx, now, limit any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DueSessions", reflect.TypeOf((*MockIAdmissionRepo)(nil).DueSessions), ctx, now, limit)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ClaimDueSessions", reflect.TypeOf((*MockIAdmissionRepo)(nil).ClaimDueSessions), ctx, now, limit)
 }
 
 // ExpireSession mocks base method.
@@ -490,6 +490,45 @@ func (mr *MockIBookingRepoMockRecorder) ListByAccount(ctx, accountID, cursor, li
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListByAccount", reflect.TypeOf((*MockIBookingRepo)(nil).ListByAccount), ctx, accountID, cursor, limit)
 }
 
+// MockIStockDrift is a mock of IStockDrift interface.
+type MockIStockDrift struct {
+	ctrl     *gomock.Controller
+	recorder *MockIStockDriftMockRecorder
+	isgomock struct{}
+}
+
+// MockIStockDriftMockRecorder is the mock recorder for MockIStockDrift.
+type MockIStockDriftMockRecorder struct {
+	mock *MockIStockDrift
+}
+
+// NewMockIStockDrift creates a new mock instance.
+func NewMockIStockDrift(ctrl *gomock.Controller) *MockIStockDrift {
+	mock := &MockIStockDrift{ctrl: ctrl}
+	mock.recorder = &MockIStockDriftMockRecorder{mock}
+	return mock
+}
+
+// EXPECT returns an object that allows the caller to indicate expected use.
+func (m *MockIStockDrift) EXPECT() *MockIStockDriftMockRecorder {
+	return m.recorder
+}
+
+// StockDrift mocks base method.
+func (m *MockIStockDrift) StockDrift(ctx context.Context) ([]outbound.StockDrift, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "StockDrift", ctx)
+	ret0, _ := ret[0].([]outbound.StockDrift)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// StockDrift indicates an expected call of StockDrift.
+func (mr *MockIStockDriftMockRecorder) StockDrift(ctx any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "StockDrift", reflect.TypeOf((*MockIStockDrift)(nil).StockDrift), ctx)
+}
+
 // MockIBookingDueScanner is a mock of IBookingDueScanner interface.
 type MockIBookingDueScanner struct {
 	ctrl     *gomock.Controller
@@ -514,19 +553,19 @@ func (m *MockIBookingDueScanner) EXPECT() *MockIBookingDueScannerMockRecorder {
 	return m.recorder
 }
 
-// DueBookingIDs mocks base method.
-func (m *MockIBookingDueScanner) DueBookingIDs(ctx context.Context, now time.Time, limit int) ([]string, error) {
+// ClaimDueBookings mocks base method.
+func (m *MockIBookingDueScanner) ClaimDueBookings(ctx context.Context, now time.Time, limit int) ([]string, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "DueBookingIDs", ctx, now, limit)
+	ret := m.ctrl.Call(m, "ClaimDueBookings", ctx, now, limit)
 	ret0, _ := ret[0].([]string)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
-// DueBookingIDs indicates an expected call of DueBookingIDs.
-func (mr *MockIBookingDueScannerMockRecorder) DueBookingIDs(ctx, now, limit any) *gomock.Call {
+// ClaimDueBookings indicates an expected call of ClaimDueBookings.
+func (mr *MockIBookingDueScannerMockRecorder) ClaimDueBookings(ctx, now, limit any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DueBookingIDs", reflect.TypeOf((*MockIBookingDueScanner)(nil).DueBookingIDs), ctx, now, limit)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ClaimDueBookings", reflect.TypeOf((*MockIBookingDueScanner)(nil).ClaimDueBookings), ctx, now, limit)
 }
 
 // MockITicketRepo is a mock of ITicketRepo interface.
@@ -649,18 +688,18 @@ func (mr *MockIAttendeeCheckerMockRecorder) IsRegistered(ctx, eventID, nikHash a
 }
 
 // RecordCheck mocks base method.
-func (m *MockIAttendeeChecker) RecordCheck(ctx context.Context, admissionID string, nikHash []byte) (bool, error) {
+func (m *MockIAttendeeChecker) RecordCheck(ctx context.Context, admissionID string, nikHash []byte, maxChecks int) (outbound.AttendeeCheckRecord, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "RecordCheck", ctx, admissionID, nikHash)
-	ret0, _ := ret[0].(bool)
+	ret := m.ctrl.Call(m, "RecordCheck", ctx, admissionID, nikHash, maxChecks)
+	ret0, _ := ret[0].(outbound.AttendeeCheckRecord)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // RecordCheck indicates an expected call of RecordCheck.
-func (mr *MockIAttendeeCheckerMockRecorder) RecordCheck(ctx, admissionID, nikHash any) *gomock.Call {
+func (mr *MockIAttendeeCheckerMockRecorder) RecordCheck(ctx, admissionID, nikHash, maxChecks any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RecordCheck", reflect.TypeOf((*MockIAttendeeChecker)(nil).RecordCheck), ctx, admissionID, nikHash)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RecordCheck", reflect.TypeOf((*MockIAttendeeChecker)(nil).RecordCheck), ctx, admissionID, nikHash, maxChecks)
 }
 
 // MockIPaymentClient is a mock of IPaymentClient interface.
@@ -765,25 +804,11 @@ func (m *MockIAvailabilityCache) EXPECT() *MockIAvailabilityCacheMockRecorder {
 	return m.recorder
 }
 
-// DecrConn mocks base method.
-func (m *MockIAvailabilityCache) DecrConn(ctx context.Context, instance string) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "DecrConn", ctx, instance)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// DecrConn indicates an expected call of DecrConn.
-func (mr *MockIAvailabilityCacheMockRecorder) DecrConn(ctx, instance any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DecrConn", reflect.TypeOf((*MockIAvailabilityCache)(nil).DecrConn), ctx, instance)
-}
-
 // GetAvailability mocks base method.
-func (m *MockIAvailabilityCache) GetAvailability(ctx context.Context, eventID string) ([]outbound.CategoryAvailabilitySnap, error) {
+func (m *MockIAvailabilityCache) GetAvailability(ctx context.Context, eventID string) (outbound.AvailabilitySnapshot, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "GetAvailability", ctx, eventID)
-	ret0, _ := ret[0].([]outbound.CategoryAvailabilitySnap)
+	ret0, _ := ret[0].(outbound.AvailabilitySnapshot)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
@@ -794,33 +819,18 @@ func (mr *MockIAvailabilityCacheMockRecorder) GetAvailability(ctx, eventID any) 
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetAvailability", reflect.TypeOf((*MockIAvailabilityCache)(nil).GetAvailability), ctx, eventID)
 }
 
-// IncrConn mocks base method.
-func (m *MockIAvailabilityCache) IncrConn(ctx context.Context, instance string) (int, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "IncrConn", ctx, instance)
-	ret0, _ := ret[0].(int)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// IncrConn indicates an expected call of IncrConn.
-func (mr *MockIAvailabilityCacheMockRecorder) IncrConn(ctx, instance any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IncrConn", reflect.TypeOf((*MockIAvailabilityCache)(nil).IncrConn), ctx, instance)
-}
-
 // SetAvailability mocks base method.
-func (m *MockIAvailabilityCache) SetAvailability(ctx context.Context, eventID string, snaps []outbound.CategoryAvailabilitySnap, ttl time.Duration) error {
+func (m *MockIAvailabilityCache) SetAvailability(ctx context.Context, eventID string, snap outbound.AvailabilitySnapshot, ttl time.Duration) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "SetAvailability", ctx, eventID, snaps, ttl)
+	ret := m.ctrl.Call(m, "SetAvailability", ctx, eventID, snap, ttl)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // SetAvailability indicates an expected call of SetAvailability.
-func (mr *MockIAvailabilityCacheMockRecorder) SetAvailability(ctx, eventID, snaps, ttl any) *gomock.Call {
+func (mr *MockIAvailabilityCacheMockRecorder) SetAvailability(ctx, eventID, snap, ttl any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetAvailability", reflect.TypeOf((*MockIAvailabilityCache)(nil).SetAvailability), ctx, eventID, snaps, ttl)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetAvailability", reflect.TypeOf((*MockIAvailabilityCache)(nil).SetAvailability), ctx, eventID, snap, ttl)
 }
 
 // MockIAvailabilitySource is a mock of IAvailabilitySource interface.
@@ -848,10 +858,10 @@ func (m *MockIAvailabilitySource) EXPECT() *MockIAvailabilitySourceMockRecorder 
 }
 
 // OnSaleAvailability mocks base method.
-func (m *MockIAvailabilitySource) OnSaleAvailability(ctx context.Context, now time.Time) (map[string][]outbound.CategoryAvailabilitySnap, error) {
+func (m *MockIAvailabilitySource) OnSaleAvailability(ctx context.Context, now time.Time) (map[string]outbound.AvailabilitySnapshot, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "OnSaleAvailability", ctx, now)
-	ret0, _ := ret[0].(map[string][]outbound.CategoryAvailabilitySnap)
+	ret0, _ := ret[0].(map[string]outbound.AvailabilitySnapshot)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
@@ -860,4 +870,73 @@ func (m *MockIAvailabilitySource) OnSaleAvailability(ctx context.Context, now ti
 func (mr *MockIAvailabilitySourceMockRecorder) OnSaleAvailability(ctx, now any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "OnSaleAvailability", reflect.TypeOf((*MockIAvailabilitySource)(nil).OnSaleAvailability), ctx, now)
+}
+
+// MockIRetention is a mock of IRetention interface.
+type MockIRetention struct {
+	ctrl     *gomock.Controller
+	recorder *MockIRetentionMockRecorder
+	isgomock struct{}
+}
+
+// MockIRetentionMockRecorder is the mock recorder for MockIRetention.
+type MockIRetentionMockRecorder struct {
+	mock *MockIRetention
+}
+
+// NewMockIRetention creates a new mock instance.
+func NewMockIRetention(ctrl *gomock.Controller) *MockIRetention {
+	mock := &MockIRetention{ctrl: ctrl}
+	mock.recorder = &MockIRetentionMockRecorder{mock}
+	return mock
+}
+
+// EXPECT returns an object that allows the caller to indicate expected use.
+func (m *MockIRetention) EXPECT() *MockIRetentionMockRecorder {
+	return m.recorder
+}
+
+// PurgeAttendeeChecks mocks base method.
+func (m *MockIRetention) PurgeAttendeeChecks(ctx context.Context, endedBefore time.Time, limit int) (int, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "PurgeAttendeeChecks", ctx, endedBefore, limit)
+	ret0, _ := ret[0].(int)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// PurgeAttendeeChecks indicates an expected call of PurgeAttendeeChecks.
+func (mr *MockIRetentionMockRecorder) PurgeAttendeeChecks(ctx, endedBefore, limit any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PurgeAttendeeChecks", reflect.TypeOf((*MockIRetention)(nil).PurgeAttendeeChecks), ctx, endedBefore, limit)
+}
+
+// PurgeExpiredIdempotency mocks base method.
+func (m *MockIRetention) PurgeExpiredIdempotency(ctx context.Context, now time.Time, limit int) (int, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "PurgeExpiredIdempotency", ctx, now, limit)
+	ret0, _ := ret[0].(int)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// PurgeExpiredIdempotency indicates an expected call of PurgeExpiredIdempotency.
+func (mr *MockIRetentionMockRecorder) PurgeExpiredIdempotency(ctx, now, limit any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PurgeExpiredIdempotency", reflect.TypeOf((*MockIRetention)(nil).PurgeExpiredIdempotency), ctx, now, limit)
+}
+
+// PurgePublishedOutbox mocks base method.
+func (m *MockIRetention) PurgePublishedOutbox(ctx context.Context, before time.Time, limit int) (int, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "PurgePublishedOutbox", ctx, before, limit)
+	ret0, _ := ret[0].(int)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// PurgePublishedOutbox indicates an expected call of PurgePublishedOutbox.
+func (mr *MockIRetentionMockRecorder) PurgePublishedOutbox(ctx, before, limit any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PurgePublishedOutbox", reflect.TypeOf((*MockIRetention)(nil).PurgePublishedOutbox), ctx, before, limit)
 }

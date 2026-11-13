@@ -3,7 +3,9 @@ package delivery
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/clock"
@@ -12,10 +14,16 @@ import (
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/config"
 )
 
-// Job is one periodic background job (mis. sweeper TTL, outbox relay, rekonsiliasi).
+// retentionEvery is the cadence of the retention job (D-C7.8). A run drains at most maxPurgeRounds batches per table, so
+// a backlog is worked off over several ticks without holding the worker.
+const retentionEvery = 10 * time.Minute
+
+// Job is one periodic background job (mis. sweeper TTL, outbox relay, rekonsiliasi). Every is its own cadence;
+// Every <= 0 means "use the runner's fallback interval" (WORKER_INTERVAL).
 type Job struct {
-	Name string
-	Run  func(context.Context) error
+	Name  string
+	Every time.Duration
+	Run   func(context.Context) error
 }
 
 // RunWorker connects the needed clients, serves GET /health on APP_PORT, runs the background jobs every
@@ -39,27 +47,67 @@ func RunWorker(ctx context.Context, cfg config.Config, logger *slog.Logger, need
 		logger.Error("booking: gagal memulai consumer payment.*", "error", consumerErr)
 	}
 
-	err = loop(ctx, cfg.Worker.Interval, js, logger)
+	err = runJobs(ctx, js, cfg.Worker.Interval, logger)
 	if serr := <-errCh; serr != nil && !errors.Is(serr, context.Canceled) {
 		return serr
 	}
 	return err
 }
 
-func loop(ctx context.Context, every time.Duration, js []Job, logger *slog.Logger) error {
-	ticker := time.NewTicker(every)
-	defer ticker.Stop()
+// runJobs runs every job on its own ticker in its own goroutine until ctx is cancelled and returns only after all of
+// them stopped (D-C7.3). A job with Every <= 0 uses fallback; a non-positive fallback is an error and nothing is started.
+// A job never overlaps itself (one goroutine, synchronous Run), and ticks missed while it ran are dropped, not queued.
+// An error or panic in one job is logged and neither stops it nor any other job (invariant #6).
+func runJobs(ctx context.Context, js []Job, fallback time.Duration, logger *slog.Logger) error {
+	every := make([]time.Duration, len(js))
+	for i, j := range js {
+		every[i] = j.Every
+		if every[i] <= 0 {
+			every[i] = fallback
+		}
+		if every[i] <= 0 {
+			return fmt.Errorf("worker job %q: interval harus > 0", j.Name)
+		}
+	}
+	var wg sync.WaitGroup
+	for i, j := range js {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			runJob(ctx, j, every[i], logger)
+		}()
+	}
+	wg.Wait()
+	return nil
+}
+
+func runJob(ctx context.Context, j Job, every time.Duration, logger *slog.Logger) {
+	t := time.NewTicker(every)
+	defer t.Stop()
 	for {
 		select {
 		case <-ctx.Done():
-			return nil
-		case <-ticker.C:
-			for _, j := range js {
-				if err := j.Run(ctx); err != nil {
-					logger.Error("worker job gagal", "job", j.Name, "error", err)
-				}
+			return
+		case <-t.C:
+			runOnce(ctx, j, logger)
+			// A ticker keeps one pending tick while the receiver is busy; drop it so a slow run is not
+			// followed by an immediate back-to-back run.
+			select {
+			case <-t.C:
+			default:
 			}
 		}
+	}
+}
+
+func runOnce(ctx context.Context, j Job, logger *slog.Logger) {
+	defer func() {
+		if r := recover(); r != nil {
+			logger.Error("worker job panic", "job", j.Name, "panic", fmt.Sprint(r))
+		}
+	}()
+	if err := j.Run(ctx); err != nil {
+		logger.Error("worker job gagal", "job", j.Name, "error", err)
 	}
 }
 
@@ -77,6 +125,9 @@ func startConsumer(ctx context.Context, cfg config.Config, clients *Clients, log
 	}
 	if mod.projAvail != nil {
 		js = append(js, Job{Name: "availability-projector", Run: mod.projAvail.ProjectAvailability})
+	}
+	if mod.purge != nil {
+		js = append(js, Job{Name: "retention", Every: retentionEvery, Run: mod.purge.Run})
 	}
 
 	if clients.MQ == nil || clients.PG == nil {
@@ -116,6 +167,9 @@ func jobs(clients *Clients) []Job {
 	}
 	if mod.projAvail != nil {
 		js = append(js, Job{Name: "availability-projector", Run: mod.projAvail.ProjectAvailability})
+	}
+	if mod.purge != nil {
+		js = append(js, Job{Name: "retention", Every: retentionEvery, Run: mod.purge.Run})
 	}
 	return js
 }

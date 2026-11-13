@@ -2,6 +2,7 @@ package inbound
 
 import (
 	"context"
+	"encoding/json"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/domain/dto"
 )
@@ -21,6 +22,9 @@ type JoinInput struct {
 	// TokenGen is the generation of the verified visitor token (0 = none); DeviceHash is the HMAC of X-Device-Id.
 	TokenGen   int64
 	DeviceHash string
+	// GuestScope scopes the Idempotency-Key of a tokenless guest: the device hash, else a keyed hash of the client IP
+	// (C6.2). "" means no scope, so the key is ignored.
+	GuestScope string
 }
 
 // IJoinUsecase joins a queue (design §2.1).
@@ -28,9 +32,9 @@ type IJoinUsecase interface {
 	Join(ctx context.Context, in JoinInput) (dto.QueueEntry, error)
 }
 
-// IStatusUsecase returns the public Status Document (design §2.2).
+// IStatusUsecase returns the public Status Document (design §2.2) as the stored JSON, served unchanged (D-C8.9).
 type IStatusUsecase interface {
-	GetStatus(ctx context.Context, eventID string) (dto.StatusDocument, error)
+	GetStatus(ctx context.Context, eventID string) (json.RawMessage, error)
 }
 
 // MyEntryInput identifies the visitor's entry for an event.

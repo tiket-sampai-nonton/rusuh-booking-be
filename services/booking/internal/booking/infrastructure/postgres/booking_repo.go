@@ -16,6 +16,7 @@ import (
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/domain/dto"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/domain/entity"
 	inbound "github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/port/inbound"
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/port/outbound"
 )
 
 // BookingRepo reads booking read models.
@@ -95,8 +96,9 @@ func (r *BookingRepo) ListByAccount(ctx context.Context, accountID, cursor strin
 				afterID = maxBookingID
 			}
 		}
-		if t, err := time.Parse(time.RFC3339Nano, ts); err == nil {
-			before = t
+		// A "+" in a zone offset arrives as a space when the cursor was not URL-escaped; restore it so older cursors still parse.
+		if t, err := time.Parse(time.RFC3339Nano, strings.ReplaceAll(ts, " ", "+")); err == nil {
+			before = t.UTC()
 		}
 	}
 	rows, err := r.pool.Query(ctx, `
@@ -122,22 +124,29 @@ func (r *BookingRepo) ListByAccount(ctx context.Context, accountID, cursor strin
 	next := ""
 	if len(items) > limit {
 		last := items[limit-1]
-		next = last.CreatedAt.Format(time.RFC3339Nano) + "_" + last.BookingID
+		// UTC keeps the cursor free of "+" offsets, so it survives a URL unescaped.
+		next = last.CreatedAt.UTC().Format(time.RFC3339Nano) + "_" + last.BookingID
 		items = items[:limit]
 	}
 	return items, next, nil
 }
 
-// DueBookingIDs returns ids of bookings the expiry sweeper must look at now: PENDING_PAYMENT past its payment deadline,
-// and VERIFYING whose next check (verification_until, D-B5) has come. A VERIFYING booking still in grace is not due.
-func (r *BookingRepo) DueBookingIDs(ctx context.Context, now time.Time, limit int) ([]string, error) {
+// ClaimDueBookings leases up to limit bookings the expiry sweeper must look at now (AC-C7.3, D-C7.3): PENDING_PAYMENT past
+// its payment deadline, and VERIFYING whose next check (verification_until, D-B5) has come. A VERIFYING booking still in
+// grace is not due. A claimed booking is hidden from other sweepers for 15 s (sweep_lease_until).
+func (r *BookingRepo) ClaimDueBookings(ctx context.Context, now time.Time, limit int) ([]string, error) {
 	rows, err := r.pool.Query(ctx, `
-		SELECT id::text FROM booking.bookings
-		 WHERE (status='PENDING_PAYMENT' AND payment_expires_at < $1)
-		    OR (status='VERIFYING' AND verification_until <= $1)
-		 ORDER BY COALESCE(verification_until, payment_expires_at) LIMIT $2`, now, limit)
+		UPDATE booking.bookings SET sweep_lease_until = $1::timestamptz + make_interval(secs => $3)
+		 WHERE id IN (
+		       SELECT id FROM booking.bookings
+		        WHERE ((status='PENDING_PAYMENT' AND payment_expires_at < $1::timestamptz)
+		            OR (status='VERIFYING' AND verification_until <= $1::timestamptz))
+		          AND (sweep_lease_until IS NULL OR sweep_lease_until <= $1::timestamptz)
+		        ORDER BY COALESCE(verification_until, payment_expires_at) LIMIT $2
+		        FOR UPDATE SKIP LOCKED)
+		RETURNING id::text`, now, limit, outbound.SweepLease.Seconds())
 	if err != nil {
-		return nil, fmt.Errorf("bookings: due: %w", err)
+		return nil, fmt.Errorf("bookings: claim due: %w", err)
 	}
 	defer rows.Close()
 	var out []string

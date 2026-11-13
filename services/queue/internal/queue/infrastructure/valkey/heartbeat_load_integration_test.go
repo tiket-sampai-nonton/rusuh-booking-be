@@ -117,7 +117,7 @@ func TestHeartbeatLoad(t *testing.T) {
 		// minimises how long it queues behind heartbeat traffic on Valkey's single command thread (design-change
 		// §4.3 / ADR-030 Amendment).
 		nowMs := time.Now().UnixMilli()
-		_, _, err := s.SweepLivenessTick(ctx, ev, nowMs-90_000, nowMs-300_000, 1000, nowMs, 5*time.Second, 200)
+		_, _, err := s.SweepLivenessTick(ctx, ev, nowMs-90_000, nowMs-300_000, 1000, nowMs, 5*time.Second, 200, 0)
 		require.NoError(t, err)
 		return time.Since(start)
 	}

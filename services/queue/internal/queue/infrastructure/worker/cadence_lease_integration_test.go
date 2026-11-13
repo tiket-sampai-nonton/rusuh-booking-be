@@ -76,7 +76,7 @@ func TestPromoterCadenceAndLivenessContendForLease(t *testing.T) {
 	var passed, lost int
 	for i := 0; i < 20; i++ {
 		now := time.Now().UnixMilli()
-		res, _, err := b.SweepLivenessTick(ctx, "ev", now-90_000, now-300_000, 10, now, 10*time.Second, 0)
+		res, _, err := b.SweepLivenessTick(ctx, "ev", now-90_000, now-300_000, 10, now, 10*time.Second, 0, 0)
 		require.NoError(t, err)
 		if res.LeaseLost {
 			lost++

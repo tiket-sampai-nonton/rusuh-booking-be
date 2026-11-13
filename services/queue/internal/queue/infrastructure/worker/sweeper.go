@@ -10,7 +10,14 @@ import (
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/port/outbound"
 )
 
+// SoldOutMaxBatches bounds the sold-out drain per event and tick (D-C8.4): 200 batches of outbound.SoldOutBatchSize.
+const SoldOutMaxBatches = 200
+
 // Sweeper marks expired ADMITTED entries as MISSED and frees their slot (design §7.3).
+// It also ends CLAIMED slots past their claim bound (claimExpiresMs, QUEUE_CLAIMED_SLOT_MAX_SECONDS) as
+// ENDED/CLAIM_TIMEOUT through end_entry.lua; Booking is not called for those.
+// It also drains a sold-out event's WAITING/STALE entries with SOLD_OUT (D-C8.4): one batch after another while the
+// batch comes back full, within SoldOutMaxBatches per event and tick. The next tick continues where this one stopped.
 // It does NOT publish booking.* events — Booking's own session sweeper releases the allocation
 // and publishes booking.journey.ended when the claim window expires (spec 11.R2, K7).
 type Sweeper struct {
@@ -28,22 +35,29 @@ func NewSweeper(store outbound.IQueueStore, settings outbound.IEventSettingsRepo
 	return &Sweeper{store: store, settings: settings, clock: clk, batchMax: batchMax}
 }
 
-// Run sweeps every configured event once.
+// Run sweeps every active event once, in two passes (R30). The first pass expires every event, so one event's drain
+// never delays another event's expiry past the tick. The second pass drains each sold-out event. A failure in one event
+// is collected and does not stop the others; the drain of an event runs even when its expiry failed.
 func (s *Sweeper) Run(ctx context.Context) error {
-	ids, err := s.settings.ListEventIDs(ctx)
+	ids, err := s.settings.ListActiveEventIDs(ctx, s.clock.Now())
 	if err != nil {
 		return err
 	}
 	var errs []error
 	for _, eventID := range ids {
-		if err := s.runEvent(ctx, eventID); err != nil {
+		if err := s.expireEvent(ctx, eventID); err != nil {
+			errs = append(errs, fmt.Errorf("sweeper event %s: %w", eventID, err))
+		}
+	}
+	for _, eventID := range ids {
+		if err := s.drainSoldOut(ctx, eventID); err != nil {
 			errs = append(errs, fmt.Errorf("sweeper event %s: %w", eventID, err))
 		}
 	}
 	return errors.Join(errs...)
 }
 
-func (s *Sweeper) runEvent(ctx context.Context, eventID string) error {
+func (s *Sweeper) expireEvent(ctx context.Context, eventID string) error {
 	nowMs := s.clock.Now().UnixMilli()
 	expired, err := s.store.ExpiredActive(ctx, eventID, nowMs, s.batchMax)
 	if err != nil {
@@ -62,4 +76,28 @@ func (s *Sweeper) runEvent(ctx context.Context, eventID string) error {
 		// booking.journey.ended(UNCLAIMED) when its own claim window expires (K7).
 	}
 	return errors.Join(errs...)
+}
+
+// drainSoldOut ends the WAITING/STALE entries of a sold-out event (D-C8.4). It stores no cursor: each batch removes what
+// it scanned from waiting/stale, so the head of the set is the next batch. A short batch means the set is empty.
+// The sale is re-read before every batch (R28): a sale that reopens (D-C5.3) stops the drain at once, so no further
+// WAITING entry is ended with SOLD_OUT. The window that remains is the one batch already in flight.
+func (s *Sweeper) drainSoldOut(ctx context.Context, eventID string) error {
+	for i := 0; i < SoldOutMaxBatches; i++ {
+		sale, err := s.store.GetSale(ctx, eventID)
+		if err != nil {
+			return fmt.Errorf("sweeper get sale: %w", err)
+		}
+		if !sale.SoldOut {
+			return nil
+		}
+		res, err := s.store.EndWaitingSoldOut(ctx, eventID, s.clock.Now().UnixMilli(), outbound.SoldOutBatchSize)
+		if err != nil {
+			return fmt.Errorf("sweeper end waiting sold out: %w", err)
+		}
+		if res.Scanned < outbound.SoldOutBatchSize {
+			return nil
+		}
+	}
+	return nil // budget spent; the remainder waits for the next tick
 }

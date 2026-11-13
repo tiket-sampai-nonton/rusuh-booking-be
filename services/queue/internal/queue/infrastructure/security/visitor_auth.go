@@ -74,6 +74,24 @@ func (a *VisitorAuthenticator) WithDeviceHasher(d *DeviceHasher) *VisitorAuthent
 // DeviceHash returns the device claim for this request ("" without hasher or header).
 func (a *VisitorAuthenticator) DeviceHash(r *http.Request) string { return a.device.FromRequest(r) }
 
+// GuestScope is the idempotency scope of a tokenless guest (C6.2, P1-13): the device hash when X-Device-Id is sent,
+// else a keyed hash of the client IP ("ip-" + 32 hex). The raw IP never leaves this function. It is "" without a
+// hasher or without any identity, and the Idempotency-Key is then ignored (no replay).
+func (a *VisitorAuthenticator) GuestScope(r *http.Request, clientIP string) string {
+	if a.device == nil {
+		return ""
+	}
+	if dh := a.DeviceHash(r); dh != "" {
+		return dh
+	}
+	if clientIP == "" {
+		return ""
+	}
+	m := hmac.New(sha256.New, a.device.key)
+	m.Write([]byte("queue.ip:" + clientIP))
+	return "ip-" + hex.EncodeToString(m.Sum(nil))[:32]
+}
+
 // ResolveToken returns the verified claim and whether a valid visitor token was present.
 func (a *VisitorAuthenticator) ResolveToken(r *http.Request) (outbound.VisitorClaim, bool) {
 	raw := ""

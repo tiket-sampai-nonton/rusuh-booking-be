@@ -49,7 +49,7 @@ func TestPromoterUsesConfiguredLeaseTTL(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	store := mock_outbound.NewMockIQueueStore(ctrl)
 	settings := mock_outbound.NewMockIEventSettingsRepo(ctrl)
-	settings.EXPECT().ListEventIDs(gomock.Any()).Return([]string{"ev1"}, nil)
+	settings.EXPECT().ListActiveEventIDs(gomock.Any(), gomock.Any()).Return([]string{"ev1"}, nil)
 	store.EXPECT().AcquirePromoterLease(gomock.Any(), "ev1", 7*time.Second).Return("", false, nil)
 
 	p := worker.NewPromoter(store, settings, nil, nil, nil, clock.System{}, nil, promoterTuning(cfg))
@@ -62,8 +62,9 @@ func TestSweeperUsesConfiguredBatch(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	store := mock_outbound.NewMockIQueueStore(ctrl)
 	settings := mock_outbound.NewMockIEventSettingsRepo(ctrl)
-	settings.EXPECT().ListEventIDs(gomock.Any()).Return([]string{"ev1"}, nil)
+	settings.EXPECT().ListActiveEventIDs(gomock.Any(), gomock.Any()).Return([]string{"ev1"}, nil)
 	store.EXPECT().ExpiredActive(gomock.Any(), "ev1", gomock.Any(), 42).Return(nil, nil)
+	store.EXPECT().GetSale(gomock.Any(), "ev1").Return(outbound.SaleState{SaleState: "OPEN"}, nil)
 
 	s := worker.NewSweeper(store, settings, clock.System{}, sweepBatch(cfg))
 	require.NoError(t, s.Run(context.Background()))
@@ -88,13 +89,13 @@ func TestPromoterWiredMetricsShowLapsedReplayAndDeadHead(t *testing.T) {
 		store := mock_outbound.NewMockIQueueStore(ctrl)
 		settings := mock_outbound.NewMockIEventSettingsRepo(ctrl)
 		booking := mock_outbound.NewMockIBookingClient(ctrl)
-		settings.EXPECT().ListEventIDs(gomock.Any()).Return([]string{"ev1"}, nil)
+		settings.EXPECT().ListActiveEventIDs(gomock.Any(), gomock.Any()).Return([]string{"ev1"}, nil)
 		store.EXPECT().AcquirePromoterLease(gomock.Any(), "ev1", gomock.Any()).Return("tok", true, nil)
 		store.EXPECT().ReleasePromoterLease(gomock.Any(), "ev1", "tok").Return(nil)
 		settings.EXPECT().Get(gomock.Any(), "ev1").Return(entity.EventSettings{ActiveSlotCapacity: 1}, true, nil)
 		store.EXPECT().ActiveCount(gomock.Any(), "ev1").Return(0, nil)
 		store.EXPECT().TopWaiting(gomock.Any(), "ev1", 1).Return([]string{"E1"}, nil)
-		store.EXPECT().GetEntry(gomock.Any(), "ev1", "E1").Return(entity.Entry{ID: "E1"}, true, nil)
+		store.EXPECT().GetEntries(gomock.Any(), "ev1", []string{"E1"}).Return(map[string]entity.Entry{"E1": {ID: "E1"}}, nil)
 		booking.EXPECT().ReserveBatch(gomock.Any(), gomock.Any()).Return(outbound.AllocationBatchResponse{Allocations: []outbound.AllocationResult{reply}}, nil)
 		if expectEnd {
 			store.EXPECT().EndEntry(gomock.Any(), "ev1", "E1", outbound.EndAlreadyActive, gomock.Any()).Return(outbound.EndResult{Tag: "OK"}, nil)
@@ -126,13 +127,13 @@ func TestPromoterUsesConfiguredNoSupplySuspectTicks(t *testing.T) {
 		settings := mock_outbound.NewMockIEventSettingsRepo(ctrl)
 		booking := mock_outbound.NewMockIBookingClient(ctrl)
 		pub := mock_outbound.NewMockIEventPublisher(ctrl)
-		settings.EXPECT().ListEventIDs(gomock.Any()).Return([]string{"ev1"}, nil).Times(5)
+		settings.EXPECT().ListActiveEventIDs(gomock.Any(), gomock.Any()).Return([]string{"ev1"}, nil).Times(5)
 		settings.EXPECT().Get(gomock.Any(), "ev1").Return(entity.EventSettings{ActiveSlotCapacity: 2}, true, nil).Times(5)
 		store.EXPECT().AcquirePromoterLease(gomock.Any(), "ev1", gomock.Any()).Return("tok", true, nil).Times(5)
 		store.EXPECT().ReleasePromoterLease(gomock.Any(), "ev1", "tok").Return(nil).Times(5)
 		store.EXPECT().ActiveCount(gomock.Any(), "ev1").Return(0, nil).Times(5)
 		store.EXPECT().TopWaiting(gomock.Any(), "ev1", 2).Return([]string{"P", "E2"}, nil).Times(5)
-		store.EXPECT().GetEntry(gomock.Any(), "ev1", gomock.Any()).Return(entity.Entry{VisitorID: "v"}, true, nil).Times(10)
+		store.EXPECT().GetEntries(gomock.Any(), "ev1", []string{"P", "E2"}).Return(map[string]entity.Entry{"P": {VisitorID: "v"}, "E2": {VisitorID: "v"}}, nil).Times(5)
 		booking.EXPECT().ReserveBatch(gomock.Any(), gomock.Any()).Return(outbound.AllocationBatchResponse{Allocations: []outbound.AllocationResult{
 			{QueueEntryID: "P", Status: "NO_SUPPLY_NOW"},
 			{QueueEntryID: "E2", AllocationID: "a2", Status: "GRANTED", ClaimDeadline: "2099-01-01T00:00:00Z"},
@@ -219,4 +220,15 @@ func TestAdmissionTTL_UnchangedAndBounded(t *testing.T) {
 	assert.Equal(t, 60*time.Second, cfg.Token.AdmissionTTL)
 	cfg.Token.AdmissionTTL = 6 * time.Minute
 	assert.Error(t, cfg.Token.Validate())
+}
+
+// C8.12: Close is nil-safe and idempotent; a module without a publisher or connection closes cleanly.
+func TestQueueModule_CloseIsNilSafe(t *testing.T) {
+	var nilMod *queueModule
+	assert.NoError(t, nilMod.Close())
+	assert.NoError(t, (&queueModule{}).Close())
+
+	m := &queueModule{}
+	assert.NoError(t, m.Close())
+	assert.NoError(t, m.Close(), "second Close must be a no-op")
 }

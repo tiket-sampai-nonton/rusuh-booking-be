@@ -3,6 +3,7 @@ package usecase_test
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -143,4 +144,68 @@ func TestJoin_SaleGate_RateLimitPrecedesAndCountsRejections(t *testing.T) {
 			assert.ErrorIs(t, err, entity.ErrNotOnSale)
 		}
 	})
+}
+
+// errPastGate stops a join right after the sale gate: Store.Join is the first call that follows checkSale, so a
+// join that reaches it has passed the gate.
+var errPastGate = errors.New("past the sale gate")
+
+// C8.6 (PF-P1-20): 50 concurrent joins on a cold cache make exactly one Booking read; every join is decided by the
+// window that read produced.
+func TestJoin_ColdSaleWindowOneBookingCall(t *testing.T) {
+	const joins = 50
+	starts, ends := joinNow.Add(-time.Hour), joinNow.Add(time.Hour)
+	uc, m := newJoinRaw(t)
+	m.settings.EXPECT().Get(gomock.Any(), "ev1").Return(entity.EventSettings{}, true, nil).AnyTimes()
+	m.store.EXPECT().GetSale(gomock.Any(), "ev1").Return(outbound.SaleState{}, nil).AnyTimes()
+	m.booking.EXPECT().Supply(gomock.Any(), "ev1").DoAndReturn(func(context.Context, string) (outbound.SupplySnapshot, error) {
+		// Every concurrent join reaches the cold path while this read is still in flight.
+		time.Sleep(100 * time.Millisecond)
+		return outbound.SupplySnapshot{SalesStartsAt: starts, SalesEndsAt: ends}, nil
+	}).Times(1)
+	m.store.EXPECT().SetSaleWindow(gomock.Any(), "ev1", ms(starts), ms(ends)).Return(nil).Times(1)
+	m.store.EXPECT().Join(gomock.Any(), gomock.Any()).Return(outbound.JoinResult{}, errPastGate).Times(joins)
+
+	var wg sync.WaitGroup
+	errs := make([]error, joins)
+	for i := range errs {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			_, errs[i] = uc.Join(context.Background(), inbound.JoinInput{EventID: "ev1"})
+		}(i)
+	}
+	wg.Wait()
+	for i, err := range errs {
+		assert.ErrorIs(t, err, errPastGate, "join %d", i)
+	}
+}
+
+// C8.6 (PF-P1-20): a window Booking reports without bounds is cached with its time and stays known for 30 s, so the
+// joins in that span make no Booking call.
+func TestJoin_ZeroWindowIsKnownFor30s(t *testing.T) {
+	tests := []struct {
+		name       string
+		windowAtMs int64 // when the zero window was cached (0 = never)
+		wantSupply bool
+	}{
+		{"cached 10 s ago is known", ms(joinNow.Add(-10 * time.Second)), false},
+		{"cached 29.999 s ago is known", ms(joinNow.Add(-30*time.Second + time.Millisecond)), false},
+		{"cached exactly 30 s ago is unknown", ms(joinNow.Add(-30 * time.Second)), true},
+		{"never cached is unknown", 0, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			uc, m := newJoinRaw(t)
+			expectLimiterAndSettings(m, 1)
+			m.store.EXPECT().GetSale(gomock.Any(), "ev1").Return(outbound.SaleState{WindowAtMs: tt.windowAtMs}, nil)
+			if tt.wantSupply {
+				m.booking.EXPECT().Supply(gomock.Any(), "ev1").Return(outbound.SupplySnapshot{}, nil).Times(1)
+				m.store.EXPECT().SetSaleWindow(gomock.Any(), "ev1", int64(0), int64(0)).Return(nil).Times(1)
+			} // else: Booking.Supply has no expectation, so any call fails the test
+			m.store.EXPECT().Join(gomock.Any(), gomock.Any()).Return(outbound.JoinResult{}, errPastGate)
+			_, err := uc.Join(context.Background(), inbound.JoinInput{EventID: "ev1", ClientIP: "1.2.3.4"})
+			assert.ErrorIs(t, err, errPastGate)
+		})
+	}
 }

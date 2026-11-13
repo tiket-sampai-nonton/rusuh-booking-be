@@ -16,12 +16,15 @@ type JoinHandler struct {
 	uc         inbound.IJoinUsecase
 	auth       VisitorTokenAuthenticator // verifies the visitor token (id, generation, device claim)
 	trustProxy bool
+	hops       int // trusted proxies that append X-Forwarded-For entries (APP_TRUSTED_PROXY_HOPS)
 }
 
-// NewJoinHandler creates the handler. trustProxy=true behind the ALB (X-Forwarded-For). The visitor cookie is always
-// Secure (https; browsers also accept it on localhost); plain-http clients send X-Client-Type: mobile and keep the token.
-func NewJoinHandler(uc inbound.IJoinUsecase, trustProxy bool) *JoinHandler {
-	return &JoinHandler{uc: uc, trustProxy: trustProxy}
+// NewJoinHandler creates the handler. trustProxy=true behind the load balancer (X-Forwarded-For); hops is the number of
+// trusted proxies that each append one entry (the client IP is the entry hops from the right). The visitor cookie is
+// always Secure (https; browsers also accept it on localhost); plain-http clients send X-Client-Type: mobile and keep
+// the token.
+func NewJoinHandler(uc inbound.IJoinUsecase, trustProxy bool, hops int) *JoinHandler {
+	return &JoinHandler{uc: uc, trustProxy: trustProxy, hops: hops}
 }
 
 // WithAuth sets the visitor authenticator (call this to enable JWT decoding on join).
@@ -47,8 +50,9 @@ func (h *JoinHandler) join(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	// cookie/header value is never trusted directly — using it as a fallback let a forged X-Visitor-ID or
 	// rb_visitor cookie impersonate another visitor's queue identity (VISITOR_ALREADY_IN_QUEUE for the attacker,
 	// or an entry keyed to the victim's visitor id). No credential at all simply means a fresh visitor id is minted.
-	vid, gen, device := "", int64(0), ""
+	vid, gen, device, guest := "", int64(0), "", ""
 	cookieAuthed := false
+	clientIP := httpx.ClientIPHops(r, h.trustProxy, h.hops)
 	if h.auth != nil {
 		if c, ok := h.auth.ResolveToken(r); ok {
 			vid, gen = c.VisitorID, c.Gen
@@ -56,6 +60,7 @@ func (h *JoinHandler) join(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 			cookieAuthed = cookiePresent(r)
 		}
 		device = h.auth.DeviceHash(r) // only the HMAC reaches the usecase and the token, never the raw id
+		guest = h.auth.GuestScope(r, clientIP)
 	}
 	in := inbound.JoinInput{
 		EventID:        r.PathValue("eventId"),
@@ -63,10 +68,11 @@ func (h *JoinHandler) join(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		IdempotencyKey: r.Header.Get("Idempotency-Key"),
 		TokenGen:       gen,
 		DeviceHash:     device,
+		GuestScope:     guest,
 		Bearer:         bearer,
 		VisitorID:      vid,
 		IsMobile:       isMobile(r),
-		ClientIP:       httpx.ClientIP(r, h.trustProxy),
+		ClientIP:       clientIP,
 	}
 	bodyToken := in.IsMobile && !cookieAuthed
 	resp, err := h.uc.Join(r.Context(), in)

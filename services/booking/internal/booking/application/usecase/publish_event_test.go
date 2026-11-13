@@ -16,45 +16,49 @@ import (
 type fakePublication struct {
 	calls     []bool
 	cancelled int
+	actor     string // the actor of the last write
 	err       error
 }
 
-func (f *fakePublication) Cancel(context.Context, string) error {
+func (f *fakePublication) Cancel(_ context.Context, _, actor string) error {
 	f.cancelled++
+	f.actor = actor
 	return f.err
 }
 
-func (f *fakePublication) SetPublished(_ context.Context, _ string, published bool) error {
+func (f *fakePublication) SetPublished(_ context.Context, _, actor string, published bool) error {
 	f.calls = append(f.calls, published)
+	f.actor = actor
 	return f.err
 }
 
 func TestPublishEvent_PublishIsAlwaysAllowed(t *testing.T) {
 	repo := &fakePublication{}
 	uc := usecase.NewPublishEvent(&fakeEventRepo{}, repo, fixedClock{t: time.Now()})
-	require.NoError(t, uc.Publish(context.Background(), eventID))
+	require.NoError(t, uc.Publish(context.Background(), eventID, "acct-7"))
 	assert.Equal(t, []bool{true}, repo.calls)
+	assert.Equal(t, "acct-7", repo.actor, "aktor diteruskan ke repo")
 }
 
 func TestPublishEvent_UnpublishOnlyBeforeSalesOpen(t *testing.T) {
 	now := time.Now()
 	before := &fakeEventRepo{event: entity.Event{ID: eventID, SalesStartsAt: now.Add(time.Hour)}}
 	repo := &fakePublication{}
-	require.NoError(t, usecase.NewPublishEvent(before, repo, fixedClock{t: now}).Unpublish(context.Background(), eventID))
+	require.NoError(t, usecase.NewPublishEvent(before, repo, fixedClock{t: now}).Unpublish(context.Background(), eventID, "acct-7"))
 	assert.Equal(t, []bool{false}, repo.calls)
 
 	opened := &fakeEventRepo{event: entity.Event{ID: eventID, SalesStartsAt: now.Add(-time.Minute)}}
 	repo = &fakePublication{}
-	err := usecase.NewPublishEvent(opened, repo, fixedClock{t: now}).Unpublish(context.Background(), eventID)
+	err := usecase.NewPublishEvent(opened, repo, fixedClock{t: now}).Unpublish(context.Background(), eventID, "acct-7")
 	assert.ErrorIs(t, err, inbound.ErrRulesLocked, "event yang sudah dijual tidak boleh disembunyikan lagi")
 	assert.Empty(t, repo.calls)
 }
 
 func TestPublishEvent_InvalidIDAndUnknownEvent(t *testing.T) {
 	uc := usecase.NewPublishEvent(&fakeEventRepo{err: inbound.ErrNotFound}, &fakePublication{}, fixedClock{t: time.Now()})
-	assert.Error(t, uc.Publish(context.Background(), "nope"))
-	assert.Error(t, uc.Unpublish(context.Background(), "nope"))
-	assert.ErrorIs(t, uc.Unpublish(context.Background(), eventID), inbound.ErrNotFound)
+	assert.Error(t, uc.Publish(context.Background(), "nope", "acct-7"))
+	assert.Error(t, uc.Unpublish(context.Background(), "nope", "acct-7"))
+	assert.ErrorIs(t, uc.Unpublish(context.Background(), eventID, "acct-7"), inbound.ErrNotFound)
 }
 
 func TestGetEventDetail_DraftIsHiddenFromThePublicButVisibleToAdmin(t *testing.T) {
@@ -80,10 +84,10 @@ func TestGetEventSupply_DraftIsNotFoundSoQueueRefusesToJoin(t *testing.T) {
 func TestPublishEvent_CancelIsIdempotentAndValidatesTheID(t *testing.T) {
 	repo := &fakePublication{}
 	uc := usecase.NewPublishEvent(&fakeEventRepo{}, repo, fixedClock{t: time.Now()})
-	require.NoError(t, uc.Cancel(context.Background(), eventID))
-	require.NoError(t, uc.Cancel(context.Background(), eventID))
+	require.NoError(t, uc.Cancel(context.Background(), eventID, "acct-7"))
+	require.NoError(t, uc.Cancel(context.Background(), eventID, "acct-7"))
 	assert.Equal(t, 2, repo.cancelled)
-	assert.Error(t, uc.Cancel(context.Background(), "nope"))
+	assert.Error(t, uc.Cancel(context.Background(), "nope", "acct-7"))
 }
 
 func TestGetEventSupply_CancelledEventHasNothingToSell(t *testing.T) {

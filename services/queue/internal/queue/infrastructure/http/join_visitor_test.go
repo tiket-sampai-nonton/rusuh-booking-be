@@ -35,7 +35,7 @@ func joinVisitorIDSeen(t *testing.T, auth queuehttp.VisitorTokenAuthenticator, m
 		seen = in.VisitorID
 		return dto.QueueEntry{EntryID: "e1"}, nil
 	})
-	h := queuehttp.NewJoinHandler(uc, false)
+	h := queuehttp.NewJoinHandler(uc, false, 1)
 	if auth != nil {
 		h = h.WithAuth(auth)
 	}
@@ -102,12 +102,47 @@ func TestJoinHandler_ClientIPTrustSemantics(t *testing.T) {
 				seen = in.ClientIP
 				return dto.QueueEntry{EntryID: "e1"}, nil
 			})
-			h := queuehttp.NewJoinHandler(uc, tc.trustProxy)
+			h := queuehttp.NewJoinHandler(uc, tc.trustProxy, 1)
 			mux := stdhttp.NewServeMux()
 			h.Register(mux)
 			req := httptest.NewRequest(stdhttp.MethodPost, "/api/v1/events/ev1/queue-entries", strings.NewReader(joinBody))
 			req.Header.Set("Content-Type", "application/json")
 			req.Header.Set("X-Forwarded-For", "6.6.6.6, 203.0.113.9") // client-forged first, proxy-appended last
+			req.RemoteAddr = "192.0.2.1:4242"
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
+			require.Equal(t, stdhttp.StatusCreated, rec.Code)
+			assert.Equal(t, tc.want, seen)
+		})
+	}
+}
+
+// P1-2 (AC-C6.3): the client IP is the entry `hops` from the right of X-Forwarded-For, so a CloudFront -> ALB chain
+// (hops 2) yields the viewer address CloudFront appended first, while a single ALB hop yields the rightmost entry.
+// The same IP feeds the usecase ClientIP (rate limit) and the guest idempotency scope.
+func TestJoinHandler_ClientIPUsesHops(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		hops int
+		want string
+	}{
+		{"hops 2: CloudFront then ALB, the viewer is the second entry from the right", 2, "1.1.1.1"},
+		{"hops 1: ALB only, the rightmost entry", 1, "2.2.2.2"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			uc := mock_inbound.NewMockIJoinUsecase(ctrl)
+			var seen string
+			uc.EXPECT().Join(gomock.Any(), gomock.Any()).DoAndReturn(func(_ interface{ Done() <-chan struct{} }, in inbound.JoinInput) (dto.QueueEntry, error) {
+				seen = in.ClientIP
+				return dto.QueueEntry{EntryID: "e1"}, nil
+			})
+			h := queuehttp.NewJoinHandler(uc, true, tc.hops)
+			mux := stdhttp.NewServeMux()
+			h.Register(mux)
+			req := httptest.NewRequest(stdhttp.MethodPost, "/api/v1/events/ev1/queue-entries", strings.NewReader(joinBody))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("X-Forwarded-For", "1.1.1.1, 2.2.2.2")
 			req.RemoteAddr = "192.0.2.1:4242"
 			rec := httptest.NewRecorder()
 			mux.ServeHTTP(rec, req)
@@ -127,7 +162,7 @@ func TestJoinHandler_PassesGenerationAndDeviceHashAndAnswers200ForExisting(t *te
 		in = got
 		return dto.QueueEntry{EntryID: "e1", Existing: true}, nil
 	})
-	h := queuehttp.NewJoinHandler(uc, false).WithAuth(fakeAuth{id: "v", ok: true})
+	h := queuehttp.NewJoinHandler(uc, false, 1).WithAuth(fakeAuth{id: "v", ok: true})
 	mux := stdhttp.NewServeMux()
 	h.Register(mux)
 	req := httptest.NewRequest(stdhttp.MethodPost, "/api/v1/events/ev1/queue-entries", nil)
@@ -188,7 +223,7 @@ func (g *tokenRig) join(t *testing.T, mutate func(*stdhttp.Request)) (*httptest.
 		return dto.QueueEntry{EntryID: "e1", Status: "WAITING", VisitorToken: g.mint(t, vid)}, nil
 	})
 	mux := stdhttp.NewServeMux()
-	queuehttp.NewJoinHandler(uc, false).WithAuth(g.auth).Register(mux)
+	queuehttp.NewJoinHandler(uc, false, 1).WithAuth(g.auth).Register(mux)
 	req := httptest.NewRequest(stdhttp.MethodPost, "/api/v1/events/ev1/queue-entries", strings.NewReader(joinBody))
 	req.Header.Set("Content-Type", "application/json")
 	mutate(req)

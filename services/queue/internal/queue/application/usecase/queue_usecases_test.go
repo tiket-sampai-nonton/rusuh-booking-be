@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/apperror"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/clock"
 
 	mock_outbound "github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/_mock/queue/port/outbound"
@@ -26,15 +27,16 @@ var fixedNow = clock.Fixed{T: time.Date(2026, 10, 20, 10, 0, 0, 0, time.UTC)}
 func TestClaim_Success(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	store := mock_outbound.NewMockIQueueStore(ctrl)
-	store.EXPECT().TokenGen(gomock.Any(), "ev1", gomock.Any()).Return(int64(1), true, nil).AnyTimes()
+	store.EXPECT().CheckTokenGen(gomock.Any(), "ev1", gomock.Any(), gomock.Any()).Return(outbound.TokenGenOK, nil).AnyTimes()
 	tokens := mock_outbound.NewMockITokenIssuer(ctrl)
 	ctx := context.Background()
 
 	// The allocation id comes from claim.lua itself: no second GetEntry (it could race a concurrent change).
-	store.EXPECT().Claim(ctx, "ev1", "e1", "v1", gomock.Any()).Return(outbound.ClaimResult{Status: "CLAIMED", AllocationID: "alloc-1"}, nil)
+	// C6.5: the configured claim bound (7200 s) reaches the store in milliseconds.
+	store.EXPECT().Claim(ctx, "ev1", "e1", "v1", gomock.Any(), int64(7_200_000)).Return(outbound.ClaimResult{Status: "CLAIMED", AllocationID: "alloc-1"}, nil)
 	tokens.EXPECT().IssueAdmission("e1", "ev1", "alloc-1", fixedNow.T).Return("adm-token", fixedNow.T.Add(time.Minute), nil)
 
-	uc := usecase.NewClaimTurn(store, tokens, fixedNow, "https://app/book")
+	uc := usecase.NewClaimTurn(store, tokens, fixedNow, "https://app/book", 7200*time.Second)
 	resp, err := uc.Claim(ctx, inbound.ClaimInput{EntryID: "e1", VisitorID: "v1", EventID: "ev1", Gen: 1})
 	require.NoError(t, err)
 	assert.Equal(t, "adm-token", resp.AdmissionToken)
@@ -46,12 +48,12 @@ func TestClaim_Success(t *testing.T) {
 func TestClaim_EmptyAllocationIDIsDependencyUnavailableAndSignsNothing(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	store := mock_outbound.NewMockIQueueStore(ctrl)
-	store.EXPECT().TokenGen(gomock.Any(), "ev1", gomock.Any()).Return(int64(1), true, nil).AnyTimes()
+	store.EXPECT().CheckTokenGen(gomock.Any(), "ev1", gomock.Any(), gomock.Any()).Return(outbound.TokenGenOK, nil).AnyTimes()
 	tokens := mock_outbound.NewMockITokenIssuer(ctrl) // IssueAdmission must never be called
 	ctx := context.Background()
-	store.EXPECT().Claim(ctx, "ev1", "e1", "v1", gomock.Any()).Return(outbound.ClaimResult{Status: "CLAIMED"}, nil)
+	store.EXPECT().Claim(ctx, "ev1", "e1", "v1", gomock.Any(), gomock.Any()).Return(outbound.ClaimResult{Status: "CLAIMED"}, nil)
 
-	uc := usecase.NewClaimTurn(store, tokens, fixedNow, "https://app/book")
+	uc := usecase.NewClaimTurn(store, tokens, fixedNow, "https://app/book", 7200*time.Second)
 	_, err := uc.Claim(ctx, inbound.ClaimInput{EntryID: "e1", VisitorID: "v1", EventID: "ev1", Gen: 1})
 	assert.ErrorIs(t, err, entity.ErrDependencyUnavailable)
 }
@@ -66,14 +68,61 @@ func TestClaim_StoreErrorsAreReturned(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			ctrl := gomock.NewController(t)
 			store := mock_outbound.NewMockIQueueStore(ctrl)
-			store.EXPECT().TokenGen(gomock.Any(), "ev1", gomock.Any()).Return(int64(1), true, nil).AnyTimes()
+			store.EXPECT().CheckTokenGen(gomock.Any(), "ev1", gomock.Any(), gomock.Any()).Return(outbound.TokenGenOK, nil).AnyTimes()
 			tokens := mock_outbound.NewMockITokenIssuer(ctrl)
 			ctx := context.Background()
-			store.EXPECT().Claim(ctx, "ev1", "e1", "v1", gomock.Any()).Return(outbound.ClaimResult{}, storeErr)
-			uc := usecase.NewClaimTurn(store, tokens, fixedNow, "https://app/book")
+			store.EXPECT().Claim(ctx, "ev1", "e1", "v1", gomock.Any(), gomock.Any()).Return(outbound.ClaimResult{}, storeErr)
+			uc := usecase.NewClaimTurn(store, tokens, fixedNow, "https://app/book", 7200*time.Second)
 			resp, err := uc.Claim(ctx, inbound.ClaimInput{EntryID: "e1", VisitorID: "v1", EventID: "ev1", Gen: 1})
 			assert.ErrorIs(t, err, storeErr)
 			assert.Equal(t, dto.ClaimResponse{}, resp, "no token and no URL on failure")
+		})
+	}
+}
+
+// D-C6.7: claim shares the `me` per-visitor budget (kind "claim"). Beyond the cap the store is never touched and the
+// answer is 429 RATE_LIMITED; a limiter error is fail-closed; a rotated token is refused before the limiter is asked.
+func TestClaim_RateLimited(t *testing.T) {
+	window := time.Minute
+	tests := []struct {
+		name      string
+		gen       int64
+		tokenGen  outbound.TokenGenCheck
+		allow     bool
+		allowErr  error
+		wantErr   error
+		wantLimit bool // the limiter must be consulted
+		wantCode  int
+	}{
+		{name: "over the budget is 429", gen: 1, tokenGen: outbound.TokenGenOK, allow: false, wantLimit: true, wantCode: 429},
+		{name: "limiter error fails closed", gen: 1, tokenGen: outbound.TokenGenOK, allowErr: errors.New("valkey: down"), wantLimit: true},
+		{name: "rotated token is refused before the limiter", gen: 1, tokenGen: outbound.TokenGenInvalid, wantErr: entity.ErrVisitorTokenInvalid},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			store := mock_outbound.NewMockIQueueStore(ctrl) // Claim must never be called
+			tokens := mock_outbound.NewMockITokenIssuer(ctrl)
+			limiter := mock_outbound.NewMockIRateLimiter(ctrl)
+			ctx := context.Background()
+			store.EXPECT().CheckTokenGen(ctx, "ev1", "v1", tt.gen).Return(tt.tokenGen, nil)
+			if tt.wantLimit {
+				limiter.EXPECT().Allow(ctx, "claim:v:ev1:v1", 120, window).Return(tt.allow, tt.allowErr)
+			}
+			uc := usecase.NewClaimTurn(store, tokens, fixedNow, "https://app/book", 7200*time.Second).WithLimiter(limiter, 120, window)
+			_, err := uc.Claim(ctx, inbound.ClaimInput{EntryID: "e1", VisitorID: "v1", EventID: "ev1", Gen: tt.gen})
+			require.Error(t, err)
+			switch {
+			case tt.wantErr != nil:
+				assert.ErrorIs(t, err, tt.wantErr)
+			case tt.allowErr != nil:
+				assert.ErrorIs(t, err, tt.allowErr)
+			default:
+				var ae *apperror.Error
+				require.ErrorAs(t, err, &ae)
+				assert.Equal(t, tt.wantCode, ae.HTTPStatus)
+				assert.Equal(t, apperror.CodeRateLimited, ae.Code)
+			}
 		})
 	}
 }
@@ -83,7 +132,7 @@ func TestClaim_StoreErrorsAreReturned(t *testing.T) {
 func TestLeave_WaitingDoesNotCallBooking(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	store := mock_outbound.NewMockIQueueStore(ctrl)
-	store.EXPECT().TokenGen(gomock.Any(), "ev1", gomock.Any()).Return(int64(1), true, nil).AnyTimes()
+	store.EXPECT().CheckTokenGen(gomock.Any(), "ev1", gomock.Any(), gomock.Any()).Return(outbound.TokenGenOK, nil).AnyTimes()
 	booking := mock_outbound.NewMockIBookingClient(ctrl) // any call fails the test
 	ctx := context.Background()
 	store.EXPECT().Leave(ctx, "ev1", "e1", "v1", gomock.Any()).Return(outbound.LeaveResult{Tag: "OK", PrevStatus: "WAITING"}, nil)
@@ -95,7 +144,7 @@ func TestLeave_WaitingDoesNotCallBooking(t *testing.T) {
 func TestLeave_AdmittedReleasesTheAllocationAfterTheCommit(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	store := mock_outbound.NewMockIQueueStore(ctrl)
-	store.EXPECT().TokenGen(gomock.Any(), "ev1", gomock.Any()).Return(int64(1), true, nil).AnyTimes()
+	store.EXPECT().CheckTokenGen(gomock.Any(), "ev1", gomock.Any(), gomock.Any()).Return(outbound.TokenGenOK, nil).AnyTimes()
 	booking := mock_outbound.NewMockIBookingClient(ctrl)
 	ctx := context.Background()
 	gomock.InOrder(
@@ -109,7 +158,7 @@ func TestLeave_AdmittedReleasesTheAllocationAfterTheCommit(t *testing.T) {
 func TestLeave_AdmittedReleaseFailureDoesNotFailTheRequest(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	store := mock_outbound.NewMockIQueueStore(ctrl)
-	store.EXPECT().TokenGen(gomock.Any(), "ev1", gomock.Any()).Return(int64(1), true, nil).AnyTimes()
+	store.EXPECT().CheckTokenGen(gomock.Any(), "ev1", gomock.Any(), gomock.Any()).Return(outbound.TokenGenOK, nil).AnyTimes()
 	booking := mock_outbound.NewMockIBookingClient(ctrl)
 	ctx := context.Background()
 	store.EXPECT().Leave(ctx, "ev1", "e1", "v1", gomock.Any()).Return(outbound.LeaveResult{Tag: "OK", PrevStatus: "ADMITTED", AllocationID: "alloc-42"}, nil)
@@ -125,7 +174,7 @@ func TestLeave_AdmittedReleaseFailureDoesNotFailTheRequest(t *testing.T) {
 func TestLeave_StrangerCausesNoBookingCall(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	store := mock_outbound.NewMockIQueueStore(ctrl)
-	store.EXPECT().TokenGen(gomock.Any(), "ev1", gomock.Any()).Return(int64(1), true, nil).AnyTimes()
+	store.EXPECT().CheckTokenGen(gomock.Any(), "ev1", gomock.Any(), gomock.Any()).Return(outbound.TokenGenOK, nil).AnyTimes()
 	booking := mock_outbound.NewMockIBookingClient(ctrl) // any call fails the test
 	ctx := context.Background()
 	store.EXPECT().Leave(ctx, "ev1", "e1", "intruder", gomock.Any()).Return(outbound.LeaveResult{}, entity.ErrNotFound)
@@ -138,7 +187,7 @@ func TestLeave_StrangerCausesNoBookingCall(t *testing.T) {
 func TestLeave_StoreErrorMeansBookingIsNeverCalled(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	store := mock_outbound.NewMockIQueueStore(ctrl)
-	store.EXPECT().TokenGen(gomock.Any(), "ev1", gomock.Any()).Return(int64(1), true, nil).AnyTimes()
+	store.EXPECT().CheckTokenGen(gomock.Any(), "ev1", gomock.Any(), gomock.Any()).Return(outbound.TokenGenOK, nil).AnyTimes()
 	booking := mock_outbound.NewMockIBookingClient(ctrl)
 	ctx := context.Background()
 	store.EXPECT().Leave(ctx, "ev1", "e1", "v1", gomock.Any()).Return(outbound.LeaveResult{}, errors.New("valkey: down"))
@@ -152,7 +201,7 @@ func TestLeave_IgnoredStatusesReleaseNothing(t *testing.T) {
 		t.Run(st, func(t *testing.T) {
 			ctrl := gomock.NewController(t)
 			store := mock_outbound.NewMockIQueueStore(ctrl)
-			store.EXPECT().TokenGen(gomock.Any(), "ev1", gomock.Any()).Return(int64(1), true, nil).AnyTimes()
+			store.EXPECT().CheckTokenGen(gomock.Any(), "ev1", gomock.Any(), gomock.Any()).Return(outbound.TokenGenOK, nil).AnyTimes()
 			booking := mock_outbound.NewMockIBookingClient(ctrl)
 			ctx := context.Background()
 			store.EXPECT().Leave(ctx, "ev1", "e1", "v1", gomock.Any()).Return(outbound.LeaveResult{Tag: "IGNORED", PrevStatus: st, AllocationID: "alloc-42"}, nil)
@@ -162,38 +211,39 @@ func TestLeave_IgnoredStatusesReleaseNothing(t *testing.T) {
 	}
 }
 
+// The status usecase passes the stored JSON through unchanged (D-C8.9): the response shape is the document's.
 func TestGetStatus_Found(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	store := mock_outbound.NewMockIQueueStore(ctrl)
+	docs := mock_outbound.NewMockIStatusDocReader(ctrl)
 	ctx := context.Background()
 	doc := dto.StatusDocument{EventID: "ev1", SaleState: "OPEN", SoldOut: false}
 	raw, _ := json.Marshal(doc)
-	store.EXPECT().GetStatusDoc(ctx, "ev1").Return(raw, true, nil)
+	docs.EXPECT().Get(ctx, "ev1").Return(raw, doc, true, nil)
 
-	uc := usecase.NewGetStatus(store)
+	uc := usecase.NewGetStatus(docs)
 	got, err := uc.GetStatus(ctx, "ev1")
 	require.NoError(t, err)
-	assert.Equal(t, doc, got)
+	assert.Equal(t, json.RawMessage(raw), got)
 }
 
 func TestGetStatus_NotFound(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	store := mock_outbound.NewMockIQueueStore(ctrl)
+	docs := mock_outbound.NewMockIStatusDocReader(ctrl)
 	ctx := context.Background()
-	store.EXPECT().GetStatusDoc(ctx, "ev1").Return(nil, false, nil)
+	docs.EXPECT().Get(ctx, "ev1").Return(nil, dto.StatusDocument{}, false, nil)
 
-	uc := usecase.NewGetStatus(store)
+	uc := usecase.NewGetStatus(docs)
 	_, err := uc.GetStatus(ctx, "ev1")
 	assert.ErrorIs(t, err, entity.ErrNotFound)
 }
 
 func TestGetStatus_StorageError(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	store := mock_outbound.NewMockIQueueStore(ctrl)
+	docs := mock_outbound.NewMockIStatusDocReader(ctrl)
 	ctx := context.Background()
-	store.EXPECT().GetStatusDoc(ctx, "ev1").Return(nil, false, errors.New("boom"))
+	docs.EXPECT().Get(ctx, "ev1").Return(nil, dto.StatusDocument{}, false, errors.New("boom"))
 
-	uc := usecase.NewGetStatus(store)
+	uc := usecase.NewGetStatus(docs)
 	_, err := uc.GetStatus(ctx, "ev1")
 	assert.Error(t, err)
 }
@@ -208,9 +258,9 @@ func TestClaimAndLeave_RotatedOutTokenIsRefused(t *testing.T) {
 			tokens := mock_outbound.NewMockITokenIssuer(ctrl)
 			booking := mock_outbound.NewMockIBookingClient(ctrl)
 			ctx := context.Background()
-			store.EXPECT().TokenGen(ctx, "ev1", "v1").Return(int64(2), true, nil).Times(2)
+			store.EXPECT().CheckTokenGen(ctx, "ev1", "v1", gomock.Any()).Return(outbound.TokenGenInvalid, nil).Times(2)
 
-			_, err := usecase.NewClaimTurn(store, tokens, fixedNow, "https://app/book").
+			_, err := usecase.NewClaimTurn(store, tokens, fixedNow, "https://app/book", 7200*time.Second).
 				Claim(ctx, inbound.ClaimInput{EntryID: "e1", VisitorID: "v1", EventID: "ev1", Gen: gen})
 			assert.ErrorIs(t, err, entity.ErrVisitorTokenInvalid)
 			err = usecase.NewLeaveQueue(store, booking, fixedNow).
@@ -236,15 +286,15 @@ func TestClaim_BookingURLShape(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			ctrl := gomock.NewController(t)
 			store := mock_outbound.NewMockIQueueStore(ctrl)
-			store.EXPECT().TokenGen(gomock.Any(), tt.eventID, gomock.Any()).Return(int64(1), true, nil).AnyTimes()
+			store.EXPECT().CheckTokenGen(gomock.Any(), tt.eventID, gomock.Any(), gomock.Any()).Return(outbound.TokenGenOK, nil).AnyTimes()
 			tokens := mock_outbound.NewMockITokenIssuer(ctrl)
 			ctx := context.Background()
-			store.EXPECT().Claim(ctx, tt.eventID, "entry-secret-id", "visitor-secret-id", gomock.Any()).
+			store.EXPECT().Claim(ctx, tt.eventID, "entry-secret-id", "visitor-secret-id", gomock.Any(), gomock.Any()).
 				Return(outbound.ClaimResult{Status: "CLAIMED", AllocationID: "alloc-1"}, nil)
 			tokens.EXPECT().IssueAdmission("entry-secret-id", tt.eventID, "alloc-1", fixedNow.T).
 				Return("distinctive.admission.token", fixedNow.T.Add(time.Minute), nil)
 
-			resp, err := usecase.NewClaimTurn(store, tokens, fixedNow, tt.base).
+			resp, err := usecase.NewClaimTurn(store, tokens, fixedNow, tt.base, 7200*time.Second).
 				Claim(ctx, inbound.ClaimInput{EntryID: "entry-secret-id", VisitorID: "visitor-secret-id", EventID: tt.eventID, Gen: 1})
 			require.NoError(t, err)
 			assert.Equal(t, tt.want, resp.BookingURL)

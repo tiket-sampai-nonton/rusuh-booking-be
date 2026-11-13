@@ -17,7 +17,8 @@ func ToBookingSession(a entity.Admission, detail entity.EventDetail, booking *dt
 			Code:       c.Category.Code,
 			Name:       c.Category.Name,
 			PriceMinor: c.Category.PriceMinor,
-			Available:  c.Available,
+			// The buyer's own reserved units are not in event free; add them back for this buyer only (C5.1).
+			Available: entity.BuyerAvailable(c.CategoryFree, c.EventFree, a.OutstandingUnits),
 		})
 	}
 	return dto.BookingSession{

@@ -1,13 +1,16 @@
 package http_test
 
 import (
+	"bufio"
 	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	bookinghttp "github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/infrastructure/http"
 )
@@ -105,4 +108,53 @@ func TestSSEHandler_MalformedSessionID_Returns400(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 	assert.Contains(t, rec.Body.String(), "VALIDATION_ERROR")
 	assert.False(t, stream.called, "usecase must not run for a malformed sessionId")
+}
+
+// tickingStream writes one timer frame per interval until the request context ends, like a live session.
+type tickingStream struct{ every time.Duration }
+
+func (s *tickingStream) Stream(ctx context.Context, _, _ string, w io.Writer, flush func()) error {
+	ticker := time.NewTicker(s.every)
+	defer ticker.Stop()
+	for {
+		if _, err := io.WriteString(w, "event: timer\ndata: {}\n\n"); err != nil {
+			return err
+		}
+		flush()
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+		}
+	}
+}
+
+// C7.5: the server's WriteTimeout must not cut a live stream, so the handler clears the write deadline before it streams.
+func TestSSEHandler_ClearsWriteDeadline(t *testing.T) {
+	mux := http.NewServeMux()
+	bookinghttp.NewSSEHandler(&tickingStream{every: 200 * time.Millisecond}).Register(mux)
+	srv := httptest.NewUnstartedServer(mux)
+	srv.Config.WriteTimeout = time.Second
+	srv.Start()
+	t.Cleanup(srv.Close)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2500*time.Millisecond)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+"/api/v1/booking-sessions/11111111-1111-1111-1111-111111111111/stream", nil)
+	require.NoError(t, err)
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer func() {
+		_ = resp.Body.Close()
+	}()
+
+	start := time.Now()
+	late := 0
+	scanner := bufio.NewScanner(resp.Body)
+	for scanner.Scan() {
+		if scanner.Text() == "event: timer" && time.Since(start) > 1500*time.Millisecond {
+			late++
+		}
+	}
+	assert.Positive(t, late, "timer frames must still arrive after the 1 s WriteTimeout")
 }

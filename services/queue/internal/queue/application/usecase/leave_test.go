@@ -39,7 +39,7 @@ func TestLeave_ByStatus(t *testing.T) {
 			ctrl := gomock.NewController(t)
 			store := mock_outbound.NewMockIQueueStore(ctrl)
 			booking := mock_outbound.NewMockIBookingClient(ctrl) // an unexpected ReleaseAllocation fails the test
-			store.EXPECT().TokenGen(gomock.Any(), "ev1", gomock.Any()).Return(int64(1), true, nil).AnyTimes()
+			store.EXPECT().CheckTokenGen(gomock.Any(), "ev1", gomock.Any(), gomock.Any()).Return(outbound.TokenGenOK, nil).AnyTimes()
 			store.EXPECT().Leave(gomock.Any(), "ev1", "e1", "v1", gomock.Any()).Return(tt.res, tt.storeErr)
 			if tt.wantRelID != "" {
 				booking.EXPECT().ReleaseAllocation(gomock.Any(), tt.wantRelID, outbound.ReleaseReasonEntryGone).Return(nil)

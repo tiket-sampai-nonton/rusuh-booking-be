@@ -266,6 +266,36 @@ func TestHold_SessionExpired(t *testing.T) {
 	assert.Equal(t, 1, idem.aborted)
 }
 
+// C4.4 (D-C4.4b): no admission can exist before the sales start, so a hold then is refused and never reaches uow.Hold.
+func TestHold_BeforeSalesStartIsRefused(t *testing.T) {
+	now := time.Now()
+	d := detailWith(true, 3)
+	d.Event.SalesStartsAt = now.Add(time.Hour)
+	uow := &fakeUoW{}
+	idem := &fakeIdem{}
+	uc := usecase.NewHold(&fakeAdmissionRepo{admission: admission3()}, &fakeEventRepo{detail: d}, idem, uow, fakeNIK{}, &fakeIDs{id: "bk-1", ref: "RB-1"}, fixedClock{t: now}, testPolicy)
+
+	_, err := uc.Hold(context.Background(), holdCmd(oneItem()))
+	assert.ErrorIs(t, err, inbound.ErrSessionExpired)
+	assert.Empty(t, uow.heldSpec.Lines, "uow.Hold must not be called before the sales start")
+}
+
+// C4.4 (D-C4.4b, owner decision): after sales_ends_at an admission reserved before the end still holds until its own
+// deadline (invariant 2, "Jangan PHP"). Only the start of the window refuses a hold.
+func TestHold_AfterSalesEndWithLiveAdmissionIsAccepted(t *testing.T) {
+	now := time.Now()
+	d := detailWith(true, 3)
+	d.Event.SalesStartsAt = now.Add(-2 * time.Hour)
+	d.Event.SalesEndsAt = now.Add(-time.Minute)
+	uow := &fakeUoW{holdRes: outbound.HoldResult{BookingID: "bk-1", PublicRef: "RB-1", Version: 1, Status: "PENDING_PAYMENT", AmountMinor: 1000, PaymentExpiresAt: now.Add(time.Hour)}}
+	uc := usecase.NewHold(&fakeAdmissionRepo{admission: admission3()}, &fakeEventRepo{detail: d}, &fakeIdem{}, uow, fakeNIK{}, &fakeIDs{id: "bk-1", ref: "RB-1"}, fixedClock{t: now}, testPolicy)
+
+	resp, err := uc.Hold(context.Background(), holdCmd(oneItem()))
+	require.NoError(t, err)
+	assert.Equal(t, "bk-1", resp.BookingID)
+	assert.Len(t, uow.heldSpec.Lines, 1, "uow.Hold must be reached after sales_ends_at while the admission is live")
+}
+
 // The submit grace is reachable over HTTP: a hold submitted after ExpiresAt but inside the grace window is accepted.
 func TestHold_InGraceIsAccepted(t *testing.T) {
 	now := time.Now()

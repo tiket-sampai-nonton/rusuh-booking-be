@@ -4,13 +4,82 @@ package valkey
 
 import (
 	"context"
+	"fmt"
+	"os"
+	"strconv"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/clock"
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/queueshard"
+	pkgvalkey "github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/valkey"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/port/outbound"
 )
+
+// hbClient opens a Valkey client on TEST_VALKEY_SERVER with a unique key prefix. The caller owns Close.
+func hbClient(t *testing.T) *pkgvalkey.Client {
+	t.Helper()
+	server := os.Getenv("TEST_VALKEY_SERVER")
+	if server == "" {
+		t.Fatal("TEST_VALKEY_SERVER wajib diset untuk test integrasi heartbeat")
+	}
+	prefix := fmt.Sprintf("hbs%d", time.Now().UnixNano()%1_000_000_000)
+	c, err := pkgvalkey.New(context.Background(), pkgvalkey.Config{Server: server, PrefixEnv: prefix})
+	require.NoError(t, err)
+	return c
+}
+
+// TestHeartbeat_UsesStoredShard: an entry joined under 4 shards keeps its liveness keys in the shard it was stored
+// under, even after a redeploy changes the shard count to 8. The heartbeat must address the stored shard, not the
+// shard the new count would compute for the id.
+func TestHeartbeat_UsesStoredShard(t *testing.T) {
+	ctx := context.Background()
+	c := hbClient(t)
+	t.Cleanup(c.Close)
+	joined := NewQueueStore(c.VK(), c, clock.System{}, 4)
+	redeployed := NewQueueStore(c.VK(), c, clock.System{}, 8)
+	ev := "ev-hb-stored-shard"
+
+	// An id whose shard differs between 4 and 8 shards, so the two computations cannot agree by accident.
+	id := ""
+	for i := 0; id == ""; i++ {
+		if cand := fmt.Sprintf("hb-entry-%d", i); queueshard.Shard(cand, 4) != queueshard.Shard(cand, 8) {
+			id = cand
+		}
+	}
+	j := joinAt(t, joined, ev, outbound.JoinParams{EntryID: id, NewVisitorID: "v-hb"}, t0)
+	stored := joined.shardOf(id)
+
+	hb, err := redeployed.Heartbeat(ctx, ev, "v-hb", j.Gen, t0+5_000)
+	require.NoError(t, err)
+	require.Equal(t, outbound.HeartbeatOK, hb.Tag)
+
+	score, ok := zscore(t, redeployed, redeployed.kHbShard(ev, stored), id)
+	require.True(t, ok, "the entry stays in its stored shard hb:%s", stored)
+	assert.Equal(t, float64(t0+5_000), score, "the stored shard's hb:%s gets the new score", stored)
+	for sh := 0; sh < 16; sh++ {
+		if strconv.Itoa(sh) == stored {
+			continue
+		}
+		_, ok := zscore(t, redeployed, redeployed.kHbShard(ev, strconv.Itoa(sh)), id)
+		assert.False(t, ok, "no other hb:%d gains the id", sh)
+	}
+}
+
+// TestHeartbeat_VlastReadErrorIsReturned: a failed vlast read is an error, not a silent fall-through to the Lua step.
+func TestHeartbeat_VlastReadErrorIsReturned(t *testing.T) {
+	c := hbClient(t)
+	s := NewQueueStore(c.VK(), c, clock.System{}, 4)
+	c.Close()
+
+	hb, err := s.Heartbeat(context.Background(), "ev-hb-closed", "v-closed", 1, t0)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "valkey: get vlast")
+	assert.NotEqual(t, outbound.HeartbeatOK, hb.Tag)
+}
 
 // hbScore reads the entry's score from its stored shard's hb key (nil => absent). It addresses the shard the entry
 // actually lives in (shardOf), the same way every production mutation does, so a stranded entry in a different shard
@@ -157,4 +226,65 @@ func shardName(b int) string {
 		return "B=1_single_key_parity"
 	}
 	return "B=16_sharded"
+}
+
+// idsPerShard returns perShard entry ids for each of the b shards, so a test sets how many silent entries every shard
+// holds.
+func idsPerShard(b, perShard int) []string {
+	count := make([]int, b)
+	var ids []string
+	for i := 0; len(ids) < b*perShard; i++ {
+		id := fmt.Sprintf("budget-%d", i)
+		if sh := queueshard.Shard(id, b); count[sh] < perShard {
+			count[sh]++
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
+
+// C8.7 (PF-P2-1): the liveness tick has ONE budget across all shards. 16 shards x 100 silent entries and a budget of
+// 300 stale exactly 300 in the tick, not 300 per shard.
+func TestLivenessTick_TotalBudgetAcrossShards(t *testing.T) {
+	const shards, perShard, budget = 16, 100, 300
+	s := newTestStoreShards(t, shards)
+	ctx := context.Background()
+	ev := "ev-budget"
+	for _, id := range idsPerShard(shards, perShard) {
+		joinAt(t, s, ev, outbound.JoinParams{EntryID: id, NewVisitorID: "v-" + id}, t0)
+	}
+	now := t0 + 100_000 // silent for 100 s: past StaleAfter (90 s), short of EndAfter (300 s)
+
+	res, _, err := s.SweepLivenessTick(ctx, ev, now-90_000, now-300_000, budget, now, 5*time.Second, 0, 0)
+	require.NoError(t, err)
+	require.False(t, res.LeaseLost)
+	assert.Equal(t, budget, res.Staled, "the budget bounds the whole tick, not each shard")
+	assert.Zero(t, res.Ended)
+}
+
+// C8.7 (PF-P2-1): the start shard rotates per tick, so every shard is reached. With budget 300 and 100 silent entries
+// per shard, six ticks with start 0..5 stale all 1600 entries. A fixed start would keep draining shards 0..2 and never
+// reach the rest.
+func TestLivenessTick_RotatingStartShardReachesEveryShard(t *testing.T) {
+	const shards, perShard, budget = 16, 100, 300
+	s := newTestStoreShards(t, shards)
+	ctx := context.Background()
+	ev := "ev-rotate"
+	for _, id := range idsPerShard(shards, perShard) {
+		joinAt(t, s, ev, outbound.JoinParams{EntryID: id, NewVisitorID: "v-" + id}, t0)
+	}
+	now := t0 + 100_000
+
+	staled := 0
+	for tick := 0; tick < 6; tick++ {
+		res, _, err := s.SweepLivenessTick(ctx, ev, now-90_000, now-300_000, budget, now, 5*time.Second, 0, tick)
+		require.NoError(t, err)
+		require.False(t, res.LeaseLost)
+		assert.LessOrEqual(t, res.Staled, budget, "tick %d stays inside the budget", tick)
+		staled += res.Staled
+	}
+	assert.Equal(t, shards*perShard, staled, "six ticks reach every silent entry")
+	for sh := 0; sh < shards; sh++ {
+		assert.Zero(t, zcard(t, s, s.kHbShard(ev, strconv.Itoa(sh))), "shard %d is reached", sh)
+	}
 }

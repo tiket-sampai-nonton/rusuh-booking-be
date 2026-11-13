@@ -73,19 +73,43 @@ func TestEventStatusFollowsTheSalesWindowAndStock(t *testing.T) {
 		e    entity.Event
 		want string
 	}{
-		"draft before sale":     {ev(entity.EventDraft, time.Hour, 2*time.Hour), "NOT_STARTED"},
-		"draft during sale":     {ev(entity.EventDraft, -time.Hour, time.Hour), "AVAILABLE"},
-		"available after sale":  {ev(entity.EventAvailable, -2*time.Hour, -time.Hour), "CLOSED"},
-		"stored sold out wins":  {ev(entity.EventSoldOut, -time.Hour, time.Hour), "SOLD_OUT"},
-		"stored closed wins":    {ev(entity.EventClosed, -time.Hour, time.Hour), "CLOSED"},
-		"stored cancelled wins": {ev(entity.EventCancelled, -time.Hour, time.Hour), "CANCELLED"},
-		"cancelled before sale": {ev(entity.EventCancelled, time.Hour, 2*time.Hour), "CANCELLED"},
+		"draft before sale":                    {ev(entity.EventDraft, time.Hour, 2*time.Hour), "NOT_STARTED"},
+		"draft during sale":                    {ev(entity.EventDraft, -time.Hour, time.Hour), "AVAILABLE"},
+		"available after sale":                 {ev(entity.EventAvailable, -2*time.Hour, -time.Hour), "CLOSED"},
+		"stored sold out ignored (stock left)": {ev(entity.EventSoldOut, -time.Hour, time.Hour), "AVAILABLE"},
+		"stored sold out before sale":          {ev(entity.EventSoldOut, time.Hour, 2*time.Hour), "NOT_STARTED"},
+		"stored sold out after sale":           {ev(entity.EventSoldOut, -2*time.Hour, -time.Hour), "CLOSED"},
+		"stored closed wins":                   {ev(entity.EventClosed, -time.Hour, time.Hour), "CLOSED"},
+		"stored cancelled wins":                {ev(entity.EventCancelled, -time.Hour, time.Hour), "CANCELLED"},
+		"cancelled before sale":                {ev(entity.EventCancelled, time.Hour, 2*time.Hour), "CANCELLED"},
 	} {
 		assert.Equal(t, c.want, mapper.ToEventList([]entity.Event{c.e}, now).Events[0].Status, name)
 	}
 
-	soldOut := entity.EventDetail{Event: ev(entity.EventDraft, -time.Hour, time.Hour), Categories: []entity.CategoryDetail{{Available: 0}, {Available: 0}}}
-	assert.Equal(t, "SOLD_OUT", mapper.ToEventDetail(soldOut, now).Event.Status, "tanpa sisa stok di semua kategori")
+	// SOLD_OUT inside the window comes from supply (StockSoldOut, derived by the repo), never from the stored status.
+	stockSoldOut := func(st entity.EventStatus, from, to time.Duration) entity.Event {
+		e := ev(st, from, to)
+		e.StockSoldOut = true
+		return e
+	}
+	for name, c := range map[string]struct {
+		e    entity.Event
+		want string
+	}{
+		"stock sold out in sale":          {stockSoldOut(entity.EventAvailable, -time.Hour, time.Hour), "SOLD_OUT"},
+		"stock sold out before sale":      {stockSoldOut(entity.EventAvailable, time.Hour, 2*time.Hour), "NOT_STARTED"},
+		"stock sold out after sale":       {stockSoldOut(entity.EventAvailable, -2*time.Hour, -time.Hour), "CLOSED"},
+		"stock sold out, stored cancel":   {stockSoldOut(entity.EventCancelled, -time.Hour, time.Hour), "CANCELLED"},
+		"stock sold out, stored closed":   {stockSoldOut(entity.EventClosed, -time.Hour, time.Hour), "CLOSED"},
+		"stock sold out, stored sold out": {stockSoldOut(entity.EventSoldOut, -time.Hour, time.Hour), "SOLD_OUT"},
+	} {
+		assert.Equal(t, c.want, mapper.ToEventList([]entity.Event{c.e}, now).Events[0].Status, name)
+	}
+
+	soldOut := entity.EventDetail{Event: stockSoldOut(entity.EventDraft, -time.Hour, time.Hour)}
+	assert.Equal(t, "SOLD_OUT", mapper.ToEventDetail(soldOut, now).Event.Status, "detail uses the same supply-derived status as the list")
+	available := entity.EventDetail{Event: ev(entity.EventDraft, -time.Hour, time.Hour), Categories: []entity.CategoryDetail{{Available: 0}}}
+	assert.Equal(t, "AVAILABLE", mapper.ToEventDetail(available, now).Event.Status, "zero categories left is not SOLD_OUT without StockSoldOut")
 }
 
 func TestToBooking_OnlyActiveItemsAndLock(t *testing.T) {
@@ -114,8 +138,10 @@ func TestToBooking_OnlyActiveItemsAndLock(t *testing.T) {
 func TestToTicketList(t *testing.T) {
 	tickets := []entity.Ticket{{PublicCode: "TK-1", CategoryCode: "VIP", AttendeeName: "A", AttendeeNIKMasked: "3174********0001"}}
 	b := entity.Booking{ID: "b1", PublicRef: "RB-7F3A9C21", AmountMinor: 1500000, BuyerNIKMasked: "3174********0009", ItemQuantity: 1}
-	out := mapper.ToTicketList(b, tickets, func(tk entity.Ticket) string { return "QR:" + tk.PublicCode })
+	startsAt := time.Date(2026, 12, 20, 19, 30, 0, 0, time.UTC)
+	out := mapper.ToTicketList(b, entity.Event{StartsAt: startsAt}, tickets, func(tk entity.Ticket) string { return "QR:" + tk.PublicCode })
 	assert.Equal(t, "b1", out.BookingID)
+	assert.Equal(t, startsAt, out.EventStartsAt)
 	assert.Equal(t, "RB-7F3A9C21", out.OrderID)
 	assert.Equal(t, "RB-7F3A9C21", out.PublicRef)
 	assert.EqualValues(t, 1500000, out.AmountMinor)

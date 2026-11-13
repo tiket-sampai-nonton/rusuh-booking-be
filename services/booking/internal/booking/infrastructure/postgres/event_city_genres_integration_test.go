@@ -30,7 +30,7 @@ func adminCreate(t *testing.T, f fixture, slug, city string, genres []string) st
 }
 
 func adminPatch(f fixture, id string, req dto.UpdateEventConfigRequest) error {
-	return usecase.NewUpdateEventConfig(NewEventWriteRepo(f.pool)).Update(context.Background(), id, req)
+	return usecase.NewUpdateEventConfig(NewEventWriteRepo(f.pool)).Update(context.Background(), id, "acct-test", req)
 }
 
 func (f fixture) cityGenre(t *testing.T, id string) (city string, genre []string) {
@@ -61,8 +61,8 @@ func TestCityGenres_CreateThenFilterAndFacets(t *testing.T) {
 
 	id := adminCreate(t, f, "cg-create", " Jakarta ", []string{"pop", "indie-rock", " "})
 	bare := adminCreate(t, f, "cg-bare", "", nil)
-	require.NoError(t, w.SetPublished(ctx, id, true))
-	require.NoError(t, w.SetPublished(ctx, bare, true))
+	require.NoError(t, w.SetPublished(ctx, id, "acct-test", true))
+	require.NoError(t, w.SetPublished(ctx, bare, "acct-test", true))
 
 	city, genre := f.cityGenre(t, id)
 	assert.Equal(t, "Jakarta", city)
@@ -102,8 +102,8 @@ func TestCityGenres_FacetsDoNotFoldCityCase(t *testing.T) {
 	w := NewEventWriteRepo(f.pool)
 	a := adminCreate(t, f, "cg-case-a", "Jakarta", nil)
 	b := adminCreate(t, f, "cg-case-b", "jakarta", nil)
-	require.NoError(t, w.SetPublished(ctx, a, true))
-	require.NoError(t, w.SetPublished(ctx, b, true))
+	require.NoError(t, w.SetPublished(ctx, a, "acct-test", true))
+	require.NoError(t, w.SetPublished(ctx, b, "acct-test", true))
 
 	facets, _, err := NewEventRepo(f.pool).Facets(ctx, dto.EventListQuery{})
 	require.NoError(t, err)
@@ -147,7 +147,7 @@ func TestCityGenres_Patch(t *testing.T) {
 	assert.Equal(t, 1, f.n(t, `SELECT count(*) FROM booking.events WHERE id=$1::uuid AND genre = '{}'`, id), "cleared genres are '{}' not NULL")
 
 	// patched values are visible to the filters immediately (no server cache)
-	require.NoError(t, NewEventWriteRepo(f.pool).SetPublished(context.Background(), id, true))
+	require.NoError(t, NewEventWriteRepo(f.pool).SetPublished(context.Background(), id, "acct-test", true))
 	require.NoError(t, adminPatch(f, id, dto.UpdateEventConfigRequest{City: strp("Medan"), Genres: slp("folk")}))
 	assert.True(t, listedIDs(t, NewEventRepo(f.pool), dto.EventListQuery{City: "medan", Genres: []string{"FOLK"}})[id])
 

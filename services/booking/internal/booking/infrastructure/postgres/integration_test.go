@@ -129,6 +129,7 @@ func TestTC_BKG07_NoOversell(t *testing.T) {
 				AmountMinor:      10000,
 				PaymentExpiresAt: time.Now().Add(10 * time.Minute),
 				Lines: []outbound.HoldLine{{
+					ItemID:            newTestUUID(),
 					CategoryID:        catID,
 					UnitPriceMinor:    10000,
 					AttendeeNIKHash:   nikHash,

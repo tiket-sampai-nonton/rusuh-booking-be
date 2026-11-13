@@ -24,6 +24,10 @@ func NewAllocateBatch(admissions outbound.IAdmissionRepo, ids IDGen, clk clock.I
 	return &AllocateBatch{admissions: admissions, ids: ids, clock: clk}
 }
 
+// maxBatchEntries caps one allocation batch (D-C7.2): the repository locks the event's supply once per batch, and Queue's
+// promoter sends at most this many entries per call (QUEUE_PROMOTE_BATCH_MAX, validated to the same 100).
+const maxBatchEntries = 100
+
 // AllocateBatch validates the request and reserves each entry.
 func (uc *AllocateBatch) AllocateBatch(ctx context.Context, req dto.AllocationBatchRequest) (dto.AllocationBatchResponse, error) {
 	if !isUUID(req.EventID) {
@@ -31,6 +35,9 @@ func (uc *AllocateBatch) AllocateBatch(ctx context.Context, req dto.AllocationBa
 	}
 	if len(req.Entries) == 0 {
 		return dto.AllocationBatchResponse{}, inbound.Validation("entries", "minimal satu entry")
+	}
+	if len(req.Entries) > maxBatchEntries {
+		return dto.AllocationBatchResponse{}, inbound.Validation("entries", "maksimal 100 entri")
 	}
 
 	entries := make([]outbound.ReserveEntry, 0, len(req.Entries))

@@ -31,8 +31,12 @@ func (h *MyEntryHandler) me(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		writeDomainError(w, r, entity.ErrVisitorTokenInvalid) // R01.6: invalid/expired/device mismatch -> 401
 		return
 	}
+	eventID, ok := queryEventID(w, r)
+	if !ok {
+		return
+	}
 	resp, err := h.uc.GetMyEntry(r.Context(), inbound.MyEntryInput{
-		EventID:   r.URL.Query().Get("eventId"),
+		EventID:   eventID,
 		VisitorID: c.VisitorID,
 		Gen:       c.Gen,
 	})

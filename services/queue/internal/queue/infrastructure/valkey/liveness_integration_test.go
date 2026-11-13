@@ -70,25 +70,25 @@ func TestTokenGen_JoinRotationAndHeartbeatStates(t *testing.T) {
 	// device 2 re-attaches with the bearer and no token: generation rotates, T1 is revoked
 	re := joinAt(t, s, ev, outbound.JoinParams{EntryID: "y", NewVisitorID: "v-y", AccountID: "acc"}, t0+3)
 	assert.Equal(t, outbound.JoinReattach, re.Outcome)
-	assert.EqualValues(t, 2, re.Gen)
+	require.Greater(t, re.Gen, a.Gen)
 	hb, err = s.Heartbeat(ctx, ev, "v-a", 1, t0+4)
 	require.NoError(t, err)
 	assert.Equal(t, outbound.HeartbeatInvalid, hb.Tag, "rotated-out token -> 401")
-	hb, err = s.Heartbeat(ctx, ev, "v-a", 2, t0+4)
+	hb, err = s.Heartbeat(ctx, ev, "v-a", re.Gen, t0+4)
 	require.NoError(t, err)
 	assert.Equal(t, outbound.HeartbeatOK, hb.Tag)
 
 	// a stale generation on join is ignored (treated as no token): the bearer re-attaches again
 	stale := joinAt(t, s, ev, outbound.JoinParams{EntryID: "z", NewVisitorID: "v-z", TokenVisitorID: "v-a", TokenGen: 1, AccountID: "acc"}, t0+5)
 	assert.Equal(t, outbound.JoinReattach, stale.Outcome)
-	assert.EqualValues(t, 3, stale.Gen)
+	require.Greater(t, stale.Gen, re.Gen)
 
 	// the entry ends; the still-valid token answers NOT_FOUND and the entry stays ENDED
 	_, err = s.EndEntry(ctx, ev, "a", "SWEEP_MISSED", t0+6)
 	require.NoError(t, err)
 	_, err = s.Leave(ctx, ev, "a", "v-a", t0+6)
 	require.NoError(t, err)
-	hb, err = s.Heartbeat(ctx, ev, "v-a", 3, t0+7)
+	hb, err = s.Heartbeat(ctx, ev, "v-a", stale.Gen, t0+7)
 	require.NoError(t, err)
 	assert.Equal(t, outbound.HeartbeatNotFound, hb.Tag)
 	last, ok, err := s.FindLastByVisitor(ctx, ev, "v-a")
@@ -98,14 +98,14 @@ func TestTokenGen_JoinRotationAndHeartbeatStates(t *testing.T) {
 	assert.Equal(t, "LEFT", last.EndReason)
 
 	// rejoin with the valid token of the ENDED entry: new entry, same visitor id, rotated token
-	rj := joinAt(t, s, ev, outbound.JoinParams{EntryID: "b", NewVisitorID: "v-b", TokenVisitorID: "v-a", TokenGen: 3}, t0+8)
+	rj := joinAt(t, s, ev, outbound.JoinParams{EntryID: "b", NewVisitorID: "v-b", TokenVisitorID: "v-a", TokenGen: stale.Gen}, t0+8)
 	assert.Equal(t, outbound.JoinCreated, rj.Outcome)
 	assert.Equal(t, "v-a", rj.VisitorID)
-	assert.EqualValues(t, 4, rj.Gen)
-	g, ok, err := s.TokenGen(ctx, ev, "v-a")
+	require.Greater(t, rj.Gen, stale.Gen)
+	g, ok, err := tokenGenRecord(ctx, s, ev, "v-a")
 	require.NoError(t, err)
 	assert.True(t, ok)
-	assert.EqualValues(t, 4, g)
+	assert.Equal(t, rj.Gen, g)
 }
 
 // S2 (R02.3): 100 untokened joins with one bearer: one entry and exactly ONE valid generation.
@@ -123,16 +123,17 @@ func TestTokenGen_S2ExactlyOneValidToken(t *testing.T) {
 		}()
 	}
 	wg.Wait()
-	cur, _, err := s.TokenGen(ctx, "ev-s2g", gensVisitor(t, s, "ev-s2g", "acc"))
+	cur, _, err := tokenGenRecord(ctx, s, "ev-s2g", gensVisitor(t, s, "ev-s2g", "acc"))
 	require.NoError(t, err)
-	valid := 0
+	valid, top := 0, int64(0)
 	for _, g := range gens {
 		if g == cur {
 			valid++
 		}
+		top = max(top, g)
 	}
 	assert.Equal(t, 1, valid, "only the last rotation is valid")
-	assert.EqualValues(t, 100, cur, "1 create + 99 rotations")
+	assert.Equal(t, top, cur, "the stored generation is the largest one handed out (1 create + 99 rotations)")
 }
 
 func gensVisitor(t *testing.T, s *QueueStore, ev, acct string) string {

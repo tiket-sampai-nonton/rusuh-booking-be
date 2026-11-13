@@ -3,6 +3,7 @@
 -- KEYS[1]=entry:<id> KEYS[2]=active KEYS[3..5]=nik/visitor/email keys KEYS[6]=waiting
 -- ARGV: 1=entryId 2=outcome 3=nowMs 4=P (prefix for the global stale/pending sets)
 --       5=hbShardKey 6=hbstaleShardKey (the entry's sharded liveness keys; ADR-030 Amendment)
+--       7=retentionMs (D-C8.2: every terminal write sets PEXPIRE on the entry hash)
 -- outcome=SWEEP_MISSED (Queue sweeper, deadline lewat); ALREADY_ACTIVE (promoter, WAITING-only; ADR-030 removed
 -- BUYER_QUOTA_EXHAUSTED and UNREADABLE_PII); PROMOTER_ORPHAN needs no class (hash gone => NO_ENTRY branch below);
 -- anything else = Booking outcome (PAID|UNCLAIMED|REFUNDED|...).
@@ -36,6 +37,7 @@ end
 
 -- class A: sweeper outcome
 if ARGV[2]=='SWEEP_MISSED' then
+  local final, reason = 'MISSED', ARGV[2]
   if st=='ADMITTED' then
     local dl = tonumber(redis.call('HGET', KEYS[1], 'claimDeadlineMs'))
     if dl == nil or tonumber(ARGV[3]) >= dl then
@@ -44,8 +46,17 @@ if ARGV[2]=='SWEEP_MISSED' then
       return {'IGNORED', 'ADMITTED'} -- still live, sweep LIMIT page moves on without blocking
     end
   elseif st=='CLAIMED' then
-    redis.call('ZADD', KEYS[2], 'XX', 'inf', ARGV[1]) -- self-heal: legacy CLAIMED still scored by deadline
-    return {'IGNORED', 'CLAIMED'}
+    -- C6.5 (P2-15): a CLAIMED slot ends once its claimExpiresMs (stamped by claim.lua) has passed; Booking is not called.
+    -- A legacy CLAIMED without the stamp keeps the self-heal (+inf) and is not expired here.
+    local exp = tonumber(redis.call('HGET', KEYS[1], 'claimExpiresMs'))
+    if exp == nil then
+      redis.call('ZADD', KEYS[2], 'XX', 'inf', ARGV[1]) -- self-heal: legacy CLAIMED still scored by deadline
+      return {'IGNORED', 'CLAIMED'}
+    end
+    if tonumber(ARGV[3]) < exp then
+      return {'IGNORED', 'CLAIMED'} -- still within its claim bound
+    end
+    final, reason = 'ENDED', 'CLAIM_TIMEOUT'
   elseif st=='WAITING' then
     redis.call('ZREM', KEYS[2], ARGV[1]) -- WAITING must never sit in active
     return {'IGNORED', 'WAITING'}
@@ -54,12 +65,13 @@ if ARGV[2]=='SWEEP_MISSED' then
   end
   redis.call('ZREM', KEYS[2], ARGV[1])
   redis.call('ZREM', KEYS[6], ARGV[1])
-  redis.call('HSET', KEYS[1], 'status', 'MISSED', 'endReason', ARGV[2], 'endedAtMs', ARGV[3])
+  redis.call('HSET', KEYS[1], 'status', final, 'endReason', reason, 'endedAtMs', ARGV[3])
+  redis.call('PEXPIRE', KEYS[1], ARGV[7])
   dropSets()
   if redis.call('GET', KEYS[3])==ARGV[1] then redis.call('DEL', KEYS[3]) end
   if redis.call('GET', KEYS[4])==ARGV[1] then redis.call('DEL', KEYS[4]) end
   if redis.call('GET', KEYS[5])==ARGV[1] then redis.call('DEL', KEYS[5]) end
-  return {'OK', 'MISSED'}
+  return {'OK', final}
 end
 
 -- class B: promoter outcomes that only ever end a WAITING entry (never touch ADMITTED/CLAIMED)
@@ -69,6 +81,7 @@ if ARGV[2]=='ALREADY_ACTIVE' then
   redis.call('ZREM', KEYS[6], ARGV[1])
   dropSets()
   redis.call('HSET', KEYS[1], 'status', 'ENDED', 'endReason', ARGV[2], 'endedAtMs', ARGV[3])
+  redis.call('PEXPIRE', KEYS[1], ARGV[7])
   if redis.call('GET', KEYS[3])==ARGV[1] then redis.call('DEL', KEYS[3]) end
   if redis.call('GET', KEYS[4])==ARGV[1] then redis.call('DEL', KEYS[4]) end
   if redis.call('GET', KEYS[5])==ARGV[1] then redis.call('DEL', KEYS[5]) end
@@ -91,6 +104,7 @@ redis.call('ZREM', KEYS[2], ARGV[1])
 redis.call('ZREM', KEYS[6], ARGV[1])
 dropSets()
 redis.call('HSET', KEYS[1], 'status', final, 'endReason', ARGV[2], 'endedAtMs', ARGV[3])
+redis.call('PEXPIRE', KEYS[1], ARGV[7])
 if redis.call('GET', KEYS[3])==ARGV[1] then redis.call('DEL', KEYS[3]) end
 if redis.call('GET', KEYS[4])==ARGV[1] then redis.call('DEL', KEYS[4]) end
 if redis.call('GET', KEYS[5])==ARGV[1] then redis.call('DEL', KEYS[5]) end

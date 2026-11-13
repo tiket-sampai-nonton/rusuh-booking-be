@@ -14,6 +14,10 @@ import (
 
 //go:generate go tool mockgen -source=ports.go -destination=../../../../_mock/booking/port/outbound/ports_mock.go -package=mock_outbound
 
+// SweepLease is how long a row claimed by a sweeper stays hidden from the other sweepers (D-C7.3). Usecases derive their
+// per-call time budget from it, so a call stops before its claimed rows can lapse.
+const SweepLease = 15 * time.Second
+
 // IEventRepo reads the event catalog and config (read-only, outside the stock transaction).
 type IEventRepo interface {
 	ListEvents(ctx context.Context, q dto.EventListQuery) ([]entity.Event, error)
@@ -27,7 +31,9 @@ type IEventRepo interface {
 // IEventWriteRepo creates and configures events (admin operations).
 type IEventWriteRepo interface {
 	CreateEvent(ctx context.Context, id string, req dto.CreateEventRequest) error
-	UpdateConfig(ctx context.Context, eventID string, req dto.UpdateEventConfigRequest) error
+	// UpdateConfig applies the configuration change and records actor (the admin account id) in config_audit.
+	// inbound.ErrEventCancelled for a cancelled event; inbound.ErrNotFound for an unknown event.
+	UpdateConfig(ctx context.Context, eventID, actor string, req dto.UpdateEventConfigRequest) error
 	// SetImageURL stores url in the column for kind (image | banner | thumbnail); ErrNotFound for an unknown event.
 	SetImageURL(ctx context.Context, eventID, kind, url string) error
 }
@@ -35,10 +41,10 @@ type IEventWriteRepo interface {
 // IEventPublicationRepo switches an event between draft and published and cancels it (admin operations).
 type IEventPublicationRepo interface {
 	// SetPublished publishes (published_at = now, unchanged when already published) or unpublishes the event;
-	// inbound.ErrNotFound for an unknown event.
-	SetPublished(ctx context.Context, eventID string, published bool) error
-	// Cancel marks the event CANCELLED (idempotent); inbound.ErrNotFound for an unknown event.
-	Cancel(ctx context.Context, eventID string) error
+	// inbound.ErrNotFound for an unknown event; inbound.ErrEventCancelled for a cancelled one.
+	SetPublished(ctx context.Context, eventID, actor string, published bool) error
+	// Cancel marks the event CANCELLED (idempotent) and records actor; inbound.ErrNotFound for an unknown event.
+	Cancel(ctx context.Context, eventID, actor string) error
 }
 
 // IImageStore saves an uploaded image under key and returns its public URL.
@@ -61,8 +67,9 @@ type IAdmissionRepo interface {
 	// (UNCLAIMED or LEFT_WITHOUT_BUYING). Terminal admissions return (false, nil); an EDITABLE admission (a hold
 	// exists) returns ErrBookingLocked and changes nothing.
 	Release(ctx context.Context, allocationID string, reason vo.EndReason) (bool, error)
-	// DueSessions scans admissions whose expiry has lapsed (session sweeper).
-	DueSessions(ctx context.Context, now time.Time, limit int) ([]entity.Admission, error)
+	// ClaimDueSessions leases up to limit admissions whose expiry has lapsed (session sweeper, D-C7.3). A claimed row is
+	// hidden from other sweepers for 15 s, or until its submit grace ends when it is still inside it.
+	ClaimDueSessions(ctx context.Context, now time.Time, limit int) ([]entity.Admission, error)
 	// ExpireSession releases one admission's allocation/held stock in its own transaction.
 	ExpireSession(ctx context.Context, admissionID string, now time.Time) error
 }
@@ -97,9 +104,23 @@ type IBookingRepo interface {
 	DeferVerification(ctx context.Context, bookingID string, until time.Time) error
 }
 
-// IBookingDueScanner finds bookings whose payment window has lapsed (expiry sweeper).
+// StockDrift is one stock counter that disagrees with a recount from the live rows (see stock_drift.sql). Delta is
+// stored minus recounted for event-level kinds; for category and quota kinds it is the sum of the absolute differences.
+type StockDrift struct {
+	EventID string
+	Kind    string
+	Delta   int
+}
+
+// IStockDrift returns every drifted counter. An empty result means the stock is consistent.
+type IStockDrift interface {
+	StockDrift(ctx context.Context) ([]StockDrift, error)
+}
+
+// IBookingDueScanner finds bookings whose payment window has lapsed (expiry sweeper). ClaimDueBookings leases the
+// returned rows for 15 s so that concurrent sweepers do not take the same booking (D-C7.3).
 type IBookingDueScanner interface {
-	DueBookingIDs(ctx context.Context, now time.Time, limit int) ([]string, error)
+	ClaimDueBookings(ctx context.Context, now time.Time, limit int) ([]string, error)
 }
 
 // ITicketRepo reads issued tickets (writes go through IUnitOfWork during settlement).
@@ -115,8 +136,16 @@ type IQuotaRepo interface {
 // IAttendeeChecker probes whether an attendee NIK is already registered (HELD/PAID) for an event.
 type IAttendeeChecker interface {
 	IsRegistered(ctx context.Context, eventID string, nikHash []byte) (bool, error)
-	// RecordCheck inserts a dedupe row; counted=false means the NIK was already checked this session.
-	RecordCheck(ctx context.Context, admissionID string, nikHash []byte) (counted bool, err error)
+	// RecordCheck counts a NIK against the session limit atomically. maxChecks is the event's per-session cap.
+	RecordCheck(ctx context.Context, admissionID string, nikHash []byte, maxChecks int) (AttendeeCheckRecord, error)
+}
+
+// AttendeeCheckRecord is the outcome of RecordCheck. Counted is true only when this call consumed a check;
+// LimitReached is true when the session cap was already full and the NIK was not recorded. Used is the number
+// of checks consumed after the call.
+type AttendeeCheckRecord struct {
+	Counted, LimitReached bool
+	Used                  int
 }
 
 // IPaymentClient asks the Payment Service what happened to a booking's payment (expiry sweeper, buyer cancel).
@@ -168,17 +197,34 @@ type CategoryAvailabilitySnap struct {
 	Available  int    `json:"available"`
 }
 
-// IAvailabilityCache reads live category availability from Valkey (written by the stock projection
-// after each hold/settle/expire) and tracks SSE connection count per instance.
-type IAvailabilityCache interface {
-	GetAvailability(ctx context.Context, eventID string) ([]CategoryAvailabilitySnap, error)
-	SetAvailability(ctx context.Context, eventID string, snaps []CategoryAvailabilitySnap, ttl time.Duration) error
-	IncrConn(ctx context.Context, instance string) (int, error)
-	DecrConn(ctx context.Context, instance string) error
+// AvailabilitySnapshot is the point-in-time availability of one event: the units the event still has free
+// (total - allocated - held - sold, clamped at 0) and each category's own free count.
+type AvailabilitySnapshot struct {
+	EventFree  int                        `json:"eventFree"`
+	Categories []CategoryAvailabilitySnap `json:"categories"`
 }
 
-// IAvailabilitySource lists the live availability of every event whose sales window is open at now,
-// keyed by event ID (the source of the SSE snapshot written by ProjectAvailability).
+// IAvailabilityCache reads live category availability from Valkey (written by the stock projection
+// after each hold/settle/expire).
+type IAvailabilityCache interface {
+	GetAvailability(ctx context.Context, eventID string) (AvailabilitySnapshot, error)
+	SetAvailability(ctx context.Context, eventID string, snap AvailabilitySnapshot, ttl time.Duration) error
+}
+
+// IAvailabilitySource lists the live availability of every event whose sales window is open at now and that is
+// published and not closed or cancelled, keyed by event ID (the source of the SSE snapshot written by ProjectAvailability).
 type IAvailabilitySource interface {
-	OnSaleAvailability(ctx context.Context, now time.Time) (map[string][]CategoryAvailabilitySnap, error)
+	OnSaleAvailability(ctx context.Context, now time.Time) (map[string]AvailabilitySnapshot, error)
+}
+
+// IRetention deletes rows past their retention window (retention job, D-C7.8). Each call is one DELETE of at most limit
+// rows that skips rows locked by another session, so the job never waits on a lock; it returns how many rows it deleted.
+type IRetention interface {
+	// PurgePublishedOutbox deletes published outbox rows whose published_at is before before. Unpublished rows are never deleted.
+	PurgePublishedOutbox(ctx context.Context, before time.Time, limit int) (int, error)
+	// PurgeExpiredIdempotency deletes idempotency records whose expires_at is before now, in any state.
+	PurgeExpiredIdempotency(ctx context.Context, now time.Time, limit int) (int, error)
+	// PurgeAttendeeChecks deletes attendee checks of admissions that ended before endedBefore. Active and editable
+	// admissions have no ended_at and are never deleted.
+	PurgeAttendeeChecks(ctx context.Context, endedBefore time.Time, limit int) (int, error)
 }

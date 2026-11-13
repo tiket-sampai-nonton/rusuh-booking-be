@@ -112,10 +112,41 @@ func TestDecide_MergedCrossRuleWithOmittedField(t *testing.T) {
 	assert.Equal(t, []string{"pollNearMs"}, fieldsOf(err))
 }
 
+// P2-14: a PATCH may not set oneActivePerVisitor to false, in either sale state.
+func TestDecide_PatchOneActivePerVisitorMustBeTrue(t *testing.T) {
+	cur := DefaultSettings("e")
+	for _, saleOpen := range []bool{false, true} {
+		_, err := Decide(SettingsPatch{OneActivePerVisitor: bp(false)}, saleOpen)(cur, true)
+		assert.Equal(t, []string{"oneActivePerVisitor"}, fieldsOf(err), "saleOpen=%v", saleOpen)
+		assert.NotErrorIs(t, err, ErrRulesLocked, "saleOpen=%v", saleOpen)
+	}
+	_, err := Decide(SettingsPatch{OneActivePerVisitor: bp(false)}, false)(cur, true)
+	var ve shared.ValidationErrors
+	require.ErrorAs(t, err, &ve)
+	assert.Equal(t, shared.ValidationError{Field: "oneActivePerVisitor", Message: "harus true"}, ve[0])
+}
+
+// A stored false is not a merged-value rule: a PATCH that sends true repairs it (even while the sale is open), and a
+// PATCH that omits the field still succeeds and keeps the stored value.
+func TestDecide_StoredFalseIsRepairableAndOmittedFieldAllowed(t *testing.T) {
+	stored := DefaultSettings("e")
+	stored.OneActivePerVisitor = false
+	assert.Empty(t, ValidateSettings(stored))
+
+	got, err := Decide(SettingsPatch{OneActivePerVisitor: bp(true)}, true)(stored, true)
+	require.NoError(t, err)
+	assert.True(t, got.OneActivePerVisitor)
+
+	got, err = Decide(patchCap(9), true)(stored, true)
+	require.NoError(t, err)
+	assert.False(t, got.OneActivePerVisitor)
+	assert.Equal(t, 9, got.ActiveSlotCapacity)
+}
+
 func TestDecide_LockMatrix(t *testing.T) {
 	def := DefaultSettings("e")
 	locked := def
-	locked.OneActivePerVisitor = false
+	locked.OneActivePerEmail = false
 	cases := []struct {
 		name     string
 		patch    SettingsPatch
@@ -124,8 +155,7 @@ func TestDecide_LockMatrix(t *testing.T) {
 		saleOpen bool
 		wantErr  error
 	}{
-		{"closed change locked", SettingsPatch{ActiveSlotCapacity: ip(1), OneActivePerVisitor: bp(false)}, def, true, false, nil},
-		{"open change visitor", SettingsPatch{ActiveSlotCapacity: ip(1), OneActivePerVisitor: bp(false)}, def, true, true, ErrRulesLocked},
+		{"closed change locked", SettingsPatch{ActiveSlotCapacity: ip(1), OneActivePerEmail: bp(false)}, def, true, false, nil},
 		{"open change email", SettingsPatch{ActiveSlotCapacity: ip(1), OneActivePerEmail: bp(false)}, def, true, true, ErrRulesLocked},
 		{"open same locked value", SettingsPatch{ActiveSlotCapacity: ip(1), OneActivePerVisitor: bp(true)}, def, true, true, nil},
 		{"open omitted locked", patchCap(7), locked, true, true, nil},
@@ -149,7 +179,7 @@ func TestDecide_LockMatrix(t *testing.T) {
 
 func TestDecide_ValidationBeforeLock(t *testing.T) {
 	cur := DefaultSettings("e")
-	p := SettingsPatch{ActiveSlotCapacity: ip(0), OneActivePerVisitor: bp(false)}
+	p := SettingsPatch{ActiveSlotCapacity: ip(0), OneActivePerEmail: bp(false)}
 	_, err := Decide(p, true)(cur, true)
 	assert.NotErrorIs(t, err, ErrRulesLocked)
 	assert.Equal(t, []string{"activeSlotCapacity"}, fieldsOf(err))

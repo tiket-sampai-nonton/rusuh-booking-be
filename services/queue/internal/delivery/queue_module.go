@@ -11,6 +11,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/clock"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/crypto"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/rabbitmq"
@@ -22,6 +24,7 @@ import (
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/config"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/application/usecase"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/infrastructure/bookingclient"
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/infrastructure/healthcheck"
 	queuehttp "github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/infrastructure/http"
 	queuepg "github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/infrastructure/postgres"
 	queuerabbitmq "github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/infrastructure/rabbitmq"
@@ -37,9 +40,11 @@ type registrar interface{ Register(*http.ServeMux) }
 // queueModule bundles the wired HTTP handlers, worker jobs, and the Booking-event consumer.
 type queueModule struct {
 	handlers []registrar
+	pingers  []healthcheck.Pinger // GET /health targets, taken from the clients the module was built with
 	jobs     []Job
 	consumer *queuerabbitmq.Consumer
 	rmqConn  *rabbitmq.Connection
+	rmqPub   *rabbitmq.Publisher
 	depth    *queuetelemetry.DepthCollector // NFR-09 queue depth; registered by the API server only
 }
 
@@ -50,11 +55,30 @@ func (m *queueModule) Register(mux *http.ServeMux) {
 	}
 }
 
+// Close releases the event publisher channel, then the AMQP connection it runs on. It is nil-safe and idempotent:
+// once released, a field is cleared, so a second call does nothing. Call it only after the jobs and the HTTP server
+// have stopped publishing.
+func (m *queueModule) Close() error {
+	if m == nil {
+		return nil
+	}
+	var err error
+	if m.rmqPub != nil {
+		err = errors.Join(err, m.rmqPub.Close())
+		m.rmqPub = nil
+	}
+	if m.rmqConn != nil {
+		err = errors.Join(err, m.rmqConn.Close())
+		m.rmqConn = nil
+	}
+	return err
+}
+
 // newQueueModule wires adapters to usecases (composition root). Without Postgres/Valkey (e.g. the
 // /health-only unit test) it returns an empty module so only /health is mounted.
 func newQueueModule(cfg config.Config, clients *Clients, logger *slog.Logger) (*queueModule, error) {
 	if clients.PG == nil || clients.VK == nil {
-		return &queueModule{}, nil
+		return &queueModule{pingers: clients.Pingers()}, nil
 	}
 	clk := clock.System{}
 
@@ -91,7 +115,7 @@ func newQueueModule(cfg config.Config, clients *Clients, logger *slog.Logger) (*
 	limiter := queuevalkey.NewRateLimiter(clients.VK.VK(), clients.VK, clk.Now)
 	settingsRepo := queuevalkey.NewEventSettingsCache(clients.VK.VK(), clients.VK, queuepg.NewEventSettings(clients.PG.Pool()))
 	settingsAdminRepo := queuepg.NewEventSettingsAdmin(clients.PG.Pool())
-	auditRepo := queuepg.NewEntryAudit(clients.PG.Pool())
+	auditRepo := clients.audit // one best-effort writer per process, owned by Clients (D-C8.5)
 
 	breaker, err := resilience.NewBreaker(resilience.BreakerConfig{
 		Name: "booking", FailureThreshold: 5, Cooldown: 10 * time.Second, HalfOpenProbes: 2, Timeout: cfg.Booking.Timeout,
@@ -119,20 +143,22 @@ func newQueueModule(cfg config.Config, clients *Clients, logger *slog.Logger) (*
 		Store: store, Settings: settingsRepo, Booking: booking, Limiter: limiter,
 		Tokens: tokens, UserVerifier: userVerifier, Audit: auditRepo, Clock: clk,
 	}, joinSettings(cfg)).WithMetrics(promoterMetrics).WithLogger(logger)
-	statusUC := usecase.NewGetStatus(store)
+	statusDocs := queuevalkey.NewStatusDocCache(store, queuevalkey.StatusDocRefresh, clk.Now) // D-C8.9: one GET per event per 250 ms
+	statusUC := usecase.NewGetStatus(statusDocs)
 	hbPolicy := heartbeatPolicy(cfg)
-	myEntryUC := usecase.NewGetMyEntry(store).WithHeartbeat(hbPolicy).
+	myEntryUC := usecase.NewGetMyEntry(store).WithHeartbeat(hbPolicy).WithStatusDocs(statusDocs).
 		WithLimiter(limiter, cfg.RateLimit.MePerVisitor, cfg.RateLimit.MePerVisitorWindow)
-	heartbeatUC := usecase.NewHeartbeat(store, clk, hbPolicy).
+	heartbeatUC := usecase.NewHeartbeat(store, clk, hbPolicy).WithStatusDocs(statusDocs).
 		WithLimiter(limiter, cfg.RateLimit.HeartbeatPerVisitor, cfg.RateLimit.MePerVisitorWindow)
-	claimUC := usecase.NewClaimTurn(store, tokens, clk, cfg.Booking.PageBaseURL)
+	claimUC := usecase.NewClaimTurn(store, tokens, clk, cfg.Booking.PageBaseURL, cfg.WorkerTuning.ClaimedSlotMax).
+		WithLimiter(limiter, cfg.RateLimit.MePerVisitor, cfg.RateLimit.MePerVisitorWindow)
 	leaveUC := usecase.NewLeaveQueue(store, booking, clk)
 	getSettingsUC := usecase.NewGetQueueSettings(settingsRepo)
-	setSettingsUC := usecase.NewSetQueueSettings(settingsRepo, booking, settingsAdminRepo, clk)
+	setSettingsUC := usecase.NewSetQueueSettings(settingsRepo, booking, settingsAdminRepo, clk).WithCache(settingsRepo)
 
 	trustProxy := cfg.App.Env != "local"
 	handlers := []registrar{
-		queuehttp.NewJoinHandler(joinUC, trustProxy).WithAuth(visitorAuth),
+		queuehttp.NewJoinHandler(joinUC, trustProxy, cfg.App.TrustedProxyHops).WithAuth(visitorAuth),
 		queuehttp.NewStatusHandler(statusUC),
 		queuehttp.NewMyEntryHandler(myEntryUC, visitorAuth),
 		queuehttp.NewHeartbeatHandler(heartbeatUC, visitorAuth),
@@ -150,8 +176,8 @@ func newQueueModule(cfg config.Config, clients *Clients, logger *slog.Logger) (*
 
 	consumer := queuerabbitmq.NewConsumer(store, clk)
 
-	return &queueModule{handlers: handlers, jobs: jobs, consumer: consumer, rmqConn: rmqConn,
-		depth: queuetelemetry.NewDepthCollector(settingsRepo, store)}, nil
+	return &queueModule{handlers: handlers, pingers: clients.Pingers(), jobs: jobs, consumer: consumer,
+		rmqConn: rmqConn, rmqPub: rmqPub, depth: queuetelemetry.NewDepthCollector(settingsRepo, store)}, nil
 }
 
 // statusTTL derives the status-doc TTL from the status publisher's own cadence (QUEUE_STATUS_INTERVAL_MS).
@@ -178,6 +204,36 @@ func buildJobs(cfg config.Config, promoter, sweeper, statusPub, liveness func(co
 		{Name: "status-publisher", Every: every["status-publisher"], Run: statusPub},
 		{Name: "liveness", Every: every["liveness"], Run: liveness},
 	}
+}
+
+// Entry audit writer (D-C8.5): a 10 000-row buffer, flushed every 200 ms or as soon as 500 rows wait, one COPY per
+// batch. Rows that do not fit are dropped and counted; the request path never waits for them.
+const (
+	entryAuditBuffer       = 10000
+	entryAuditBatch        = 500
+	entryAuditEvery        = 200 * time.Millisecond
+	entryAuditDrainTimeout = 5 * time.Second // bounds the flush on shutdown
+)
+
+// startEntryAudit starts the entry_audit writer. It keeps flushing through the HTTP drain after a SIGTERM and stops only
+// in Clients.Close, which flushes what is buffered before the pool closes.
+func startEntryAudit(pool *pgxpool.Pool) *queuepg.AsyncEntryAudit {
+	a := queuepg.NewAsyncEntryAudit(pool, entryAuditBuffer, entryAuditBatch, entryAuditEvery).WithMetrics(sharedEntryAuditMetrics())
+	go a.Run(context.Background())
+	return a
+}
+
+var (
+	entryAuditMetricsOnce sync.Once
+	entryAuditMetricsInst *queuetelemetry.EntryAuditMetrics
+)
+
+// sharedEntryAuditMetrics registers rbt_queue_entry_audit_dropped_total on the process-wide registry exactly once.
+func sharedEntryAuditMetrics() *queuetelemetry.EntryAuditMetrics {
+	entryAuditMetricsOnce.Do(func() {
+		entryAuditMetricsInst = queuetelemetry.NewEntryAuditMetrics(telemetry.Default)
+	})
+	return entryAuditMetricsInst
 }
 
 var (

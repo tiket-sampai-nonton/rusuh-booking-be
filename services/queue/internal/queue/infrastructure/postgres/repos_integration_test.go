@@ -119,3 +119,83 @@ func TestEntryAudit_AppendsForGuestAndAccount(t *testing.T) {
 	rec.EventID = "bukan-uuid"
 	assert.Error(t, repo.Append(ctx, rec))
 }
+
+func TestAsyncEntryAudit_CopyFromWritesRows(t *testing.T) {
+	pool := setup(t)
+	ctx := context.Background()
+	a := NewAsyncEntryAudit(pool, 100, 500, 10*time.Millisecond)
+	runCtx, stopRun := context.WithCancel(ctx)
+	defer stopRun()
+	go a.Run(runCtx)
+
+	rec := outbound.AuditRecord{
+		EventID: "11111111-1111-1111-1111-111111111111", EntryID: "22222222-2222-2222-2222-222222222222", Seq: 7,
+		Action: "JOINED", OccurredAt: time.Now(),
+	}
+	require.NoError(t, a.Append(ctx, rec), "tamu: account_id NULL, metadata kosong")
+	rec.Action, rec.AccountID, rec.Metadata = "ADMITTED", "33333333-3333-3333-3333-333333333333", map[string]any{"via": "direct"}
+	require.NoError(t, a.Append(ctx, rec))
+
+	// The ticker writes the rows without Close: the request path only queues them.
+	require.Eventually(t, func() bool {
+		var n int
+		return pool.QueryRow(ctx, `SELECT count(*) FROM entry_audit`).Scan(&n) == nil && n == 2
+	}, 5*time.Second, 10*time.Millisecond)
+	stopRun()
+	require.NoError(t, a.Close(ctx))
+
+	var n, withAccount, withNIK int
+	require.NoError(t, pool.QueryRow(ctx, `SELECT count(*), count(account_id), count(buyer_nik_hash) FROM entry_audit`).
+		Scan(&n, &withAccount, &withNIK))
+	assert.Equal(t, 2, n)
+	assert.Equal(t, 1, withAccount)
+	assert.Zero(t, withNIK, "ADR-030: the COPY path writes no NIK either")
+	var via string
+	require.NoError(t, pool.QueryRow(ctx, `SELECT metadata->>'via' FROM entry_audit WHERE action = 'ADMITTED'`).Scan(&via))
+	assert.Equal(t, "direct", via)
+	assert.Zero(t, a.Dropped())
+
+	// A row the database rejects fails its whole batch: it is counted and Close reports it.
+	bad := NewAsyncEntryAudit(pool, 100, 500, time.Hour)
+	require.NoError(t, bad.Append(ctx, outbound.AuditRecord{EventID: "bukan-uuid", EntryID: rec.EntryID, Seq: 8, Action: "JOINED", OccurredAt: time.Now()}))
+	assert.Error(t, bad.Close(ctx))
+	assert.EqualValues(t, 1, bad.Dropped())
+	require.NoError(t, pool.QueryRow(ctx, `SELECT count(*) FROM entry_audit`).Scan(&n))
+	assert.Equal(t, 2, n, "the failed batch wrote nothing")
+}
+
+// TC-C8.10 (D-C8.10): the workers iterate an event until one day after its sale ends. An unknown window stays in the list.
+func TestListActiveEventIDs_DropsEventsEndedOverADay(t *testing.T) {
+	pool := setup(t)
+	ctx := context.Background()
+	repo := NewEventSettings(pool)
+	now := time.Date(2026, 11, 13, 12, 0, 0, 0, time.UTC)
+	const (
+		unknownWindow = "11111111-1111-1111-1111-111111111111" // window not written yet: iterated
+		endedHourAgo  = "22222222-2222-2222-2222-222222222222" // ended 1 h ago: iterated (retirement runs inside the day)
+		endedDayAgo   = "33333333-3333-3333-3333-333333333333" // ended exactly 24 h ago: dropped
+		endedLongAgo  = "44444444-4444-4444-4444-444444444444" // ended 48 h ago: dropped
+		upcoming      = "55555555-5555-5555-5555-555555555555" // sale ends in 72 h: iterated
+	)
+	for _, ev := range []string{unknownWindow, endedHourAgo, endedDayAgo, endedLongAgo, upcoming} {
+		_, err := pool.Exec(ctx, `INSERT INTO event_settings (event_id) VALUES ($1::uuid)`, ev)
+		require.NoError(t, err)
+	}
+	require.NoError(t, repo.UpdateSaleWindow(ctx, endedHourAgo, now.Add(-48*time.Hour), now.Add(-time.Hour)))
+	require.NoError(t, repo.UpdateSaleWindow(ctx, endedDayAgo, now.Add(-72*time.Hour), now.Add(-24*time.Hour)))
+	require.NoError(t, repo.UpdateSaleWindow(ctx, endedLongAgo, now.Add(-96*time.Hour), now.Add(-48*time.Hour)))
+	require.NoError(t, repo.UpdateSaleWindow(ctx, upcoming, now, now.Add(72*time.Hour)))
+
+	ids, err := repo.ListActiveEventIDs(ctx, now)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{unknownWindow, endedHourAgo, upcoming}, ids)
+
+	// The cut-off moves with now: a day later the event that ended an hour before no longer qualifies.
+	ids, err = repo.ListActiveEventIDs(ctx, now.Add(24*time.Hour))
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{unknownWindow, upcoming}, ids)
+
+	all, err := repo.ListEventIDs(ctx)
+	require.NoError(t, err)
+	assert.Len(t, all, 5, "ListEventIDs still lists every configured event (depth metrics)")
+}

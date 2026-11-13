@@ -33,12 +33,12 @@ func TestLoad_QueueExtras(t *testing.T) {
 	setBase(t)
 	t.Setenv("TOKEN_ADMISSION_TTL", "60s")
 	t.Setenv("QUEUE_PROMOTOR_INTERVAL_MS", "100ms")
-	t.Setenv("QUEUE_PROMOTE_BATCH_MAX", "200")
+	t.Setenv("QUEUE_PROMOTE_BATCH_MAX", "100")
 	t.Setenv("RATE_LIMIT_JOIN_PER_IP", "150")
 	cfg, err := Load()
 	require.NoError(t, err)
 	assert.Equal(t, "http://booking:8082", cfg.Booking.BaseURL)
-	assert.Equal(t, 200, cfg.WorkerTuning.PromoteBatchMax)
+	assert.Equal(t, 100, cfg.WorkerTuning.PromoteBatchMax)
 	assert.Equal(t, 150, cfg.RateLimit.JoinPerIP)
 	assert.Equal(t, int64(100), cfg.WorkerTuning.PromotorInterval.Milliseconds())
 	assert.Equal(t, int64(60), int64(cfg.Token.AdmissionTTL.Seconds()))
@@ -88,6 +88,8 @@ func TestLoad_QueueHardeningDefaults(t *testing.T) {
 	assert.Equal(t, 50, cfg.WorkerTuning.NoSupplySuspectTicks)
 	// REQ-5: status-doc TTL multiplier defaults to 4 (within the 3..5 bound).
 	assert.Equal(t, 4, cfg.WorkerTuning.StatusTTLMultiplier)
+	// C6.5 (P2-15, R17): default 7200 s >= Booking maxima 1800 + 30 + 3600 + 600 + VERIFY_GRACE 600 (= 6630 s).
+	assert.Equal(t, 7200*time.Second, cfg.WorkerTuning.ClaimedSlotMax)
 }
 
 // REQ-5 AC7: StatusTTL returns the configured multiple of the effective publish cadence (Worker.Interval),
@@ -208,6 +210,8 @@ func TestLoad_QueueHardeningValidation(t *testing.T) {
 		{"sweep batch at max", map[string]string{"QUEUE_SWEEP_BATCH_MAX": "5000"}, ""},
 		{"suspect ticks 1 rejected (a single race must never label)", map[string]string{"QUEUE_NO_SUPPLY_SUSPECT_TICKS": "1"}, "QUEUE_NO_SUPPLY_SUSPECT_TICKS"},
 		{"suspect ticks 2 ok", map[string]string{"QUEUE_NO_SUPPLY_SUSPECT_TICKS": "2"}, ""},
+		{"claimed slot max 599s rejected", map[string]string{"QUEUE_CLAIMED_SLOT_MAX_SECONDS": "599"}, "QUEUE_CLAIMED_SLOT_MAX_SECONDS"},
+		{"claimed slot max 600s ok", map[string]string{"QUEUE_CLAIMED_SLOT_MAX_SECONDS": "600"}, ""},
 		{"rate window under 1ms", map[string]string{"RATE_LIMIT_JOIN_PER_IP_WINDOW": "500us"}, "RATE_LIMIT_JOIN_PER_IP_WINDOW"},
 		{"ip window zero", map[string]string{"RATE_LIMIT_JOIN_PER_IP_WINDOW": "0s"}, "RATE_LIMIT_JOIN_PER_IP_WINDOW"},
 		{"me window zero", map[string]string{"RATE_LIMIT_ME_PER_VISITOR_WINDOW": "0s"}, "RATE_LIMIT_ME_PER_VISITOR_WINDOW"},
@@ -265,3 +269,81 @@ func TestLoad_AdminEmails(t *testing.T) {
 }
 
 func strPtr(s string) *string { return &s }
+
+// P2-18 (AC-C6.7): every rate-limit count must be at least 1; a zero or negative limit is rejected at start and the
+// error names the variable.
+func TestLoad_RateLimitsMustBePositive(t *testing.T) {
+	for _, v := range []string{"RATE_LIMIT_JOIN_PER_IP", "RATE_LIMIT_ME_PER_VISITOR", "RATE_LIMIT_HEARTBEAT_PER_VISITOR"} {
+		t.Run(v, func(t *testing.T) {
+			setBase(t)
+			t.Setenv(v, "0")
+			_, err := Load()
+			require.Error(t, err)
+			assert.ErrorContains(t, err, v)
+		})
+	}
+}
+
+// P1-2 (AC-C6.3): APP_TRUSTED_PROXY_HOPS defaults to 1 (the rightmost X-Forwarded-For entry) and must be 1..5.
+func TestLoad_TrustedProxyHops(t *testing.T) {
+	tests := []struct {
+		name, val string
+		want      string // "" = valid
+		wantHops  int
+	}{
+		{"default is 1", "", "", 1},
+		{"2 (CloudFront then ALB)", "2", "", 2},
+		{"5 (upper bound)", "5", "", 5},
+		{"6 rejected", "6", "APP_TRUSTED_PROXY_HOPS", 0},
+		{"0 rejected", "0", "APP_TRUSTED_PROXY_HOPS", 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setBase(t)
+			if tt.val != "" {
+				t.Setenv("APP_TRUSTED_PROXY_HOPS", tt.val)
+			}
+			cfg, err := Load()
+			if tt.want == "" {
+				require.NoError(t, err)
+				assert.Equal(t, tt.wantHops, cfg.App.TrustedProxyHops)
+				return
+			}
+			require.Error(t, err)
+			assert.ErrorContains(t, err, tt.want)
+		})
+	}
+}
+
+// C7.2 (D-C7.2): Booking takes at most 100 entries per batch, so the promoter's batch is validated to 1..100.
+func TestLoad_PromoteBatchMaxCappedAt100(t *testing.T) {
+	setBase(t)
+	cfg, err := Load()
+	require.NoError(t, err)
+	assert.Equal(t, 100, cfg.WorkerTuning.PromoteBatchMax, "default batch size")
+
+	for _, tc := range []struct {
+		value string
+		ok    bool
+	}{{"1", true}, {"100", true}, {"0", false}, {"101", false}} {
+		t.Run("QUEUE_PROMOTE_BATCH_MAX="+tc.value, func(t *testing.T) {
+			setBase(t)
+			t.Setenv("QUEUE_PROMOTE_BATCH_MAX", tc.value)
+			_, err := Load()
+			if tc.ok {
+				require.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
+			assert.ErrorContains(t, err, "QUEUE_PROMOTE_BATCH_MAX")
+		})
+	}
+}
+
+// C8.9 (D-C8.9): the `me` limit default is 60/min (the fastest legal poll is pollNearMs >= 1000 ms).
+func TestLoad_MeLimitDefault60(t *testing.T) {
+	setBase(t)
+	cfg, err := Load()
+	require.NoError(t, err)
+	assert.Equal(t, 60, cfg.RateLimit.MePerVisitor)
+}

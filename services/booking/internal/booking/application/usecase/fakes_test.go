@@ -160,7 +160,7 @@ func (f *fakeAdmissionRepo) Release(_ context.Context, id string, reason vo.EndR
 	}
 	return true, nil
 }
-func (f *fakeAdmissionRepo) DueSessions(context.Context, time.Time, int) ([]entity.Admission, error) {
+func (f *fakeAdmissionRepo) ClaimDueSessions(context.Context, time.Time, int) ([]entity.Admission, error) {
 	return f.due, nil
 }
 func (f *fakeAdmissionRepo) ExpireSession(_ context.Context, id string, _ time.Time) error {
@@ -278,7 +278,7 @@ func (f *fakeBookingRepo) GetByID(context.Context, string) (entity.Booking, erro
 func (f *fakeBookingRepo) ListByAccount(context.Context, string, string, int) ([]dto.MyBookingItem, string, error) {
 	return f.list, f.next, f.listErr
 }
-func (f *fakeBookingRepo) DueBookingIDs(context.Context, time.Time, int) ([]string, error) {
+func (f *fakeBookingRepo) ClaimDueBookings(context.Context, time.Time, int) ([]string, error) {
 	return f.due, nil
 }
 func (f *fakeBookingRepo) DeferVerification(_ context.Context, bookingID string, until time.Time) error {
@@ -296,22 +296,24 @@ func (f *fakeTicketRepo) ListByBookingID(context.Context, string) ([]entity.Tick
 	return f.tickets, f.err
 }
 
-// fakeAttendeeChecker is controllable.
+// fakeAttendeeChecker is controllable. used is the post-call check count reported by RecordCheck.
 type fakeAttendeeChecker struct {
-	registered bool
-	regErr     error
-	counted    bool
-	recErr     error
-	calls      int
+	registered   bool
+	regErr       error
+	counted      bool
+	limitReached bool
+	used         int
+	recErr       error
+	calls        int
 }
 
 func (f *fakeAttendeeChecker) IsRegistered(context.Context, string, []byte) (bool, error) {
 	f.calls++
 	return f.registered, f.regErr
 }
-func (f *fakeAttendeeChecker) RecordCheck(context.Context, string, []byte) (bool, error) {
+func (f *fakeAttendeeChecker) RecordCheck(context.Context, string, []byte, int) (outbound.AttendeeCheckRecord, error) {
 	f.calls++
-	return f.counted, f.recErr
+	return outbound.AttendeeCheckRecord{Counted: f.counted, LimitReached: f.limitReached, Used: f.used}, f.recErr
 }
 
 // fakePayments resolves a canned result; the zero value answers NOT_PAID. It records the modes it was asked with.
@@ -351,31 +353,25 @@ func (c fixedClock) Now() time.Time { return c.t }
 
 // fakeAvailCache is a controllable IAvailabilityCache for SSE tests.
 type fakeAvailCache struct {
-	snaps   []outbound.CategoryAvailabilitySnap
+	snap    outbound.AvailabilitySnapshot
 	snapErr error
 	setErr  error
-	written map[string][]outbound.CategoryAvailabilitySnap
-	connN   int
-	connErr error
+	written map[string]outbound.AvailabilitySnapshot
 }
 
-func (f *fakeAvailCache) GetAvailability(_ context.Context, _ string) ([]outbound.CategoryAvailabilitySnap, error) {
-	return f.snaps, f.snapErr
+func (f *fakeAvailCache) GetAvailability(_ context.Context, _ string) (outbound.AvailabilitySnapshot, error) {
+	return f.snap, f.snapErr
 }
-func (f *fakeAvailCache) SetAvailability(_ context.Context, id string, snaps []outbound.CategoryAvailabilitySnap, _ time.Duration) error {
+func (f *fakeAvailCache) SetAvailability(_ context.Context, id string, snap outbound.AvailabilitySnapshot, _ time.Duration) error {
 	if f.setErr != nil {
 		return f.setErr
 	}
 	if f.written == nil {
-		f.written = map[string][]outbound.CategoryAvailabilitySnap{}
+		f.written = map[string]outbound.AvailabilitySnapshot{}
 	}
-	f.written[id] = snaps
+	f.written[id] = snap
 	return nil
 }
-func (f *fakeAvailCache) IncrConn(_ context.Context, _ string) (int, error) {
-	return f.connN, f.connErr
-}
-func (f *fakeAvailCache) DecrConn(_ context.Context, _ string) error { return nil }
 
 // fakeEventWriteRepo records admin event writes and returns canned errors.
 type fakeEventWriteRepo struct {
@@ -390,6 +386,7 @@ type fakeEventWriteRepo struct {
 	createdReq  dto.CreateEventRequest
 	updateCalls int
 	updatedReq  dto.UpdateEventConfigRequest
+	updatedBy   string
 }
 
 func (f *fakeEventWriteRepo) SetImageURL(_ context.Context, _, kind, url string) error {
@@ -402,9 +399,10 @@ func (f *fakeEventWriteRepo) CreateEvent(_ context.Context, _ string, req dto.Cr
 	f.createdReq = req
 	return f.createErr
 }
-func (f *fakeEventWriteRepo) UpdateConfig(_ context.Context, _ string, req dto.UpdateEventConfigRequest) error {
+func (f *fakeEventWriteRepo) UpdateConfig(_ context.Context, _, actor string, req dto.UpdateEventConfigRequest) error {
 	f.updateCalls++
 	f.updatedReq = req
+	f.updatedBy = actor
 	return f.updateErr
 }
 

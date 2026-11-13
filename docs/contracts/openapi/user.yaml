@@ -219,6 +219,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
+        '403':
+          description: 'Akun dinonaktifkan — errorCode: `ACCOUNT_DISABLED`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
     patch:
       tags:
       - profile
@@ -256,6 +262,12 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
         '401':
           description: 'Access token tidak valid — errorCode: `UNAUTHORIZED`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '403':
+          description: 'Akun dinonaktifkan — errorCode: `ACCOUNT_DISABLED`'
           content:
             application/json:
               schema:

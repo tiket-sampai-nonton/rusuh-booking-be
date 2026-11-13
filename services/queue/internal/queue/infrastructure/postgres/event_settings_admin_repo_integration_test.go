@@ -131,7 +131,7 @@ func TestEventSettingsAdmin_DecideErrorWritesNothing(t *testing.T) {
 	_, err = apply(t, repo, entity.SettingsPatch{ActiveSlotCapacity: intp(5)}, true, "a", t0)
 	require.NoError(t, err, "create saat sale terbuka dengan nilai terkunci bawaan diizinkan")
 	before := auditCount(t, pool)
-	_, err = apply(t, repo, entity.SettingsPatch{ActiveSlotCapacity: intp(6), OneActivePerVisitor: boolp(false)}, true, "a", t0)
+	_, err = apply(t, repo, entity.SettingsPatch{ActiveSlotCapacity: intp(6), OneActivePerEmail: boolp(false)}, true, "a", t0)
 	assert.ErrorIs(t, err, entity.ErrRulesLocked)
 	assert.Equal(t, before, auditCount(t, pool))
 	var capacity int
@@ -277,9 +277,10 @@ func TestMigration0004_DownThenUpAgain(t *testing.T) {
 		return n == 1
 	}
 	require.True(t, exists())
-	n, err := runner.Down(ctx, 2)
+	// Steps count from the newest: 0006 and 0005 are reverted first, then 0004.
+	n, err := runner.Down(ctx, 3)
 	require.NoError(t, err)
-	assert.Equal(t, 2, n)
+	assert.Equal(t, 3, n)
 	assert.False(t, exists(), "down menghapus tabel audit")
 	var fn int
 	require.NoError(t, pool.QueryRow(ctx, `SELECT count(*) FROM pg_proc WHERE proname='event_settings_audit_immutable'`).Scan(&fn))
@@ -289,6 +290,6 @@ func TestMigration0004_DownThenUpAgain(t *testing.T) {
 
 	n, err = runner.Up(ctx, 0)
 	require.NoError(t, err)
-	assert.Equal(t, 2, n)
+	assert.Equal(t, 3, n)
 	assert.True(t, exists(), "up kedua membuat ulang tabel audit")
 }

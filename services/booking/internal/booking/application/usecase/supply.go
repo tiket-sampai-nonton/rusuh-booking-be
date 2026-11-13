@@ -19,7 +19,8 @@ func NewGetEventSupply(events outbound.IEventRepo) *GetEventSupply {
 	return &GetEventSupply{events: events}
 }
 
-// GetSupply returns remaining tickets and per-category availability for the Queue Service.
+// GetSupply returns the event's free units as remaining tickets, and per-category sold and capacity for the Queue
+// Service.
 func (uc *GetEventSupply) GetSupply(ctx context.Context, eventID string) (dto.SupplySnapshot, error) {
 	detail, err := uc.events.GetDetail(ctx, eventID)
 	if err != nil {
@@ -29,26 +30,26 @@ func (uc *GetEventSupply) GetSupply(ctx context.Context, eventID string) (dto.Su
 		return dto.SupplySnapshot{}, inbound.ErrNotFound // draf tidak boleh dijual: Queue menolak join
 	}
 
-	remaining := 0
 	cats := make([]dto.SupplyCategory, 0, len(detail.Categories))
 	for _, c := range detail.Categories {
-		remaining += c.Available
 		cats = append(cats, dto.SupplyCategory{
 			Code:  c.Category.Code,
 			Name:  c.Category.Name,
-			Sold:  0,
-			Total: c.Available,
+			Sold:  c.Sold,
+			Total: c.Capacity,
 		})
 	}
 
-	if detail.Event.Status == entity.EventCancelled {
-		remaining = 0 // dibatalkan: tidak ada tiket yang dijual
-	}
-	soldOut := detail.Event.Status == entity.EventSoldOut || detail.Event.Status == entity.EventCancelled || remaining == 0
-
+	// D-C5.2: the event's free units are what can still be sold; the stored SOLD_OUT status is not read.
 	supply, err := uc.events.GetSupply(ctx, eventID)
 	if err != nil {
 		return dto.SupplySnapshot{}, err
+	}
+	remaining := supply.Free()
+	soldOut := supply.SoldOut()
+	if detail.Event.Status == entity.EventCancelled {
+		remaining = 0 // dibatalkan: tidak ada tiket yang dijual
+		soldOut = true
 	}
 	return dto.SupplySnapshot{
 		EventID:            eventID,

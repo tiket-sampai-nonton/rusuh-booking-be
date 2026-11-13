@@ -22,7 +22,7 @@ func TestEndWaitingSoldOut_EndsWaitingAndStaleButNeverAllocated(t *testing.T) {
 
 	adm, _, _ := joinAdmit(t, s, ev, 1, now+60_000, now)
 	claimed, visC, _ := joinAdmit(t, s, ev, 2, now+60_000, now)
-	cl, err := s.Claim(ctx, ev, claimed, visC, now)
+	cl, err := s.Claim(ctx, ev, claimed, visC, now, testClaimMaxMs)
 	require.NoError(t, err)
 	require.Equal(t, "CLAIMED", cl.Status)
 	w1, visW1, nikW1 := joinOne(t, s, ev, 3, now)

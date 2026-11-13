@@ -133,6 +133,9 @@ func (uc *Hold) execute(ctx context.Context, cmd inbound.HoldCommand, v validate
 	}
 
 	now := uc.clock.Now()
+	for i := range lines {
+		lines[i].ItemID = uc.ids.NewID() // booking_items.id, inserted by the UoW in one statement
+	}
 	accountID := admission.AccountID // the principal that queued; a bearer on hold only fills the gap
 	if accountID == "" {
 		accountID = cmd.AccountID
@@ -278,6 +281,11 @@ func (uc *Hold) plan(ctx context.Context, cmd inbound.HoldCommand, v validated) 
 	}
 	if detail.Event.Status == entity.EventCancelled {
 		return entity.Admission{}, nil, 0, inbound.ErrEventCancelled
+	}
+	// D-C4.4b: no admission can exist before the sales start, so a hold then is refused (defensive). After sales_ends_at
+	// an admission reserved before the end still holds until its own deadline (invariant 2), so no end check here.
+	if uc.clock.Now().Before(detail.Event.SalesStartsAt) {
+		return entity.Admission{}, nil, 0, inbound.ErrSessionExpired
 	}
 	n := len(v.holders)
 	if n > detail.Event.MaxTicketsPerOrder {

@@ -5,6 +5,7 @@ package postgres
 import (
 	"context"
 	"encoding/json"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -14,6 +15,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/domain/dto"
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/domain/entity"
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/domain/mapper"
 	vo "github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/domain/valueobject"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/port/inbound"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/port/outbound"
@@ -100,7 +103,7 @@ func TestEventRepo_ListFilterSortAndDetail(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, d.Categories, 1)
 	assert.Equal(t, "VIP", d.Categories[0].Category.Code)
-	assert.Equal(t, 10, d.Categories[0].Available)
+	assert.Equal(t, 9, d.Categories[0].Available, "min(kategori 10, event 10 - dialokasikan 1 untuk admission seed)")
 
 	_, err = repo.GetByID(ctx, "00000000-0000-0000-0000-000000000000")
 	assert.ErrorIs(t, err, inbound.ErrNotFound)
@@ -124,12 +127,12 @@ func TestBookingRepo_GetListAndDue(t *testing.T) {
 	_, err = repo.GetByID(ctx, "bukan-uuid")
 	assert.ErrorIs(t, err, inbound.ErrNotFound)
 
-	due, err := repo.DueBookingIDs(ctx, time.Now(), 10)
+	due, err := repo.ClaimDueBookings(ctx, time.Now(), 10)
 	require.NoError(t, err)
 	assert.Empty(t, due, "belum lewat batas bayar")
 	_, err = f.pool.Exec(ctx, `UPDATE booking.bookings SET created_at = now() - interval '2 hours', payment_expires_at = now() - interval '1 minute' WHERE id=$1::uuid`, id)
 	require.NoError(t, err)
-	due, err = repo.DueBookingIDs(ctx, time.Now(), 10)
+	due, err = repo.ClaimDueBookings(ctx, time.Now(), 10)
 	require.NoError(t, err)
 	assert.Equal(t, []string{id}, due)
 
@@ -189,6 +192,50 @@ func TestBookingRepo_ListByAccountSameCreatedAtIsNotSkipped(t *testing.T) {
 	assert.Len(t, junk, 3)
 }
 
+// The next cursor travels in a URL. A zone offset written as "+07:00" turns into a space when a query string is decoded,
+// and then the cursor silently falls back to page 1. The cursor is built in UTC, so it has no "+" and pages chain even
+// when the process runs in a non-UTC local zone.
+func TestBookingRepo_ListByAccountCursorSurvivesURLInLocalZone(t *testing.T) {
+	f := seed(t)
+	ctx := context.Background()
+	repo := NewBookingRepo(f.pool)
+	acct := "33333333-3333-3333-3333-333333333333"
+	prevLocal := time.Local
+	time.Local = time.FixedZone("WIB", 7*60*60)
+	t.Cleanup(func() { time.Local = prevLocal })
+
+	base := time.Date(2026, 11, 12, 10, 0, 0, 0, time.UTC)
+	for i := 0; i < 3; i++ {
+		id := f.insertBooking(t, "EXPIRED", time.Now().Add(time.Hour), nil)
+		_, err := f.pool.Exec(ctx, `UPDATE booking.bookings SET account_id=$2::uuid, created_at=$3, payment_expires_at=$4 WHERE id=$1::uuid`,
+			id, acct, base.Add(time.Duration(i)*time.Minute), base.Add(time.Hour))
+		require.NoError(t, err)
+	}
+
+	page1, next, err := repo.ListByAccount(ctx, acct, "", 2)
+	require.NoError(t, err)
+	require.Len(t, page1, 2)
+	require.NotEmpty(t, next)
+	assert.NotContains(t, next, "+", "cursor tidak boleh memuat '+' (berubah menjadi spasi di URL)")
+
+	// Embed the cursor raw in a query string, as a client does, and decode it the way the server does.
+	query, err := url.ParseQuery("cursor=" + next)
+	require.NoError(t, err)
+	page2, next2, err := repo.ListByAccount(ctx, acct, query.Get("cursor"), 2)
+	require.NoError(t, err)
+	require.Len(t, page2, 1, "cursor dari URL harus melanjutkan halaman, bukan kembali ke halaman 1")
+	assert.Empty(t, next2)
+	assert.Equal(t, page1[0].CreatedAt.Add(-2*time.Minute).UTC(), page2[0].CreatedAt.UTC(), "halaman 2 berisi booking paling lama")
+
+	// A cursor already issued in the old local-offset form, mangled the same way, still pages from its timestamp.
+	legacy := strings.ReplaceAll(page1[1].CreatedAt.In(time.Local).Format(time.RFC3339Nano)+"_"+page1[1].BookingID, "+", " ")
+	legacyQuery, err := url.ParseQuery("cursor=" + legacy)
+	require.NoError(t, err)
+	old, _, err := repo.ListByAccount(ctx, acct, legacyQuery.Get("cursor"), 10)
+	require.NoError(t, err)
+	assert.Len(t, old, 1, "cursor lama yang rusak di URL tetap dibaca dari stempel waktunya")
+}
+
 // insertBooking adds a booking in the given status without the hold path. admission_id is unique and an active
 // admission per visitor is unique too, so each booking gets its own terminal (EXPIRED) admission. A nil deadline is NULL.
 func (f fixture) insertBooking(t *testing.T, status string, paymentExpiresAt time.Time, verificationUntil *time.Time) string {
@@ -222,7 +269,7 @@ func TestBookingRepo_DueSkipsVerifyingInGrace(t *testing.T) {
 	}
 	pending := f.insertBooking(t, "PENDING_PAYMENT", now.Add(-time.Second), nil)
 
-	due, err := repo.DueBookingIDs(ctx, now, 2)
+	due, err := repo.ClaimDueBookings(ctx, now, 2)
 	require.NoError(t, err)
 	assert.Equal(t, []string{pending}, due, "limit 2 tidak boleh habis oleh VERIFYING yang masih dalam grace")
 
@@ -230,10 +277,11 @@ func TestBookingRepo_DueSkipsVerifyingInGrace(t *testing.T) {
 	_, err = f.pool.Exec(ctx, `UPDATE booking.bookings SET verification_until = now() - interval '1 second' WHERE status='VERIFYING' AND id IN (
 		SELECT id FROM booking.bookings WHERE status='VERIFYING' LIMIT 1)`)
 	require.NoError(t, err)
-	due, err = repo.DueBookingIDs(ctx, time.Now(), 10)
+	// The first claim leased the PENDING row for 15 s, so only the VERIFYING row whose grace has passed is claimable now.
+	due, err = repo.ClaimDueBookings(ctx, time.Now(), 10)
 	require.NoError(t, err)
-	assert.Len(t, due, 2, "PENDING yang lewat batas bayar dan satu VERIFYING yang grace-nya sudah lewat")
-	assert.Contains(t, due, pending)
+	assert.Len(t, due, 1, "satu VERIFYING yang grace-nya sudah lewat; PENDING masih di-lease")
+	assert.NotContains(t, due, pending)
 }
 
 func ptrTime(t time.Time) *time.Time { return &t }
@@ -256,7 +304,7 @@ func TestBookingRepo_DeferVerificationOnlyMovesVerifying(t *testing.T) {
 	assert.WithinDuration(t, until, got, time.Millisecond)
 	assert.Equal(t, 1, f.n(t, `SELECT count(*) FROM booking.bookings WHERE id=$1::uuid AND verification_until IS NULL`, pending))
 
-	due, err := repo.DueBookingIDs(ctx, now, 10)
+	due, err := repo.ClaimDueBookings(ctx, now, 10)
 	require.NoError(t, err)
 	assert.Equal(t, []string{pending}, due, "VERIFYING yang ditunda belum jatuh tempo")
 }
@@ -313,7 +361,7 @@ func TestAdmissionRepo_FindActivateReserveReleaseAndDue(t *testing.T) {
 	// Sessions past their time are due; ending an ACTIVE one frees its stock.
 	_, err = f.pool.Exec(ctx, `UPDATE booking.admissions SET reserved_at = now() - interval '3 hours', claimed_at = now() - interval '2 hours', expires_at = now() - interval '1 hour' WHERE id=$1::uuid`, f.admissionID)
 	require.NoError(t, err)
-	due, err := repo.DueSessions(ctx, time.Now(), 10)
+	due, err := repo.ClaimDueSessions(ctx, time.Now(), 10)
 	require.NoError(t, err)
 	require.Len(t, due, 1)
 	require.NoError(t, repo.ExpireSession(ctx, f.admissionID, time.Now()))
@@ -563,12 +611,59 @@ func TestTicketQuotaAndAttendeeRepos(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, reg)
 
-	counted, err := att.RecordCheck(ctx, f.admissionID, []byte("nik-dicek"))
+	rec, err := att.RecordCheck(ctx, f.admissionID, []byte("nik-dicek"), 3)
 	require.NoError(t, err)
-	assert.True(t, counted)
-	counted, err = att.RecordCheck(ctx, f.admissionID, []byte("nik-dicek"))
+	assert.True(t, rec.Counted)
+	assert.Equal(t, 1, rec.Used)
+	rec, err = att.RecordCheck(ctx, f.admissionID, []byte("nik-dicek"), 3)
 	require.NoError(t, err)
-	assert.False(t, counted, "NIK yang sama dalam sesi tidak dihitung dua kali")
+	assert.False(t, rec.Counted, "NIK yang sama dalam sesi tidak dihitung dua kali")
+	assert.Equal(t, 1, rec.Used)
+}
+
+// Ten distinct NIKs race for a limit of three: the admission counter and the dedupe rows must stop at exactly three.
+func TestRecordCheck_ConcurrentNeverExceedsMax(t *testing.T) {
+	f := seed(t)
+	ctx := context.Background()
+	att := NewAttendeeCheckRepo(f.pool)
+	const maxChecks, attempts = 3, 10
+
+	var wg sync.WaitGroup
+	recs := make(chan outbound.AttendeeCheckRecord, attempts)
+	errs := make(chan error, attempts)
+	for i := 0; i < attempts; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			rec, err := att.RecordCheck(ctx, f.admissionID, []byte{'c', byte('0' + i)}, maxChecks)
+			if err != nil {
+				errs <- err
+				return
+			}
+			recs <- rec
+		}(i)
+	}
+	wg.Wait()
+	close(recs)
+	close(errs)
+	for err := range errs {
+		require.NoError(t, err)
+	}
+
+	counted, limited := 0, 0
+	for rec := range recs {
+		switch {
+		case rec.Counted:
+			counted++
+		case rec.LimitReached:
+			limited++
+			assert.Equal(t, maxChecks, rec.Used)
+		}
+	}
+	assert.Equal(t, maxChecks, counted)
+	assert.Equal(t, attempts-maxChecks, limited)
+	assert.Equal(t, maxChecks, f.n(t, `SELECT attendee_checks FROM booking.admissions WHERE id = $1::uuid`, f.admissionID))
+	assert.Equal(t, maxChecks, f.n(t, `SELECT count(*)::int FROM booking.attendee_checks WHERE admission_id = $1::uuid`, f.admissionID))
 }
 
 func TestEventWriteRepo_CreateAndUpdateConfig(t *testing.T) {
@@ -592,12 +687,45 @@ func TestEventWriteRepo_CreateAndUpdateConfig(t *testing.T) {
 	require.Error(t, dup, "slug sama ditolak sebagai validasi")
 
 	sel, pay := 120, 900
-	require.NoError(t, w.UpdateConfig(ctx, id, dto.UpdateEventConfigRequest{SelectionTTLSeconds: &sel, PaymentTTLSeconds: &pay}))
+	require.NoError(t, w.UpdateConfig(ctx, id, "acct-test", dto.UpdateEventConfigRequest{SelectionTTLSeconds: &sel, PaymentTTLSeconds: &pay}))
 	e, err := NewEventRepo(f.pool).GetByID(ctx, id)
 	require.NoError(t, err)
 	assert.Equal(t, 120, e.SelectionTTLSeconds)
 	assert.Equal(t, 900, e.PaymentTTLSeconds)
-	assert.ErrorIs(t, w.UpdateConfig(ctx, "00000000-0000-0000-0000-000000000000", dto.UpdateEventConfigRequest{SelectionTTLSeconds: &sel}), inbound.ErrNotFound)
+	assert.ErrorIs(t, w.UpdateConfig(ctx, "00000000-0000-0000-0000-000000000000", "acct-test", dto.UpdateEventConfigRequest{SelectionTTLSeconds: &sel}), inbound.ErrNotFound)
+}
+
+// AC-C4.3 (F-actor): the actor is written to config_audit.changed_by in the same transaction as the change.
+func TestEventWriteRepo_AuditRecordsActor(t *testing.T) {
+	f := seed(t)
+	ctx := context.Background()
+	w := NewEventWriteRepo(f.pool)
+
+	sel := 400
+	require.NoError(t, w.UpdateConfig(ctx, f.eventID, "acct-1", dto.UpdateEventConfigRequest{SelectionTTLSeconds: &sel}))
+	assert.Equal(t, "acct-1", f.q(t, `SELECT changed_by FROM booking.config_audit WHERE event_id=$1::uuid AND field='selection_ttl_seconds'`, f.eventID))
+
+	require.NoError(t, w.SetPublished(ctx, f.eventID, "acct-2", false))
+	require.NoError(t, w.SetPublished(ctx, f.eventID, "acct-2", true))
+	assert.Equal(t, 2, f.n(t, `SELECT count(*)::int FROM booking.config_audit WHERE event_id=$1::uuid AND field='published_at' AND changed_by='acct-2'`, f.eventID), "menyembunyikan dan menerbitkan lagi")
+}
+
+// AC-C4.4 (F-cancel, admin part): a cancelled event refuses config changes and publication, and its row stays unchanged.
+func TestEventWriteRepo_CancelledEventRefusesConfigAndPublish(t *testing.T) {
+	f := seed(t)
+	ctx := context.Background()
+	w := NewEventWriteRepo(f.pool)
+	require.NoError(t, w.Cancel(ctx, f.eventID, "acct-3"))
+	ttlBefore := f.n(t, `SELECT selection_ttl_seconds FROM booking.events WHERE id=$1::uuid`, f.eventID)
+	auditBefore := f.n(t, `SELECT count(*)::int FROM booking.config_audit WHERE event_id=$1::uuid`, f.eventID)
+
+	sel := 400
+	assert.ErrorIs(t, w.UpdateConfig(ctx, f.eventID, "acct-4", dto.UpdateEventConfigRequest{SelectionTTLSeconds: &sel}), inbound.ErrEventCancelled)
+	assert.ErrorIs(t, w.SetPublished(ctx, f.eventID, "acct-4", true), inbound.ErrEventCancelled)
+
+	assert.Equal(t, "CANCELLED", f.q(t, `SELECT status FROM booking.events WHERE id=$1::uuid`, f.eventID))
+	assert.Equal(t, ttlBefore, f.n(t, `SELECT selection_ttl_seconds FROM booking.events WHERE id=$1::uuid`, f.eventID), "konfigurasi tidak berubah")
+	assert.Equal(t, auditBefore, f.n(t, `SELECT count(*)::int FROM booking.config_audit WHERE event_id=$1::uuid`, f.eventID), "tidak ada audit baru")
 }
 
 func TestEventWriteRepo_Description(t *testing.T) {
@@ -618,20 +746,20 @@ func TestEventWriteRepo_Description(t *testing.T) {
 
 	// Absent leaves the document unchanged (no-op update).
 	sel := 100
-	require.NoError(t, w.UpdateConfig(ctx, id, dto.UpdateEventConfigRequest{SelectionTTLSeconds: &sel}))
+	require.NoError(t, w.UpdateConfig(ctx, id, "acct-test", dto.UpdateEventConfigRequest{SelectionTTLSeconds: &sel}))
 	e, err = r.GetByID(ctx, id)
 	require.NoError(t, err)
 	assert.JSONEq(t, string(doc), string(e.Description), "tanpa field description tidak berubah")
 
 	// Replace.
 	next := json.RawMessage(`[{"type":"h1","children":[{"text":"baru"}]}]`)
-	require.NoError(t, w.UpdateConfig(ctx, id, dto.UpdateEventConfigRequest{Description: next}))
+	require.NoError(t, w.UpdateConfig(ctx, id, "acct-test", dto.UpdateEventConfigRequest{Description: next}))
 	e, err = r.GetByID(ctx, id)
 	require.NoError(t, err)
 	assert.JSONEq(t, string(next), string(e.Description))
 
 	// JSON null clears it.
-	require.NoError(t, w.UpdateConfig(ctx, id, dto.UpdateEventConfigRequest{Description: json.RawMessage(`null`)}))
+	require.NoError(t, w.UpdateConfig(ctx, id, "acct-test", dto.UpdateEventConfigRequest{Description: json.RawMessage(`null`)}))
 	e, err = r.GetByID(ctx, id)
 	require.NoError(t, err)
 	assert.Empty(t, e.Description, "null menghapus deskripsi")
@@ -652,14 +780,15 @@ func TestEventRepo_OnSaleAvailability_ClampsAndHonoursTheSalesWindow(t *testing.
 
 	got, err := repo.OnSaleAvailability(ctx, now)
 	require.NoError(t, err)
-	require.Len(t, got[f.eventID], 1)
-	assert.Equal(t, 10, got[f.eventID][0].Available)
+	require.Len(t, got[f.eventID].Categories, 1)
+	assert.Equal(t, 10, got[f.eventID].Categories[0].Available)
+	assert.Equal(t, 9, got[f.eventID].EventFree, "event 10 - dialokasikan 1")
 
 	_, err = f.pool.Exec(ctx, `UPDATE booking.category_inventories SET held_quantity = 4, sold_quantity = 3 WHERE event_id=$1::uuid`, f.eventID)
 	require.NoError(t, err)
 	got, err = repo.OnSaleAvailability(ctx, now)
 	require.NoError(t, err)
-	assert.Equal(t, 3, got[f.eventID][0].Available, "kapasitas - ditahan - terjual")
+	assert.Equal(t, 3, got[f.eventID].Categories[0].Available, "kapasitas - ditahan - terjual")
 
 	got, err = repo.OnSaleAvailability(ctx, now.Add(-72*time.Hour))
 	require.NoError(t, err)
@@ -670,6 +799,82 @@ func TestEventRepo_OnSaleAvailability_ClampsAndHonoursTheSalesWindow(t *testing.
 	got, err = repo.OnSaleAvailability(ctx, now)
 	require.NoError(t, err)
 	assert.Empty(t, got, "event CLOSED tidak diproyeksikan")
+
+	// C5.1: a cancelled event is not projected either, and neither is an unpublished one.
+	_, err = f.pool.Exec(ctx, `UPDATE booking.events SET status='CANCELLED' WHERE id=$1::uuid`, f.eventID)
+	require.NoError(t, err)
+	got, err = repo.OnSaleAvailability(ctx, now)
+	require.NoError(t, err)
+	assert.Empty(t, got, "event CANCELLED tidak diproyeksikan")
+
+	_, err = f.pool.Exec(ctx, `UPDATE booking.events SET status='AVAILABLE', published_at=NULL WHERE id=$1::uuid`, f.eventID)
+	require.NoError(t, err)
+	got, err = repo.OnSaleAvailability(ctx, now)
+	require.NoError(t, err)
+	assert.Empty(t, got, "event belum terbit tidak diproyeksikan")
+}
+
+// C5.1: a category never shows more than the event still has free. The event supply is the cap shared by all categories.
+func TestEventRepo_DetailAvailabilityIsCappedByEventFree(t *testing.T) {
+	f := seed(t)
+	ctx := context.Background()
+	repo := NewEventRepo(f.pool)
+
+	// Seed: category capacity 10, event total 10 with 1 allocated (the seeded admission). Allocate 8 more.
+	_, err := f.pool.Exec(ctx, `UPDATE booking.event_supply SET allocated_units = 8 WHERE event_id=$1::uuid`, f.eventID)
+	require.NoError(t, err)
+	d, err := repo.GetDetail(ctx, f.eventID)
+	require.NoError(t, err)
+	require.Len(t, d.Categories, 1)
+	assert.Equal(t, 2, d.Categories[0].Available, "min(kategori 10, event 10-8)")
+
+	_, err = f.pool.Exec(ctx, `UPDATE booking.event_supply SET held_units = 1 WHERE event_id=$1::uuid`, f.eventID)
+	require.NoError(t, err)
+	d, err = repo.GetDetail(ctx, f.eventID)
+	require.NoError(t, err)
+	require.Len(t, d.Categories, 1)
+	assert.Equal(t, 1, d.Categories[0].Available, "min(kategori 10, event 10-8-1)")
+}
+
+// C5.1: an admitted buyer sees the units reserved for them even when the event has no free units left. The public
+// detail shows 0; the session view of the buyer adds back the buyer's own outstanding units.
+func TestEventRepo_SessionViewCountsBuyerOwnReservation(t *testing.T) {
+	f := seed(t)
+	ctx := context.Background()
+
+	// Seed: category capacity 10, event total 10, the seeded admission holds 1 outstanding unit. Allocate the rest.
+	_, err := f.pool.Exec(ctx, `UPDATE booking.event_supply SET allocated_units = total_capacity WHERE event_id=$1::uuid`, f.eventID)
+	require.NoError(t, err)
+	d, err := NewEventRepo(f.pool).GetDetail(ctx, f.eventID)
+	require.NoError(t, err)
+	require.Len(t, d.Categories, 1)
+	assert.Equal(t, 0, d.Categories[0].Available, "detail publik: event tidak punya unit bebas")
+	assert.Equal(t, 10, d.Categories[0].CategoryFree, "kategori: kapasitas - ditahan - terjual")
+	assert.Equal(t, 0, d.Categories[0].EventFree, "event: total - dialokasikan")
+
+	adm, err := NewAdmissionRepo(f.pool).GetByID(ctx, f.admissionID)
+	require.NoError(t, err)
+	require.Equal(t, 1, adm.OutstandingUnits, "admission seed memegang 1 unit")
+	sess := mapper.ToBookingSession(adm, d, nil, time.Now())
+	require.Len(t, sess.Categories, 1)
+	assert.Equal(t, 1, sess.Categories[0].Available, "sesi pembeli menampilkan unit miliknya sendiri")
+}
+
+// D-C5.2: the detail carries the category's capacity and paid sold count (the supply snapshot's total and sold).
+func TestEventRepo_DetailCarriesCapacityAndSold(t *testing.T) {
+	f := seed(t)
+	ctx := context.Background()
+	repo := NewEventRepo(f.pool)
+
+	_, err := f.pool.Exec(ctx, `UPDATE booking.category_inventories SET sold_quantity = 3 WHERE event_id=$1::uuid`, f.eventID)
+	require.NoError(t, err)
+	_, err = f.pool.Exec(ctx, `UPDATE booking.event_supply SET sold_units = 3 WHERE event_id=$1::uuid`, f.eventID)
+	require.NoError(t, err)
+	d, err := repo.GetDetail(ctx, f.eventID)
+	require.NoError(t, err)
+	require.Len(t, d.Categories, 1)
+	assert.Equal(t, 10, d.Categories[0].Capacity, "kapasitas kategori dari seed")
+	assert.Equal(t, 3, d.Categories[0].Sold, "terjual berbayar")
 }
 
 func TestEventWriteRepo_SetImageURL(t *testing.T) {
@@ -715,26 +920,26 @@ func TestEventRepo_DraftIsHiddenAndCannotBeReservedUntilPublished(t *testing.T) 
 		return out[0].Outcome
 	}
 
-	require.NoError(t, write.SetPublished(ctx, f.eventID, false))
+	require.NoError(t, write.SetPublished(ctx, f.eventID, "acct-test", false))
 	assert.Equal(t, 0, listed(), "draf tidak masuk katalog")
 	detail, err := events.GetDetail(ctx, f.eventID)
 	require.NoError(t, err)
 	assert.False(t, detail.Event.Published, "repo tetap bisa membaca draf (dipakai admin)")
 	assert.Equal(t, "NO_SUPPLY_NOW", reserve(), "draf tidak boleh dialokasikan")
 
-	require.NoError(t, write.SetPublished(ctx, f.eventID, true))
+	require.NoError(t, write.SetPublished(ctx, f.eventID, "acct-test", true))
 	assert.Equal(t, 1, listed())
 	assert.Equal(t, "GRANTED", reserve(), "terbit: alokasi normal")
 
 	var first time.Time
 	require.NoError(t, f.pool.QueryRow(ctx, `SELECT published_at FROM booking.events WHERE id=$1::uuid`, f.eventID).Scan(&first))
-	require.NoError(t, write.SetPublished(ctx, f.eventID, true))
+	require.NoError(t, write.SetPublished(ctx, f.eventID, "acct-test", true))
 	var second time.Time
 	require.NoError(t, f.pool.QueryRow(ctx, `SELECT published_at FROM booking.events WHERE id=$1::uuid`, f.eventID).Scan(&second))
 	assert.True(t, first.Equal(second), "menerbitkan ulang tidak menggeser waktu terbit pertama")
 
-	assert.ErrorIs(t, write.SetPublished(ctx, "00000000-0000-0000-0000-000000000000", true), inbound.ErrNotFound)
-	assert.ErrorIs(t, write.SetPublished(ctx, "bukan-uuid", true), inbound.ErrNotFound)
+	assert.ErrorIs(t, write.SetPublished(ctx, "00000000-0000-0000-0000-000000000000", "acct-test", true), inbound.ErrNotFound)
+	assert.ErrorIs(t, write.SetPublished(ctx, "bukan-uuid", "acct-test", true), inbound.ErrNotFound)
 }
 
 // SCRUM-56: a cancelled event leaves the default list, can be listed by status CANCELLED, stays readable by id, and
@@ -751,8 +956,8 @@ func TestEventRepo_CancelledEventLeavesTheListButStaysReadable(t *testing.T) {
 	}
 	assert.Equal(t, 1, count("ALL"))
 
-	require.NoError(t, write.Cancel(ctx, f.eventID))
-	require.NoError(t, write.Cancel(ctx, f.eventID), "idempoten")
+	require.NoError(t, write.Cancel(ctx, f.eventID, "acct-test"))
+	require.NoError(t, write.Cancel(ctx, f.eventID, "acct-test"), "idempoten")
 	assert.Equal(t, 0, count("ALL"), "dibatalkan: hilang dari daftar bawaan")
 	assert.Equal(t, 0, count("AVAILABLE"))
 	assert.Equal(t, 1, count("CANCELLED"), "tetap bisa disaring lewat status")
@@ -767,7 +972,236 @@ func TestEventRepo_CancelledEventLeavesTheListButStaysReadable(t *testing.T) {
 		AdmissionJTI: f.q(t, `SELECT gen_random_uuid()::text`),
 	}}, time.Now())
 	require.NoError(t, err)
-	assert.Equal(t, "NO_SUPPLY_NOW", out[0].Outcome, "tidak ada admission baru untuk event dibatalkan")
+	assert.Equal(t, "SOLD_OUT", out[0].Outcome, "tidak ada admission baru untuk event dibatalkan (D-C4.4a: antrean berakhir)")
 
-	assert.ErrorIs(t, write.Cancel(ctx, "00000000-0000-0000-0000-000000000000"), inbound.ErrNotFound)
+	assert.ErrorIs(t, write.Cancel(ctx, "00000000-0000-0000-0000-000000000000", "acct-test"), inbound.ErrNotFound)
+}
+
+// AC-C4.2 (F-status): SOLD_OUT in the catalog comes from supply (held + sold >= total) inside the sales window, not
+// from the stored events.status, which stays untouched.
+func TestEventRepo_ListAndFilterDeriveSoldOutFromSupply(t *testing.T) {
+	f := seed(t)
+	ctx := context.Background()
+	repo := NewEventRepo(f.pool)
+	count := func(status string) int {
+		got, err := repo.ListEvents(ctx, dto.EventListQuery{Status: status})
+		require.NoError(t, err)
+		return len(got)
+	}
+	assert.Equal(t, 1, count("AVAILABLE"), "stok masih ada")
+
+	_, err := f.pool.Exec(ctx, `UPDATE booking.event_supply SET allocated_units=0, held_units=6, sold_units=4 WHERE event_id=$1::uuid`, f.eventID)
+	require.NoError(t, err)
+	_, err = f.pool.Exec(ctx, `UPDATE booking.category_inventories SET held_quantity=6, sold_quantity=4 WHERE event_id=$1::uuid`, f.eventID)
+	require.NoError(t, err)
+
+	assert.Equal(t, 1, count("SOLD_OUT"), "held + sold = total dalam masa jual")
+	assert.Equal(t, 0, count("AVAILABLE"), "tidak lagi tersedia")
+	all, err := repo.ListEvents(ctx, dto.EventListQuery{Status: "ALL"})
+	require.NoError(t, err)
+	require.Len(t, all, 1)
+	assert.True(t, all[0].StockSoldOut)
+
+	detail, err := repo.GetDetail(ctx, f.eventID)
+	require.NoError(t, err)
+	assert.True(t, detail.Event.StockSoldOut)
+	assert.Equal(t, "SOLD_OUT", mapper.ToEventDetail(detail, time.Now()).Event.Status, "detail sejalan dengan daftar")
+
+	var stored string
+	require.NoError(t, f.pool.QueryRow(ctx, `SELECT status FROM booking.events WHERE id=$1::uuid`, f.eventID).Scan(&stored))
+	assert.Equal(t, "AVAILABLE", stored, "events.status tidak diubah oleh turunan stok")
+}
+
+// AC-C4.2 / R13: a stored SOLD_OUT (written before this change) is ignored. The status comes from stock alone, so a
+// released hold shows AVAILABLE again in list, filter and detail.
+func TestEventRepo_StoredSoldOutIsDerivedFromStock(t *testing.T) {
+	f := seed(t)
+	ctx := context.Background()
+	repo := NewEventRepo(f.pool)
+	count := func(status string) int {
+		got, err := repo.ListEvents(ctx, dto.EventListQuery{Status: status})
+		require.NoError(t, err)
+		return len(got)
+	}
+	_, err := f.pool.Exec(ctx, `UPDATE booking.events SET status='SOLD_OUT' WHERE id=$1::uuid`, f.eventID)
+	require.NoError(t, err)
+
+	assert.Equal(t, 1, count("AVAILABLE"), "stored SOLD_OUT, stok masih ada: AVAILABLE")
+	assert.Equal(t, 0, count("SOLD_OUT"))
+	detail, err := repo.GetDetail(ctx, f.eventID)
+	require.NoError(t, err)
+	assert.Equal(t, "AVAILABLE", mapper.ToEventDetail(detail, time.Now()).Event.Status)
+
+	_, err = f.pool.Exec(ctx, `UPDATE booking.event_supply SET allocated_units=0, held_units=6, sold_units=4 WHERE event_id=$1::uuid`, f.eventID)
+	require.NoError(t, err)
+	_, err = f.pool.Exec(ctx, `UPDATE booking.category_inventories SET held_quantity=6, sold_quantity=4 WHERE event_id=$1::uuid`, f.eventID)
+	require.NoError(t, err)
+	assert.Equal(t, 1, count("SOLD_OUT"), "stored SOLD_OUT dan stok habis: SOLD_OUT")
+	assert.Equal(t, 0, count("AVAILABLE"))
+	detail, err = repo.GetDetail(ctx, f.eventID)
+	require.NoError(t, err)
+	assert.Equal(t, "SOLD_OUT", mapper.ToEventDetail(detail, time.Now()).Event.Status)
+}
+
+// D-C7.3: two sweepers claiming at once never get the same admission; together they get every due row once.
+func TestClaimDueSessions_TwoSweepersNeverShareRows(t *testing.T) {
+	ctx := context.Background()
+	f := newAcctFixture(t, suffixFor(t), 30)
+	for i := range 20 {
+		f.reserve(t, i, 1, false)
+	}
+	_, err := f.pool.Exec(ctx, `UPDATE booking.admissions SET reserved_at=now()-interval '3 hours', claimed_at=now()-interval '2 hours', expires_at=now()-interval '1 hour' WHERE event_id=$1::uuid`, f.eventID)
+	require.NoError(t, err)
+	repo := NewAdmissionRepo(f.pool)
+	now := time.Now()
+
+	start := make(chan struct{})
+	got := make([][]string, 2)
+	var wg sync.WaitGroup
+	for i := range got {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			due, err := repo.ClaimDueSessions(ctx, now, 20)
+			assert.NoError(t, err)
+			for _, d := range due {
+				got[i] = append(got[i], d.ID)
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+
+	union := map[string]int{}
+	for _, ids := range got {
+		for _, id := range ids {
+			union[id]++
+		}
+	}
+	shared := 0
+	for _, n := range union {
+		if n > 1 {
+			shared++
+		}
+	}
+	assert.Len(t, union, 20, "union of both claims is the 20 due rows")
+	assert.Zero(t, shared, "no admission was claimed by both sweepers")
+}
+
+// D-C7.3: a row inside its submit grace is claimed, ExpireSession leaves it alone, and it comes back at grace end.
+func TestClaimDueSessions_InGraceComesBackAtGraceEnd(t *testing.T) {
+	ctx := context.Background()
+	f := newAcctFixture(t, suffixFor(t), 5)
+	id, _ := f.reserve(t, 1, 1, false) // ACTIVE, submit grace 5 s
+	repo := NewAdmissionRepo(f.pool)
+	t0 := time.Now()
+	_, err := f.pool.Exec(ctx, `UPDATE booking.admissions SET reserved_at=$2, claimed_at=$3, expires_at=$4 WHERE id=$1::uuid`,
+		id, t0.Add(-3*time.Hour), t0.Add(-2*time.Hour), t0.Add(-time.Second))
+	require.NoError(t, err)
+	has := func(due []entity.Admission) bool {
+		for _, d := range due {
+			if d.ID == id {
+				return true
+			}
+		}
+		return false
+	}
+
+	due, err := repo.ClaimDueSessions(ctx, t0, 10)
+	require.NoError(t, err)
+	require.True(t, has(due), "in grace: claimed")
+	require.NoError(t, repo.ExpireSession(ctx, id, t0))
+	st, _, _ := admState(t, f, id)
+	assert.Equal(t, "ACTIVE", st, "ExpireSession is a no-op inside the submit grace")
+
+	due, err = repo.ClaimDueSessions(ctx, t0, 10)
+	require.NoError(t, err)
+	assert.False(t, has(due), "leased until grace end: not claimable again at now")
+	due, err = repo.ClaimDueSessions(ctx, t0.Add(3*time.Second), 10)
+	require.NoError(t, err)
+	assert.False(t, has(due), "still leased at now+3 s")
+	due, err = repo.ClaimDueSessions(ctx, t0.Add(5*time.Second), 10)
+	require.NoError(t, err)
+	assert.True(t, has(due), "returned at grace end (expires_at + 5 s = t0+4 s)")
+	require.NoError(t, repo.ExpireSession(ctx, id, t0.Add(5*time.Second)))
+	st, _, _ = admState(t, f, id)
+	assert.Equal(t, "EXPIRED", st, "expired once grace has ended")
+}
+
+// D-C7.3: a claimed booking is hidden for the 15 s lease and comes back when it lapses.
+func TestClaimDueBookings_LeaseHidesClaimedRows(t *testing.T) {
+	f := seed(t)
+	ctx := context.Background()
+	repo := NewBookingRepo(f.pool)
+	now := time.Now()
+	id := f.insertBooking(t, "PENDING_PAYMENT", now.Add(-time.Second), nil)
+
+	due, err := repo.ClaimDueBookings(ctx, now, 10)
+	require.NoError(t, err)
+	assert.Equal(t, []string{id}, due)
+	due, err = repo.ClaimDueBookings(ctx, now, 10)
+	require.NoError(t, err)
+	assert.Empty(t, due, "leased: a second sweeper skips it")
+	due, err = repo.ClaimDueBookings(ctx, now.Add(16*time.Second), 10)
+	require.NoError(t, err)
+	assert.Equal(t, []string{id}, due, "lease lapsed")
+}
+
+// D-C7.3 / R32: a row another transaction holds is skipped, not waited for. While the lock is held, the claim returns
+// the other due admissions within the context timeout (SKIP LOCKED); without SKIP LOCKED it would block until the timeout.
+func TestClaimDueSessions_SkipsRowsLockedByAnotherTransaction(t *testing.T) {
+	ctx := context.Background()
+	f := newAcctFixture(t, suffixFor(t), 10)
+	ids := make([]string, 0, 4)
+	for i := range 4 {
+		id, _ := f.reserve(t, i, 1, false)
+		ids = append(ids, id)
+	}
+	_, err := f.pool.Exec(ctx, `UPDATE booking.admissions SET reserved_at=now()-interval '3 hours', claimed_at=now()-interval '2 hours', expires_at=now()-interval '1 hour' WHERE event_id=$1::uuid`, f.eventID)
+	require.NoError(t, err)
+
+	tx, err := f.pool.Begin(ctx)
+	require.NoError(t, err)
+	defer func() { _ = tx.Rollback(ctx) }()
+	var locked string
+	require.NoError(t, tx.QueryRow(ctx, `SELECT id::text FROM booking.admissions WHERE id=$1::uuid FOR UPDATE`, ids[0]).Scan(&locked))
+
+	cctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	due, err := NewAdmissionRepo(f.pool).ClaimDueSessions(cctx, time.Now(), 10)
+	require.NoError(t, err, "the locked row is skipped; the claim must not wait for it")
+	got := map[string]bool{}
+	for _, d := range due {
+		got[d.ID] = true
+	}
+	assert.False(t, got[ids[0]], "locked row not claimed")
+	for _, id := range ids[1:] {
+		assert.True(t, got[id], "other due rows claimed while the lock is held")
+	}
+}
+
+// D-C7.3 / R32: the booking claim also skips a row locked by another transaction and returns the rest.
+func TestClaimDueBookings_SkipsRowsLockedByAnotherTransaction(t *testing.T) {
+	f := seed(t)
+	ctx := context.Background()
+	repo := NewBookingRepo(f.pool)
+	now := time.Now()
+	locked := f.insertBooking(t, "PENDING_PAYMENT", now.Add(-time.Second), nil)
+	a := f.insertBooking(t, "PENDING_PAYMENT", now.Add(-time.Second), nil)
+	b := f.insertBooking(t, "VERIFYING", now.Add(-time.Second), ptrTime(now.Add(-time.Second)))
+
+	tx, err := f.pool.Begin(ctx)
+	require.NoError(t, err)
+	defer func() { _ = tx.Rollback(ctx) }()
+	var got string
+	require.NoError(t, tx.QueryRow(ctx, `SELECT id::text FROM booking.bookings WHERE id=$1::uuid FOR UPDATE`, locked).Scan(&got))
+
+	cctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	due, err := repo.ClaimDueBookings(cctx, now, 10)
+	require.NoError(t, err, "the locked booking is skipped; the claim must not wait for it")
+	assert.NotContains(t, due, locked, "locked booking not claimed")
+	assert.Contains(t, due, a)
+	assert.Contains(t, due, b)
 }

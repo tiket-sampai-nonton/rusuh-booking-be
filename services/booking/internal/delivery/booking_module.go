@@ -18,12 +18,14 @@ import (
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/token"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/application/usecase"
+	bookingcache "github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/infrastructure/cache"
 	bookinghttp "github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/infrastructure/http"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/infrastructure/ids"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/infrastructure/paymentclient"
 	bookingpg "github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/infrastructure/postgres"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/infrastructure/security"
 	bookingvalkey "github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/infrastructure/valkey"
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/port/outbound"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/config"
 )
 
@@ -40,6 +42,7 @@ type module struct {
 	sweepSess  *usecase.SweepSessions
 	sweepExp   *usecase.SweepExpiries
 	projAvail  *usecase.ProjectAvailability
+	purge      *usecase.Purge
 	settle     *usecase.Settle
 	outbox     *bookingpg.OutboxWriter
 }
@@ -56,6 +59,7 @@ func newBookingModule(cfg config.Config, clients *Clients, logger *slog.Logger) 
 
 	// Outbound adapters.
 	eventRepo := bookingpg.NewEventRepo(pool)
+	eventReads, adminEventReads := newEventReads(eventRepo, clk)
 	eventWriteRepo := bookingpg.NewEventWriteRepo(pool)
 	admissionRepo := bookingpg.NewAdmissionRepo(pool)
 	bookingRepo := bookingpg.NewBookingRepo(pool)
@@ -82,8 +86,9 @@ func newBookingModule(cfg config.Config, clients *Clients, logger *slog.Logger) 
 	paymentAuth := buildPaymentAuth(logger, clk.Now)
 
 	// Usecases.
-	listEvents := usecase.NewListEvents(eventRepo, clk)
-	getDetail := usecase.NewGetEventDetail(eventRepo, clk)
+	listEvents := usecase.NewListEvents(eventReads, clk)
+	getDetail := usecase.NewGetEventDetail(eventReads, clk)
+	adminDetail := usecase.NewGetEventDetail(adminEventReads, clk)
 	listFacets := usecase.NewListFacets(eventRepo)
 	createEvent := usecase.NewCreateEvent(eventWriteRepo, idGen)
 	updateConfig := usecase.NewUpdateEventConfig(eventWriteRepo)
@@ -92,7 +97,7 @@ func newBookingModule(cfg config.Config, clients *Clients, logger *slog.Logger) 
 	sessions := usecase.NewSession(admissionRepo, eventRepo, admissionVerifier, clk)
 	attendee := usecase.NewCheckAttendee(admissionRepo, eventRepo, attendeeRepo, pii, clk)
 	cancelSess := usecase.NewCancelSession(admissionRepo)
-	hold := usecase.NewHold(admissionRepo, eventRepo, idemStore, uow, pii, idGen, clk, usecase.HoldPolicy{
+	hold := usecase.NewHold(admissionRepo, eventReads, idemStore, uow, pii, idGen, clk, usecase.HoldPolicy{
 		RefusalBudget: cfg.Hold.BuyerNikAttemptBudget,
 		ThrottleBase:  cfg.Hold.ThrottleBase,
 		ThrottleMax:   cfg.Hold.ThrottleMax,
@@ -102,7 +107,7 @@ func newBookingModule(cfg config.Config, clients *Clients, logger *slog.Logger) 
 	if err != nil {
 		return nil, err
 	}
-	tickets := usecase.NewGetTickets(bookingRepo, ticketRepo, links)
+	tickets := usecase.NewGetTickets(bookingRepo, ticketRepo, eventRepo, links)
 	history := usecase.NewListMyBookings(bookingRepo)
 	getBooking := usecase.NewGetBooking(bookingRepo, clk)
 	payable := usecase.NewGetPayable(bookingRepo, clk)
@@ -125,7 +130,7 @@ func newBookingModule(cfg config.Config, clients *Clients, logger *slog.Logger) 
 		return nil, err
 	}
 	adminHandler := bookinghttp.NewAdminHandler(createEvent, updateConfig, tv.admin).WithImages(usecase.NewUploadEventImage(eventWriteRepo, store)).
-		WithPublication(usecase.NewPublishEvent(eventRepo, eventWriteRepo, clk), getDetail)
+		WithPublication(usecase.NewPublishEvent(eventRepo, eventWriteRepo, clk), adminDetail)
 	regs := []registrar{
 		bookinghttp.NewCatalogHandler(listEvents, getDetail, listFacets),
 		bookinghttp.NewSessionHandler(sessions, attendee, cancelSess),
@@ -155,9 +160,20 @@ func newBookingModule(cfg config.Config, clients *Clients, logger *slog.Logger) 
 		sweepSess:  usecase.NewSweepSessions(admissionRepo, clk),
 		sweepExp:   usecase.NewSweepExpiries(bookingRepo, expiry, clk),
 		projAvail:  projAvail,
+		purge:      usecase.NewPurge(bookingpg.NewRetention(pool), clk),
 		settle:     usecase.NewSettle(uow, links.Token),
 		outbox:     outboxWriter,
 	}, nil
+}
+
+// catalogCacheTTL is the staleness budget of public catalog, detail and hold reads (D-C7.7).
+const catalogCacheTTL = 2 * time.Second
+
+// newEventReads returns the cached reader for the public catalog, the public detail and the hold (its price and rule
+// read), and the uncached reader for the admin detail: an admin PATCH, publish, unpublish or cancel must show at once
+// (R35), so the admin path never goes through the cache.
+func newEventReads(repo outbound.IEventRepo, clk clock.IClock) (catalog, admin outbound.IEventRepo) {
+	return bookingcache.NewEventReadCache(repo, catalogCacheTTL, clk.Now), repo
 }
 
 // WrapVisitor puts visitor-token verification in front of the routes.

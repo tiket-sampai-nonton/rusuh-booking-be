@@ -28,4 +28,12 @@ var (
 	Liveness string
 	//go:embed liveness_tick.lua
 	LivenessTick string
+	//go:embed token_gen.lua
+	TokenGen string
+	//go:embed retire_event.lua
+	RetireEvent string
+	//go:embed notify_window.lua
+	NotifyWindow string
+	//go:embed me.lua
+	Me string
 )

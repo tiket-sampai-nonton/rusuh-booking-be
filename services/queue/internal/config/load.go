@@ -22,6 +22,8 @@ func Load() (Config, error) {
 			Env:  r.String("APP_ENV", "local"),
 			Name: r.String("APP_NAME", ServiceName),
 			Port: r.Int("APP_PORT", 8081),
+			// 1 = rightmost X-Forwarded-For entry (ALB only); production CloudFront -> ALB uses 2 (deployment change).
+			TrustedProxyHops: r.Int("APP_TRUSTED_PROXY_HOPS", 1),
 		},
 		Log: logger.Config{Level: r.String("LOG_LEVEL", "info"), Format: r.String("LOG_FORMAT", "json")},
 		HTTP: HTTP{
@@ -91,20 +93,21 @@ func Load() (Config, error) {
 		JoinPerIPWindow:     r.Duration("RATE_LIMIT_JOIN_PER_IP_WINDOW", time.Minute),
 		MePerVisitorWindow:  r.Duration("RATE_LIMIT_ME_PER_VISITOR_WINDOW", time.Minute),
 		JoinPerIP:           r.Int("RATE_LIMIT_JOIN_PER_IP", 200),
-		MePerVisitor:        r.Int("RATE_LIMIT_ME_PER_VISITOR", 120),
+		MePerVisitor:        r.Int("RATE_LIMIT_ME_PER_VISITOR", 60), // D-C8.9: the fastest legal poll is 1 s
 		HeartbeatPerVisitor: r.Int("RATE_LIMIT_HEARTBEAT_PER_VISITOR", 20),
 	}
 	cfg.WorkerTuning = WorkerTuning{
 		PromotorInterval: r.Duration("QUEUE_PROMOTOR_INTERVAL_MS", 100*time.Millisecond),
 		SweeperInterval:  r.Duration("QUEUE_SWEEPER_INTERVAL_MS", 10*time.Second),
 		StatusInterval:   r.Duration("QUEUE_STATUS_INTERVAL_MS", time.Second),
-		PromoteBatchMax:  r.Int("QUEUE_PROMOTE_BATCH_MAX", 200),
+		PromoteBatchMax:  r.Int("QUEUE_PROMOTE_BATCH_MAX", 100),
 
 		StatusTTLMultiplier: r.Int("QUEUE_STATUS_TTL_MULTIPLIER", 4),
 
 		PromoterLeaseTTL:     r.Duration("QUEUE_PROMOTER_LEASE_TTL_MS", 10*time.Second),
 		SweepBatchMax:        r.Int("QUEUE_SWEEP_BATCH_MAX", 500),
 		NoSupplySuspectTicks: r.Int("QUEUE_NO_SUPPLY_SUSPECT_TICKS", 50),
+		ClaimedSlotMax:       time.Duration(r.Int("QUEUE_CLAIMED_SLOT_MAX_SECONDS", 7200)) * time.Second,
 	}
 
 	sec := func(name string, def int) time.Duration { return time.Duration(r.Int(name, def)) * time.Second }

@@ -7,10 +7,13 @@ import (
 	cryptorand "crypto/rand"
 	"fmt"
 	"math/rand"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -298,18 +301,24 @@ func TestActivate_DeadlineIsActivationPlusSelectionTTL(t *testing.T) {
 		g, err := repo.GetByID(context.Background(), id)
 		require.NoError(t, err)
 		assert.True(t, stored.Equal(g.ExpiresAt), "no recompute")
-		due, err := repo.DueSessions(context.Background(), stored.Add(4*time.Second), 10)
-		require.NoError(t, err)
-		for _, d := range due {
-			assert.NotEqual(t, id, d.ID, "not due before expires_at + grace (5 s)")
-		}
-		due, err = repo.DueSessions(context.Background(), stored.Add(6*time.Second), 10)
+		// Inside the grace window the sweeper still claims the row (D-C7.3), but ExpireSession leaves it ACTIVE.
+		due, err := repo.ClaimDueSessions(context.Background(), stored.Add(4*time.Second), 10)
 		require.NoError(t, err)
 		var found bool
 		for _, d := range due {
 			found = found || d.ID == id
 		}
-		assert.True(t, found, "due after expires_at + grace")
+		assert.True(t, found, "claimed inside the grace window")
+		require.NoError(t, repo.ExpireSession(context.Background(), id, stored.Add(4*time.Second)))
+		st, _, _ := admState(t, f, id)
+		assert.Equal(t, "ACTIVE", st, "not expired before expires_at + grace (5 s)")
+		due, err = repo.ClaimDueSessions(context.Background(), stored.Add(6*time.Second), 10)
+		require.NoError(t, err)
+		found = false
+		for _, d := range due {
+			found = found || d.ID == id
+		}
+		assert.True(t, found, "due again after expires_at + grace")
 	})
 }
 
@@ -524,8 +533,8 @@ func TestSoldOut_OnlyWhenNothingCanReturn(t *testing.T) {
 	})
 }
 
-// P1-6: the sold-out announcement is written with the status change and survives the per-entry savepoint rollback,
-// and it is written at most once per batch.
+// P1-6: the sold-out announcement (booking.sold_out outbox row) survives the per-entry savepoint rollback, and it is
+// written at most once per batch. The catalog derives SOLD_OUT from supply, so events.status is not changed (AC-C4.2).
 func TestReserveBatch_SoldOutIsAnnouncedOnce(t *testing.T) {
 	f := newAcctFixture(t, suffixFor(t), 1)
 	ctx := context.Background()
@@ -543,6 +552,585 @@ func TestReserveBatch_SoldOutIsAnnouncedOnce(t *testing.T) {
 
 	var status string
 	require.NoError(t, f.pool.QueryRow(ctx, `SELECT status FROM booking.events WHERE id=$1::uuid`, f.eventID).Scan(&status))
-	assert.Equal(t, "SOLD_OUT", status, "the status change survives the entry rollback")
+	assert.Equal(t, "AVAILABLE", status, "the stored status is not changed; SOLD_OUT is derived from supply")
 	assert.Equal(t, 1, soldOutRows(t, f), "booking.sold_out is announced exactly once per batch")
+}
+
+// C4.4 (AC-C4.4 F-window): a batch grants nothing outside the sales window. Before sales_starts_at every entry waits
+// (NO_SUPPLY_NOW). At or after sales_ends_at every entry is SOLD_OUT and no booking.sold_out row is written, because
+// nothing can come back for the queue to wait for.
+func TestReserveBatch_OutsideSalesWindow(t *testing.T) {
+	ctx := context.Background()
+	t.Run("sales_starts_at in the future", func(t *testing.T) {
+		f := newAcctFixture(t, suffixFor(t), 5)
+		_, err := f.pool.Exec(ctx, `UPDATE booking.events SET sales_starts_at = now() + interval '1 hour' WHERE id=$1::uuid`, f.eventID)
+		require.NoError(t, err)
+		out, err := NewAdmissionRepo(f.pool).ReserveBatch(ctx, f.eventID,
+			[]outbound.ReserveEntry{anonEntry(1, 2), anonEntry(2, 2)}, time.Now())
+		require.NoError(t, err)
+		require.Len(t, out, 2)
+		assert.Equal(t, "NO_SUPPLY_NOW", out[0].Outcome)
+		assert.Equal(t, "NO_SUPPLY_NOW", out[1].Outcome)
+		assert.Equal(t, 0, f.ledger(t).alloc, "allocated_units = 0")
+		assert.Equal(t, 0, admissionRows(t, f))
+	})
+	t.Run("sales_ends_at in the past", func(t *testing.T) {
+		f := newAcctFixture(t, suffixFor(t), 5)
+		_, err := f.pool.Exec(ctx, `UPDATE booking.events SET sales_ends_at = now() - interval '1 minute' WHERE id=$1::uuid`, f.eventID)
+		require.NoError(t, err)
+		out, err := NewAdmissionRepo(f.pool).ReserveBatch(ctx, f.eventID,
+			[]outbound.ReserveEntry{anonEntry(1, 2), anonEntry(2, 2)}, time.Now())
+		require.NoError(t, err)
+		require.Len(t, out, 2)
+		assert.Equal(t, "SOLD_OUT", out[0].Outcome)
+		assert.Equal(t, "SOLD_OUT", out[1].Outcome)
+		assert.Equal(t, 0, f.ledger(t).alloc, "allocated_units = 0")
+		assert.Equal(t, 0, admissionRows(t, f))
+		assert.Equal(t, 0, outboxRows(t, f), "no outbox row after the sales end")
+	})
+}
+
+// C4.4 (AC-C4.4 F-cancel, D-C4.4a): a cancelled event answers SOLD_OUT to every entry, grants nothing, and writes no
+// booking.sold_out row: SOLD_OUT here means the queue ends, so the announcement is not sent for it.
+func TestReserveBatch_CancelledEventIsSoldOut(t *testing.T) {
+	ctx := context.Background()
+	f := newAcctFixture(t, suffixFor(t), 5)
+	_, err := f.pool.Exec(ctx, `UPDATE booking.events SET status='CANCELLED' WHERE id=$1::uuid`, f.eventID)
+	require.NoError(t, err)
+
+	out, err := NewAdmissionRepo(f.pool).ReserveBatch(ctx, f.eventID,
+		[]outbound.ReserveEntry{anonEntry(1, 2), anonEntry(2, 2)}, time.Now())
+	require.NoError(t, err)
+	require.Len(t, out, 2)
+	assert.Equal(t, "SOLD_OUT", out[0].Outcome)
+	assert.Equal(t, "SOLD_OUT", out[1].Outcome)
+	assert.Equal(t, 0, f.ledger(t).alloc, "allocated_units = 0")
+	assert.Equal(t, 0, admissionRows(t, f))
+	assert.Equal(t, 0, soldOutRows(t, f), "a cancelled event does not announce booking.sold_out")
+}
+
+func admissionRows(t *testing.T, f acctFixture) int {
+	t.Helper()
+	var n int
+	require.NoError(t, f.pool.QueryRow(context.Background(),
+		`SELECT count(*) FROM booking.admissions WHERE event_id=$1::uuid`, f.eventID).Scan(&n))
+	return n
+}
+
+func outboxRows(t *testing.T, f acctFixture) int {
+	t.Helper()
+	var n int
+	require.NoError(t, f.pool.QueryRow(context.Background(),
+		`SELECT count(*) FROM booking.outbox_events WHERE aggregate_id=$1::uuid`, f.eventID).Scan(&n))
+	return n
+}
+
+// Fix round 1 (R14): an entry that already holds a reservation is replayed with the same grant even after sales_ends_at.
+// Queue retries the batch when its promotion failed; a SOLD_OUT answer here would close the sale for a buyer who
+// already holds an admission (invariant 2). Only a new grant is refused after the end.
+func TestReserveBatch_ReplayAfterSalesEndReturnsSameGrant(t *testing.T) {
+	ctx := context.Background()
+	f := newAcctFixture(t, suffixFor(t), 5)
+	repo := NewAdmissionRepo(f.pool)
+	entry := anonEntry(1, 2)
+
+	first, err := repo.ReserveBatch(ctx, f.eventID, []outbound.ReserveEntry{entry}, time.Now())
+	require.NoError(t, err)
+	require.Equal(t, "GRANTED", first[0].Outcome)
+	require.NotEmpty(t, first[0].AllocationID)
+
+	_, err = f.pool.Exec(ctx, `UPDATE booking.events SET sales_ends_at = now() - interval '1 minute' WHERE id=$1::uuid`, f.eventID)
+	require.NoError(t, err)
+
+	again, err := repo.ReserveBatch(ctx, f.eventID, []outbound.ReserveEntry{entry}, time.Now())
+	require.NoError(t, err)
+	require.Len(t, again, 1)
+	assert.Equal(t, "GRANTED", again[0].Outcome, "replay after the sales end returns the same grant")
+	assert.Equal(t, first[0].AllocationID, again[0].AllocationID, "same allocation id")
+	assert.Equal(t, 2, f.ledger(t).alloc, "replay takes no extra stock")
+	assert.Equal(t, 1, admissionRows(t, f))
+
+	fresh, err := repo.ReserveBatch(ctx, f.eventID, []outbound.ReserveEntry{anonEntry(2, 1)}, time.Now())
+	require.NoError(t, err)
+	assert.Equal(t, "SOLD_OUT", fresh[0].Outcome, "a new grant after the sales end is refused")
+	assert.Equal(t, 0, soldOutRows(t, f), "the refusal after the end writes no booking.sold_out row")
+}
+
+// D-C6.6 (P2-16): a RESERVED admission that lapsed unclaimed (EXPIRED/UNCLAIMED) was never activated, so Queue never
+// admitted its entry. Its entry is granted again with the same allocation id and the units it had, instead of being
+// told ALREADY_ACTIVE (the promoter would then end a live buyer). The lapse already wrote its journey.ended row; the
+// re-grant writes no new one.
+func TestReserveBatch_LapsedUnclaimedReservationIsGrantedAgain(t *testing.T) {
+	ctx := context.Background()
+	f := newAcctFixture(t, suffixFor(t), 5)
+	repo := NewAdmissionRepo(f.pool)
+	entry := anonEntry(1, 2)
+
+	first, err := repo.ReserveBatch(ctx, f.eventID, []outbound.ReserveEntry{entry}, time.Now())
+	require.NoError(t, err)
+	require.Equal(t, "GRANTED", first[0].Outcome)
+	require.Equal(t, 2, f.ledger(t).alloc)
+
+	require.NoError(t, repo.ExpireSession(ctx, first[0].AllocationID, time.Now()))
+	var status, endReason string
+	require.NoError(t, f.pool.QueryRow(ctx, `SELECT status, COALESCE(end_reason,'') FROM booking.admissions WHERE id=$1::uuid`,
+		first[0].AllocationID).Scan(&status, &endReason))
+	require.Equal(t, "EXPIRED", status)
+	require.Equal(t, "UNCLAIMED", endReason)
+	require.Equal(t, 0, f.ledger(t).alloc, "the lapse gave the units back")
+
+	again, err := repo.ReserveBatch(ctx, f.eventID, []outbound.ReserveEntry{entry}, time.Now())
+	require.NoError(t, err)
+	require.Len(t, again, 1)
+	assert.Equal(t, "GRANTED", again[0].Outcome, "a lapsed unclaimed reservation is granted again")
+	assert.Equal(t, first[0].AllocationID, again[0].AllocationID, "same allocation id")
+	assert.Equal(t, 2, again[0].Units, "the granted units come back")
+	assert.Equal(t, 2, f.ledger(t).alloc, "allocated_units back to the granted units")
+
+	var units, outstanding int
+	var endedAtNull bool
+	require.NoError(t, f.pool.QueryRow(ctx, `SELECT status, COALESCE(end_reason,''), ended_at IS NULL, units, outstanding_units
+		FROM booking.admissions WHERE id=$1::uuid`, first[0].AllocationID).Scan(&status, &endReason, &endedAtNull, &units, &outstanding))
+	assert.Equal(t, "RESERVED", status)
+	assert.Empty(t, endReason, "end_reason cleared")
+	assert.True(t, endedAtNull, "ended_at cleared")
+	assert.Equal(t, 2, units)
+	assert.Equal(t, 2, outstanding)
+	assert.Equal(t, 1, admissionRows(t, f), "the row is reused, not inserted again")
+	assert.Len(t, journeyEnded(t, f, first[0].AllocationID), 1, "the re-grant writes no journey.ended")
+}
+
+// D-C6.6: a RELEASED admission (Queue said the entry is gone) is never granted again, even though its end_reason is
+// UNCLAIMED too.
+func TestReserveBatch_ReleasedReservationIsNotGrantedAgain(t *testing.T) {
+	ctx := context.Background()
+	f := newAcctFixture(t, suffixFor(t), 5)
+	repo := NewAdmissionRepo(f.pool)
+	entry := anonEntry(1, 2)
+
+	first, err := repo.ReserveBatch(ctx, f.eventID, []outbound.ReserveEntry{entry}, time.Now())
+	require.NoError(t, err)
+	require.Equal(t, "GRANTED", first[0].Outcome)
+	ok, err := repo.Release(ctx, first[0].AllocationID, vo.EndUnclaimed)
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	again, err := repo.ReserveBatch(ctx, f.eventID, []outbound.ReserveEntry{entry}, time.Now())
+	require.NoError(t, err)
+	require.Len(t, again, 1)
+	assert.Equal(t, "ALREADY_ACTIVE", again[0].Outcome, "a released reservation is not granted again")
+	assert.Equal(t, first[0].AllocationID, again[0].AllocationID)
+	assert.Equal(t, 0, f.ledger(t).alloc, "no stock is taken again")
+	var status string
+	require.NoError(t, f.pool.QueryRow(ctx, `SELECT status FROM booking.admissions WHERE id=$1::uuid`, first[0].AllocationID).Scan(&status))
+	assert.Equal(t, "RELEASED", status)
+}
+
+// D-C6.6: an admission that was activated and then expired by its session (EXPIRED/SESSION_EXPIRED) belongs to a buyer
+// who was in the detail flow; it is never granted again.
+func TestReserveBatch_ActivatedThenExpiredIsNotGrantedAgain(t *testing.T) {
+	ctx := context.Background()
+	f := newAcctFixture(t, suffixFor(t), 5)
+	repo := NewAdmissionRepo(f.pool)
+	entry := anonEntry(1, 2)
+
+	first, err := repo.ReserveBatch(ctx, f.eventID, []outbound.ReserveEntry{entry}, time.Now())
+	require.NoError(t, err)
+	require.Equal(t, "GRANTED", first[0].Outcome)
+	_, err = repo.Activate(ctx, first[0].AllocationID, time.Now())
+	require.NoError(t, err)
+	require.NoError(t, repo.ExpireSession(ctx, first[0].AllocationID, time.Now()))
+
+	again, err := repo.ReserveBatch(ctx, f.eventID, []outbound.ReserveEntry{entry}, time.Now())
+	require.NoError(t, err)
+	require.Len(t, again, 1)
+	assert.Equal(t, "ALREADY_ACTIVE", again[0].Outcome, "an expired session is not granted again")
+	assert.Equal(t, 0, f.ledger(t).alloc)
+	var endReason string
+	require.NoError(t, f.pool.QueryRow(ctx, `SELECT COALESCE(end_reason,'') FROM booking.admissions WHERE id=$1::uuid`, first[0].AllocationID).Scan(&endReason))
+	assert.Equal(t, "SESSION_EXPIRED", endReason)
+}
+
+// Fix round 1 (R18): a batch locks its existing admission rows before any supply lock, the same order Release and
+// ExpireSession use (admission, then event_supply). The holder below repeats Release's statements in that order while a
+// batch waits on the same admission. Before R18 the batch already held supply and then waited on the admission: a
+// deadlock (40P01). After R18 the batch waits before it takes supply, so the holder finishes and the batch goes on.
+func TestReserveBatch_DoesNotDeadlockWithReleaseOnSameAdmission(t *testing.T) {
+	ctx := context.Background()
+	f := newAcctFixture(t, suffixFor(t), 10)
+	repo := NewAdmissionRepo(f.pool)
+	entry2 := anonEntry(2, 2)
+	first, err := repo.ReserveBatch(ctx, f.eventID, []outbound.ReserveEntry{entry2}, time.Now())
+	require.NoError(t, err)
+	require.Equal(t, "GRANTED", first[0].Outcome)
+	adm2 := first[0].AllocationID
+
+	holder, err := f.pool.Begin(ctx)
+	require.NoError(t, err)
+	defer func() { _ = holder.Rollback(ctx) }()
+	_, err = holder.Exec(ctx, `SELECT id FROM booking.admissions WHERE id=$1::uuid FOR UPDATE`, adm2)
+	require.NoError(t, err)
+
+	var out []outbound.ReserveOutcome
+	var batchErr error
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		out, batchErr = repo.ReserveBatch(ctx, f.eventID,
+			[]outbound.ReserveEntry{anonEntry(1, 1), entry2}, time.Now())
+	}()
+	// The batch must reach its wait on adm2 before the holder continues (before R18 it already holds event_supply here).
+	time.Sleep(300 * time.Millisecond)
+
+	_, err = holder.Exec(ctx, `UPDATE booking.admissions SET status='RELEASED', outstanding_units=0, ended_at=now(), end_reason='UNCLAIMED'
+		WHERE id=$1::uuid`, adm2)
+	require.NoError(t, err, "Release's admission step must not be blocked by the batch")
+	_, err = holder.Exec(ctx, `UPDATE booking.event_supply SET allocated_units = allocated_units - 2, version = version + 1, updated_at = now()
+		WHERE event_id=$1::uuid`, f.eventID)
+	require.NoError(t, err, "Release's supply step must not deadlock with the batch")
+	require.NoError(t, holder.Commit(ctx))
+	<-done
+
+	require.NoError(t, batchErr, "the batch must not fail with 40P01")
+	require.Len(t, out, 2)
+	assert.Equal(t, "GRANTED", out[0].Outcome)
+	assert.Equal(t, "ALREADY_ACTIVE", out[1].Outcome, "entry 2 was released by the holder")
+	assert.Equal(t, 1, f.ledger(t).alloc, "only the new entry's 1 unit is allocated")
+}
+
+// Fix round 1 (R18): Release and reservation batches run concurrently on the same admissions, repeatedly. No batch may
+// fail (40P01 or otherwise), and allocated_units stays equal to the outstanding units of the RESERVED admissions.
+func TestReserveBatch_ConcurrentReleaseKeepsStockAndLockOrder(t *testing.T) {
+	ctx := context.Background()
+	f := newAcctFixture(t, suffixFor(t), 200)
+	repo := NewAdmissionRepo(f.pool)
+	for i := 0; i < 20; i++ {
+		entry2 := anonEntry(2*i+2, 2)
+		first, err := repo.ReserveBatch(ctx, f.eventID, []outbound.ReserveEntry{entry2}, time.Now())
+		require.NoError(t, err)
+		require.Equal(t, "GRANTED", first[0].Outcome)
+		allocID := first[0].AllocationID
+
+		var wg sync.WaitGroup
+		start := make(chan struct{})
+		var out []outbound.ReserveOutcome
+		var batchErr, releaseErr error
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			<-start
+			out, batchErr = repo.ReserveBatch(ctx, f.eventID, []outbound.ReserveEntry{anonEntry(2*i+1, 1), entry2}, time.Now())
+		}()
+		go func() {
+			defer wg.Done()
+			<-start
+			_, releaseErr = repo.Release(ctx, allocID, vo.EndUnclaimed)
+		}()
+		close(start)
+		wg.Wait()
+
+		require.NoError(t, batchErr, "iteration %d: batch", i)
+		require.NoError(t, releaseErr, "iteration %d: release", i)
+		require.Len(t, out, 2)
+		assert.Contains(t, []string{"GRANTED", "ALREADY_ACTIVE"}, out[1].Outcome, "iteration %d", i)
+		var sum int
+		require.NoError(t, f.pool.QueryRow(ctx,
+			`SELECT COALESCE(sum(outstanding_units),0) FROM booking.admissions WHERE event_id=$1::uuid AND status='RESERVED'`,
+			f.eventID).Scan(&sum))
+		assert.Equal(t, sum, f.ledger(t).alloc, "iteration %d: allocated_units = sum of RESERVED outstanding units", i)
+	}
+}
+
+// stmtCounter records the SQL of every statement a pool runs (C7.2 tracer).
+type stmtCounter struct {
+	mu   sync.Mutex
+	sqls []string
+}
+
+func (c *stmtCounter) TraceQueryStart(ctx context.Context, _ *pgx.Conn, data pgx.TraceQueryStartData) context.Context {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.sqls = append(c.sqls, strings.Join(strings.Fields(data.SQL), " "))
+	return ctx
+}
+
+func (c *stmtCounter) TraceQueryEnd(context.Context, *pgx.Conn, pgx.TraceQueryEndData) {}
+
+// countPrefix returns how many recorded statements start with prefix.
+func (c *stmtCounter) countPrefix(prefix string) int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	n := 0
+	for _, s := range c.sqls {
+		if strings.HasPrefix(s, prefix) {
+			n++
+		}
+	}
+	return n
+}
+
+// tracedAdmissionRepo is an admission repository over a second pool of the same database that records its statements.
+func tracedAdmissionRepo(t *testing.T, pool *pgxpool.Pool) (*AdmissionRepo, *stmtCounter) {
+	t.Helper()
+	counter := &stmtCounter{}
+	cfg := pool.Config().Copy()
+	cfg.ConnConfig.Tracer = counter
+	traced, err := pgxpool.NewWithConfig(context.Background(), cfg)
+	require.NoError(t, err)
+	t.Cleanup(traced.Close)
+	return NewAdmissionRepo(traced), counter
+}
+
+// C7.2 (AC-C7.2 PF-P1-1): a 100-entry batch locks event_supply once and writes its admissions in one statement. Free 150
+// units: the first 50 entries (3 units each) are GRANTED, the rest find no supply (NO_SUPPLY_NOW).
+func TestReserveBatch_HundredEntriesOneSupplyUpdate(t *testing.T) {
+	ctx := context.Background()
+	f := newAcctFixture(t, suffixFor(t), 150)
+	repo, counter := tracedAdmissionRepo(t, f.pool)
+	entries := make([]outbound.ReserveEntry, 0, 100)
+	for i := 1; i <= 100; i++ {
+		entries = append(entries, anonEntry(i, 3))
+	}
+
+	out, err := repo.ReserveBatch(ctx, f.eventID, entries, time.Now())
+	require.NoError(t, err)
+	require.Len(t, out, 100)
+	for i, o := range out {
+		if i < 50 {
+			assert.Equal(t, "GRANTED", o.Outcome, "entry %d", i)
+			assert.Equal(t, 3, o.Units, "entry %d", i)
+			assert.NotEmpty(t, o.AllocationID, "entry %d", i)
+		} else {
+			assert.Equal(t, "NO_SUPPLY_NOW", o.Outcome, "entry %d", i)
+		}
+	}
+	assert.Equal(t, 150, f.ledger(t).alloc, "allocated_units = 150")
+	assert.Equal(t, 1, counter.countPrefix("SELECT s.total_capacity"), "the supply row is locked once for the whole batch")
+	assert.Equal(t, 1, counter.countPrefix("UPDATE booking.event_supply"), "one supply update for the whole batch")
+	assert.Equal(t, 1, counter.countPrefix("INSERT INTO booking.admissions"), "one bulk insert for the whole batch")
+}
+
+// C7.2: 10 holds run in parallel with a 100-entry batch on the same event. No statement fails (40P01 or otherwise), and
+// the ledger still matches the admissions and the HELD items.
+func TestReserveBatch_ConcurrentWithHoldsKeepsLedger(t *testing.T) {
+	ctx := context.Background()
+	f := newAcctFixture(t, suffixFor(t), 100)
+	repo := NewAdmissionRepo(f.pool)
+	type reserved struct{ id, vis string }
+	var admissions []reserved
+	for i := 0; i < 10; i++ {
+		id, vis := f.reserve(t, i, 1, true)
+		admissions = append(admissions, reserved{id, vis})
+	}
+	entries := make([]outbound.ReserveEntry, 0, 100)
+	for i := 1; i <= 100; i++ {
+		entries = append(entries, anonEntry(100+i, 3))
+	}
+
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	holdErrs := make([]error, len(admissions))
+	var out []outbound.ReserveOutcome
+	var batchErr error
+	for i, a := range admissions {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			_, holdErrs[i] = f.uow.Hold(ctx, f.spec(i, 1, a.id, a.vis, true))
+		}()
+	}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		<-start
+		out, batchErr = repo.ReserveBatch(ctx, f.eventID, entries, time.Now())
+	}()
+	close(start)
+	wg.Wait()
+
+	for i, err := range holdErrs {
+		require.NoError(t, err, "hold %d", i)
+	}
+	require.NoError(t, batchErr, "batch must not fail while holds run")
+	require.Len(t, out, 100)
+	granted := 0
+	for _, o := range out {
+		if o.Outcome == "GRANTED" {
+			granted++
+		}
+	}
+	assert.Equal(t, 30, granted, "90 free units in 3-unit grants")
+
+	var sumOut, heldItems int
+	require.NoError(t, f.pool.QueryRow(ctx, `SELECT COALESCE(sum(outstanding_units),0) FROM booking.admissions WHERE event_id=$1::uuid`, f.eventID).Scan(&sumOut))
+	require.NoError(t, f.pool.QueryRow(ctx, `SELECT count(*) FROM booking.booking_items WHERE event_id=$1::uuid AND item_status='HELD'`, f.eventID).Scan(&heldItems))
+	l := f.ledger(t)
+	assert.Equal(t, sumOut, l.alloc, "allocated_units = sum(outstanding_units)")
+	assert.Equal(t, heldItems, l.held, "held_units = HELD items")
+	assert.LessOrEqual(t, l.alloc+l.held+l.sold, l.total)
+}
+
+// R24 (C7.2 fix round 1): an entry that cannot be written alone is answered alone. Its visitor already holds an active
+// admission on the event, so its row conflicts: it is ALREADY_ACTIVE, the entries around it are granted, and the supply
+// counts only the units that were written.
+func TestReserveBatch_VisitorAlreadyActiveAnswersOnlyThatEntry(t *testing.T) {
+	ctx := context.Background()
+	f := newAcctFixture(t, suffixFor(t), 20)
+	_, busyVisitor := f.reserve(t, 9, 1, true) // one active admission of another buyer: 1 unit allocated
+	entries := []outbound.ReserveEntry{anonEntry(1, 3), anonEntry(2, 3), anonEntry(3, 3)}
+	entries[1].VisitorID = busyVisitor
+
+	out, err := NewAdmissionRepo(f.pool).ReserveBatch(ctx, f.eventID, entries, time.Now())
+	require.NoError(t, err)
+	require.Len(t, out, 3)
+	assert.Equal(t, "GRANTED", out[0].Outcome)
+	assert.Equal(t, 3, out[0].Units)
+	assert.Equal(t, "ALREADY_ACTIVE", out[1].Outcome, "the busy visitor's entry, alone")
+	assert.Equal(t, "GRANTED", out[2].Outcome)
+	assert.Equal(t, 1+3+3, f.ledger(t).alloc, "supply counts entries 1 and 3 only")
+	assert.Equal(t, 3, admissionRows(t, f), "the busy entry writes no admission row")
+}
+
+// R24: a lapsed admission (EXPIRED/UNCLAIMED) is granted again in place unless its visitor now holds another active
+// admission on the event. That entry is ALREADY_ACTIVE (its old allocation id), and the rest of the batch is granted.
+func TestReserveBatch_RegrantConflictAnswersOnlyThatEntry(t *testing.T) {
+	ctx := context.Background()
+	f := newAcctFixture(t, suffixFor(t), 20)
+	repo := NewAdmissionRepo(f.pool)
+	lapsed := anonEntry(1, 2)
+	first, err := repo.ReserveBatch(ctx, f.eventID, []outbound.ReserveEntry{lapsed}, time.Now())
+	require.NoError(t, err)
+	require.Equal(t, "GRANTED", first[0].Outcome)
+	require.NoError(t, repo.ExpireSession(ctx, first[0].AllocationID, time.Now())) // EXPIRED/UNCLAIMED, units given back
+
+	taking := anonEntry(2, 1) // the same visitor now holds a new active admission under another queue entry
+	taking.VisitorID = lapsed.VisitorID
+	got, err := repo.ReserveBatch(ctx, f.eventID, []outbound.ReserveEntry{taking}, time.Now())
+	require.NoError(t, err)
+	require.Equal(t, "GRANTED", got[0].Outcome)
+
+	out, err := repo.ReserveBatch(ctx, f.eventID, []outbound.ReserveEntry{lapsed, anonEntry(3, 2)}, time.Now())
+	require.NoError(t, err)
+	require.Len(t, out, 2)
+	assert.Equal(t, "ALREADY_ACTIVE", out[0].Outcome, "the lapsed row cannot be granted again: the visitor is active")
+	assert.Equal(t, first[0].AllocationID, out[0].AllocationID)
+	assert.Equal(t, "GRANTED", out[1].Outcome)
+	assert.Equal(t, 1+2, f.ledger(t).alloc, "taking (1) and the new entry (2); the conflicting re-grant adds nothing")
+}
+
+// R24: one malformed entry is answered alone with the old per-entry outcome. A malformed id failed the insert
+// (NO_SUPPLY_NOW); a queue_seq or units outside the admission CHECK gave SOLD_OUT. The entries around it are granted.
+func TestReserveBatch_MalformedEntryAnswersOnlyItself(t *testing.T) {
+	cases := map[string]struct {
+		mutate func(e *outbound.ReserveEntry)
+		want   string
+	}{
+		"queue entry id": {func(e *outbound.ReserveEntry) { e.QueueEntryID = "not-a-uuid" }, "NO_SUPPLY_NOW"},
+		"visitor id":     {func(e *outbound.ReserveEntry) { e.VisitorID = "x" }, "NO_SUPPLY_NOW"},
+		"admission jti":  {func(e *outbound.ReserveEntry) { e.AdmissionJTI = "x" }, "NO_SUPPLY_NOW"},
+		"account id":     {func(e *outbound.ReserveEntry) { e.AccountID = "nope" }, "NO_SUPPLY_NOW"},
+		"queue_seq zero": {func(e *outbound.ReserveEntry) { e.Seq = 0 }, "SOLD_OUT"},
+		"units zero":     {func(e *outbound.ReserveEntry) { e.Units = 0 }, "SOLD_OUT"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			f := newAcctFixture(t, suffixFor(t), 20)
+			entries := []outbound.ReserveEntry{anonEntry(1, 3), anonEntry(2, 3), anonEntry(3, 3)}
+			tc.mutate(&entries[1])
+			out, err := NewAdmissionRepo(f.pool).ReserveBatch(context.Background(), f.eventID, entries, time.Now())
+			require.NoError(t, err, "a malformed entry must not fail the batch")
+			require.Len(t, out, 3)
+			assert.Equal(t, "GRANTED", out[0].Outcome)
+			assert.Equal(t, tc.want, out[1].Outcome)
+			assert.Equal(t, "GRANTED", out[2].Outcome)
+			assert.Equal(t, 6, f.ledger(t).alloc, "only the two valid entries took units")
+		})
+	}
+}
+
+// C7.2 fix round 2 (R27): the buyer's quota counts across the batch. Two entries with one NIK hash share the 3 units left
+// on the quota: the first takes 2, the second only the 1 left, and a third finds the quota exhausted.
+func TestReserveBatch_SameBuyerNIKCountsAcrossBatch(t *testing.T) {
+	ctx := context.Background()
+	f := newAcctFixture(t, suffixFor(t), 20)
+	nik := []byte("buyer-nik-fixture-01")
+	entries := []outbound.ReserveEntry{anonEntry(1, 2), anonEntry(2, 2), anonEntry(3, 2)}
+	for i := range entries {
+		entries[i].BuyerNIKHash = nik
+	}
+
+	out, err := NewAdmissionRepo(f.pool).ReserveBatch(ctx, f.eventID, entries, time.Now())
+	require.NoError(t, err)
+	require.Len(t, out, 3)
+	assert.Equal(t, "GRANTED", out[0].Outcome)
+	assert.Equal(t, 2, out[0].Units)
+	assert.Equal(t, "GRANTED", out[1].Outcome)
+	assert.Equal(t, 1, out[1].Units, "the quota left after the first entry of the batch")
+	assert.Equal(t, "BUYER_QUOTA_EXHAUSTED", out[2].Outcome, "3 units are taken: the buyer's quota is used up")
+	assert.Equal(t, 3, f.ledger(t).alloc, "the buyer never gets more than 3 units on the event")
+}
+
+// waitForSupplyLockWait polls until a statement of the database waits on the event_supply lock of the batch.
+func waitForSupplyLockWait(t *testing.T, pool *pgxpool.Pool) {
+	t.Helper()
+	for i := 0; i < 500; i++ {
+		var n int
+		require.NoError(t, pool.QueryRow(context.Background(), `
+			SELECT count(*) FROM pg_stat_activity
+			 WHERE datname = current_database() AND wait_event_type = 'Lock' AND query LIKE '%FOR UPDATE OF s%'`).Scan(&n))
+		if n > 0 {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("the batch never waited on the supply lock")
+}
+
+// C7.2 fix round 2 (R27): another batch commits the RESERVED admission of entry 1 after this batch has read the admissions
+// but before it inserts. Entry 1 is GRANTED with that row's id, units and claim deadline, not ALREADY_ACTIVE; entry 2 is
+// granted as usual. The other batch's transaction holds the event_supply lock until this batch is waiting on it, so the
+// commit lands between the read and the insert.
+func TestReserveBatch_ConflictWithReservedRowIsGranted(t *testing.T) {
+	ctx := context.Background()
+	f := newAcctFixture(t, suffixFor(t), 20)
+	entries := []outbound.ReserveEntry{anonEntry(1, 3), anonEntry(2, 3)}
+
+	other, err := f.pool.Begin(ctx)
+	require.NoError(t, err)
+	defer func() { _ = other.Rollback(ctx) }()
+	var otherID string
+	var expires time.Time
+	require.NoError(t, other.QueryRow(ctx, `
+		INSERT INTO booking.admissions (
+			event_id, queue_entry_id, queue_seq, visitor_id, units, outstanding_units, status, admission_jti,
+			attendee_checks, edit_count, cfg_selection_ttl_seconds, cfg_payment_ttl_seconds, cfg_submit_grace_seconds,
+			cfg_edit_enabled, cfg_max_edits, cfg_allow_mixed_categories, reserved_at, expires_at)
+		VALUES ($1::uuid, $2::uuid, 1, $3::uuid, 3, 3, 'RESERVED', $4::uuid, 0, 0, 300, 600, 5, true, 3, true,
+			now(), now() + interval '5 minutes')
+		RETURNING id::text, expires_at`, f.eventID, entries[0].QueueEntryID, newTestUUID(), newTestUUID()).Scan(&otherID, &expires))
+	_, err = other.Exec(ctx, `UPDATE booking.event_supply SET allocated_units = allocated_units + 3 WHERE event_id=$1::uuid`, f.eventID)
+	require.NoError(t, err)
+
+	var out []outbound.ReserveOutcome
+	var batchErr error
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		out, batchErr = NewAdmissionRepo(f.pool).ReserveBatch(ctx, f.eventID, entries, time.Now())
+	}()
+	waitForSupplyLockWait(t, f.pool)
+	require.NoError(t, other.Commit(ctx))
+	<-done
+
+	require.NoError(t, batchErr)
+	require.Len(t, out, 2)
+	assert.Equal(t, "GRANTED", out[0].Outcome, "the RESERVED row of the other batch is this entry's grant")
+	assert.Equal(t, otherID, out[0].AllocationID)
+	assert.Equal(t, 3, out[0].Units)
+	require.NotNil(t, out[0].ClaimDeadline)
+	assert.True(t, expires.Equal(*out[0].ClaimDeadline), "claim deadline is the row's own")
+	assert.Equal(t, "GRANTED", out[1].Outcome)
+	assert.Equal(t, 3+3, f.ledger(t).alloc, "the other batch's 3 units and entry 2's 3 units; entry 1 is not counted twice")
+	assert.Equal(t, 2, admissionRows(t, f))
 }

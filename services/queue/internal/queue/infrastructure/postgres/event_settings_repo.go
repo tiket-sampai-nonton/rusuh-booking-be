@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -48,9 +49,29 @@ func (r *EventSettings) Get(ctx context.Context, eventID string) (entity.EventSe
 	return s, true, nil
 }
 
-// ListEventIDs returns every configured event id (used by workers to iterate events).
+// ListEventIDs returns every configured event id (the depth metrics read every configured event).
 func (r *EventSettings) ListEventIDs(ctx context.Context) ([]string, error) {
-	rows, err := r.pool.Query(ctx, `SELECT event_id::text FROM event_settings`)
+	return r.queryEventIDs(ctx, `SELECT event_id::text FROM event_settings`)
+}
+
+// ListActiveEventIDs returns the events the workers still iterate at now (D-C8.10): the sale ended less than a day ago, or
+// the window is not known yet. Retirement (C8.2) runs on the status publisher's tick inside that day.
+func (r *EventSettings) ListActiveEventIDs(ctx context.Context, now time.Time) ([]string, error) {
+	return r.queryEventIDs(ctx, `SELECT event_id::text FROM event_settings
+		WHERE sales_ends_at IS NULL OR sales_ends_at > $1::timestamptz - interval '1 day'`, now)
+}
+
+// UpdateSaleWindow stores Booking's sale window of eventID. An unknown event id matches no row.
+func (r *EventSettings) UpdateSaleWindow(ctx context.Context, eventID string, starts, ends time.Time) error {
+	if _, err := r.pool.Exec(ctx, `UPDATE event_settings SET sales_starts_at = $2, sales_ends_at = $3 WHERE event_id = $1::uuid`,
+		eventID, starts, ends); err != nil {
+		return fmt.Errorf("event_settings: sale window: %w", err)
+	}
+	return nil
+}
+
+func (r *EventSettings) queryEventIDs(ctx context.Context, sql string, args ...any) ([]string, error) {
+	rows, err := r.pool.Query(ctx, sql, args...)
 	if err != nil {
 		return nil, fmt.Errorf("event_settings: list: %w", err)
 	}

@@ -71,7 +71,11 @@ func TestInventoryAndSupply(t *testing.T) {
 	inv.SoldQuantity = 20
 	assert.Equal(t, 0, inv.Available())
 
+	// Allocated and held units can still return to sale, so zero free units is not sold out.
 	s := entity.Supply{TotalCapacity: 100, AllocatedUnits: 40, HeldUnits: 30, SoldUnits: 30}
 	assert.Equal(t, 0, s.Free())
-	assert.True(t, s.SoldOut())
+	assert.False(t, s.SoldOut())
+
+	s.SoldUnits = 100
+	assert.True(t, s.SoldOut(), "sold reached total capacity")
 }

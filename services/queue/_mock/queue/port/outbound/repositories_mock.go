@@ -12,6 +12,7 @@ package mock_outbound
 import (
 	context "context"
 	reflect "reflect"
+	time "time"
 
 	entity "github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/domain/entity"
 	outbound "github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/port/outbound"
@@ -58,6 +59,21 @@ func (mr *MockIEventSettingsRepoMockRecorder) Get(ctx, eventID any) *gomock.Call
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Get", reflect.TypeOf((*MockIEventSettingsRepo)(nil).Get), ctx, eventID)
 }
 
+// ListActiveEventIDs mocks base method.
+func (m *MockIEventSettingsRepo) ListActiveEventIDs(ctx context.Context, now time.Time) ([]string, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ListActiveEventIDs", ctx, now)
+	ret0, _ := ret[0].([]string)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ListActiveEventIDs indicates an expected call of ListActiveEventIDs.
+func (mr *MockIEventSettingsRepoMockRecorder) ListActiveEventIDs(ctx, now any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListActiveEventIDs", reflect.TypeOf((*MockIEventSettingsRepo)(nil).ListActiveEventIDs), ctx, now)
+}
+
 // ListEventIDs mocks base method.
 func (m *MockIEventSettingsRepo) ListEventIDs(ctx context.Context) ([]string, error) {
 	m.ctrl.T.Helper()
@@ -71,6 +87,58 @@ func (m *MockIEventSettingsRepo) ListEventIDs(ctx context.Context) ([]string, er
 func (mr *MockIEventSettingsRepoMockRecorder) ListEventIDs(ctx any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListEventIDs", reflect.TypeOf((*MockIEventSettingsRepo)(nil).ListEventIDs), ctx)
+}
+
+// UpdateSaleWindow mocks base method.
+func (m *MockIEventSettingsRepo) UpdateSaleWindow(ctx context.Context, eventID string, starts, ends time.Time) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "UpdateSaleWindow", ctx, eventID, starts, ends)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// UpdateSaleWindow indicates an expected call of UpdateSaleWindow.
+func (mr *MockIEventSettingsRepoMockRecorder) UpdateSaleWindow(ctx, eventID, starts, ends any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateSaleWindow", reflect.TypeOf((*MockIEventSettingsRepo)(nil).UpdateSaleWindow), ctx, eventID, starts, ends)
+}
+
+// MockISettingsCacheInvalidator is a mock of ISettingsCacheInvalidator interface.
+type MockISettingsCacheInvalidator struct {
+	ctrl     *gomock.Controller
+	recorder *MockISettingsCacheInvalidatorMockRecorder
+	isgomock struct{}
+}
+
+// MockISettingsCacheInvalidatorMockRecorder is the mock recorder for MockISettingsCacheInvalidator.
+type MockISettingsCacheInvalidatorMockRecorder struct {
+	mock *MockISettingsCacheInvalidator
+}
+
+// NewMockISettingsCacheInvalidator creates a new mock instance.
+func NewMockISettingsCacheInvalidator(ctrl *gomock.Controller) *MockISettingsCacheInvalidator {
+	mock := &MockISettingsCacheInvalidator{ctrl: ctrl}
+	mock.recorder = &MockISettingsCacheInvalidatorMockRecorder{mock}
+	return mock
+}
+
+// EXPECT returns an object that allows the caller to indicate expected use.
+func (m *MockISettingsCacheInvalidator) EXPECT() *MockISettingsCacheInvalidatorMockRecorder {
+	return m.recorder
+}
+
+// Invalidate mocks base method.
+func (m *MockISettingsCacheInvalidator) Invalidate(ctx context.Context, eventID string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Invalidate", ctx, eventID)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// Invalidate indicates an expected call of Invalidate.
+func (mr *MockISettingsCacheInvalidatorMockRecorder) Invalidate(ctx, eventID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Invalidate", reflect.TypeOf((*MockISettingsCacheInvalidator)(nil).Invalidate), ctx, eventID)
 }
 
 // MockIEntryAuditRepo is a mock of IEntryAuditRepo interface.
@@ -109,6 +177,42 @@ func (m *MockIEntryAuditRepo) Append(ctx context.Context, e outbound.AuditRecord
 func (mr *MockIEntryAuditRepoMockRecorder) Append(ctx, e any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Append", reflect.TypeOf((*MockIEntryAuditRepo)(nil).Append), ctx, e)
+}
+
+// MockIEntryAuditMetrics is a mock of IEntryAuditMetrics interface.
+type MockIEntryAuditMetrics struct {
+	ctrl     *gomock.Controller
+	recorder *MockIEntryAuditMetricsMockRecorder
+	isgomock struct{}
+}
+
+// MockIEntryAuditMetricsMockRecorder is the mock recorder for MockIEntryAuditMetrics.
+type MockIEntryAuditMetricsMockRecorder struct {
+	mock *MockIEntryAuditMetrics
+}
+
+// NewMockIEntryAuditMetrics creates a new mock instance.
+func NewMockIEntryAuditMetrics(ctrl *gomock.Controller) *MockIEntryAuditMetrics {
+	mock := &MockIEntryAuditMetrics{ctrl: ctrl}
+	mock.recorder = &MockIEntryAuditMetricsMockRecorder{mock}
+	return mock
+}
+
+// EXPECT returns an object that allows the caller to indicate expected use.
+func (m *MockIEntryAuditMetrics) EXPECT() *MockIEntryAuditMetricsMockRecorder {
+	return m.recorder
+}
+
+// Dropped mocks base method.
+func (m *MockIEntryAuditMetrics) Dropped(reason string, rows int) {
+	m.ctrl.T.Helper()
+	m.ctrl.Call(m, "Dropped", reason, rows)
+}
+
+// Dropped indicates an expected call of Dropped.
+func (mr *MockIEntryAuditMetricsMockRecorder) Dropped(reason, rows any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Dropped", reflect.TypeOf((*MockIEntryAuditMetrics)(nil).Dropped), reason, rows)
 }
 
 // MockIEventSettingsAdminRepo is a mock of IEventSettingsAdminRepo interface.

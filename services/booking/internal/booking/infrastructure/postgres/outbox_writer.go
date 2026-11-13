@@ -11,7 +11,7 @@ import (
 )
 
 // OutboxWriter reads and updates the outbox for the relay. Writes into the outbox happen inside the
-// unit-of-work transaction (enqueueOutbox); this type only serves the relay worker.
+// unit-of-work transaction (enqueueOutboxMany); this type only serves the relay worker.
 type OutboxWriter struct{ pool *pgxpool.Pool }
 
 // NewOutboxWriter returns the writer.

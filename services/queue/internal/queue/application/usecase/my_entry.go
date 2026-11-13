@@ -2,7 +2,6 @@ package usecase
 
 import (
 	"context"
-	"encoding/json"
 	"math/rand/v2"
 	"time"
 
@@ -41,6 +40,7 @@ func (p HeartbeatPolicy) next(seq int64, doc dto.StatusDocument) int64 {
 // joined this event (no generation record) or had no entry; 401 for a rotated-out token generation.
 type GetMyEntry struct {
 	store  outbound.IQueueStore
+	docs   outbound.IStatusDocReader
 	policy HeartbeatPolicy
 	limit  visitorLimit
 }
@@ -62,37 +62,44 @@ func (u *GetMyEntry) WithLimiter(l outbound.IRateLimiter, limit int, window time
 	return u
 }
 
-// GetMyEntry finds the visitor's entry and maps it to the EntryStatus DTO (no PII).
+// WithStatusDocs reads the Status Document for the rank and zone through docs (the process cache, D-C8.9).
+func (u *GetMyEntry) WithStatusDocs(docs outbound.IStatusDocReader) *GetMyEntry {
+	u.docs = docs
+	return u
+}
+
+// GetMyEntry finds the visitor's entry and maps it to the EntryStatus DTO (no PII). The token generation is checked
+// before the rate limit, and the rate limit before the entry is reported: the same order as the multi-call path, now
+// answered by one store call (me.lua, C8.9).
 func (u *GetMyEntry) GetMyEntry(ctx context.Context, in inbound.MyEntryInput) (dto.EntryStatus, error) {
-	if err := checkTokenGen(ctx, u.store, in.EventID, in.VisitorID, in.Gen); err != nil {
+	if in.EventID == "" {
+		return dto.EntryStatus{}, entity.ErrVisitorTokenInvalid
+	}
+	res, err := u.store.MyEntry(ctx, in.EventID, in.VisitorID, in.Gen)
+	if err != nil {
 		return dto.EntryStatus{}, err
+	}
+	switch res.Tag {
+	case outbound.MyEntryAbsent:
+		return dto.EntryStatus{}, entity.ErrNotFound
+	case outbound.MyEntryInvalid:
+		return dto.EntryStatus{}, entity.ErrVisitorTokenInvalid
 	}
 	if err := u.limit.allow(ctx, "me", in.EventID, in.VisitorID); err != nil {
 		return dto.EntryStatus{}, err
 	}
-	ent, ok, err := u.store.FindByVisitor(ctx, in.EventID, in.VisitorID)
-	if err != nil {
-		return dto.EntryStatus{}, err
+	if res.Tag == outbound.MyEntryNotFound {
+		return dto.EntryStatus{}, entity.ErrNotFound
 	}
-	if !ok {
-		if ent, ok, err = u.store.FindLastByVisitor(ctx, in.EventID, in.VisitorID); err != nil {
-			return dto.EntryStatus{}, err
-		}
-		if !ok {
-			return dto.EntryStatus{}, entity.ErrNotFound
-		}
-	}
+	ent := res.Entry
 	out := mapper.ToEntryStatus(ent)
 	if ent.IsTerminal() {
 		out.Reason = endedReason(ent)
 		return out, nil
 	}
-	doc, _ := readDoc(ctx, u.store, in.EventID)
+	doc, _ := readDoc(ctx, u.docs, in.EventID)
 	if ent.Status == valueobject.StatusWaiting || ent.Status == valueobject.StatusStale {
-		pos, perr := u.store.LivePosition(ctx, in.EventID, ent.Seq.Int64())
-		if perr == nil {
-			out.ExactPosition = pos
-		}
+		out.ExactPosition = res.Position
 		if doc.GuaranteedUntilSeq != nil && doc.PossibleUntilSeq != nil {
 			z := string(valueobject.ZoneForSeq(ent.Seq.Int64(), *doc.GuaranteedUntilSeq, *doc.PossibleUntilSeq))
 			out.Zone = &z
@@ -102,36 +109,38 @@ func (u *GetMyEntry) GetMyEntry(ctx context.Context, in inbound.MyEntryInput) (d
 	return out, nil
 }
 
-// checkTokenGen is the generation check shared by claim, leave and me (R01.4/R01.6). It runs before any state change
-// and does not depend on the entry id, so a rotated token cannot probe entries. Outcomes:
+// checkTokenGen is the generation check of claim and leave (R01.4/R01.6); `me` runs the same check inside me.lua. It
+// runs before any state change and does not depend on the entry id, so a rotated token cannot probe entries. Outcomes:
 //   - empty eventId                       -> ErrVisitorTokenInvalid (401, unchanged)
 //   - no generation record for the event  -> entity.ErrNotFound (404: the visitor never joined this event)
-//   - record present, gen <= 0 or differs -> ErrVisitorTokenInvalid (401: rotated out / legacy token)
-//   - match                               -> nil
+//   - gen older than the stored one, or <= 0 -> ErrVisitorTokenInvalid (401: rotated out / legacy token)
+//   - gen equal to or newer than the stored one -> nil (a newer gen is ratcheted up by the store, D-C6.1)
 func checkTokenGen(ctx context.Context, store outbound.IQueueStore, eventID, visitorID string, gen int64) error {
 	if eventID == "" {
 		return entity.ErrVisitorTokenInvalid
 	}
-	cur, ok, err := store.TokenGen(ctx, eventID, visitorID)
+	res, err := store.CheckTokenGen(ctx, eventID, visitorID, gen)
 	if err != nil {
 		return err
 	}
-	if !ok {
+	switch res {
+	case outbound.TokenGenOK:
+		return nil
+	case outbound.TokenGenAbsent:
 		return entity.ErrNotFound
-	}
-	if gen <= 0 || cur != gen {
+	default:
 		return entity.ErrVisitorTokenInvalid
 	}
-	return nil
 }
 
-func readDoc(ctx context.Context, store outbound.IQueueStore, eventID string) (dto.StatusDocument, bool) {
-	raw, has, err := store.GetStatusDoc(ctx, eventID)
-	if err != nil || !has {
+// readDoc returns the event's Status Document through docs. Without a reader, or on a miss or a read error, the rank
+// logic runs on an empty document (no zone, the policy's default interval).
+func readDoc(ctx context.Context, docs outbound.IStatusDocReader, eventID string) (dto.StatusDocument, bool) {
+	if docs == nil {
 		return dto.StatusDocument{}, false
 	}
-	var doc dto.StatusDocument
-	if json.Unmarshal(raw, &doc) != nil {
+	_, doc, ok, err := docs.Get(ctx, eventID)
+	if err != nil || !ok {
 		return dto.StatusDocument{}, false
 	}
 	return doc, true

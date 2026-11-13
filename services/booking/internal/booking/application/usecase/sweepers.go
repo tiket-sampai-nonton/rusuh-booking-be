@@ -13,6 +13,14 @@ import (
 
 const sweepBatch = 100
 
+// maxSweepRounds caps how many full batches one sweeper call drains (D-C7.3): a backlog larger than
+// maxSweepRounds*sweepBatch is finished by the next tick instead of holding the worker for one long call.
+const maxSweepRounds = 20
+
+// sweepBudget bounds one sweep call (R32): a call starts no new round or row once lease − 3 s has passed, so every row it
+// claimed is still leased while it works. Rows it did not reach lapse and are claimed again by a later call.
+const sweepBudget = outbound.SweepLease - 3*time.Second
+
 // SweepSessions releases admissions whose selection/claim window lapsed (AC10.1). Each admission is
 // handled in its own transaction so one failure does not block the rest.
 type SweepSessions struct {
@@ -25,17 +33,31 @@ func NewSweepSessions(admissions outbound.IAdmissionRepo, clk clock.IClock) *Swe
 	return &SweepSessions{admissions: admissions, clock: clk}
 }
 
-// SweepSessions scans due admissions and releases each one.
+// SweepSessions claims due admissions and releases each one. While a batch comes back full, it claims again (at most
+// maxSweepRounds times); a short batch ends the call. The call stops once sweepBudget is spent.
 func (uc *SweepSessions) SweepSessions(ctx context.Context) error {
-	now := uc.clock.Now()
-	due, err := uc.admissions.DueSessions(ctx, now, sweepBatch)
-	if err != nil {
-		return err
-	}
 	var errs []error
-	for _, a := range due {
-		if err := uc.admissions.ExpireSession(ctx, a.ID, now); err != nil {
+	start := time.Now()
+	for round := 0; round < maxSweepRounds; round++ {
+		if time.Since(start) >= sweepBudget {
+			break
+		}
+		now := uc.clock.Now()
+		batch, err := uc.admissions.ClaimDueSessions(ctx, now, sweepBatch)
+		if err != nil {
 			errs = append(errs, err)
+			break
+		}
+		for _, a := range batch {
+			if time.Since(start) >= sweepBudget {
+				break
+			}
+			if err := uc.admissions.ExpireSession(ctx, a.ID, now); err != nil {
+				errs = append(errs, err)
+			}
+		}
+		if len(batch) < sweepBatch {
+			break
 		}
 	}
 	return errors.Join(errs...)
@@ -53,16 +75,30 @@ func NewSweepExpiries(bookings outbound.IBookingDueScanner, expiry inbound.IExpi
 	return &SweepExpiries{bookings: bookings, expiry: expiry, clock: clk}
 }
 
-// SweepExpiries resolves each due booking.
+// SweepExpiries claims due bookings and resolves each one, repeating while a batch comes back full and stopping once
+// sweepBudget is spent (see SweepSessions).
 func (uc *SweepExpiries) SweepExpiries(ctx context.Context) error {
-	ids, err := uc.bookings.DueBookingIDs(ctx, uc.clock.Now(), sweepBatch)
-	if err != nil {
-		return err
-	}
 	var errs []error
-	for _, id := range ids {
-		if err := uc.expiry.ExpireBooking(ctx, id); err != nil {
+	start := time.Now()
+	for round := 0; round < maxSweepRounds; round++ {
+		if time.Since(start) >= sweepBudget {
+			break
+		}
+		ids, err := uc.bookings.ClaimDueBookings(ctx, uc.clock.Now(), sweepBatch)
+		if err != nil {
 			errs = append(errs, err)
+			break
+		}
+		for _, id := range ids {
+			if time.Since(start) >= sweepBudget {
+				break
+			}
+			if err := uc.expiry.ExpireBooking(ctx, id); err != nil {
+				errs = append(errs, err)
+			}
+		}
+		if len(ids) < sweepBatch {
+			break
 		}
 	}
 	return errors.Join(errs...)
@@ -91,8 +127,8 @@ func (uc *ProjectAvailability) ProjectAvailability(ctx context.Context) error {
 		return err
 	}
 	var errs []error
-	for eventID, snaps := range byEvent {
-		if err := uc.cache.SetAvailability(ctx, eventID, snaps, availabilityTTL); err != nil {
+	for eventID, snap := range byEvent {
+		if err := uc.cache.SetAvailability(ctx, eventID, snap, availabilityTTL); err != nil {
 			errs = append(errs, err)
 		}
 	}

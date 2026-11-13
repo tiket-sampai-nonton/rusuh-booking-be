@@ -180,6 +180,9 @@ func TestHoldThrottle_BudgetThenBackoff(t *testing.T) {
 	adm, vis := f.reserve(t, 1, 3, true)
 	f.seedQuota(t, []byte(fmt.Sprintf("buyer%08d", 1)), 0, 3)
 	t0 := time.Date(2030, 1, 1, 12, 0, 0, 0, time.UTC)
+	// The hold reads its clock from the spec (C3.1), so the admission lives on the same injected timeline.
+	_, err := f.pool.Exec(context.Background(), `UPDATE booking.admissions SET expires_at=$2 WHERE id=$1::uuid`, adm, t0.Add(10*time.Minute))
+	require.NoError(t, err)
 	mk := func(at time.Time) outbound.HoldSpec {
 		s := f.spec(1, 1, adm, vis, true)
 		s.Now, s.RefusalBudget, s.ThrottleBase, s.ThrottleMax = at, 2, 2*time.Second, 5*time.Second
@@ -191,7 +194,7 @@ func TestHoldThrottle_BudgetThenBackoff(t *testing.T) {
 		require.Equal(t, outbound.RefusedBuyerNikLimit, res.Refused)
 	}
 	// budget used: the next attempt inside base window is throttled with a retry-after >= 1s
-	_, err := f.uow.Hold(context.Background(), mk(t0.Add(time.Second)))
+	_, err = f.uow.Hold(context.Background(), mk(t0.Add(time.Second)))
 	require.Error(t, err)
 	var ae *apperror.Error
 	require.ErrorAs(t, err, &ae)

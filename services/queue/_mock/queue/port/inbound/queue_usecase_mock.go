@@ -11,6 +11,7 @@ package mock_inbound
 
 import (
 	context "context"
+	json "encoding/json"
 	reflect "reflect"
 
 	dto "github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/domain/dto"
@@ -82,10 +83,10 @@ func (m *MockIStatusUsecase) EXPECT() *MockIStatusUsecaseMockRecorder {
 }
 
 // GetStatus mocks base method.
-func (m *MockIStatusUsecase) GetStatus(ctx context.Context, eventID string) (dto.StatusDocument, error) {
+func (m *MockIStatusUsecase) GetStatus(ctx context.Context, eventID string) (json.RawMessage, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "GetStatus", ctx, eventID)
-	ret0, _ := ret[0].(dto.StatusDocument)
+	ret0, _ := ret[0].(json.RawMessage)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }

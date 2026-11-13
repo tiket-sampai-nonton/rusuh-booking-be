@@ -69,3 +69,58 @@ func TestLivenessSweeper_StaleEntriesAreNotAdmitted(t *testing.T) {
 	e, _, _ = store.GetEntry(ctx, "ev", "e1")
 	assert.Equal(t, "ADMITTED", string(e.Status), "admitted entries never end by silence")
 }
+
+// inactiveSettings lists ev as configured but no longer active: its sale ended more than a day ago (D-C8.10).
+type inactiveSettings struct{ fakeSettings }
+
+func (f *inactiveSettings) ListActiveEventIDs(context.Context, time.Time) ([]string, error) {
+	return nil, nil
+}
+
+// retireSpy records the answer of every RetireEvent call the real store gave.
+type retireSpy struct {
+	*queuevalkey.QueueStore
+	answers []bool
+}
+
+func (s *retireSpy) RetireEvent(ctx context.Context, eventID string, ttl time.Duration) (bool, error) {
+	ok, err := s.QueueStore.RetireEvent(ctx, eventID, ttl)
+	if err == nil {
+		s.answers = append(s.answers, ok)
+	}
+	return ok, err
+}
+
+// C8.10 Part B (R40, I1): an event past its cut-off is still iterated by liveness. An entry that keeps heartbeating is not
+// ended and keeps the event from retiring; once it goes silent liveness ends it, and the event retires in the same tick. The
+// retirement is remembered, so later ticks do not call RetireEvent again.
+func TestLivenessSweeper_InactiveEventRetiresOnceQuiet(t *testing.T) {
+	store, clk, _, _, start := fifoEnv(t)
+	ctx := context.Background()
+	spy := &retireSpy{QueueStore: store}
+	settings := &inactiveSettings{fakeSettings: fakeSettings{s: entity.EventSettings{EventID: "ev"}}}
+	lv := worker.NewLiveness(spy, settings, clk, worker.LivenessTuning{StaleAfter: 90 * time.Second, EndAfter: 300 * time.Second, BatchMax: 100, LeaseTTL: 5 * time.Second})
+	_, err := store.Join(ctx, outbound.JoinParams{EventID: "ev", EntryID: "e0", NewVisitorID: "v0",
+		NowMs: start.UnixMilli(), OneActivePerVisitor: true, TokenTTL: time.Hour})
+	require.NoError(t, err)
+
+	for i := 1; i <= 4; i++ {
+		clk.T = start.Add(time.Duration(60*i) * time.Second)
+		_, err := store.Heartbeat(ctx, "ev", "v0", 1, clk.T.UnixMilli())
+		require.NoError(t, err)
+		require.NoError(t, lv.Run(ctx))
+	}
+	e, _, _ := store.GetEntry(ctx, "ev", "e0")
+	assert.Equal(t, "WAITING", string(e.Status), "a heartbeating entry is not ended past the cut-off")
+	assert.Equal(t, []bool{false, false, false, false}, spy.answers, "retirement is refused while the entry is live")
+
+	clk.T = start.Add(240*time.Second + 301*time.Second) // 301 s after the last heartbeat
+	require.NoError(t, lv.Run(ctx))
+	e, _, _ = store.GetEntry(ctx, "ev", "e0")
+	assert.Equal(t, "ENDED", string(e.Status))
+	assert.Equal(t, []bool{false, false, false, false, true}, spy.answers, "the event retires once nothing is live")
+
+	clk.T = clk.T.Add(5 * time.Second)
+	require.NoError(t, lv.Run(ctx))
+	assert.Len(t, spy.answers, 5, "a retired event is not retired again")
+}

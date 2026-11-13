@@ -68,6 +68,46 @@ func newDeviceRig(t *testing.T) *deviceRig {
 	}
 }
 
+// C6.2 (P1-13): a tokenless guest's idempotency scope is the device hash when X-Device-Id is sent, else a keyed hash
+// of the client IP ("ip-" prefix). The raw device id and the raw IP never reach the usecase.
+func TestJoinHandler_GuestScopeFromDeviceOrIP(t *testing.T) {
+	g := newDeviceRig(t)
+	const remoteIP = "203.0.113.7"
+	join := func(t *testing.T, device string) inbound.JoinInput {
+		t.Helper()
+		ctrl := gomock.NewController(t)
+		uc := mock_inbound.NewMockIJoinUsecase(ctrl)
+		var in inbound.JoinInput
+		uc.EXPECT().Join(gomock.Any(), gomock.Any()).DoAndReturn(func(_ interface{ Done() <-chan struct{} }, got inbound.JoinInput) (dto.QueueEntry, error) {
+			in = got
+			return dto.QueueEntry{EntryID: "e1"}, nil
+		})
+		mux := stdhttp.NewServeMux()
+		queuehttp.NewJoinHandler(uc, false, 1).WithAuth(g.auth).Register(mux)
+		req := httptest.NewRequest(stdhttp.MethodPost, "/api/v1/events/ev1/queue-entries", strings.NewReader("{}"))
+		req.RemoteAddr = remoteIP + ":4321"
+		if device != "" {
+			req.Header.Set("X-Device-Id", device)
+		}
+		mux.ServeHTTP(httptest.NewRecorder(), req)
+		return in
+	}
+
+	t.Run("X-Device-Id scopes by the device hash", func(t *testing.T) {
+		in := join(t, rawDevice)
+		assert.Equal(t, remoteIP, in.ClientIP)
+		assert.Equal(t, g.hasher.Hash(rawDevice), in.GuestScope)
+		assert.NotContains(t, in.GuestScope, rawDevice)
+	})
+
+	t.Run("without X-Device-Id scopes by a keyed hash of the IP", func(t *testing.T) {
+		in := join(t, "")
+		assert.Regexp(t, `^ip-[0-9a-f]{32}$`, in.GuestScope)
+		assert.NotContains(t, in.GuestScope, remoteIP)
+		assert.Equal(t, in.GuestScope, join(t, "").GuestScope, "stable for the same IP")
+	})
+}
+
 // authAt returns an authenticator for the same keys whose clock is fixed at t.
 func (g *deviceRig) authAt(t time.Time) *security.VisitorAuthenticator {
 	return security.NewVisitorAuthenticator(g.verifier, func() time.Time { return t }).WithDeviceHasher(g.hasher)
@@ -83,7 +123,7 @@ type deviceRoute struct {
 
 func deviceRoutes() []deviceRoute {
 	return []deviceRoute{
-		{"me", stdhttp.MethodGet, "/api/v1/queue-entries/me?eventId=ev1", func(c *gomock.Controller, a *security.VisitorAuthenticator, m *stdhttp.ServeMux) {
+		{"me", stdhttp.MethodGet, "/api/v1/queue-entries/me?eventId=5b1f2c9e-0000-4000-8000-000000000001", func(c *gomock.Controller, a *security.VisitorAuthenticator, m *stdhttp.ServeMux) {
 			uc := mock_inbound.NewMockIMyEntryUsecase(c)
 			uc.EXPECT().GetMyEntry(gomock.Any(), gomock.Any()).Return(dto.EntryStatus{EntryID: "e1"}, nil).AnyTimes()
 			queuehttp.NewMyEntryHandler(uc, a).Register(m)
@@ -93,12 +133,12 @@ func deviceRoutes() []deviceRoute {
 			uc.EXPECT().Heartbeat(gomock.Any(), gomock.Any()).Return(dto.HeartbeatStatus{}, nil).AnyTimes()
 			queuehttp.NewHeartbeatHandler(uc, a).Register(m)
 		}, stdhttp.StatusOK},
-		{"claim", stdhttp.MethodPost, "/api/v1/queue-entries/e1/claim?eventId=ev1", func(c *gomock.Controller, a *security.VisitorAuthenticator, m *stdhttp.ServeMux) {
+		{"claim", stdhttp.MethodPost, "/api/v1/queue-entries/e1/claim?eventId=5b1f2c9e-0000-4000-8000-000000000001", func(c *gomock.Controller, a *security.VisitorAuthenticator, m *stdhttp.ServeMux) {
 			uc := mock_inbound.NewMockIClaimUsecase(c)
 			uc.EXPECT().Claim(gomock.Any(), gomock.Any()).Return(dto.ClaimResponse{AdmissionToken: "adm"}, nil).AnyTimes()
 			queuehttp.NewClaimHandler(uc, a).Register(m)
 		}, stdhttp.StatusOK},
-		{"leave", stdhttp.MethodDelete, "/api/v1/queue-entries/e1?eventId=ev1", func(c *gomock.Controller, a *security.VisitorAuthenticator, m *stdhttp.ServeMux) {
+		{"leave", stdhttp.MethodDelete, "/api/v1/queue-entries/e1?eventId=5b1f2c9e-0000-4000-8000-000000000001", func(c *gomock.Controller, a *security.VisitorAuthenticator, m *stdhttp.ServeMux) {
 			uc := mock_inbound.NewMockILeaveUsecase(c)
 			uc.EXPECT().Leave(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 			queuehttp.NewLeaveHandler(uc, a).Register(m)
@@ -178,7 +218,7 @@ func TestDeviceBinding_JoinDegradesToNewVisitor(t *testing.T) {
 				return dto.QueueEntry{EntryID: "e1"}, nil
 			})
 			mux := stdhttp.NewServeMux()
-			queuehttp.NewJoinHandler(uc, false).WithAuth(g.auth).Register(mux)
+			queuehttp.NewJoinHandler(uc, false, 1).WithAuth(g.auth).Register(mux)
 			req := httptest.NewRequest(stdhttp.MethodPost, "/api/v1/events/ev1/queue-entries", strings.NewReader("{}"))
 			req.Header.Set("X-Visitor-Token", g.bound)
 			if tc.device != "" {

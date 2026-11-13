@@ -283,7 +283,7 @@ func (s *sim) claimAdmitted() {
 		if !ok || e.Status != "ADMITTED" {
 			continue
 		}
-		if _, err := s.store.Claim(ctx, "ev", id, e.VisitorID, s.clk.Now().UnixMilli()); err == nil {
+		if _, err := s.store.Claim(ctx, "ev", id, e.VisitorID, s.clk.Now().UnixMilli(), 7_200_000); err == nil {
 			s.book.markClaimed(id, s.clk.Now())
 		}
 	}

@@ -486,16 +486,18 @@ jobs:
         env:
           TARGET: ${{ vars.DEV_USER }}@${{ vars.DEV_HOST }}
           SSH_PORT: ${{ vars.DEV_SSH_PORT || '22' }}
-          IMAGE_TAG: ${{ github.sha }}
+          SERVICES: ${{ needs.changes.outputs.services }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_ACTOR: ${{ github.actor }}
         run: |
           prefix="$REGISTRY/${GITHUB_REPOSITORY,,}"
+          # Hanya service yang berubah yang di-publish dengan tag sha ini; service lain memakai tag `main`.
+          tags="$(jq -r --arg sha "$GITHUB_SHA" '.[].name | "TAG_\(ascii_upcase)=\($sha)"' <<<"$SERVICES" | tr '\n' ' ')"
           # Server menarik image dari GHCR (privat bila repo privat). Token run ini (hanya baca package, kedaluwarsa setelah job)
           # dikirim lewat stdin; tidak ada PAT yang tersimpan di repo atau perlu diatur manual.
           printf '%s' "$GH_TOKEN" | ssh -p "$SSH_PORT" "$TARGET" "docker login $REGISTRY -u '$GH_ACTOR' --password-stdin"
-          ssh -p "$SSH_PORT" "$TARGET" "IMAGE_PREFIX='$prefix' IMAGE_TAG='$IMAGE_TAG' bash /opt/rusuh/repo/deployments/dev/deploy.sh"
-          echo "- deployment-dev: $prefix:*:$IMAGE_TAG ke ${{ vars.DEV_HOST }}" >> "$GITHUB_STEP_SUMMARY"
+          ssh -p "$SSH_PORT" "$TARGET" "IMAGE_PREFIX='$prefix' IMAGE_TAG=main $tags bash /opt/rusuh/repo/deployments/dev/deploy.sh"
+          echo "- deployment-dev: $tags(sisanya :main) ke ${{ vars.DEV_HOST }}" >> "$GITHUB_STEP_SUMMARY"
 
   # ------------------------------------------------------------------ stage: deployment-prod (manual)
   deployment-prod:

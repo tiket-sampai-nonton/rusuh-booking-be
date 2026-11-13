@@ -56,3 +56,98 @@ func TestStatusPublisher_CachesSaleWindow(t *testing.T) {
 		})
 	}
 }
+
+// windowSettings records every UpdateSaleWindow attempt; writeErr makes the attempts fail.
+type windowSettings struct {
+	oneSettings
+	attempts [][2]int64
+	writeErr error
+}
+
+func (w *windowSettings) ListActiveEventIDs(context.Context, time.Time) ([]string, error) {
+	return []string{"ev"}, nil
+}
+
+func (w *windowSettings) UpdateSaleWindow(_ context.Context, _ string, starts, ends time.Time) error {
+	w.attempts = append(w.attempts, [2]int64{starts.UnixMilli(), ends.UnixMilli()})
+	return w.writeErr
+}
+
+// stepSupply answers Supply from fields the test changes between ticks.
+type stepSupply struct {
+	outbound.IBookingClient
+	snap outbound.SupplySnapshot
+	err  error
+}
+
+func (b *stepSupply) Supply(context.Context, string) (outbound.SupplySnapshot, error) {
+	return b.snap, b.err
+}
+
+// TC-C8.10 (D-C8.10): the status publisher writes the sale window to event_settings only when it differs from the value this
+// process last wrote; a failed write is not remembered, so the next tick retries it.
+func TestStatusPublisher_WritesSaleWindowOnlyOnChange(t *testing.T) {
+	w1 := outbound.SupplySnapshot{SalesStartsAt: wnow.Now().Add(-24 * time.Hour), SalesEndsAt: wnow.Now().Add(24 * time.Hour)}
+	w2 := outbound.SupplySnapshot{SalesStartsAt: w1.SalesStartsAt, SalesEndsAt: wnow.Now().Add(48 * time.Hour)}
+	write := func(s outbound.SupplySnapshot) [2]int64 {
+		return [2]int64{s.SalesStartsAt.UnixMilli(), s.SalesEndsAt.UnixMilli()}
+	}
+	errBoom := errors.New("postgres down")
+
+	st := &windowSettings{oneSettings: oneSettings{s: entity.EventSettings{ActiveSlotCapacity: 10, NearFrontMultiplier: 2}}}
+	supply := &stepSupply{snap: w1}
+	sp := worker.NewStatusPublisher(newFakeStore(), st, supply, wnow, time.Second)
+	tick := func(t *testing.T) { t.Helper(); require.NoError(t, sp.Run(context.Background())) }
+
+	tick(t)
+	assert.Equal(t, [][2]int64{write(w1)}, st.attempts, "first sight of the window is written")
+
+	tick(t)
+	assert.Len(t, st.attempts, 1, "an unchanged window is not written again")
+
+	supply.snap = w2
+	tick(t)
+	assert.Equal(t, [][2]int64{write(w1), write(w2)}, st.attempts, "a changed window is written")
+
+	supply.err = errors.New("booking down")
+	tick(t)
+	assert.Len(t, st.attempts, 2, "no write while Booking's window is unreadable")
+	supply.err = nil
+
+	st.writeErr = errBoom
+	supply.snap = w1
+	tick(t)
+	assert.Len(t, st.attempts, 3, "a changed window is attempted")
+	tick(t)
+	assert.Len(t, st.attempts, 4, "a failed write is retried on the next tick")
+
+	st.writeErr = nil
+	tick(t)
+	assert.Len(t, st.attempts, 5, "the retry succeeds")
+	tick(t)
+	assert.Len(t, st.attempts, 5, "after a successful write the window is quiet again")
+}
+
+// C8.10 Part B (R40, I2): a window whose end is not after its start is never written, because it would drop the event from
+// the iteration for good. It is not remembered either, so the next sane window is written.
+func TestStatusPublisher_RejectsWindowEndingNotAfterStart(t *testing.T) {
+	at := wnow.Now()
+	equal := outbound.SupplySnapshot{SalesStartsAt: at, SalesEndsAt: at}
+	backwards := outbound.SupplySnapshot{SalesStartsAt: at.Add(time.Hour), SalesEndsAt: at}
+	sane := outbound.SupplySnapshot{SalesStartsAt: at.Add(-time.Hour), SalesEndsAt: at.Add(time.Hour)}
+
+	st := &windowSettings{oneSettings: oneSettings{s: entity.EventSettings{ActiveSlotCapacity: 10, NearFrontMultiplier: 2}}}
+	supply := &stepSupply{snap: equal}
+	sp := worker.NewStatusPublisher(newFakeStore(), st, supply, wnow, time.Second)
+	tick := func(t *testing.T) { t.Helper(); require.NoError(t, sp.Run(context.Background())) }
+
+	tick(t)
+	assert.Empty(t, st.attempts, "ends equal to starts is not written")
+	supply.snap = backwards
+	tick(t)
+	assert.Empty(t, st.attempts, "ends before starts is not written")
+	supply.snap = sane
+	tick(t)
+	assert.Equal(t, [][2]int64{{sane.SalesStartsAt.UnixMilli(), sane.SalesEndsAt.UnixMilli()}}, st.attempts,
+		"a sane window is written; the rejected ones were not remembered")
+}

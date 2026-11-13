@@ -10,11 +10,12 @@ import (
 	vo "github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/domain/valueobject"
 )
 
-// eventStatus is the status the API shows. Only SOLD_OUT, CLOSED, and CANCELLED are stored states; NOT_STARTED and AVAILABLE
-// follow the sales window (nothing else moves an event out of DRAFT, and clients only know these four).
+// eventStatus is the status the API shows. A stored CLOSED or CANCELLED wins. A stored SOLD_OUT is ignored (rows written
+// before AC-C4.2 are derived like AVAILABLE). Otherwise NOT_STARTED and CLOSED follow the sales window, and inside the
+// window SOLD_OUT comes from supply (StockSoldOut) and AVAILABLE otherwise.
 func eventStatus(e entity.Event, now time.Time) string {
 	switch e.Status {
-	case entity.EventSoldOut, entity.EventClosed, entity.EventCancelled:
+	case entity.EventClosed, entity.EventCancelled:
 		return string(e.Status)
 	}
 	switch {
@@ -22,6 +23,8 @@ func eventStatus(e entity.Event, now time.Time) string {
 		return string(entity.EventNotStarted)
 	case !e.SalesEndsAt.IsZero() && now.After(e.SalesEndsAt):
 		return string(entity.EventClosed)
+	case e.StockSoldOut:
+		return string(entity.EventSoldOut)
 	}
 	return string(entity.EventAvailable)
 }
@@ -73,21 +76,6 @@ func ToEventFacets(f entity.EventFacets) dto.EventFacets {
 	return dto.EventFacets{Cities: cities, Genres: genres}
 }
 
-// summaryWithStock is the event summary of a detail view, where stock is known: no category left means SOLD_OUT.
-func summaryWithStock(d entity.EventDetail, now time.Time) dto.EventSummary {
-	s := ToEventSummary(d.Event, now)
-	if s.Status == string(entity.EventAvailable) && len(d.Categories) > 0 {
-		left := 0
-		for _, c := range d.Categories {
-			left += c.Available
-		}
-		if left == 0 {
-			s.Status = string(entity.EventSoldOut)
-		}
-	}
-	return s
-}
-
 // ToEventDetail maps an event with categories + availability.
 func ToEventDetail(d entity.EventDetail, now time.Time) dto.EventDetail {
 	cats := make([]dto.CategoryView, 0, len(d.Categories))
@@ -101,7 +89,7 @@ func ToEventDetail(d entity.EventDetail, now time.Time) dto.EventDetail {
 		})
 	}
 	return dto.EventDetail{
-		Event:                 summaryWithStock(d, now),
+		Event:                 ToEventSummary(d.Event, now),
 		MaxTicketsPerOrder:    d.Event.MaxTicketsPerOrder,
 		MaxTicketsPerBuyerNik: d.Event.MaxTicketsPerBuyerNik,
 		AllowMixedCategories:  d.Event.AllowMixedCategories,
@@ -148,8 +136,9 @@ func ToBooking(b entity.Booking, editsRemaining int, now time.Time) dto.Booking 
 	}
 }
 
-// ToTicketList maps issued tickets to the ticket-list DTO. qrPayloadFn builds the per-ticket QR string.
-func ToTicketList(b entity.Booking, tickets []entity.Ticket, qrPayloadFn func(entity.Ticket) string) dto.TicketList {
+// ToTicketList maps issued tickets to the ticket-list DTO; ev supplies the event date. qrPayloadFn builds the per-ticket
+// QR string.
+func ToTicketList(b entity.Booking, ev entity.Event, tickets []entity.Ticket, qrPayloadFn func(entity.Ticket) string) dto.TicketList {
 	views := make([]dto.TicketView, 0, len(tickets))
 	for _, t := range tickets {
 		views = append(views, dto.TicketView{
@@ -162,6 +151,6 @@ func ToTicketList(b entity.Booking, tickets []entity.Ticket, qrPayloadFn func(en
 	}
 	return dto.TicketList{
 		BookingID: b.ID, OrderID: b.PublicRef, PublicRef: b.PublicRef, AmountMinor: b.AmountMinor,
-		TicketQuantity: b.ItemQuantity, BuyerNIKMasked: b.BuyerNIKMasked, Tickets: views,
+		TicketQuantity: b.ItemQuantity, BuyerNIKMasked: b.BuyerNIKMasked, EventStartsAt: ev.StartsAt, Tickets: views,
 	}
 }

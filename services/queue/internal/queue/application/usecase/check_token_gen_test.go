@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -16,28 +17,27 @@ import (
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/port/outbound"
 )
 
-// TC-QUE-42/43 (REQ-QVT-02/03, P4-P6): the token-generation check shared by claim, leave and me is three-way:
-// dependency error -> as is; empty eventId -> 401; no generation record (never joined this event) -> 404;
-// record present but generation differs / is 0 (rotated) -> 401; match -> proceeds. It runs before any state change.
+// TC-QUE-42/43 (REQ-QVT-02/03, P4-P6): the token-generation check shared by claim, leave and me maps the store's
+// outcome three ways (D-C6.1: the store decides, the usecase maps): dependency error -> as is; empty eventId -> 401;
+// no generation record (never joined this event) -> 404; invalid (older or non-positive generation) -> 401; OK -> proceeds.
+// It runs before any state change.
 func TestTokenGenCheck_ThreeWay(t *testing.T) {
 	tests := []struct {
 		name    string
 		eventID string
 		gen     int64
-		cur     int64
-		has     bool
+		res     outbound.TokenGenCheck // what the store reports for the visitor's record
 		stErr   error
 		wantErr error // nil = the check passes and the usecase proceeds past it
-		noStore bool  // TokenGen must not even be consulted
+		noStore bool  // CheckTokenGen must not even be consulted
 	}{
 		{name: "store error is returned as is", eventID: "ev1", gen: 1, stErr: errors.New("boom"), wantErr: errors.New("boom")},
 		{name: "empty eventId stays 401", eventID: "", gen: 1, wantErr: entity.ErrVisitorTokenInvalid, noStore: true},
-		{name: "no record -> never joined -> 404", eventID: "ev1", gen: 1, has: false, wantErr: entity.ErrNotFound},
-		{name: "legacy gen 0, record absent -> 404", eventID: "ev1", gen: 0, has: false, wantErr: entity.ErrNotFound},
-		{name: "legacy gen 0, record present -> 401", eventID: "ev1", gen: 0, cur: 2, has: true, wantErr: entity.ErrVisitorTokenInvalid},
-		{name: "rotated (older generation) -> 401", eventID: "ev1", gen: 1, cur: 2, has: true, wantErr: entity.ErrVisitorTokenInvalid},
-		{name: "newer than server -> 401", eventID: "ev1", gen: 5, cur: 2, has: true, wantErr: entity.ErrVisitorTokenInvalid},
-		{name: "current generation passes", eventID: "ev1", gen: 2, cur: 2, has: true},
+		{name: "no record -> never joined -> 404", eventID: "ev1", gen: 1, res: outbound.TokenGenAbsent, wantErr: entity.ErrNotFound},
+		{name: "legacy gen 0 -> 401", eventID: "ev1", gen: 0, res: outbound.TokenGenInvalid, wantErr: entity.ErrVisitorTokenInvalid},
+		{name: "rotated (older generation) -> 401", eventID: "ev1", gen: 1, res: outbound.TokenGenInvalid, wantErr: entity.ErrVisitorTokenInvalid},
+		{name: "newer than stored is ratcheted by the store -> passes", eventID: "ev1", gen: 5, res: outbound.TokenGenOK},
+		{name: "current generation passes", eventID: "ev1", gen: 2, res: outbound.TokenGenOK},
 	}
 	type runner struct {
 		name string
@@ -45,7 +45,7 @@ func TestTokenGenCheck_ThreeWay(t *testing.T) {
 	}
 	runners := []runner{
 		{"claim", func(t *testing.T, store *mock_outbound.MockIQueueStore, ctrl *gomock.Controller, ev string, gen int64) error {
-			_, err := usecase.NewClaimTurn(store, mock_outbound.NewMockITokenIssuer(ctrl), fixedNow, "https://app/book").
+			_, err := usecase.NewClaimTurn(store, mock_outbound.NewMockITokenIssuer(ctrl), fixedNow, "https://app/book", 7200*time.Second).
 				Claim(context.Background(), inbound.ClaimInput{EntryID: "e1", VisitorID: "v1", EventID: ev, Gen: gen})
 			return err
 		}},
@@ -64,19 +64,27 @@ func TestTokenGenCheck_ThreeWay(t *testing.T) {
 				ctrl := gomock.NewController(t)
 				// Strict mock: anything not expected below (Claim, Leave, FindByVisitor, ReleaseAllocation...) fails the test.
 				store := mock_outbound.NewMockIQueueStore(ctrl)
+				sentinel := errors.New("past-the-check")
+				passes := tt.wantErr == nil // the check passed: the usecase moves on to its own store call
 				if !tt.noStore {
-					store.EXPECT().TokenGen(gomock.Any(), tt.eventID, "v1").Return(tt.cur, tt.has, tt.stErr)
+					if r.name == "me" {
+						// me runs the check inside MyEntry (me.lua): the outcome is in the reply; a passing check is
+						// stopped by the sentinel the same call returns.
+						res, rerr := myEntryFor(tt.res), tt.stErr
+						if passes {
+							res, rerr = outbound.MyEntryResult{}, sentinel
+						}
+						store.EXPECT().MyEntry(gomock.Any(), tt.eventID, "v1", tt.gen).Return(res, rerr)
+					} else {
+						store.EXPECT().CheckTokenGen(gomock.Any(), tt.eventID, "v1", tt.gen).Return(tt.res, tt.stErr)
+					}
 				}
-				if tt.wantErr == nil {
-					// The check passed: the usecase moves on to its own store call; stop it with a sentinel.
-					sentinel := errors.New("past-the-check")
+				if passes {
 					switch r.name {
 					case "claim":
-						store.EXPECT().Claim(gomock.Any(), tt.eventID, "e1", "v1", gomock.Any()).Return(outbound.ClaimResult{}, sentinel)
+						store.EXPECT().Claim(gomock.Any(), tt.eventID, "e1", "v1", gomock.Any(), gomock.Any()).Return(outbound.ClaimResult{}, sentinel)
 					case "leave":
 						store.EXPECT().Leave(gomock.Any(), tt.eventID, "e1", "v1", gomock.Any()).Return(outbound.LeaveResult{}, sentinel)
-					case "me":
-						store.EXPECT().FindByVisitor(gomock.Any(), tt.eventID, "v1").Return(entity.Entry{}, false, sentinel)
 					}
 					err := r.run(t, store, ctrl, tt.eventID, tt.gen)
 					assert.EqualError(t, err, sentinel.Error())
@@ -94,6 +102,17 @@ func TestTokenGenCheck_ThreeWay(t *testing.T) {
 	}
 }
 
+// myEntryFor is the me.lua reply for a token generation outcome (the token check runs inside the script).
+func myEntryFor(c outbound.TokenGenCheck) outbound.MyEntryResult {
+	switch c {
+	case outbound.TokenGenAbsent:
+		return outbound.MyEntryResult{Tag: outbound.MyEntryAbsent}
+	case outbound.TokenGenInvalid:
+		return outbound.MyEntryResult{Tag: outbound.MyEntryInvalid}
+	}
+	return outbound.MyEntryResult{Tag: outbound.MyEntryNotFound}
+}
+
 // D4 (P4, NFR-07): a rotated token is refused with 401 for an own, a foreign and a nonexistent entry id alike, and
 // nothing is claimed, left or released (a stale token must not free another buyer's allocation).
 func TestClaimAndLeave_RotatedTokenIsIdenticalForOwnForeignAndAbsentEntries(t *testing.T) {
@@ -103,12 +122,12 @@ func TestClaimAndLeave_RotatedTokenIsIdenticalForOwnForeignAndAbsentEntries(t *t
 			store := mock_outbound.NewMockIQueueStore(ctrl)
 			booking := mock_outbound.NewMockIBookingClient(ctrl)
 			tokens := mock_outbound.NewMockITokenIssuer(ctrl)
-			store.EXPECT().TokenGen(gomock.Any(), "ev1", "v1").Return(int64(3), true, nil).Times(2)
-			store.EXPECT().Claim(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
+			store.EXPECT().CheckTokenGen(gomock.Any(), "ev1", "v1", gomock.Any()).Return(outbound.TokenGenInvalid, nil).Times(2)
+			store.EXPECT().Claim(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
 			store.EXPECT().Leave(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
 			booking.EXPECT().ReleaseAllocation(gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
 
-			_, cerr := usecase.NewClaimTurn(store, tokens, fixedNow, "https://app/book").
+			_, cerr := usecase.NewClaimTurn(store, tokens, fixedNow, "https://app/book", 7200*time.Second).
 				Claim(context.Background(), inbound.ClaimInput{EntryID: entryID, VisitorID: "v1", EventID: "ev1", Gen: 2})
 			lerr := usecase.NewLeaveQueue(store, booking, fixedNow).
 				Leave(context.Background(), inbound.LeaveInput{EntryID: entryID, VisitorID: "v1", EventID: "ev1", Gen: 2})
@@ -124,12 +143,12 @@ func TestClaimAndLeave_RotatedTokenIsIdenticalForOwnForeignAndAbsentEntries(t *t
 func TestClaimAndLeave_ForeignAndAbsentEntryAreIndistinguishable(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	store := mock_outbound.NewMockIQueueStore(ctrl)
-	store.EXPECT().TokenGen(gomock.Any(), "ev1", "v1").Return(int64(1), true, nil).AnyTimes()
-	store.EXPECT().Claim(gomock.Any(), "ev1", gomock.Any(), "v1", gomock.Any()).Return(outbound.ClaimResult{}, entity.ErrNotFound).Times(2)
+	store.EXPECT().CheckTokenGen(gomock.Any(), "ev1", "v1", gomock.Any()).Return(outbound.TokenGenOK, nil).AnyTimes()
+	store.EXPECT().Claim(gomock.Any(), "ev1", gomock.Any(), "v1", gomock.Any(), gomock.Any()).Return(outbound.ClaimResult{}, entity.ErrNotFound).Times(2)
 	store.EXPECT().Leave(gomock.Any(), "ev1", gomock.Any(), "v1", gomock.Any()).Return(outbound.LeaveResult{}, entity.ErrNotFound).Times(2)
 	tokens := mock_outbound.NewMockITokenIssuer(ctrl)
 	booking := mock_outbound.NewMockIBookingClient(ctrl)
-	claim := usecase.NewClaimTurn(store, tokens, fixedNow, "https://app/book")
+	claim := usecase.NewClaimTurn(store, tokens, fixedNow, "https://app/book", 7200*time.Second)
 	leave := usecase.NewLeaveQueue(store, booking, fixedNow)
 
 	var got []string
@@ -144,4 +163,32 @@ func TestClaimAndLeave_ForeignAndAbsentEntryAreIndistinguishable(t *testing.T) {
 	}
 	assert.Equal(t, got[0], got[2])
 	assert.Equal(t, got[1], got[3])
+}
+
+// D-C6.1 (AC-C6.1 P0-8): `me` maps the me.lua outcome directly: an absent record is 404, an invalid generation is 401,
+// and a valid one reads the entry (the usecase's own store call, stopped here by a sentinel).
+func TestGetMyEntry_TokenGenOutcomes(t *testing.T) {
+	sentinel := errors.New("past-the-check")
+	tests := []struct {
+		name    string
+		res     outbound.TokenGenCheck
+		wantErr error
+	}{
+		{name: "absent -> ErrNotFound", res: outbound.TokenGenAbsent, wantErr: entity.ErrNotFound},
+		{name: "invalid -> ErrVisitorTokenInvalid", res: outbound.TokenGenInvalid, wantErr: entity.ErrVisitorTokenInvalid},
+		{name: "ok -> reads the entry", res: outbound.TokenGenOK, wantErr: sentinel},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			store := mock_outbound.NewMockIQueueStore(ctrl)
+			if tt.res == outbound.TokenGenOK {
+				store.EXPECT().MyEntry(gomock.Any(), "ev1", "v1", int64(2)).Return(outbound.MyEntryResult{}, sentinel)
+			} else {
+				store.EXPECT().MyEntry(gomock.Any(), "ev1", "v1", int64(2)).Return(myEntryFor(tt.res), nil)
+			}
+			_, err := usecase.NewGetMyEntry(store).GetMyEntry(context.Background(), inbound.MyEntryInput{EventID: "ev1", VisitorID: "v1", Gen: 2})
+			require.ErrorIs(t, err, tt.wantErr)
+		})
+	}
 }

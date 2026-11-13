@@ -85,6 +85,7 @@ func (uc *Edit) ReplaceItems(ctx context.Context, cmd inbound.EditCommand) (dto.
 		NewAmountMinor:  amount,
 		Lines:           lines,
 		CorrelationID:   cmd.CorrelationID,
+		Now:             uc.clock.Now(),
 	})
 	if err != nil {
 		return dto.Booking{}, err

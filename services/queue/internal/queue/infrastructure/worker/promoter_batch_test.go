@@ -1,13 +1,20 @@
 package worker_test
 
 import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/domain/entity"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/infrastructure/worker"
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/port/outbound"
 )
 
 // TC-QUE-19d (P18, reviewer reproduction as a negative test): a FULL/NOT_HEAD-after-grant deferral cannot leave a
@@ -229,4 +236,138 @@ func TestPromoter_UnknownOutcomeIsCountedAndMutatesNothing(t *testing.T) {
 	assert.Equal(t, 1, h.metrics.Count(worker.MetricUnknownOutcome))
 	assert.Equal(t, "WAITING", h.status("e1"))
 	assert.Equal(t, "ADMITTED", h.status("e2"))
+}
+
+// TC-C8.8: the candidates of one tick are read in one GetEntries call, never one GetEntry per candidate (PF-P2-2).
+func TestPromoter_FetchesCandidatesInOneCall(t *testing.T) {
+	h := newHarness(t, 10, 0, worker.PromoterTuning{}) // no stock: every candidate answers NO_SUPPLY_NOW
+	for i := 1; i <= 5; i++ {
+		h.store.addWaiting(fmt.Sprintf("e%d", i), 0)
+	}
+	h.mustTick()
+	assert.Equal(t, 1, h.store.batchReads, "all candidates come back in a single GetEntries call")
+	assert.Equal(t, 0, h.store.entryReads, "no per-candidate GetEntry on the promoter path")
+}
+
+// C8.8: a failed batch read skips the whole tick: nothing is reserved at Booking and no candidate is ended, since a
+// transient read failure is not an orphan (C5).
+func TestPromoter_FailedBatchReadSkipsTheTickAndEndsNothing(t *testing.T) {
+	h := newHarness(t, 10, 5, worker.PromoterTuning{})
+	h.store.addWaiting("e1", 0)
+	h.store.addOrphanWaiting("orphan", 99)
+	h.store.batchErr = errors.New("valkey down")
+	h.mustTick()
+	reserve, _ := h.stub.Calls()
+	assert.Equal(t, 0, reserve, "no candidate is sent to Booking")
+	assert.Equal(t, "WAITING", h.status("e1"))
+	assert.Equal(t, []string{"e1", "orphan"}, h.waiting(), "the orphan is not ended on a read failure")
+}
+
+// leaseCheckPub records each turn.arrived publish in the store's call log and fails the test when the promoter lease
+// is still held at that moment (C8.8: announcements leave the lease).
+type leaseCheckPub struct {
+	*fakePub
+	store *fakeStore
+	t     *testing.T
+}
+
+func (p leaseCheckPub) PublishTurnArrived(ctx context.Context, ev, entryID, visitorID string, deadline time.Time) error {
+	p.store.mu.Lock()
+	held := p.store.leaseToken != ""
+	p.store.mu.Unlock()
+	if held {
+		p.t.Errorf("turn.arrived %s published while the promoter lease is held", entryID)
+	}
+	p.store.record("arrived:" + entryID)
+	return p.fakePub.PublishTurnArrived(ctx, ev, entryID, visitorID, deadline)
+}
+
+// TC-C8.8: turn.arrived is published after the lease is released, not inside it.
+func TestPromoter_PublishesAfterLeaseRelease(t *testing.T) {
+	h := newHarness(t, 2, 5, worker.PromoterTuning{})
+	h.store.addWaiting("a", 0)
+	h.store.addWaiting("b", 0)
+	p := worker.NewPromoter(h.store, h.settings, h.stub, leaseCheckPub{fakePub: h.pub, store: h.store, t: t}, fakeAudit{}, h.clk, slog.New(slog.NewTextHandler(discard{}, nil)), worker.PromoterTuning{BatchMax: 200})
+	require.NoError(t, p.Run(context.Background()))
+	assert.Equal(t, []string{"release", "arrived:a", "arrived:b"}, h.store.order)
+	assert.Equal(t, []string{"a", "b"}, h.pub.Arrived())
+}
+
+var _ outbound.IEventPublisher = leaseCheckPub{}
+
+// perEventSettings serves a different capacity per event, for the two-event bound test.
+type perEventSettings map[string]entity.EventSettings
+
+func (s perEventSettings) Get(_ context.Context, ev string) (entity.EventSettings, bool, error) {
+	v, ok := s[ev]
+	return v, ok, nil
+}
+
+func (s perEventSettings) ListEventIDs(context.Context) ([]string, error) {
+	return []string{"ev1", "ev2"}, nil
+}
+
+func (s perEventSettings) ListActiveEventIDs(context.Context, time.Time) ([]string, error) {
+	return []string{"ev1", "ev2"}, nil
+}
+
+func (s perEventSettings) UpdateSaleWindow(context.Context, string, time.Time, time.Time) error {
+	return nil
+}
+
+// blockingPub blocks the announcement of entry "a" until its context is done (a broker stall). The 5 s fallback only keeps a
+// regression from hanging the suite: an unbounded publish reports an error after it.
+type blockingPub struct {
+	mu        sync.Mutex
+	attempted []string
+	delivered []string
+}
+
+func (p *blockingPub) PublishTurnSoon(context.Context, string, string, string) error { return nil }
+func (p *blockingPub) PublishJourneyEnded(context.Context, string, string, string) error {
+	return nil
+}
+
+func (p *blockingPub) PublishTurnArrived(ctx context.Context, _, entryID, _ string, _ time.Time) error {
+	p.mu.Lock()
+	p.attempted = append(p.attempted, entryID)
+	p.mu.Unlock()
+	if entryID == "a" {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(5 * time.Second):
+			return errors.New("publish was not bounded")
+		}
+	}
+	p.mu.Lock()
+	p.delivered = append(p.delivered, entryID)
+	p.mu.Unlock()
+	return nil
+}
+
+// R36: the post-lease turn.arrived publishes of an event are bounded by LeaseTTL-1s. Once the bound passes, the rest of
+// that event's arrivals are not attempted, and later events in the same Run are still processed.
+func TestPromoter_ArrivalPublishIsBoundedAndLaterEventsStillRun(t *testing.T) {
+	h := newHarness(t, 2, 5, worker.PromoterTuning{})
+	for _, id := range []string{"a", "a2", "c"} {
+		h.store.addWaiting(id, 0)
+	}
+	settings := perEventSettings{
+		"ev1": {EventID: "ev1", ActiveSlotCapacity: 2},
+		"ev2": {EventID: "ev2", ActiveSlotCapacity: 3},
+	}
+	pub := &blockingPub{}
+	p := worker.NewPromoter(h.store, settings, h.stub, pub, fakeAudit{}, h.clk, slog.New(slog.NewTextHandler(discard{}, nil)),
+		worker.PromoterTuning{BatchMax: 200, LeaseTTL: 2 * time.Second}) // bound = 1 s
+
+	start := time.Now()
+	require.NoError(t, p.Run(context.Background()))
+	elapsed := time.Since(start)
+
+	assert.Less(t, elapsed, 1500*time.Millisecond, "arrival publishing stops at the 1 s bound, not at the broker's stall")
+	pub.mu.Lock()
+	defer pub.mu.Unlock()
+	assert.Equal(t, []string{"a", "c"}, pub.attempted, "a2 is never attempted after the bound; ev2 is")
+	assert.Equal(t, []string{"c"}, pub.delivered, "ev2 is still processed and announced")
 }

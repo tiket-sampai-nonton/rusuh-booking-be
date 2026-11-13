@@ -24,15 +24,15 @@ func NewPublishEvent(events outbound.IEventRepo, repo outbound.IEventPublication
 }
 
 // Publish makes the event visible and sellable.
-func (uc *PublishEvent) Publish(ctx context.Context, eventID string) error {
+func (uc *PublishEvent) Publish(ctx context.Context, eventID, actor string) error {
 	if !isUUID(eventID) {
 		return inbound.Validation("eventId", errEventIDNotUUID)
 	}
-	return uc.repo.SetPublished(ctx, eventID, true)
+	return uc.repo.SetPublished(ctx, eventID, actor, true)
 }
 
 // Unpublish hides the event again; rejected (EVENT_RULES_LOCKED) once the sales window has opened.
-func (uc *PublishEvent) Unpublish(ctx context.Context, eventID string) error {
+func (uc *PublishEvent) Unpublish(ctx context.Context, eventID, actor string) error {
 	if !isUUID(eventID) {
 		return inbound.Validation("eventId", errEventIDNotUUID)
 	}
@@ -43,15 +43,15 @@ func (uc *PublishEvent) Unpublish(ctx context.Context, eventID string) error {
 	if !uc.clock.Now().Before(event.SalesStartsAt) {
 		return inbound.ErrRulesLocked
 	}
-	return uc.repo.SetPublished(ctx, eventID, false)
+	return uc.repo.SetPublished(ctx, eventID, actor, false)
 }
 
 // Cancel marks the event CANCELLED: it leaves the catalog list, stays readable by id with status CANCELLED, and no new
 // admission, hold, or booking session can start. Idempotent. Bookings already holding stock run out their own payment
 // deadline; refunds for paid bookings are a separate task.
-func (uc *PublishEvent) Cancel(ctx context.Context, eventID string) error {
+func (uc *PublishEvent) Cancel(ctx context.Context, eventID, actor string) error {
 	if !isUUID(eventID) {
 		return inbound.Validation("eventId", errEventIDNotUUID)
 	}
-	return uc.repo.Cancel(ctx, eventID)
+	return uc.repo.Cancel(ctx, eventID, actor)
 }

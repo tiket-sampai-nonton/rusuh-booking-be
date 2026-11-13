@@ -109,6 +109,11 @@ type WorkerTuning struct {
 	SweepBatchMax int
 	// NoSupplySuspectTicks labels a head that answers NO_SUPPLY_NOW this many consecutive ticks as suspect.
 	NoSupplySuspectTicks int
+	// ClaimedSlotMax bounds how long a CLAIMED slot may hold capacity without a journey outcome
+	// (QUEUE_CLAIMED_SLOT_MAX_SECONDS, default 7200 s). Invariant (P2-15, D-C6.5, R17): the value must be >= Booking's
+	// max selection TTL + submit grace + payment TTL + 600 s deadline extension + VERIFY_GRACE_SECONDS
+	// (≈ 6630 s at Booking's maxima), so a live buyer is never ended. Validate enforces only the 600 s floor.
+	ClaimedSlotMax time.Duration
 }
 
 // StatusTTL returns the Valkey TTL for the published status document: StatusTTLMultiplier times the
@@ -124,10 +129,12 @@ const (
 	minLeaseTTL        = 2 * time.Second
 	maxLeaseTTL        = 30 * time.Second
 	maxSweepBatch      = 5000
+	maxPromoteBatch    = 100 // Booking takes at most 100 entries per allocation batch (D-C7.2)
 	minSuspectTicks    = 2
 	minRateLimitWindow = time.Millisecond
 	minStatusTTLMult   = 3
 	maxStatusTTLMult   = 5
+	minClaimedSlotMax  = 600 * time.Second
 )
 
 // Validate checks WorkerTuning against the booking client timeout (the lease must outlive two Booking calls).
@@ -152,11 +159,17 @@ func (w WorkerTuning) Validate(bookingTimeout time.Duration) error {
 	case w.PromoterLeaseTTL <= 2*bookingTimeout:
 		errs = append(errs, fmt.Errorf("QUEUE_PROMOTER_LEASE_TTL_MS %s harus > 2x BOOKING_TIMEOUT (%s)", w.PromoterLeaseTTL, 2*bookingTimeout))
 	}
+	if w.PromoteBatchMax < 1 || w.PromoteBatchMax > maxPromoteBatch {
+		errs = append(errs, fmt.Errorf("QUEUE_PROMOTE_BATCH_MAX %d di luar rentang 1..%d", w.PromoteBatchMax, maxPromoteBatch))
+	}
 	if w.SweepBatchMax < 1 || w.SweepBatchMax > maxSweepBatch {
 		errs = append(errs, fmt.Errorf("QUEUE_SWEEP_BATCH_MAX %d di luar rentang 1..%d", w.SweepBatchMax, maxSweepBatch))
 	}
 	if w.NoSupplySuspectTicks < minSuspectTicks {
 		errs = append(errs, fmt.Errorf("QUEUE_NO_SUPPLY_SUSPECT_TICKS %d harus >= %d", w.NoSupplySuspectTicks, minSuspectTicks))
+	}
+	if w.ClaimedSlotMax < minClaimedSlotMax {
+		errs = append(errs, fmt.Errorf("QUEUE_CLAIMED_SLOT_MAX_SECONDS %s harus >= %s", w.ClaimedSlotMax, minClaimedSlotMax))
 	}
 	if w.StatusTTLMultiplier < minStatusTTLMult || w.StatusTTLMultiplier > maxStatusTTLMult {
 		errs = append(errs, fmt.Errorf("QUEUE_STATUS_TTL_MULTIPLIER %d di luar rentang %d..%d", w.StatusTTLMultiplier, minStatusTTLMult, maxStatusTTLMult))
@@ -164,7 +177,8 @@ func (w WorkerTuning) Validate(bookingTimeout time.Duration) error {
 	return errors.Join(errs...)
 }
 
-// Validate checks that every window is at least 1ms: a smaller window divides by zero in the limiter.
+// Validate checks that every window is at least 1ms (a smaller window divides by zero in the limiter) and that every
+// limit allows at least one request (P2-18: a zero limit would reject all traffic on that endpoint).
 func (r RateLimit) Validate() error {
 	var errs []error
 	for name, w := range map[string]time.Duration{
@@ -173,6 +187,18 @@ func (r RateLimit) Validate() error {
 	} {
 		if w < minRateLimitWindow {
 			errs = append(errs, fmt.Errorf("%s %s harus >= %s", name, w, minRateLimitWindow))
+		}
+	}
+	for _, lim := range []struct {
+		name string
+		n    int
+	}{
+		{"RATE_LIMIT_JOIN_PER_IP", r.JoinPerIP},
+		{"RATE_LIMIT_ME_PER_VISITOR", r.MePerVisitor},
+		{"RATE_LIMIT_HEARTBEAT_PER_VISITOR", r.HeartbeatPerVisitor},
+	} {
+		if lim.n < 1 {
+			errs = append(errs, fmt.Errorf("%s %d harus > 0", lim.name, lim.n))
 		}
 	}
 	return errors.Join(errs...)
@@ -184,7 +210,7 @@ type Liveness struct {
 	NearInterval      time.Duration // QUEUE_HEARTBEAT_NEAR_INTERVAL_SECONDS, used near the head
 	StaleAfter        time.Duration // QUEUE_STALE_AFTER_SECONDS: silent longer than this -> STALE
 	EndAfter          time.Duration // QUEUE_END_AFTER_SECONDS: silent longer than this -> ENDED (only without admission)
-	BatchMax          int           // QUEUE_LIVENESS_BATCH_MAX entries marked/ended per event and shard per tick
+	BatchMax          int           // QUEUE_LIVENESS_BATCH_MAX entries staled or ended per event and tick, across all shards
 	Shards            int           // QUEUE_LIVENESS_SHARDS: hb/hbstale index is split across this many keys (ADR-030 Amendment)
 }
 

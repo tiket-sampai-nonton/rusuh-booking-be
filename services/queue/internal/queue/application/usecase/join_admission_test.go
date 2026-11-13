@@ -48,6 +48,16 @@ type admissionEnv struct {
 // newAdmission builds a JoinQueue with injected Sleep/Jitter (no real waiting) and a captured logger.
 func newAdmission(t *testing.T) *admissionEnv {
 	t.Helper()
+	return newAdmissionWithClock(t, clock.Fixed{T: time.Date(2026, 10, 20, 10, 0, 0, 0, time.UTC)})
+}
+
+// steppingClock returns now until a test moves it; the Booking stub moves it to model a slow reservation.
+type steppingClock struct{ now time.Time }
+
+func (c *steppingClock) Now() time.Time { return c.now }
+
+func newAdmissionWithClock(t *testing.T, clk clock.IClock) *admissionEnv {
+	t.Helper()
 	ctrl := gomock.NewController(t)
 	e := &admissionEnv{metrics: &countingMetrics{}, logs: &bytes.Buffer{}}
 	e.m = joinMocks{
@@ -63,7 +73,7 @@ func newAdmission(t *testing.T) *admissionEnv {
 	e.uc = usecase.NewJoinQueue(usecase.JoinDeps{
 		Store: e.m.store, Settings: e.m.settings, Booking: e.m.booking, Limiter: e.m.limiter,
 		Tokens: e.m.tokens, UserVerifier: e.m.verifier, Audit: e.m.audit,
-		Clock:  clock.Fixed{T: time.Date(2026, 10, 20, 10, 0, 0, 0, time.UTC)},
+		Clock:  clk,
 		Sleep:  func(_ context.Context, d time.Duration) error { e.sleeps = append(e.sleeps, d); return nil },
 		Jitter: func() time.Duration { return 25 * time.Millisecond },
 	}, usecase.JoinSettings{
@@ -323,4 +333,70 @@ func TestJoin_EmptyClientIPIsLoggedAndNotRejected(t *testing.T) {
 	assert.Contains(t, e.logs.String(), "IP klien kosong")
 	assert.NotContains(t, e.logs.String(), "a@b.id")
 	assert.NotContains(t, e.logs.String(), "3201010101900001")
+}
+
+// Direct admission re-reads the clock after the Booking call: the reservation takes time, so the claim deadline
+// fallback, the Promote nowMs and the ADMITTED audit must use the reading taken after it. JOINED keeps the first.
+func TestJoin_DirectAdmissionUsesClockAfterBooking(t *testing.T) {
+	t0 := time.Date(2026, 10, 20, 10, 0, 0, 0, time.UTC)
+	after := t0.Add(3 * time.Second)
+	clk := &steppingClock{now: t0}
+	e := newAdmissionWithClock(t, clk)
+	ctx := context.Background()
+	var c captureID
+	m := e.m
+	m.limiter.EXPECT().Allow(ctx, gomock.Any(), gomock.Any(), gomock.Any()).Return(true, nil).AnyTimes()
+	m.settings.EXPECT().Get(ctx, "ev1").Return(entity.EventSettings{ActiveSlotCapacity: 10}, true, nil)
+	e.joinCapturing(ctx, &c)
+	var audits []outbound.AuditRecord
+	m.audit.EXPECT().Append(ctx, gomock.Any()).DoAndReturn(func(_ context.Context, r outbound.AuditRecord) error {
+		audits = append(audits, r)
+		return nil
+	}).AnyTimes()
+	var issuedAt []time.Time // token iat instants: the response must not carry the pre-Booking reading
+	m.tokens.EXPECT().IssueQueue(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
+		func(_, _ string, at time.Time) (string, error) { issuedAt = append(issuedAt, at); return "qt", nil })
+	m.tokens.EXPECT().IssueVisitor(gomock.Any(), gomock.Any()).DoAndReturn(
+		func(_ outbound.VisitorClaim, at time.Time) (string, error) {
+			issuedAt = append(issuedAt, at)
+			return "vt", nil
+		})
+	m.store.EXPECT().ActiveCount(ctx, "ev1").Return(0, nil).Times(2)
+	m.store.EXPECT().TopWaiting(ctx, "ev1", 1).DoAndReturn(c.topWaiting()).Times(2)
+	m.store.EXPECT().AcquirePromoterLease(ctx, "ev1", 10*time.Second).Return("tok", true, nil)
+	m.booking.EXPECT().ReserveBatch(ctx, gomock.Any()).DoAndReturn(
+		func(rctx context.Context, req outbound.AllocationBatchRequest) (outbound.AllocationBatchResponse, error) {
+			clk.now = after                      // the Booking call takes 3 seconds
+			return grantedFor(&c, "")(rctx, req) // no ClaimDeadline: the fallback applies
+		})
+	// fallback deadline = post-booking reading + ClaimWindow (1 minute in the test settings)
+	m.store.EXPECT().Promote(ctx, "ev1", gomock.Any(), 10, after.UnixMilli(), outbound.PromoteOpts{RequireHead: true, LeaseToken: "tok"}).DoAndReturn(
+		func(_ context.Context, _ string, cands []outbound.PromoteCandidate, _ int, _ int64, _ outbound.PromoteOpts) (outbound.PromoteResult, error) {
+			assert.Equal(t, after.Add(time.Minute).UnixMilli(), cands[0].ClaimDeadlineMs)
+			return outbound.PromoteResult{Promoted: []string{cands[0].EntryID}}, nil
+		})
+	m.store.EXPECT().ReleasePromoterLease(gomock.Any(), "ev1", "tok").Return(nil)
+
+	resp, err := e.uc.Join(ctx, inbound.JoinInput{EventID: "ev1", ClientIP: "1.2.3.4"})
+	require.NoError(t, err)
+	assert.Equal(t, "ADMITTED", resp.Status)
+
+	occurred := map[string]time.Time{}
+	for _, r := range audits {
+		occurred[r.Action] = r.OccurredAt
+	}
+	assert.Equal(t, t0, occurred["JOINED"], "JOINED memakai pembacaan jam pertama")
+	assert.Equal(t, after, occurred["ADMITTED"], "ADMITTED memakai pembacaan jam setelah Booking")
+
+	// The response answers with the admission instant: serverTime and the token iat are the post-Booking reading, so
+	// claimDeadline - serverTime is the claim window and not the window minus the Booking latency.
+	require.Len(t, issuedAt, 2)
+	assert.Equal(t, after, issuedAt[0], "iat token antrean memakai pembacaan jam setelah Booking")
+	assert.Equal(t, after, issuedAt[1], "iat token pengunjung memakai pembacaan jam setelah Booking")
+	serverTime, err := time.Parse(time.RFC3339, resp.ServerTime)
+	require.NoError(t, err)
+	assert.Equal(t, after, serverTime, "serverTime memakai pembacaan jam setelah Booking")
+	claimDeadline, err := time.Parse(time.RFC3339, resp.ClaimDeadline)
+	require.NoError(t, err)
+	assert.Equal(t, time.Minute, claimDeadline.Sub(serverTime), "claimDeadline - serverTime == ClaimWindow")
 }

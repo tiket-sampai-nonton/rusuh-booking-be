@@ -33,7 +33,14 @@ const eventCols = `e.id::text, e.slug, e.name, e.venue, e.city, e.genre,
 	e.max_tickets_per_order, e.max_tickets_per_buyer_nik, e.allow_mixed_categories,
 	e.selection_ttl_seconds, e.payment_ttl_seconds, e.claim_window_seconds,
 	e.max_attendee_checks_per_session, e.selection_edit_enabled, e.max_selection_edits, e.selection_submit_grace_seconds,
-	(e.published_at IS NOT NULL)`
+	(e.published_at IS NOT NULL),
+	` + stockSoldOutSQL
+
+// stockSoldOutSQL derives SOLD_OUT from supply (AC-C4.2, D-C4.2): every unit is held or sold. It is the same rule as the
+// detail's categories (sum of capacity - held - sold = total - held - sold), so list, filter and detail agree.
+// It has no $n placeholder, so filterWhereAt can renumber eventFilterWhere around it.
+const stockSoldOutSQL = `EXISTS (SELECT 1 FROM booking.event_supply s
+		WHERE s.event_id = e.id AND s.total_capacity > 0 AND s.held_units + s.sold_units >= s.total_capacity)`
 
 // scanEvent scans eventCols, then minPrice when given, then any extra destinations (columns appended to the query).
 func scanEvent(row pgx.Row, minPrice *int64, extra ...any) (entity.Event, error) {
@@ -45,7 +52,7 @@ func scanEvent(row pgx.Row, minPrice *int64, extra ...any) (entity.Event, error)
 		&e.MaxTicketsPerOrder, &e.MaxTicketsPerBuyerNik, &e.AllowMixedCategories,
 		&e.SelectionTTLSeconds, &e.PaymentTTLSeconds, &e.ClaimWindowSeconds,
 		&e.MaxAttendeeChecks, &e.SelectionEditEnabled, &e.MaxSelectionEdits, &e.SubmitGraceSeconds,
-		&e.Published,
+		&e.Published, &e.StockSoldOut,
 	}
 	if minPrice != nil {
 		dest = append(dest, minPrice)
@@ -61,9 +68,10 @@ func scanEvent(row pgx.Row, minPrice *int64, extra ...any) (entity.Event, error)
 // The published + non-cancelled floor is always applied. Callers that want a drill-down facet zero out the
 // dimension being listed (city="" or genres=nil) via filterArgs before binding.
 const eventFilterWhere = `
-		 WHERE ($1 = 'ALL' OR (CASE WHEN e.status IN ('SOLD_OUT','CLOSED','CANCELLED') THEN e.status
+		 WHERE ($1 = 'ALL' OR (CASE WHEN e.status IN ('CLOSED','CANCELLED') THEN e.status
 		                            WHEN now() < e.sales_starts_at THEN 'NOT_STARTED'
 		                            WHEN now() > e.sales_ends_at THEN 'CLOSED'
+		                            WHEN ` + stockSoldOutSQL + ` THEN 'SOLD_OUT'
 		                            ELSE 'AVAILABLE' END) = $1)
 		   AND ($2 = '' OR lower(e.city) = lower($2))
 		   AND ($3 = 'ALL'
@@ -100,7 +108,11 @@ func filterWhereAt(base int) string {
 // placeholderRe matches a positional parameter token like $1 or $12.
 var placeholderRe = regexp.MustCompile(`\$\d+`)
 
-// ListEvents returns catalog rows filtered by the query.
+// catalogListLimit caps the public list (D-C7.7). The query has no keyset cursor, so a larger page would scale with
+// the whole catalog on every request.
+const catalogListLimit = 500
+
+// ListEvents returns catalog rows filtered by the query, at most catalogListLimit rows in the query's sort order.
 func (r *EventRepo) ListEvents(ctx context.Context, q dto.EventListQuery) ([]entity.Event, error) {
 	order := "e.starts_at ASC, e.id"
 	switch q.Sort {
@@ -111,14 +123,16 @@ func (r *EventRepo) ListEvents(ctx context.Context, q dto.EventListQuery) ([]ent
 	case "PRICE_DESC":
 		order = "min_price_minor DESC, e.id"
 	}
-	// status follows the sales window like the status the API shows (stored SOLD_OUT/CLOSED win); timeframe applies to
-	// startsAt in WIB: THIS_WEEK Monday-Sunday, THIS_MONTH the calendar month, UPCOMING today onwards (SRS-F-28-03).
+	// status follows the sales window and stock like the status the API shows (stored CLOSED/CANCELLED win, a stored
+	// SOLD_OUT is ignored, AC-C4.2 R13); timeframe applies to startsAt in WIB: THIS_WEEK Monday-Sunday, THIS_MONTH
+	// the calendar month, UPCOMING today onwards (SRS-F-28-03).
 	sql := fmt.Sprintf(`
 		SELECT %s, COALESCE(MIN(c.price_minor), 0) AS min_price_minor
 		  FROM booking.events e
 		  LEFT JOIN booking.ticket_categories c ON c.event_id = e.id%s
 		 GROUP BY e.id
-		 ORDER BY %s`, eventCols, eventFilterWhere, order)
+		 ORDER BY %s
+		 LIMIT %d`, eventCols, eventFilterWhere, order, catalogListLimit)
 
 	rows, err := r.pool.Query(ctx, sql, filterArgs(q)...)
 	if err != nil {
@@ -217,10 +231,12 @@ func (r *EventRepo) GetDetail(ctx context.Context, eventID string) (entity.Event
 		return entity.EventDetail{}, err
 	}
 	rows, err := r.pool.Query(ctx, `
-		SELECT c.id::text, c.code, c.name, c.price_minor,
-		       (ci.capacity - ci.held_quantity - ci.sold_quantity) AS available
+		SELECT c.id::text, c.code, c.name, c.price_minor, ci.capacity, ci.sold_quantity,
+		       GREATEST(ci.capacity - ci.held_quantity - ci.sold_quantity, 0) AS category_free,
+		       GREATEST(s.total_capacity - s.allocated_units - s.held_units - s.sold_units, 0) AS event_free
 		  FROM booking.ticket_categories c
 		  JOIN booking.category_inventories ci ON ci.category_id = c.id
+		  JOIN booking.event_supply s ON s.event_id = c.event_id
 		 WHERE c.event_id = $1::uuid
 		 ORDER BY c.display_order`, eventID)
 	if err != nil {
@@ -230,15 +246,16 @@ func (r *EventRepo) GetDetail(ctx context.Context, eventID string) (entity.Event
 	var cats []entity.CategoryDetail
 	for rows.Next() {
 		var c entity.Category
-		var available int
-		if err := rows.Scan(&c.ID, &c.Code, &c.Name, &c.PriceMinor, &available); err != nil {
+		var capacity, sold, categoryFree, eventFree int
+		if err := rows.Scan(&c.ID, &c.Code, &c.Name, &c.PriceMinor, &capacity, &sold, &categoryFree, &eventFree); err != nil {
 			return entity.EventDetail{}, fmt.Errorf("events: detail scan: %w", err)
 		}
 		c.EventID = eventID
-		if available < 0 {
-			available = 0
-		}
-		cats = append(cats, entity.CategoryDetail{Category: c, Available: available})
+		cats = append(cats, entity.CategoryDetail{
+			Category: c, Capacity: capacity, Sold: sold,
+			Available:    entity.BuyerAvailable(categoryFree, eventFree, 0),
+			CategoryFree: categoryFree, EventFree: eventFree,
+		})
 	}
 	if err := rows.Err(); err != nil {
 		return entity.EventDetail{}, err
@@ -269,29 +286,38 @@ func genresParam(g []string) []string {
 	return g
 }
 
-// OnSaleAvailability returns per-category availability (capacity - held - sold, clamped at 0) for every
-// event whose sales window contains now and that is not closed, keyed by event ID.
-func (r *EventRepo) OnSaleAvailability(ctx context.Context, now time.Time) (map[string][]outbound.CategoryAvailabilitySnap, error) {
+// OnSaleAvailability returns the availability snapshot of every published event whose sales window contains now and
+// that is neither closed nor cancelled, keyed by event ID. Category free is capacity - held - sold (clamped at 0);
+// event free is total - allocated - held - sold (clamped at 0) from event_supply.
+func (r *EventRepo) OnSaleAvailability(ctx context.Context, now time.Time) (map[string]outbound.AvailabilitySnapshot, error) {
 	rows, err := r.pool.Query(ctx, `
-		SELECT e.id::text, c.id::text,
+		SELECT e.id::text,
+		       GREATEST(s.total_capacity - s.allocated_units - s.held_units - s.sold_units, 0),
+		       c.id::text,
 		       GREATEST(ci.capacity - ci.held_quantity - ci.sold_quantity, 0)
 		  FROM booking.events e
+		  JOIN booking.event_supply s ON s.event_id = e.id
 		  JOIN booking.ticket_categories c ON c.event_id = e.id
 		  JOIN booking.category_inventories ci ON ci.category_id = c.id
-		 WHERE e.status <> 'CLOSED' AND e.sales_starts_at <= $1 AND e.sales_ends_at > $1
+		 WHERE e.status NOT IN ('CLOSED','CANCELLED') AND e.published_at IS NOT NULL
+		   AND e.sales_starts_at <= $1 AND e.sales_ends_at > $1
 		 ORDER BY e.id, c.display_order`, now)
 	if err != nil {
 		return nil, fmt.Errorf("events: on-sale availability: %w", err)
 	}
 	defer rows.Close()
-	out := map[string][]outbound.CategoryAvailabilitySnap{}
+	out := map[string]outbound.AvailabilitySnapshot{}
 	for rows.Next() {
 		var eventID string
+		var eventFree int
 		var s outbound.CategoryAvailabilitySnap
-		if err := rows.Scan(&eventID, &s.CategoryID, &s.Available); err != nil {
+		if err := rows.Scan(&eventID, &eventFree, &s.CategoryID, &s.Available); err != nil {
 			return nil, fmt.Errorf("events: scan on-sale availability: %w", err)
 		}
-		out[eventID] = append(out[eventID], s)
+		snap := out[eventID]
+		snap.EventFree = eventFree
+		snap.Categories = append(snap.Categories, s)
+		out[eventID] = snap
 	}
 	return out, rows.Err()
 }

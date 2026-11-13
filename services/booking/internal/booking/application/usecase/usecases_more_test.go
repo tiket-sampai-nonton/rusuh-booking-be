@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/apperror"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/application/usecase"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/domain/dto"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/domain/entity"
@@ -52,19 +54,28 @@ func TestCheckAttendee_InvalidNIKNoQuotaBurn(t *testing.T) {
 
 func TestCheckAttendee_AvailableAndRegistered(t *testing.T) {
 	adm := activeAdmission(true)
-	adm.AttendeeChecks = 2
 	ev := &fakeEventRepo{event: entity.Event{ID: eventID, MaxAttendeeChecks: 10}}
 
-	uc := usecase.NewCheckAttendee(&fakeAdmissionRepo{admission: adm}, ev, &fakeAttendeeChecker{counted: true, registered: false}, fakeNIK{}, fixedClock{t: time.Now()})
+	uc := usecase.NewCheckAttendee(&fakeAdmissionRepo{admission: adm}, ev, &fakeAttendeeChecker{counted: true, used: 3, registered: false}, fakeNIK{}, fixedClock{t: time.Now()})
 	res, err := uc.CheckAttendee(context.Background(), sessionID, visitor, dto.AttendeeCheckRequest{NIK: nik1})
 	require.NoError(t, err)
 	assert.Equal(t, "AVAILABLE", res.Result)
-	assert.Equal(t, 7, res.ChecksRemaining) // 10 - (2+1)
+	assert.Equal(t, 7, res.ChecksRemaining) // 10 - 3 used after this check
 
-	uc2 := usecase.NewCheckAttendee(&fakeAdmissionRepo{admission: adm}, ev, &fakeAttendeeChecker{counted: false, registered: true}, fakeNIK{}, fixedClock{t: time.Now()})
+	uc2 := usecase.NewCheckAttendee(&fakeAdmissionRepo{admission: adm}, ev, &fakeAttendeeChecker{counted: false, used: 3, registered: true}, fakeNIK{}, fixedClock{t: time.Now()})
 	res2, err := uc2.CheckAttendee(context.Background(), sessionID, visitor, dto.AttendeeCheckRequest{NIK: nik1})
 	require.NoError(t, err)
 	assert.Equal(t, "ALREADY_REGISTERED", res2.Result)
+}
+
+func TestCheckAttendee_LimitFromRepository(t *testing.T) {
+	checker := &fakeAttendeeChecker{limitReached: true, used: 3}
+	uc := usecase.NewCheckAttendee(&fakeAdmissionRepo{admission: activeAdmission(true)}, &fakeEventRepo{event: entity.Event{ID: eventID, MaxAttendeeChecks: 3}}, checker, fakeNIK{}, fixedClock{t: time.Now()})
+	res, err := uc.CheckAttendee(context.Background(), sessionID, visitor, dto.AttendeeCheckRequest{NIK: nik1})
+	require.NoError(t, err)
+	assert.Equal(t, "CHECK_LIMIT_REACHED", res.Result)
+	assert.Equal(t, 0, res.ChecksRemaining)
+	assert.Equal(t, 1, checker.calls, "only RecordCheck runs; IsRegistered must not be called once the limit is reached")
 }
 
 func TestCheckAttendee_InGraceIsAccepted(t *testing.T) {
@@ -258,11 +269,11 @@ func TestListMyBookings_Ownership(t *testing.T) {
 
 func TestGetTickets_RequiresPaid(t *testing.T) {
 	owner := inbound.TicketAccess{VisitorID: visitor}
-	uc := usecase.NewGetTickets(&fakeBookingRepo{booking: entity.Booking{ID: eventID, Status: vo.BookingPendingPayment, VisitorID: visitor}}, &fakeTicketRepo{}, nil)
+	uc := usecase.NewGetTickets(&fakeBookingRepo{booking: entity.Booking{ID: eventID, Status: vo.BookingPendingPayment, VisitorID: visitor}}, &fakeTicketRepo{}, &fakeEventRepo{}, nil)
 	_, err := uc.GetTickets(context.Background(), eventID, owner)
 	assert.ErrorIs(t, err, inbound.ErrNotPayable)
 
-	uc2 := usecase.NewGetTickets(&fakeBookingRepo{booking: entity.Booking{ID: eventID, Status: vo.BookingPaid, VisitorID: visitor}}, &fakeTicketRepo{tickets: []entity.Ticket{{PublicCode: "TK-1"}}}, nil)
+	uc2 := usecase.NewGetTickets(&fakeBookingRepo{booking: entity.Booking{ID: eventID, Status: vo.BookingPaid, VisitorID: visitor}}, &fakeTicketRepo{tickets: []entity.Ticket{{PublicCode: "TK-1"}}}, &fakeEventRepo{}, nil)
 	out, err := uc2.GetTickets(context.Background(), eventID, owner)
 	require.NoError(t, err)
 	assert.Len(t, out.Tickets, 1)
@@ -282,9 +293,187 @@ func (f *fakeExpiryUC) ExpireBooking(_ context.Context, id string) error {
 	return nil
 }
 
+// batchedAdmissionRepo serves ClaimDueSessions from scripted batches and counts the claims.
+type batchedAdmissionRepo struct {
+	*fakeAdmissionRepo
+	batches [][]entity.Admission
+	claims  int
+	always  int // when > 0, every claim returns this many admissions (a backlog that never drains)
+}
+
+func (b *batchedAdmissionRepo) ClaimDueSessions(context.Context, time.Time, int) ([]entity.Admission, error) {
+	b.claims++
+	if b.always > 0 {
+		out := make([]entity.Admission, b.always)
+		for i := range out {
+			out[i].ID = "x"
+		}
+		return out, nil
+	}
+	if len(b.batches) == 0 {
+		return nil, nil
+	}
+	out := b.batches[0]
+	b.batches = b.batches[1:]
+	return out, nil
+}
+
+func admissionBatch(n, from int) []entity.Admission {
+	out := make([]entity.Admission, n)
+	for i := range out {
+		out[i].ID = fmt.Sprintf("a%d", from+i)
+	}
+	return out
+}
+
+// D-C7.3: a full batch means more may be due, so the sweeper claims again until a short batch ends the round.
+func TestSweepSessions_RepeatsWhileBatchFull(t *testing.T) {
+	adm := &batchedAdmissionRepo{
+		fakeAdmissionRepo: &fakeAdmissionRepo{},
+		batches:           [][]entity.Admission{admissionBatch(100, 0), admissionBatch(100, 100), admissionBatch(3, 200)},
+	}
+	uc := usecase.NewSweepSessions(adm, fixedClock{t: time.Now()})
+	require.NoError(t, uc.SweepSessions(context.Background()))
+	assert.Equal(t, 3, adm.claims)
+	assert.Len(t, adm.expired, 203)
+}
+
+// D-C7.3: one call never claims more than maxSweepRounds (20) batches, even when the backlog never drains.
+func TestSweepSessions_StopsAfterMaxRounds(t *testing.T) {
+	adm := &batchedAdmissionRepo{fakeAdmissionRepo: &fakeAdmissionRepo{}, always: 100}
+	uc := usecase.NewSweepSessions(adm, fixedClock{t: time.Now()})
+	require.NoError(t, uc.SweepSessions(context.Background()))
+	assert.Equal(t, 20, adm.claims)
+	assert.Len(t, adm.expired, 2000)
+}
+
+// batchedBookingRepo serves ClaimDueBookings from scripted batches (or always returns `always` ids).
+type batchedBookingRepo struct {
+	*fakeBookingRepo
+	batches [][]string
+	claims  int
+	always  int
+}
+
+func (b *batchedBookingRepo) ClaimDueBookings(context.Context, time.Time, int) ([]string, error) {
+	b.claims++
+	if b.always > 0 {
+		out := make([]string, b.always)
+		for i := range out {
+			out[i] = fmt.Sprintf("b%d", i)
+		}
+		return out, nil
+	}
+	if len(b.batches) == 0 {
+		return nil, nil
+	}
+	out := b.batches[0]
+	b.batches = b.batches[1:]
+	return out, nil
+}
+
+func bookingBatch(n, from int) []string {
+	out := make([]string, n)
+	for i := range out {
+		out[i] = fmt.Sprintf("b%d", from+i)
+	}
+	return out
+}
+
+// slowExpiryUC stands in for a slow Payment Resolve: each booking takes delay. After slowCalls calls it returns at once,
+// so a sweeper that ignores its budget finishes quickly and fails on the assertions instead of hanging.
+type slowExpiryUC struct {
+	delay time.Duration
+	calls int
+	ids   []string
+}
+
+func (f *slowExpiryUC) ExpireBooking(_ context.Context, id string) error {
+	f.calls++
+	if f.calls <= slowCalls {
+		time.Sleep(f.delay)
+	}
+	f.ids = append(f.ids, id)
+	return nil
+}
+
+const slowCalls = 3
+
+// D-C7.3 / R32: a sweep call stops once its budget (lease − 3 s = 12 s) is spent and leaves the rest to lapse.
+func TestSweepExpiries_StopsAfterTimeBudget(t *testing.T) {
+	t.Parallel()
+	exp := &slowExpiryUC{delay: 6 * time.Second}
+	bookings := &batchedBookingRepo{fakeBookingRepo: &fakeBookingRepo{}, always: 100}
+	uc := usecase.NewSweepExpiries(bookings, exp, fixedClock{t: time.Now()})
+	require.NoError(t, uc.SweepExpiries(context.Background()))
+	assert.Len(t, exp.ids, 2, "row 1 ends at 6 s, row 2 at 12 s; the call stops before row 3")
+	assert.Equal(t, 1, bookings.claims, "no new claim round once the budget is spent")
+}
+
+// D-C7.3: SweepExpiries repeats while a batch comes back full, like SweepSessions.
+func TestSweepExpiries_RepeatsWhileBatchFull(t *testing.T) {
+	bookings := &batchedBookingRepo{
+		fakeBookingRepo: &fakeBookingRepo{},
+		batches:         [][]string{bookingBatch(100, 0), bookingBatch(100, 100), bookingBatch(3, 200)},
+	}
+	exp := &fakeExpiryUC{}
+	uc := usecase.NewSweepExpiries(bookings, exp, fixedClock{t: time.Now()})
+	require.NoError(t, uc.SweepExpiries(context.Background()))
+	assert.Equal(t, 3, bookings.claims)
+	assert.Len(t, exp.ids, 203)
+}
+
+// slowAdmissionRepo is the session-side slow release: each ExpireSession takes delay (same cap as slowExpiryUC).
+type slowAdmissionRepo struct {
+	*batchedAdmissionRepo
+	delay time.Duration
+	calls int
+}
+
+func (s *slowAdmissionRepo) ExpireSession(ctx context.Context, id string, now time.Time) error {
+	s.calls++
+	if s.calls <= slowCalls {
+		time.Sleep(s.delay)
+	}
+	return s.batchedAdmissionRepo.ExpireSession(ctx, id, now)
+}
+
+// D-C7.3 / R32: the session sweeper also stops at the budget.
+func TestSweepSessions_StopsAfterTimeBudget(t *testing.T) {
+	t.Parallel()
+	adm := &slowAdmissionRepo{
+		batchedAdmissionRepo: &batchedAdmissionRepo{fakeAdmissionRepo: &fakeAdmissionRepo{}, always: 100},
+		delay:                6 * time.Second,
+	}
+	uc := usecase.NewSweepSessions(adm, fixedClock{t: time.Now()})
+	require.NoError(t, uc.SweepSessions(context.Background()))
+	assert.Len(t, adm.expired, 2, "row 1 ends at 6 s, row 2 at 12 s; the call stops before row 3")
+	assert.Equal(t, 1, adm.claims, "no new claim round once the budget is spent")
+}
+
 func TestSweepExpiries_DelegatesEach(t *testing.T) {
 	exp := &fakeExpiryUC{}
 	uc := usecase.NewSweepExpiries(&fakeBookingRepo{due: []string{"b1", "b2"}}, exp, fixedClock{t: time.Now()})
 	require.NoError(t, uc.SweepExpiries(context.Background()))
 	assert.Equal(t, []string{"b1", "b2"}, exp.ids)
+}
+
+// C7.2 (D-C7.2): one allocation batch carries at most 100 entries; more is a 400 that names the field.
+func TestAllocateBatch_MoreThan100Is400(t *testing.T) {
+	entries := func(n int) []dto.AllocationEntry {
+		out := make([]dto.AllocationEntry, 0, n)
+		for i := 0; i < n; i++ {
+			out = append(out, dto.AllocationEntry{QueueEntryID: "q", VisitorID: visitor, Units: 1})
+		}
+		return out
+	}
+	uc := usecase.NewAllocateBatch(&fakeAdmissionRepo{}, &fakeIDs{}, fixedClock{t: time.Now()})
+
+	_, err := uc.AllocateBatch(context.Background(), dto.AllocationBatchRequest{EventID: eventID, Entries: entries(101)})
+	require.Error(t, err)
+	assert.Equal(t, apperror.CodeValidationFailed, codeOf(t, err))
+	assert.Equal(t, "entries", validationField(t, err))
+
+	_, err = uc.AllocateBatch(context.Background(), dto.AllocationBatchRequest{EventID: eventID, Entries: entries(100)})
+	assert.NoError(t, err, "exactly 100 entries is allowed")
 }

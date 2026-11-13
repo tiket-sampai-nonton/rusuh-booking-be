@@ -24,11 +24,11 @@ func (h *StatusHandler) Register(mux *stdhttp.ServeMux) {
 }
 
 func (h *StatusHandler) status(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-	doc, err := h.uc.GetStatus(r.Context(), r.PathValue("eventId"))
+	raw, err := h.uc.GetStatus(r.Context(), r.PathValue("eventId"))
 	if err != nil {
 		writeDomainError(w, r, err)
 		return
 	}
 	w.Header().Set("Cache-Control", "public, max-age=1, stale-while-revalidate=2")
-	httpx.WriteData(w, r, stdhttp.StatusOK, doc)
+	httpx.WriteData(w, r, stdhttp.StatusOK, raw) // the stored document, served as is (D-C8.9)
 }

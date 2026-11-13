@@ -138,6 +138,9 @@ func (soldOutSettings) ListEventIDs(context.Context) ([]string, error) { return 
 func (soldOutSettings) Get(context.Context, string) (entity.EventSettings, bool, error) {
 	return entity.EventSettings{ActiveSlotCapacity: 1, NearFrontMultiplier: 1}, true, nil
 }
+func (soldOutSettings) UpdateSaleWindow(context.Context, string, time.Time, time.Time) error {
+	return nil
+}
 
 type soldOutBooking struct{ outbound.IBookingClient }
 
@@ -161,8 +164,10 @@ func TestConsumer_SoldOut_DuplicateLeavesSaleStateUnchanged(t *testing.T) {
 	second, err := s.GetSale(ctx, ev)
 	require.NoError(t, err)
 
-	assert.Equal(t, outbound.SaleState{SaleState: "CLOSED", SoldOut: true, SalesStartsMs: 1_000, SalesEndsMs: 2_000}, first)
 	assert.Equal(t, first, second, "second delivery changes nothing")
+	require.NotZero(t, first.WindowAtMs, "SetSaleWindow stamps windowAtMs")
+	first.WindowAtMs = 0 // the stamp is when the test wrote the window, not part of the sold-out outcome
+	assert.Equal(t, outbound.SaleState{SaleState: "CLOSED", SoldOut: true, SalesStartsMs: 1_000, SalesEndsMs: 2_000}, first)
 }
 
 // TC-QUE-40 (5.5): a buyer admitted into WAITING in the race window before booking.sold_out is consumed is told
@@ -202,3 +207,8 @@ type soldOutEvents struct {
 }
 
 func (s soldOutEvents) ListEventIDs(context.Context) ([]string, error) { return []string{s.ev}, nil }
+
+// ListActiveEventIDs lists the same single event: the publisher iterates the active list, which is the event under test.
+func (s soldOutEvents) ListActiveEventIDs(context.Context, time.Time) ([]string, error) {
+	return []string{s.ev}, nil
+}

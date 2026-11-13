@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -52,14 +53,14 @@ func TestPromoter_PromotesReservedAndPublishes(t *testing.T) {
 	m := newWorkerMocks(t)
 	ctx := context.Background()
 
-	m.settings.EXPECT().ListEventIDs(gomock.Any()).Return([]string{"ev1"}, nil)
+	m.settings.EXPECT().ListActiveEventIDs(gomock.Any(), gomock.Any()).Return([]string{"ev1"}, nil)
 	expectLease(m, ctx, "ev1")
 	m.settings.EXPECT().Get(gomock.Any(), "ev1").Return(entity.EventSettings{ActiveSlotCapacity: 10}, true, nil)
 	m.store.EXPECT().ActiveCount(gomock.Any(), "ev1").Return(0, nil)
 	m.store.EXPECT().TopWaiting(gomock.Any(), "ev1", 10).Return([]string{"e1"}, nil)
-	m.store.EXPECT().GetEntry(gomock.Any(), "ev1", "e1").Return(entity.Entry{
+	m.store.EXPECT().GetEntries(gomock.Any(), "ev1", []string{"e1"}).Return(map[string]entity.Entry{"e1": {
 		ID: "e1", VisitorID: "v1", AccountID: "acc-1",
-	}, true, nil)
+	}}, nil)
 	// ADR-030: the admission is anonymous. Booking receives the account (identity only) and no buyer fields; the
 	// buyer NIK, masked NIK and e-ticket email are bound at hold.
 	m.booking.EXPECT().ReserveBatch(gomock.Any(), gomock.Any()).DoAndReturn(
@@ -80,7 +81,7 @@ func TestPromoter_PromotesReservedAndPublishes(t *testing.T) {
 func TestPromoter_SkipsEventWhenLeaseHeld(t *testing.T) {
 	m := newWorkerMocks(t)
 	ctx := context.Background()
-	m.settings.EXPECT().ListEventIDs(gomock.Any()).Return([]string{"ev1"}, nil)
+	m.settings.EXPECT().ListActiveEventIDs(gomock.Any(), gomock.Any()).Return([]string{"ev1"}, nil)
 	// Lease already held by another instance — return false (spec 11.R3).
 	m.store.EXPECT().AcquirePromoterLease(gomock.Any(), "ev1", 10*time.Second).Return("", false, nil)
 	// ActiveCount, TopWaiting, ReserveBatch, Promote must NOT be called.
@@ -92,7 +93,7 @@ func TestPromoter_SkipsEventWhenLeaseHeld(t *testing.T) {
 func TestPromoter_NoFreeSlotsSkips(t *testing.T) {
 	m := newWorkerMocks(t)
 	ctx := context.Background()
-	m.settings.EXPECT().ListEventIDs(gomock.Any()).Return([]string{"ev1"}, nil)
+	m.settings.EXPECT().ListActiveEventIDs(gomock.Any(), gomock.Any()).Return([]string{"ev1"}, nil)
 	expectLease(m, ctx, "ev1")
 	m.settings.EXPECT().Get(gomock.Any(), "ev1").Return(entity.EventSettings{ActiveSlotCapacity: 5}, true, nil)
 	m.store.EXPECT().ActiveCount(gomock.Any(), "ev1").Return(5, nil)
@@ -106,12 +107,12 @@ func TestPromoter_NoFreeSlotsSkips(t *testing.T) {
 func TestPromoter_AnonymousThreeUnitRequestAndStaleQuotaOutcomeIsInert(t *testing.T) {
 	m := newWorkerMocks(t)
 	ctx := context.Background()
-	m.settings.EXPECT().ListEventIDs(gomock.Any()).Return([]string{"ev1"}, nil)
+	m.settings.EXPECT().ListActiveEventIDs(gomock.Any(), gomock.Any()).Return([]string{"ev1"}, nil)
 	expectLease(m, ctx, "ev1")
 	m.settings.EXPECT().Get(gomock.Any(), "ev1").Return(entity.EventSettings{ActiveSlotCapacity: 10}, true, nil)
 	m.store.EXPECT().ActiveCount(gomock.Any(), "ev1").Return(0, nil)
 	m.store.EXPECT().TopWaiting(gomock.Any(), "ev1", 10).Return([]string{"e1"}, nil)
-	m.store.EXPECT().GetEntry(gomock.Any(), "ev1", "e1").Return(entity.Entry{ID: "e1", VisitorID: "v1", AccountID: "acc-1", Seq: 7}, true, nil)
+	m.store.EXPECT().GetEntries(gomock.Any(), "ev1", []string{"e1"}).Return(map[string]entity.Entry{"e1": {ID: "e1", VisitorID: "v1", AccountID: "acc-1", Seq: 7}}, nil)
 	m.booking.EXPECT().ReserveBatch(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(_ context.Context, req outbound.AllocationBatchRequest) (outbound.AllocationBatchResponse, error) {
 			require.Len(t, req.Entries, 1)
@@ -131,14 +132,14 @@ func TestPromoter_AnonymousThreeUnitRequestAndStaleQuotaOutcomeIsInert(t *testin
 func TestPromoter_AdoptsAGrantThatFollowsNoSupplyAndNeverReleasesIt(t *testing.T) {
 	m := newWorkerMocks(t)
 	ctx := context.Background()
-	m.settings.EXPECT().ListEventIDs(gomock.Any()).Return([]string{"ev1"}, nil)
+	m.settings.EXPECT().ListActiveEventIDs(gomock.Any(), gomock.Any()).Return([]string{"ev1"}, nil)
 	expectLease(m, ctx, "ev1")
 	m.settings.EXPECT().Get(gomock.Any(), "ev1").Return(entity.EventSettings{ActiveSlotCapacity: 10}, true, nil)
 	m.store.EXPECT().ActiveCount(gomock.Any(), "ev1").Return(0, nil)
 	m.store.EXPECT().TopWaiting(gomock.Any(), "ev1", 10).Return([]string{"e1", "e2", "e3"}, nil)
-	for _, id := range []string{"e1", "e2", "e3"} {
-		m.store.EXPECT().GetEntry(gomock.Any(), "ev1", id).Return(entity.Entry{ID: id, VisitorID: "v-" + id}, true, nil)
-	}
+	m.store.EXPECT().GetEntries(gomock.Any(), "ev1", []string{"e1", "e2", "e3"}).Return(map[string]entity.Entry{
+		"e1": {ID: "e1", VisitorID: "v-e1"}, "e2": {ID: "e2", VisitorID: "v-e2"}, "e3": {ID: "e3", VisitorID: "v-e3"},
+	}, nil)
 	m.booking.EXPECT().ReserveBatch(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(_ context.Context, req outbound.AllocationBatchRequest) (outbound.AllocationBatchResponse, error) {
 			for _, e := range req.Entries {
@@ -171,12 +172,12 @@ func TestPromoter_AdoptsAGrantThatFollowsNoSupplyAndNeverReleasesIt(t *testing.T
 func TestPromoter_NothingGrantedPromotesNothing(t *testing.T) {
 	m := newWorkerMocks(t)
 	ctx := context.Background()
-	m.settings.EXPECT().ListEventIDs(gomock.Any()).Return([]string{"ev1"}, nil)
+	m.settings.EXPECT().ListActiveEventIDs(gomock.Any(), gomock.Any()).Return([]string{"ev1"}, nil)
 	expectLease(m, ctx, "ev1")
 	m.settings.EXPECT().Get(gomock.Any(), "ev1").Return(entity.EventSettings{ActiveSlotCapacity: 10}, true, nil)
 	m.store.EXPECT().ActiveCount(gomock.Any(), "ev1").Return(0, nil)
 	m.store.EXPECT().TopWaiting(gomock.Any(), "ev1", 10).Return([]string{"e1"}, nil)
-	m.store.EXPECT().GetEntry(gomock.Any(), "ev1", "e1").Return(entity.Entry{ID: "e1", VisitorID: "v1"}, true, nil)
+	m.store.EXPECT().GetEntries(gomock.Any(), "ev1", []string{"e1"}).Return(map[string]entity.Entry{"e1": {ID: "e1", VisitorID: "v1"}}, nil)
 	m.booking.EXPECT().ReserveBatch(gomock.Any(), gomock.Any()).Return(outbound.AllocationBatchResponse{
 		Allocations: []outbound.AllocationResult{{QueueEntryID: "e1", Status: "NO_SUPPLY_NOW"}},
 	}, nil)
@@ -189,12 +190,12 @@ func TestPromoter_NothingGrantedPromotesNothing(t *testing.T) {
 func TestPromoter_AlreadyActiveEndsEntry(t *testing.T) {
 	m := newWorkerMocks(t)
 	ctx := context.Background()
-	m.settings.EXPECT().ListEventIDs(gomock.Any()).Return([]string{"ev1"}, nil)
+	m.settings.EXPECT().ListActiveEventIDs(gomock.Any(), gomock.Any()).Return([]string{"ev1"}, nil)
 	expectLease(m, ctx, "ev1")
 	m.settings.EXPECT().Get(gomock.Any(), "ev1").Return(entity.EventSettings{ActiveSlotCapacity: 10}, true, nil)
 	m.store.EXPECT().ActiveCount(gomock.Any(), "ev1").Return(0, nil)
 	m.store.EXPECT().TopWaiting(gomock.Any(), "ev1", 10).Return([]string{"e1"}, nil)
-	m.store.EXPECT().GetEntry(gomock.Any(), "ev1", "e1").Return(entity.Entry{ID: "e1", VisitorID: "v1"}, true, nil)
+	m.store.EXPECT().GetEntries(gomock.Any(), "ev1", []string{"e1"}).Return(map[string]entity.Entry{"e1": {ID: "e1", VisitorID: "v1"}}, nil)
 	m.booking.EXPECT().ReserveBatch(gomock.Any(), gomock.Any()).Return(outbound.AllocationBatchResponse{
 		Allocations: []outbound.AllocationResult{{QueueEntryID: "e1", Status: "ALREADY_ACTIVE"}},
 	}, nil)
@@ -209,9 +210,10 @@ func TestPromoter_AlreadyActiveEndsEntry(t *testing.T) {
 func TestSweeper_MarksMissedOnly(t *testing.T) {
 	m := newWorkerMocks(t)
 	ctx := context.Background()
-	m.settings.EXPECT().ListEventIDs(gomock.Any()).Return([]string{"ev1"}, nil)
+	m.settings.EXPECT().ListActiveEventIDs(gomock.Any(), gomock.Any()).Return([]string{"ev1"}, nil)
 	m.store.EXPECT().ExpiredActive(gomock.Any(), "ev1", gomock.Any(), 500).Return([]string{"e1"}, nil)
 	m.store.EXPECT().EndEntry(gomock.Any(), "ev1", "e1", outbound.EndSweepMissed, gomock.Any()).Return(outbound.EndResult{Tag: "OK", Status: "MISSED"}, nil)
+	m.store.EXPECT().GetSale(gomock.Any(), "ev1").Return(outbound.SaleState{SaleState: "OPEN"}, nil)
 	// pub must NOT be called — Booking's own sweeper publishes booking.journey.ended (spec 11.R2, K7).
 
 	s := worker.NewSweeper(m.store, m.settings, wnow, 500)
@@ -221,18 +223,143 @@ func TestSweeper_MarksMissedOnly(t *testing.T) {
 func TestSweeper_AlreadyMissedNoPublish(t *testing.T) {
 	m := newWorkerMocks(t)
 	ctx := context.Background()
-	m.settings.EXPECT().ListEventIDs(gomock.Any()).Return([]string{"ev1"}, nil)
+	m.settings.EXPECT().ListActiveEventIDs(gomock.Any(), gomock.Any()).Return([]string{"ev1"}, nil)
 	m.store.EXPECT().ExpiredActive(gomock.Any(), "ev1", gomock.Any(), 500).Return([]string{"e1"}, nil)
 	m.store.EXPECT().EndEntry(gomock.Any(), "ev1", "e1", outbound.EndSweepMissed, gomock.Any()).Return(outbound.EndResult{Tag: "IGNORED", Status: "CLAIMED"}, nil) // not expired anymore
+	m.store.EXPECT().GetSale(gomock.Any(), "ev1").Return(outbound.SaleState{SaleState: "OPEN"}, nil)
 
 	s := worker.NewSweeper(m.store, m.settings, wnow, 500)
 	require.NoError(t, s.Run(ctx))
 }
 
+// D-C8.4: the sweeper drains a sold-out event's WAITING/STALE entries, one batch after another, until a short batch
+// comes back. Three full batches and a short one end in a single tick.
+func TestSweeper_DrainsSoldOutWaiting(t *testing.T) {
+	m := newWorkerMocks(t)
+	ctx := context.Background()
+	m.settings.EXPECT().ListActiveEventIDs(gomock.Any(), gomock.Any()).Return([]string{"ev1"}, nil)
+	m.store.EXPECT().ExpiredActive(gomock.Any(), "ev1", gomock.Any(), 500).Return(nil, nil)
+	m.store.EXPECT().GetSale(gomock.Any(), "ev1").Return(outbound.SaleState{SaleState: "CLOSED", SoldOut: true}, nil).Times(4) // re-read before each batch
+	gomock.InOrder(
+		m.store.EXPECT().EndWaitingSoldOut(gomock.Any(), "ev1", gomock.Any(), outbound.SoldOutBatchSize).
+			Return(outbound.SoldOutBatch{Scanned: outbound.SoldOutBatchSize, Ended: outbound.SoldOutBatchSize}, nil).Times(3),
+		m.store.EXPECT().EndWaitingSoldOut(gomock.Any(), "ev1", gomock.Any(), outbound.SoldOutBatchSize).
+			Return(outbound.SoldOutBatch{Scanned: 7, Ended: 7}, nil),
+	)
+
+	s := worker.NewSweeper(m.store, m.settings, wnow, 500)
+	require.NoError(t, s.Run(ctx))
+}
+
+// The per-tick budget (SoldOutMaxBatches batches of SoldOutBatchSize, 100k entries) holds even when every batch is full;
+// the rest of the set waits for the next tick.
+func TestSweeper_DrainsSoldOutWithinTickBudget(t *testing.T) {
+	m := newWorkerMocks(t)
+	ctx := context.Background()
+	m.settings.EXPECT().ListActiveEventIDs(gomock.Any(), gomock.Any()).Return([]string{"ev1"}, nil)
+	m.store.EXPECT().ExpiredActive(gomock.Any(), "ev1", gomock.Any(), 500).Return(nil, nil)
+	m.store.EXPECT().GetSale(gomock.Any(), "ev1").Return(outbound.SaleState{SaleState: "CLOSED", SoldOut: true}, nil).Times(worker.SoldOutMaxBatches)
+	m.store.EXPECT().EndWaitingSoldOut(gomock.Any(), "ev1", gomock.Any(), outbound.SoldOutBatchSize).
+		Return(outbound.SoldOutBatch{Scanned: outbound.SoldOutBatchSize, Ended: outbound.SoldOutBatchSize}, nil).
+		Times(worker.SoldOutMaxBatches)
+
+	s := worker.NewSweeper(m.store, m.settings, wnow, 500)
+	require.NoError(t, s.Run(ctx))
+}
+
+// A sale that is not sold out (never closed, or reopened by Booking's stock return, D-C5.3) is never drained.
+func TestSweeper_SoldOutFalseDoesNotDrain(t *testing.T) {
+	for _, sale := range []outbound.SaleState{
+		{SaleState: "OPEN"},
+		{SaleState: "CLOSED"}, // manual close without soldOut
+	} {
+		m := newWorkerMocks(t)
+		ctx := context.Background()
+		m.settings.EXPECT().ListActiveEventIDs(gomock.Any(), gomock.Any()).Return([]string{"ev1"}, nil)
+		m.store.EXPECT().ExpiredActive(gomock.Any(), "ev1", gomock.Any(), 500).Return(nil, nil)
+		m.store.EXPECT().GetSale(gomock.Any(), "ev1").Return(sale, nil)
+		// EndWaitingSoldOut must NOT be called (a strict mock fails on an unexpected call).
+
+		s := worker.NewSweeper(m.store, m.settings, wnow, 500)
+		require.NoError(t, s.Run(ctx), sale.SaleState)
+	}
+}
+
+// D-C5.3 / R28: the sale is re-read before every batch. When it reopens after the first batch, the drain stops at once:
+// no second EndWaitingSoldOut, so the WAITING entries behind the first batch are never ended with SOLD_OUT.
+func TestSweeper_StopsDrainWhenSaleReopens(t *testing.T) {
+	m := newWorkerMocks(t)
+	ctx := context.Background()
+	m.settings.EXPECT().ListActiveEventIDs(gomock.Any(), gomock.Any()).Return([]string{"ev1"}, nil)
+	m.store.EXPECT().ExpiredActive(gomock.Any(), "ev1", gomock.Any(), 500).Return(nil, nil)
+	gomock.InOrder(
+		m.store.EXPECT().GetSale(gomock.Any(), "ev1").Return(outbound.SaleState{SaleState: "CLOSED", SoldOut: true}, nil),
+		m.store.EXPECT().EndWaitingSoldOut(gomock.Any(), "ev1", gomock.Any(), outbound.SoldOutBatchSize).
+			Return(outbound.SoldOutBatch{Scanned: outbound.SoldOutBatchSize, Ended: outbound.SoldOutBatchSize}, nil),
+		m.store.EXPECT().GetSale(gomock.Any(), "ev1").Return(outbound.SaleState{SaleState: "OPEN", SoldOut: false}, nil),
+	)
+	// No further EndWaitingSoldOut: a strict mock fails on it.
+
+	s := worker.NewSweeper(m.store, m.settings, wnow, 500)
+	require.NoError(t, s.Run(ctx))
+}
+
+// R30 (I1): every event expires first, then the sold-out drains run. Event A is sold out with a full drain budget, and
+// event B has an expired ADMITTED entry. B's expiry must land before A's drain, or one event's 100k drain delays another
+// event's expiry past the tick.
+func TestSweeper_ExpiresEveryEventBeforeDrainingSoldOut(t *testing.T) {
+	m := newWorkerMocks(t)
+	ctx := context.Background()
+	var order []string
+	m.settings.EXPECT().ListActiveEventIDs(gomock.Any(), gomock.Any()).Return([]string{"A", "B"}, nil)
+	m.store.EXPECT().ExpiredActive(gomock.Any(), "A", gomock.Any(), 500).DoAndReturn(
+		func(context.Context, string, int64, int) ([]string, error) {
+			order = append(order, "expire A")
+			return nil, nil
+		})
+	m.store.EXPECT().ExpiredActive(gomock.Any(), "B", gomock.Any(), 500).DoAndReturn(
+		func(context.Context, string, int64, int) ([]string, error) {
+			order = append(order, "expire B")
+			return []string{"e1"}, nil
+		})
+	m.store.EXPECT().EndEntry(gomock.Any(), "B", "e1", outbound.EndSweepMissed, gomock.Any()).
+		Return(outbound.EndResult{Tag: "OK", Status: "MISSED"}, nil)
+	m.store.EXPECT().GetSale(gomock.Any(), "A").Return(outbound.SaleState{SaleState: "CLOSED", SoldOut: true}, nil).Times(worker.SoldOutMaxBatches)
+	drained := false
+	m.store.EXPECT().EndWaitingSoldOut(gomock.Any(), "A", gomock.Any(), outbound.SoldOutBatchSize).
+		DoAndReturn(func(context.Context, string, int64, int) (outbound.SoldOutBatch, error) {
+			if !drained {
+				drained = true
+				order = append(order, "drain A")
+			}
+			return outbound.SoldOutBatch{Scanned: outbound.SoldOutBatchSize, Ended: outbound.SoldOutBatchSize}, nil
+		}).Times(worker.SoldOutMaxBatches)
+	// GetSale for B: not sold out, so B has no drain.
+	m.store.EXPECT().GetSale(gomock.Any(), "B").Return(outbound.SaleState{SaleState: "OPEN"}, nil)
+
+	s := worker.NewSweeper(m.store, m.settings, wnow, 500)
+	require.NoError(t, s.Run(ctx))
+	require.Equal(t, []string{"expire A", "expire B", "drain A"}, order)
+}
+
+// A failing drain batch is returned (the tick reports it) and does not retry inside the tick.
+func TestSweeper_SoldOutDrainErrorIsReturned(t *testing.T) {
+	m := newWorkerMocks(t)
+	ctx := context.Background()
+	m.settings.EXPECT().ListActiveEventIDs(gomock.Any(), gomock.Any()).Return([]string{"ev1"}, nil)
+	m.store.EXPECT().ExpiredActive(gomock.Any(), "ev1", gomock.Any(), 500).Return(nil, nil)
+	m.store.EXPECT().GetSale(gomock.Any(), "ev1").Return(outbound.SaleState{SaleState: "CLOSED", SoldOut: true}, nil)
+	m.store.EXPECT().EndWaitingSoldOut(gomock.Any(), "ev1", gomock.Any(), outbound.SoldOutBatchSize).
+		Return(outbound.SoldOutBatch{}, errors.New("valkey down")).Times(1)
+
+	s := worker.NewSweeper(m.store, m.settings, wnow, 500)
+	require.Error(t, s.Run(ctx))
+}
+
 func TestStatusPublisher_WritesDocument(t *testing.T) {
 	m := newWorkerMocks(t)
 	ctx := context.Background()
-	m.settings.EXPECT().ListEventIDs(gomock.Any()).Return([]string{"ev1"}, nil)
+	m.settings.EXPECT().ListActiveEventIDs(gomock.Any(), gomock.Any()).Return([]string{"ev1"}, nil)
 	m.settings.EXPECT().Get(gomock.Any(), "ev1").Return(entity.EventSettings{
 		ActiveSlotCapacity: 100, NearFrontMultiplier: 2, PollFarMs: 30000, PollMidMs: 10000, PollNearMs: 3000,
 		CategoryLimitedThresholdPct: 5,
@@ -263,7 +390,7 @@ func TestStatusPublisher_WritesDocument(t *testing.T) {
 func TestStatusPublisher_SupplyErrorStillPublishes(t *testing.T) {
 	m := newWorkerMocks(t)
 	ctx := context.Background()
-	m.settings.EXPECT().ListEventIDs(gomock.Any()).Return([]string{"ev1"}, nil)
+	m.settings.EXPECT().ListActiveEventIDs(gomock.Any(), gomock.Any()).Return([]string{"ev1"}, nil)
 	m.settings.EXPECT().Get(gomock.Any(), "ev1").Return(entity.EventSettings{ActiveSlotCapacity: 100, NearFrontMultiplier: 2, PollNearMs: 3000}, true, nil)
 	m.store.EXPECT().GetSale(gomock.Any(), "ev1").Return(outbound.SaleState{SaleState: "OPEN", SoldOut: true}, nil)
 	m.booking.EXPECT().Supply(gomock.Any(), "ev1").Return(outbound.SupplySnapshot{}, assert.AnError)
@@ -288,19 +415,20 @@ func TestPromoter_PublishesTurnSoon_WhenNearFront(t *testing.T) {
 		EventID: evID, ActiveSlotCapacity: 5, NearFrontMultiplier: 2,
 		PreTurnNotifyEnabled: true,
 	}
-	m.settings.EXPECT().ListEventIDs(gomock.Any()).Return([]string{evID}, nil)
+	m.settings.EXPECT().ListActiveEventIDs(gomock.Any(), gomock.Any()).Return([]string{evID}, nil)
 	expectLease(m, ctx, evID)
 	m.settings.EXPECT().Get(gomock.Any(), evID).Return(s, true, nil)
 	// Slots full — no promotion path
 	m.store.EXPECT().ActiveCount(gomock.Any(), evID).Return(5, nil)
-	// Pre-turn notify: fetch top 10 waiting entries
-	m.store.EXPECT().TopWaiting(gomock.Any(), evID, 10).Return([]string{entryID}, nil)
+	// Pre-turn notify (after the lease release): one waiting entry, seq 1, inside the position 10 window.
+	m.store.EXPECT().WaitingCount(gomock.Any(), evID).Return(int64(1), nil)
+	m.store.EXPECT().WaitingSeqAt(gomock.Any(), evID, int64(0)).Return(int64(1), true, nil)
+	m.store.EXPECT().AdvanceNotifyWatermark(gomock.Any(), evID, int64(1)).Return(int64(0), nil)
+	m.store.EXPECT().WaitingBetween(gomock.Any(), evID, int64(0), int64(1), 10).Return([]string{entryID}, nil)
 	m.store.EXPECT().GetEntry(gomock.Any(), evID, entryID).Return(
 		entity.Entry{ID: entryID, VisitorID: visitorID}, true, nil,
 	)
-	m.store.EXPECT().WasNotifiedSoon(gomock.Any(), evID, entryID).Return(false, nil)
 	m.pub.EXPECT().PublishTurnSoon(gomock.Any(), evID, entryID, visitorID).Return(nil)
-	m.store.EXPECT().MarkNotifiedSoon(gomock.Any(), evID, entryID).Return(nil)
 
 	p := worker.NewPromoter(m.store, m.settings, m.booking, m.pub, m.audit, wnow, nil, worker.PromoterTuning{BatchMax: 200})
 	require.NoError(t, p.Run(ctx))
@@ -311,19 +439,20 @@ func TestPromoter_SkipsTurnSoon_WhenAlreadyNotified(t *testing.T) {
 	ctx := context.Background()
 
 	evID := "evt-1"
-	entryID := "near-entry-1"
 
 	s := entity.EventSettings{
 		EventID: evID, ActiveSlotCapacity: 5, NearFrontMultiplier: 2,
 		PreTurnNotifyEnabled: true,
 	}
-	m.settings.EXPECT().ListEventIDs(gomock.Any()).Return([]string{evID}, nil)
+	m.settings.EXPECT().ListActiveEventIDs(gomock.Any(), gomock.Any()).Return([]string{evID}, nil)
 	expectLease(m, ctx, evID)
 	m.settings.EXPECT().Get(gomock.Any(), evID).Return(s, true, nil)
 	m.store.EXPECT().ActiveCount(gomock.Any(), evID).Return(5, nil)
-	m.store.EXPECT().TopWaiting(gomock.Any(), evID, 10).Return([]string{entryID}, nil)
-	m.store.EXPECT().WasNotifiedSoon(gomock.Any(), evID, entryID).Return(true, nil)
-	// GetEntry and PublishTurnSoon must NOT be called — already notified
+	// The watermark already covers the window's last seq (1): nothing is read or published (C8.3).
+	m.store.EXPECT().WaitingCount(gomock.Any(), evID).Return(int64(1), nil)
+	m.store.EXPECT().WaitingSeqAt(gomock.Any(), evID, int64(0)).Return(int64(1), true, nil)
+	m.store.EXPECT().AdvanceNotifyWatermark(gomock.Any(), evID, int64(1)).Return(int64(1), nil)
+	// WaitingBetween, GetEntry and PublishTurnSoon must NOT be called — already notified
 
 	p := worker.NewPromoter(m.store, m.settings, m.booking, m.pub, m.audit, wnow, nil, worker.PromoterTuning{BatchMax: 200})
 	require.NoError(t, p.Run(ctx))
@@ -338,7 +467,7 @@ func TestPromoter_SkipsTurnSoon_WhenDisabled(t *testing.T) {
 		EventID: evID, ActiveSlotCapacity: 5, NearFrontMultiplier: 2,
 		PreTurnNotifyEnabled: false, // disabled
 	}
-	m.settings.EXPECT().ListEventIDs(gomock.Any()).Return([]string{evID}, nil)
+	m.settings.EXPECT().ListActiveEventIDs(gomock.Any(), gomock.Any()).Return([]string{evID}, nil)
 	expectLease(m, ctx, evID)
 	m.settings.EXPECT().Get(gomock.Any(), evID).Return(s, true, nil)
 	m.store.EXPECT().ActiveCount(gomock.Any(), evID).Return(5, nil)
@@ -348,15 +477,66 @@ func TestPromoter_SkipsTurnSoon_WhenDisabled(t *testing.T) {
 	require.NoError(t, p.Run(ctx))
 }
 
+// recordingTurnSoonPub records each queue.turn.soon publish into the fake store's ordered log (C8.3).
+type recordingTurnSoonPub struct {
+	*fakePub
+	store *fakeStore
+}
+
+func (p *recordingTurnSoonPub) PublishTurnSoon(_ context.Context, _, entryID, _ string) error {
+	p.store.record("publish:" + entryID)
+	return nil
+}
+
+// TC-C8.3 (PF-P1-5, D-C8.3): pre-turn notify keeps a per-event seq watermark, publishes only the seqs above it, and runs
+// after the promoter lease is released (never inside the lease).
+func TestPromoter_PreTurnNotifiesOnlyNewSeqsOutsideLease(t *testing.T) {
+	h := newHarness(t, 5, 0, worker.PromoterTuning{})
+	for i := 1; i <= 15; i++ {
+		h.store.addWaiting(fmt.Sprintf("e%d", i), 0) // seq i
+	}
+	// Five active slots: the event is full, so the tick promotes nothing and only the pre-turn step has work.
+	for i := 1; i <= 5; i++ {
+		h.store.active[fmt.Sprintf("a%d", i)] = true
+	}
+	h.settings.s = entity.EventSettings{EventID: "ev", ActiveSlotCapacity: 5, NearFrontMultiplier: 2, PreTurnNotifyEnabled: true}
+	pub := &recordingTurnSoonPub{fakePub: &fakePub{}, store: h.store}
+	p := worker.NewPromoter(h.store, h.settings, h.stub, pub, fakeAudit{}, h.clk, nil, worker.PromoterTuning{BatchMax: 200})
+	ctx := context.Background()
+
+	// Tick 1: notify position 10 -> seqs 1..10 publish, after the release of this tick's lease.
+	require.NoError(t, p.Run(ctx))
+	want := []string{"release"}
+	for i := 1; i <= 10; i++ {
+		want = append(want, fmt.Sprintf("publish:e%d", i))
+	}
+	assert.Equal(t, want, h.store.order, "tick 1 publishes e1..e10 after the release")
+
+	// Tick 2: the same window again publishes nothing; only the lease release is logged.
+	require.NoError(t, p.Run(ctx))
+	want = append(want, "release")
+	assert.Equal(t, want, h.store.order, "tick 2 publishes nothing new")
+
+	// Tick 3: the window widens to 15 -> only seqs 11..15 publish.
+	h.settings.s.NearFrontMultiplier = 3
+	require.NoError(t, p.Run(ctx))
+	want = append(want, "release")
+	for i := 11; i <= 15; i++ {
+		want = append(want, fmt.Sprintf("publish:e%d", i))
+	}
+	assert.Equal(t, want, h.store.order, "tick 3 publishes only e11..e15, after the release")
+}
+
 // QSH-T14/T15: fault isolation. A failing entry/event must not stop the rest; errors are aggregated.
 
 func TestSweeper_OneEntrysEndEntryErrorDoesNotStopTheOthers(t *testing.T) {
 	m := newWorkerMocks(t)
 	ctx := context.Background()
-	m.settings.EXPECT().ListEventIDs(gomock.Any()).Return([]string{"ev1"}, nil)
+	m.settings.EXPECT().ListActiveEventIDs(gomock.Any(), gomock.Any()).Return([]string{"ev1"}, nil)
 	m.store.EXPECT().ExpiredActive(gomock.Any(), "ev1", gomock.Any(), 500).Return([]string{"e1", "e2"}, nil)
 	m.store.EXPECT().EndEntry(gomock.Any(), "ev1", "e1", outbound.EndSweepMissed, gomock.Any()).Return(outbound.EndResult{}, errors.New("valkey down"))
 	m.store.EXPECT().EndEntry(gomock.Any(), "ev1", "e2", outbound.EndSweepMissed, gomock.Any()).Return(outbound.EndResult{Tag: "OK", Status: "MISSED"}, nil)
+	m.store.EXPECT().GetSale(gomock.Any(), "ev1").Return(outbound.SaleState{SaleState: "OPEN"}, nil)
 
 	s := worker.NewSweeper(m.store, m.settings, wnow, 500)
 	require.Error(t, s.Run(ctx), "galat dikumpulkan dan dikembalikan, bukan diabaikan")
@@ -365,10 +545,12 @@ func TestSweeper_OneEntrysEndEntryErrorDoesNotStopTheOthers(t *testing.T) {
 func TestSweeper_OneEventsFailureDoesNotStopTheOthers(t *testing.T) {
 	m := newWorkerMocks(t)
 	ctx := context.Background()
-	m.settings.EXPECT().ListEventIDs(gomock.Any()).Return([]string{"ev1", "ev2"}, nil)
+	m.settings.EXPECT().ListActiveEventIDs(gomock.Any(), gomock.Any()).Return([]string{"ev1", "ev2"}, nil)
 	m.store.EXPECT().ExpiredActive(gomock.Any(), "ev1", gomock.Any(), 500).Return(nil, errors.New("ev1 down"))
+	m.store.EXPECT().GetSale(gomock.Any(), "ev1").Return(outbound.SaleState{SaleState: "OPEN"}, nil) // drain is independent of expiry
 	m.store.EXPECT().ExpiredActive(gomock.Any(), "ev2", gomock.Any(), 500).Return([]string{"e1"}, nil)
 	m.store.EXPECT().EndEntry(gomock.Any(), "ev2", "e1", outbound.EndSweepMissed, gomock.Any()).Return(outbound.EndResult{Tag: "OK"}, nil)
+	m.store.EXPECT().GetSale(gomock.Any(), "ev2").Return(outbound.SaleState{SaleState: "OPEN"}, nil)
 
 	s := worker.NewSweeper(m.store, m.settings, wnow, 500)
 	require.Error(t, s.Run(ctx))
@@ -377,7 +559,7 @@ func TestSweeper_OneEventsFailureDoesNotStopTheOthers(t *testing.T) {
 func TestStatusPublisher_OneEventsFailureDoesNotStopTheOthers(t *testing.T) {
 	m := newWorkerMocks(t)
 	ctx := context.Background()
-	m.settings.EXPECT().ListEventIDs(gomock.Any()).Return([]string{"ev1", "ev2"}, nil)
+	m.settings.EXPECT().ListActiveEventIDs(gomock.Any(), gomock.Any()).Return([]string{"ev1", "ev2"}, nil)
 	m.settings.EXPECT().Get(gomock.Any(), "ev1").Return(entity.EventSettings{}, false, errors.New("pg down"))
 	m.settings.EXPECT().Get(gomock.Any(), "ev2").Return(entity.EventSettings{ActiveSlotCapacity: 10}, true, nil)
 	m.store.EXPECT().GetSale(gomock.Any(), "ev2").Return(outbound.SaleState{}, nil)

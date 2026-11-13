@@ -68,21 +68,17 @@ func (uc *CheckAttendee) CheckAttendee(ctx context.Context, sessionID, visitorID
 		return dto.AttendeeCheck{}, inbound.ErrNIKInvalid
 	}
 
-	// Dedupe: re-checking the same NIK does not count again.
-	counted, err := uc.checker.RecordCheck(ctx, admission.ID, nik.Hash())
+	// Dedupe and count in one atomic step: re-checking the same NIK does not count again, and a full cap is refused.
+	rec, err := uc.checker.RecordCheck(ctx, admission.ID, nik.Hash(), maxChecks)
 	if err != nil {
 		return dto.AttendeeCheck{}, err
 	}
-	used := admission.AttendeeChecks
-	if counted {
-		used++
+	if rec.LimitReached {
+		return dto.AttendeeCheck{Result: checkLimit, ChecksRemaining: 0}, nil
 	}
-	remaining := maxChecks - used
+	remaining := maxChecks - rec.Used
 	if remaining < 0 {
 		remaining = 0
-	}
-	if counted && used > maxChecks {
-		return dto.AttendeeCheck{Result: checkLimit, ChecksRemaining: 0}, nil
 	}
 
 	registered, err := uc.checker.IsRegistered(ctx, admission.EventID, nik.Hash())

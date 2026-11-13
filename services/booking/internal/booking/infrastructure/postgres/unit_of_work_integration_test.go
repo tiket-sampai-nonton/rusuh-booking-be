@@ -33,7 +33,7 @@ const (
 
 // setup creates a throw-away database. Booking's SQL names the schema "booking" explicitly (queries and the supply
 // trigger), so unlike the other services it cannot run in a temporary schema of the shared database.
-func setup(t *testing.T) *pgxpool.Pool {
+func setup(t testing.TB) *pgxpool.Pool {
 	t.Helper()
 	dsn := os.Getenv("TEST_POSTGRES_DSN")
 	if dsn == "" {
@@ -141,7 +141,7 @@ func (f fixture) holdSpec(id string) outbound.HoldSpec {
 		BookingID: id, PublicRef: "RB-7F3A9C21", EventID: f.eventID, AdmissionID: f.admissionID, VisitorID: visitor,
 		BuyerNIKHash: []byte(f.nikH), BuyerEmailEnc: sealedEmail, AmountMinor: 150000, CfgEditEnabled: true, PaymentExpiresAt: time.Now().Add(10 * time.Minute),
 		Lines: []outbound.HoldLine{{
-			CategoryID: f.categoryID, UnitPriceMinor: 150000, AttendeeNIKHash: []byte("attendee-1"), AttendeeNIKEnc: []byte("enc"),
+			ItemID: newTestUUID(), CategoryID: f.categoryID, UnitPriceMinor: 150000, AttendeeNIKHash: []byte("attendee-1"), AttendeeNIKEnc: []byte("enc"),
 			AttendeeNIKMasked: "3174********0001", AttendeeName: "Budi Santoso",
 		}},
 		CorrelationID: id,
@@ -184,7 +184,7 @@ func TestHold_LockedAtOnceKeepsReadModelInStepWithTheStream(t *testing.T) {
 		BuyerNIKHash: []byte(f.nikH), BuyerEmailEnc: sealedEmail, AmountMinor: 150000, CfgEditEnabled: false,
 		PaymentExpiresAt: time.Now().Add(10 * time.Minute), CorrelationID: id,
 		Lines: []outbound.HoldLine{{
-			CategoryID: f.categoryID, UnitPriceMinor: 150000, AttendeeNIKHash: []byte("attendee-1"), AttendeeNIKEnc: []byte("enc"),
+			ItemID: newTestUUID(), CategoryID: f.categoryID, UnitPriceMinor: 150000, AttendeeNIKHash: []byte("attendee-1"), AttendeeNIKEnc: []byte("enc"),
 			AttendeeNIKMasked: "3174********0001", AttendeeName: "Budi Santoso",
 		}},
 	})
@@ -195,6 +195,20 @@ func TestHold_LockedAtOnceKeepsReadModelInStepWithTheStream(t *testing.T) {
 	lock, err := f.uow.PaymentLock(ctx, outbound.PaymentLockSpec{BookingID: id, AttemptKey: "attempt-1", CorrelationID: id})
 	require.NoError(t, err)
 	assert.Equal(t, "OK", lock.Outcome)
+}
+
+// C3.1: hold reads the clock from the spec, so the caller's clock decides whether the admission is still open.
+func TestHold_UsesSpecClock(t *testing.T) {
+	f := seed(t)
+	ctx := context.Background()
+	before := f.stock(t)
+
+	id := f.q(t, `SELECT gen_random_uuid()::text`)
+	spec := f.holdSpec(id)
+	spec.Now = time.Now().Add(10 * time.Minute) // admission expires in 5 min, grace is 5 s
+	_, err := f.uow.Hold(ctx, spec)
+	assert.ErrorIs(t, err, inbound.ErrSessionExpired)
+	assert.Equal(t, before, f.stock(t), "stok tidak berubah ketika sesi habis menurut jam spec")
 }
 
 func (f fixture) status(t *testing.T, id string) string {
@@ -263,6 +277,20 @@ func TestPaymentLock_RefusesExpiredAndNonPayableBookings(t *testing.T) {
 	res, err = f.uow.PaymentLock(ctx, outbound.PaymentLockSpec{BookingID: id, AttemptKey: "k", CorrelationID: id})
 	require.NoError(t, err)
 	assert.Equal(t, "BOOKING_NOT_PAYABLE", res.Outcome)
+}
+
+// C3.1: payment-lock reads the clock from the spec; past payment_expires_at it refuses and stamps nothing.
+func TestPaymentLock_UsesSpecClock(t *testing.T) {
+	f := seed(t)
+	ctx := context.Background()
+	id := f.hold(t)
+	var paymentExpiresAt time.Time
+	require.NoError(t, f.pool.QueryRow(ctx, `SELECT payment_expires_at FROM booking.bookings WHERE id=$1::uuid`, id).Scan(&paymentExpiresAt))
+
+	res, err := f.uow.PaymentLock(ctx, outbound.PaymentLockSpec{BookingID: id, AttemptKey: "attempt-1", CorrelationID: id, Now: paymentExpiresAt.Add(time.Second)})
+	require.NoError(t, err)
+	assert.Equal(t, "PAYMENT_EXPIRED", res.Outcome)
+	assert.Equal(t, 0, f.n(t, `SELECT count(*) FROM booking.bookings WHERE id=$1::uuid AND payment_started_at IS NOT NULL`, id), "payment_started_at tidak diisi")
 }
 
 // The extension is recorded as an event and only once; a second request is refused (deadline_extended_at).
@@ -453,7 +481,7 @@ func TestExpireSession_EditableAdmissionBecomesConverted(t *testing.T) {
 func TestUpdateConfig_OutOfRangeValueIsAValidationError(t *testing.T) {
 	f := seed(t)
 	ttl := 30 // payment TTL minimum is 120 s
-	err := NewEventWriteRepo(f.pool).UpdateConfig(context.Background(), f.eventID, dto.UpdateEventConfigRequest{PaymentTTLSeconds: &ttl})
+	err := NewEventWriteRepo(f.pool).UpdateConfig(context.Background(), f.eventID, "acct-test", dto.UpdateEventConfigRequest{PaymentTTLSeconds: &ttl})
 	var ae *apperror.Error
 	require.ErrorAs(t, err, &ae)
 	assert.Equal(t, http.StatusBadRequest, ae.HTTPStatus)

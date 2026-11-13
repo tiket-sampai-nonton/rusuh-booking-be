@@ -1,6 +1,10 @@
 package outbound
 
-import "time"
+import (
+	"time"
+
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/domain/entity"
+)
 
 // JoinParams carries everything join.lua needs. There is no NIK, email or consent: the join ranks an anonymous
 // principal (ADR-030). The bearer account id identifies the principal only.
@@ -19,6 +23,8 @@ type JoinParams struct {
 	TokenGen int64
 	// TokenTTL is the lifetime of the server-side token record (vtok), equal to the visitor token's lifetime.
 	TokenTTL time.Duration
+	// GuestScope scopes IdemKey for a tokenless guest (device hash or keyed client IP, C6.2). "" = the key is ignored.
+	GuestScope string
 }
 
 // JoinOutcome enumerates the join.lua result kinds.
@@ -61,6 +67,25 @@ type HeartbeatResult struct {
 	Revived bool
 }
 
+// MyEntryTag is the me.lua outcome.
+type MyEntryTag string
+
+// `me` outcomes.
+const (
+	MyEntryAbsent   MyEntryTag = "ABSENT"    // no generation record for the event: never joined -> 404
+	MyEntryInvalid  MyEntryTag = "INVALID"   // rotated-out or non-positive generation -> 401
+	MyEntryNotFound MyEntryTag = "NOT_FOUND" // valid token, no entry in any state -> 404
+	MyEntryOK       MyEntryTag = "OK"
+)
+
+// MyEntryResult is the mapped me.lua reply. Position is the 1-based live position of a WAITING or STALE entry and 0
+// otherwise; Entry is set only for MyEntryOK.
+type MyEntryResult struct {
+	Tag      MyEntryTag
+	Entry    entity.Entry
+	Position int64
+}
+
 // LivenessResult is the mapped liveness.lua reply.
 type LivenessResult struct {
 	LeaseLost bool
@@ -70,6 +95,10 @@ type LivenessResult struct {
 
 // End outcome originated by the liveness sweeper.
 const EndStaleTimeout = "STALE_TIMEOUT"
+
+// EntryRetention is how long a terminal entry hash, and the fixed keys of a finished event, stay in Valkey before
+// they expire (D-C8.2, P1-4, P3-13). Live entries (WAITING, ADMITTED, CLAIMED) never get a TTL.
+const EntryRetention = 24 * time.Hour
 
 // PromoteCandidate is one reserved entry to move waiting→active.
 type PromoteCandidate struct {
@@ -100,6 +129,9 @@ type EndResult struct {
 
 // Changed reports whether the script mutated the entry.
 func (r EndResult) Changed() bool { return r.Tag == "OK" || r.Tag == "OK_CLEANUP" }
+
+// SoldOutBatchSize bounds the entries ended per EndWaitingSoldOut call (D-C8.4).
+const SoldOutBatchSize = 500
 
 // SoldOutBatch is the result of one EndWaitingSoldOut batch.
 type SoldOutBatch struct {
@@ -143,6 +175,9 @@ type SaleState struct {
 	// 0 means unknown: the join gate then reads Booking once and caches the answer.
 	SalesStartsMs int64
 	SalesEndsMs   int64
+	// WindowAtMs is when the window was cached (epoch ms). A window Booking reported without bounds stays known
+	// for 30 s from this instant, so an event without a window does not cost a Booking read on every join.
+	WindowAtMs int64
 }
 
 // AuditRecord is one entry_audit row.

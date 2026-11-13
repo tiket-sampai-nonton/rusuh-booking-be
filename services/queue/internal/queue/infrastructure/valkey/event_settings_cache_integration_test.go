@@ -4,7 +4,10 @@ package valkey
 
 import (
 	"context"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -27,6 +30,14 @@ func (s *stubSettingsSource) Get(_ context.Context, _ string) (entity.EventSetti
 
 func (s *stubSettingsSource) ListEventIDs(_ context.Context) ([]string, error) {
 	return []string{"ev-list"}, nil
+}
+
+func (s *stubSettingsSource) ListActiveEventIDs(_ context.Context, _ time.Time) ([]string, error) {
+	return []string{"ev-active"}, nil
+}
+
+func (s *stubSettingsSource) UpdateSaleWindow(_ context.Context, _ string, _, _ time.Time) error {
+	return nil
 }
 
 func TestEventSettingsCache(t *testing.T) {
@@ -58,7 +69,7 @@ func TestEventSettingsCache(t *testing.T) {
 		}
 		c := newCache(src)
 
-		_, _, _ = c.Get(ctx, "ev-c2") // populate cache
+		_, _, _ = c.Get(ctx, "ev-c2")        // populate cache
 		s, found, err := c.Get(ctx, "ev-c2") // should hit cache
 		require.NoError(t, err)
 		assert.True(t, found)
@@ -104,3 +115,89 @@ var errStubFail = stubError("stub postgres failure")
 type stubError string
 
 func (e stubError) Error() string { return string(e) }
+
+// TestEventSettingsCache_InvalidateDropsKey proves that Invalidate removes the cached row, so the next Get goes back
+// to Postgres and sees a change committed by a PUT (F-qcache).
+func TestEventSettingsCache_InvalidateDropsKey(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	src := &stubSettingsSource{
+		result: entity.EventSettings{EventID: "ev-inv", ActiveSlotCapacity: 200},
+		found:  true,
+	}
+	c := NewEventSettingsCache(store.c, store.keyer, src)
+
+	_, _, err := c.Get(ctx, "ev-inv") // populate cache
+	require.NoError(t, err)
+	require.Equal(t, 1, src.calls)
+
+	require.NoError(t, c.Invalidate(ctx, "ev-inv"))
+
+	exists, err := store.c.Do(ctx, store.c.B().Exists().Key(c.cacheKey("ev-inv")).Build()).AsInt64()
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), exists, "key cache harus terhapus setelah Invalidate")
+
+	src.result.ActiveSlotCapacity = 350 // the PUT committed a new value
+	s, found, err := c.Get(ctx, "ev-inv")
+	require.NoError(t, err)
+	assert.True(t, found)
+	assert.Equal(t, 2, src.calls, "pembacaan berikutnya harus ke source")
+	assert.Equal(t, 350, s.ActiveSlotCapacity)
+}
+
+// gatedSettingsSource holds every Get until release is closed, so concurrent misses overlap the source read.
+type gatedSettingsSource struct {
+	calls   atomic.Int32
+	release chan struct{}
+	result  entity.EventSettings
+}
+
+func (s *gatedSettingsSource) Get(_ context.Context, _ string) (entity.EventSettings, bool, error) {
+	s.calls.Add(1)
+	<-s.release
+	return s.result, true, nil
+}
+
+func (s *gatedSettingsSource) ListEventIDs(_ context.Context) ([]string, error) { return nil, nil }
+
+func (s *gatedSettingsSource) ListActiveEventIDs(_ context.Context, _ time.Time) ([]string, error) {
+	return nil, nil
+}
+
+func (s *gatedSettingsSource) UpdateSaleWindow(_ context.Context, _ string, _, _ time.Time) error {
+	return nil
+}
+
+// C8.6 (PF-P3-2): 20 concurrent misses on one event read Postgres once; every caller gets the same settings.
+func TestEventSettingsCache_SingleflightOnMiss(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	const callers = 20
+	src := &gatedSettingsSource{
+		release: make(chan struct{}),
+		result:  entity.EventSettings{EventID: "ev-sf", ActiveSlotCapacity: 250},
+	}
+	c := NewEventSettingsCache(store.c, store.keyer, src)
+
+	var wg sync.WaitGroup
+	got := make([]entity.EventSettings, callers)
+	found := make([]bool, callers)
+	errs := make([]error, callers)
+	for i := 0; i < callers; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			got[i], found[i], errs[i] = c.Get(ctx, "ev-sf")
+		}(i)
+	}
+	time.Sleep(100 * time.Millisecond) // every caller misses the cache and waits on the one in-flight read
+	close(src.release)
+	wg.Wait()
+
+	assert.Equal(t, int32(1), src.calls.Load(), "source harus dipanggil sekali untuk miss bersamaan")
+	for i := 0; i < callers; i++ {
+		require.NoError(t, errs[i], "caller %d", i)
+		assert.True(t, found[i], "caller %d", i)
+		assert.Equal(t, 250, got[i].ActiveSlotCapacity, "caller %d", i)
+	}
+}

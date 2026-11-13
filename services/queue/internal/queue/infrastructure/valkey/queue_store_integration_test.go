@@ -100,6 +100,30 @@ func endEntryNow(t *testing.T, s *QueueStore, ev, id string) {
 	require.NoError(t, s.c.Do(context.Background(), s.c.B().Zrem().Key(s.kWaiting(ev)).Member(id).Build()).Error())
 }
 
+// C6.2 (P1-13): a tokenless guest's Idempotency-Key replays only inside the guest's own scope (device hash or keyed
+// client IP). Without a scope the key is ignored, so a reused key cannot return another guest's entry.
+func TestJoin_GuestIdempotencyIsScoped(t *testing.T) {
+	s := newTestStore(t)
+	const ev, key = "ev-guest-scope", "idem-test-guest-scope-01"
+
+	d1 := join(t, s, ev, outbound.JoinParams{EntryID: "g1", NewVisitorID: "vg1", IdemKey: key, GuestScope: "d1", IdemTTL: time.Minute})
+	assert.Equal(t, outbound.JoinCreated, d1.Outcome)
+
+	d2 := join(t, s, ev, outbound.JoinParams{EntryID: "g2", NewVisitorID: "vg2", IdemKey: key, GuestScope: "d2", IdemTTL: time.Minute})
+	assert.Equal(t, outbound.JoinCreated, d2.Outcome, "another guest scope is a new join")
+	assert.NotEqual(t, d1.EntryID, d2.EntryID)
+	assert.NotEqual(t, d1.VisitorID, d2.VisitorID)
+
+	again := join(t, s, ev, outbound.JoinParams{EntryID: "g3", NewVisitorID: "vg3", IdemKey: key, GuestScope: "d1", IdemTTL: time.Minute})
+	assert.Equal(t, outbound.JoinExisting, again.Outcome, "same guest scope replays")
+	assert.Equal(t, d1.EntryID, again.EntryID)
+	assert.Equal(t, d1.VisitorID, again.VisitorID)
+
+	none := join(t, s, ev, outbound.JoinParams{EntryID: "g4", NewVisitorID: "vg4", IdemKey: key, IdemTTL: time.Minute})
+	assert.Equal(t, outbound.JoinCreated, none.Outcome, "no guest scope: the key is ignored, no replay")
+	assert.NotEqual(t, d1.EntryID, none.EntryID)
+}
+
 // ADR-030 decision table (TC-ANON-02) against the real script: T1, T2, T3, T5, T6, T9, T10, T11, T12, T14, T15, T16, T17, T18, T19, T19b.
 func TestJoinLua_DecisionTable(t *testing.T) {
 	s := newTestStore(t)
@@ -204,8 +228,8 @@ func TestJoinLua_DecisionTable(t *testing.T) {
 	})
 
 	t.Run("T16 Idempotency-Key replay returns the same entry", func(t *testing.T) {
-		first := join(t, s, "ev-t16", outbound.JoinParams{EntryID: "a", NewVisitorID: "v-a", IdemKey: "idem-test-t16-replay", IdemTTL: time.Minute})
-		again := join(t, s, "ev-t16", outbound.JoinParams{EntryID: "b", NewVisitorID: "v-b", IdemKey: "idem-test-t16-replay", IdemTTL: time.Minute})
+		first := join(t, s, "ev-t16", outbound.JoinParams{EntryID: "a", NewVisitorID: "v-a", IdemKey: "idem-test-t16-replay", GuestScope: "d-t16", IdemTTL: time.Minute})
+		again := join(t, s, "ev-t16", outbound.JoinParams{EntryID: "b", NewVisitorID: "v-b", IdemKey: "idem-test-t16-replay", GuestScope: "d-t16", IdemTTL: time.Minute})
 		assert.Equal(t, outbound.JoinExisting, again.Outcome)
 		assert.Equal(t, first.EntryID, again.EntryID)
 		assert.Equal(t, first.VisitorID, again.VisitorID)
@@ -236,13 +260,13 @@ func TestJoinLua_DecisionTable(t *testing.T) {
 		require.NoError(t, s.c.Do(context.Background(), s.c.B().Del().Key(s.kVisitor("ev-t18-A", "v-t18")).Build()).Error())
 		a2 := join(t, s, "ev-t18-A", outbound.JoinParams{EntryID: "eA2", NewVisitorID: "v-t18-x", TokenVisitorID: "v-t18"})
 		assert.Equal(t, outbound.JoinCreated, a2.Outcome)
-		assert.EqualValues(t, 2, a2.Gen, "gen di Event A seharusnya sudah dirotasi ke 2")
+		require.Greater(t, a2.Gen, a1.Gen, "gen di Event A seharusnya sudah dirotasi (naik)")
 
 		// join Event B dengan token gen=2 dari Event A
-		b := join(t, s, "ev-t18-B", outbound.JoinParams{EntryID: "eB", NewVisitorID: "v-t18-new", TokenVisitorID: "v-t18", TokenGen: 2})
+		b := join(t, s, "ev-t18-B", outbound.JoinParams{EntryID: "eB", NewVisitorID: "v-t18-new", TokenVisitorID: "v-t18", TokenGen: a2.Gen})
 		assert.Equal(t, outbound.JoinCreated, b.Outcome)
 		assert.Equal(t, "v-t18", b.VisitorID, "visitor id harus sama")
-		assert.EqualValues(t, 2, b.Gen, "gen di Event B harus = tokGen (2), bukan 1 atau hasil rotate")
+		assert.Equal(t, a2.Gen, b.Gen, "gen di Event B harus = tokGen, bukan 1 atau hasil rotate")
 	})
 
 	t.Run("T19 guard: vtok+visitor expired tapi vlast masih ada -> EXISTING dikembalikan, bukan duplikat", func(t *testing.T) {
@@ -370,6 +394,15 @@ func TestJoinLua_ConcurrencyProofs(t *testing.T) {
 	})
 }
 
+// withoutWindowStamp returns st with WindowAtMs cleared, after checking that SetSaleWindow stamped it: the window
+// assertions below pin the sale fields, and the stamp has its own subtest.
+func withoutWindowStamp(t *testing.T, st outbound.SaleState) outbound.SaleState {
+	t.Helper()
+	require.NotZero(t, st.WindowAtMs, "SetSaleWindow stamps windowAtMs")
+	st.WindowAtMs = 0
+	return st
+}
+
 // TC-QUE-40 (P15): the sale window and the sold-out flag share one hash but neither writer clobbers the other.
 func TestQueueStore_SaleWindow(t *testing.T) {
 	ctx := context.Background()
@@ -388,7 +421,7 @@ func TestQueueStore_SaleWindow(t *testing.T) {
 		require.NoError(t, s.SetSale(ctx, ev, "CLOSED", true))
 		got, err := s.GetSale(ctx, ev)
 		require.NoError(t, err)
-		assert.Equal(t, outbound.SaleState{SaleState: "CLOSED", SoldOut: true, SalesStartsMs: starts, SalesEndsMs: ends}, got)
+		assert.Equal(t, outbound.SaleState{SaleState: "CLOSED", SoldOut: true, SalesStartsMs: starts, SalesEndsMs: ends}, withoutWindowStamp(t, got))
 	})
 	t.Run("SetSale then window: both survive", func(t *testing.T) {
 		s := newTestStore(t)
@@ -397,7 +430,7 @@ func TestQueueStore_SaleWindow(t *testing.T) {
 		require.NoError(t, s.SetSaleWindow(ctx, ev, starts, ends))
 		got, err := s.GetSale(ctx, ev)
 		require.NoError(t, err)
-		assert.Equal(t, outbound.SaleState{SaleState: "CLOSED", SoldOut: true, SalesStartsMs: starts, SalesEndsMs: ends}, got)
+		assert.Equal(t, outbound.SaleState{SaleState: "CLOSED", SoldOut: true, SalesStartsMs: starts, SalesEndsMs: ends}, withoutWindowStamp(t, got))
 	})
 	t.Run("window rewrite replaces only the window", func(t *testing.T) {
 		s := newTestStore(t)
@@ -407,6 +440,19 @@ func TestQueueStore_SaleWindow(t *testing.T) {
 		require.NoError(t, s.SetSaleWindow(ctx, ev, starts+1, ends+1))
 		got, err := s.GetSale(ctx, ev)
 		require.NoError(t, err)
-		assert.Equal(t, outbound.SaleState{SaleState: "OPEN", SalesStartsMs: starts + 1, SalesEndsMs: ends + 1}, got)
+		assert.Equal(t, outbound.SaleState{SaleState: "OPEN", SalesStartsMs: starts + 1, SalesEndsMs: ends + 1}, withoutWindowStamp(t, got))
+	})
+	t.Run("window stamps windowAtMs from the store clock, zero bounds included", func(t *testing.T) {
+		s := newTestStore(t)
+		ev := evID(t)
+		before := time.Now().UnixMilli()
+		require.NoError(t, s.SetSaleWindow(ctx, ev, 0, 0))
+		after := time.Now().UnixMilli()
+		got, err := s.GetSale(ctx, ev)
+		require.NoError(t, err)
+		assert.GreaterOrEqual(t, got.WindowAtMs, before)
+		assert.LessOrEqual(t, got.WindowAtMs, after)
+		assert.Equal(t, int64(0), got.SalesStartsMs)
+		assert.Equal(t, int64(0), got.SalesEndsMs)
 	})
 }

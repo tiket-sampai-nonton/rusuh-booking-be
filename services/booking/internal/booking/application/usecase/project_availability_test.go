@@ -14,18 +14,18 @@ import (
 )
 
 type fakeAvailSource struct {
-	byEvent map[string][]outbound.CategoryAvailabilitySnap
+	byEvent map[string]outbound.AvailabilitySnapshot
 	err     error
 }
 
-func (f fakeAvailSource) OnSaleAvailability(context.Context, time.Time) (map[string][]outbound.CategoryAvailabilitySnap, error) {
+func (f fakeAvailSource) OnSaleAvailability(context.Context, time.Time) (map[string]outbound.AvailabilitySnapshot, error) {
 	return f.byEvent, f.err
 }
 
 func TestProjectAvailability_WritesEverySnapshotAndReportsFailures(t *testing.T) {
-	snaps := map[string][]outbound.CategoryAvailabilitySnap{
-		"ev1": {{CategoryID: "c1", Available: 3}},
-		"ev2": {{CategoryID: "c2", Available: 0}},
+	snaps := map[string]outbound.AvailabilitySnapshot{
+		"ev1": {EventFree: 4, Categories: []outbound.CategoryAvailabilitySnap{{CategoryID: "c1", Available: 3}}},
+		"ev2": {EventFree: 0, Categories: []outbound.CategoryAvailabilitySnap{{CategoryID: "c2", Available: 0}}},
 	}
 	cache := &fakeAvailCache{}
 	uc := usecase.NewProjectAvailability(fakeAvailSource{byEvent: snaps}, cache, fixedClock{})

@@ -42,7 +42,7 @@ func TestTokenLifetimeBoundary_RecordGoneVersusTokenExpired(t *testing.T) {
 			auth := g.authAt(g.now.Add(tt.at))
 			mux := stdhttp.NewServeMux()
 			queuehttp.NewMyEntryHandler(uc, auth).Register(mux)
-			req := httptest.NewRequest(stdhttp.MethodGet, "/api/v1/queue-entries/me?eventId=ev1", nil)
+			req := httptest.NewRequest(stdhttp.MethodGet, "/api/v1/queue-entries/me?eventId=5b1f2c9e-0000-4000-8000-000000000001", nil)
 			req.Header.Set("X-Visitor-Token", g.unbound)
 			rec := httptest.NewRecorder()
 			mux.ServeHTTP(rec, req)
