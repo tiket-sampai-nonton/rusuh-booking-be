@@ -227,3 +227,64 @@ func shardName(b int) string {
 	}
 	return "B=16_sharded"
 }
+
+// idsPerShard returns perShard entry ids for each of the b shards, so a test sets how many silent entries every shard
+// holds.
+func idsPerShard(b, perShard int) []string {
+	count := make([]int, b)
+	var ids []string
+	for i := 0; len(ids) < b*perShard; i++ {
+		id := fmt.Sprintf("budget-%d", i)
+		if sh := queueshard.Shard(id, b); count[sh] < perShard {
+			count[sh]++
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
+
+// C8.7 (PF-P2-1): the liveness tick has ONE budget across all shards. 16 shards x 100 silent entries and a budget of
+// 300 stale exactly 300 in the tick, not 300 per shard.
+func TestLivenessTick_TotalBudgetAcrossShards(t *testing.T) {
+	const shards, perShard, budget = 16, 100, 300
+	s := newTestStoreShards(t, shards)
+	ctx := context.Background()
+	ev := "ev-budget"
+	for _, id := range idsPerShard(shards, perShard) {
+		joinAt(t, s, ev, outbound.JoinParams{EntryID: id, NewVisitorID: "v-" + id}, t0)
+	}
+	now := t0 + 100_000 // silent for 100 s: past StaleAfter (90 s), short of EndAfter (300 s)
+
+	res, _, err := s.SweepLivenessTick(ctx, ev, now-90_000, now-300_000, budget, now, 5*time.Second, 0, 0)
+	require.NoError(t, err)
+	require.False(t, res.LeaseLost)
+	assert.Equal(t, budget, res.Staled, "the budget bounds the whole tick, not each shard")
+	assert.Zero(t, res.Ended)
+}
+
+// C8.7 (PF-P2-1): the start shard rotates per tick, so every shard is reached. With budget 300 and 100 silent entries
+// per shard, six ticks with start 0..5 stale all 1600 entries. A fixed start would keep draining shards 0..2 and never
+// reach the rest.
+func TestLivenessTick_RotatingStartShardReachesEveryShard(t *testing.T) {
+	const shards, perShard, budget = 16, 100, 300
+	s := newTestStoreShards(t, shards)
+	ctx := context.Background()
+	ev := "ev-rotate"
+	for _, id := range idsPerShard(shards, perShard) {
+		joinAt(t, s, ev, outbound.JoinParams{EntryID: id, NewVisitorID: "v-" + id}, t0)
+	}
+	now := t0 + 100_000
+
+	staled := 0
+	for tick := 0; tick < 6; tick++ {
+		res, _, err := s.SweepLivenessTick(ctx, ev, now-90_000, now-300_000, budget, now, 5*time.Second, 0, tick)
+		require.NoError(t, err)
+		require.False(t, res.LeaseLost)
+		assert.LessOrEqual(t, res.Staled, budget, "tick %d stays inside the budget", tick)
+		staled += res.Staled
+	}
+	assert.Equal(t, shards*perShard, staled, "six ticks reach every silent entry")
+	for sh := 0; sh < shards; sh++ {
+		assert.Zero(t, zcard(t, s, s.kHbShard(ev, strconv.Itoa(sh))), "shard %d is reached", sh)
+	}
+}

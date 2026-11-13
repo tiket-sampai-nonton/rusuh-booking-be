@@ -91,10 +91,10 @@ func TestTerminalEntriesGetRetention(t *testing.T) {
 		ev := evID(t)
 		id, _, _ := joinOne(t, s, ev, 8, now)
 		staleAt := now + 90_002
-		_, _, err := s.SweepLivenessTick(ctx, ev, staleAt-90_000, staleAt-300_000, 100, staleAt, 5*time.Second, 0)
+		_, _, err := s.SweepLivenessTick(ctx, ev, staleAt-90_000, staleAt-300_000, 100, staleAt, 5*time.Second, 0, 0)
 		require.NoError(t, err)
 		endAt := now + 300_002
-		r, _, err := s.SweepLivenessTick(ctx, ev, endAt-90_000, endAt-300_000, 100, endAt, 5*time.Second, 0)
+		r, _, err := s.SweepLivenessTick(ctx, ev, endAt-90_000, endAt-300_000, 100, endAt, 5*time.Second, 0, 0)
 		require.NoError(t, err)
 		require.Equal(t, 1, r.Ended)
 		assert.Equal(t, "ENDED", hget(t, s, s.kEntry(ev, id), "status"))

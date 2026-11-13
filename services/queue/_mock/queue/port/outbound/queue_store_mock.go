@@ -420,9 +420,9 @@ func (mr *MockIQueueStoreMockRecorder) SweepLiveness(ctx, eventID, leaseToken, s
 }
 
 // SweepLivenessTick mocks base method.
-func (m *MockIQueueStore) SweepLivenessTick(ctx context.Context, eventID string, staleBeforeMs, endBeforeMs int64, batch int, nowMs int64, ttl time.Duration, topN int) (outbound.LivenessResult, []string, error) {
+func (m *MockIQueueStore) SweepLivenessTick(ctx context.Context, eventID string, staleBeforeMs, endBeforeMs int64, batch int, nowMs int64, ttl time.Duration, topN, startShard int) (outbound.LivenessResult, []string, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "SweepLivenessTick", ctx, eventID, staleBeforeMs, endBeforeMs, batch, nowMs, ttl, topN)
+	ret := m.ctrl.Call(m, "SweepLivenessTick", ctx, eventID, staleBeforeMs, endBeforeMs, batch, nowMs, ttl, topN, startShard)
 	ret0, _ := ret[0].(outbound.LivenessResult)
 	ret1, _ := ret[1].([]string)
 	ret2, _ := ret[2].(error)
@@ -430,9 +430,9 @@ func (m *MockIQueueStore) SweepLivenessTick(ctx context.Context, eventID string,
 }
 
 // SweepLivenessTick indicates an expected call of SweepLivenessTick.
-func (mr *MockIQueueStoreMockRecorder) SweepLivenessTick(ctx, eventID, staleBeforeMs, endBeforeMs, batch, nowMs, ttl, topN any) *gomock.Call {
+func (mr *MockIQueueStoreMockRecorder) SweepLivenessTick(ctx, eventID, staleBeforeMs, endBeforeMs, batch, nowMs, ttl, topN, startShard any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SweepLivenessTick", reflect.TypeOf((*MockIQueueStore)(nil).SweepLivenessTick), ctx, eventID, staleBeforeMs, endBeforeMs, batch, nowMs, ttl, topN)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SweepLivenessTick", reflect.TypeOf((*MockIQueueStore)(nil).SweepLivenessTick), ctx, eventID, staleBeforeMs, endBeforeMs, batch, nowMs, ttl, topN, startShard)
 }
 
 // TopWaiting mocks base method.

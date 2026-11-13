@@ -39,11 +39,11 @@ func TestLiveness_LeaseHeldSkipsAndWarnsAfterSixConsecutive(t *testing.T) {
 	m.settings.EXPECT().ListEventIDs(gomock.Any()).Return([]string{"ev1", "ev2"}, nil).AnyTimes()
 
 	// ev1 is always held; ev2 is held only on the first pass, then succeeds.
-	m.store.EXPECT().SweepLivenessTick(gomock.Any(), "ev1", gomock.Any(), gomock.Any(), 10, gomock.Any(), 10*time.Second, 0).
+	m.store.EXPECT().SweepLivenessTick(gomock.Any(), "ev1", gomock.Any(), gomock.Any(), 10, gomock.Any(), 10*time.Second, 0, gomock.Any()).
 		Return(outbound.LivenessResult{LeaseLost: true}, nil, nil).AnyTimes()
-	m.store.EXPECT().SweepLivenessTick(gomock.Any(), "ev2", gomock.Any(), gomock.Any(), 10, gomock.Any(), 10*time.Second, 0).
+	m.store.EXPECT().SweepLivenessTick(gomock.Any(), "ev2", gomock.Any(), gomock.Any(), 10, gomock.Any(), 10*time.Second, 0, gomock.Any()).
 		Return(outbound.LivenessResult{LeaseLost: true}, nil, nil).Times(1)
-	m.store.EXPECT().SweepLivenessTick(gomock.Any(), "ev2", gomock.Any(), gomock.Any(), 10, gomock.Any(), 10*time.Second, 0).
+	m.store.EXPECT().SweepLivenessTick(gomock.Any(), "ev2", gomock.Any(), gomock.Any(), 10, gomock.Any(), 10*time.Second, 0, gomock.Any()).
 		Return(outbound.LivenessResult{}, nil, nil).AnyTimes()
 
 	for i := 1; i <= 5; i++ {
@@ -71,8 +71,8 @@ func TestLiveness_SuccessResetsCounter(t *testing.T) {
 	held := outbound.LivenessResult{LeaseLost: true}
 	seq := []outbound.LivenessResult{held, held, held, held, held, {}, held, held, held, held, held, held}
 	i := 0
-	m.store.EXPECT().SweepLivenessTick(gomock.Any(), "ev1", gomock.Any(), gomock.Any(), 10, gomock.Any(), 10*time.Second, 0).
-		DoAndReturn(func(context.Context, string, int64, int64, int, int64, time.Duration, int) (outbound.LivenessResult, []string, error) {
+	m.store.EXPECT().SweepLivenessTick(gomock.Any(), "ev1", gomock.Any(), gomock.Any(), 10, gomock.Any(), 10*time.Second, 0, gomock.Any()).
+		DoAndReturn(func(context.Context, string, int64, int64, int, int64, time.Duration, int, int) (outbound.LivenessResult, []string, error) {
 			r := seq[i]
 			i++
 			return r, nil, nil
@@ -123,11 +123,33 @@ func TestLiveness_EvictsCounterOfRemovedEvent(t *testing.T) {
 		m.settings.EXPECT().ListEventIDs(gomock.Any()).Return([]string{}, nil).Times(1),
 		m.settings.EXPECT().ListEventIDs(gomock.Any()).Return([]string{"ev1"}, nil).Times(1),
 	)
-	m.store.EXPECT().SweepLivenessTick(gomock.Any(), "ev1", gomock.Any(), gomock.Any(), 10, gomock.Any(), 10*time.Second, 0).
+	m.store.EXPECT().SweepLivenessTick(gomock.Any(), "ev1", gomock.Any(), gomock.Any(), 10, gomock.Any(), 10*time.Second, 0, gomock.Any()).
 		Return(outbound.LivenessResult{LeaseLost: true}, nil, nil).AnyTimes()
 
 	for i := 0; i < 7; i++ {
 		require.NoError(t, l.Run(ctx))
 	}
 	assert.Zero(t, warnCount(buf), "6th lost pass overall, but the counter was evicted while ev1 was absent")
+}
+
+// C8.7 (PF-P2-1): the start shard rotates once per tick, shared by every event of that tick, so each tick starts its
+// budget at the next shard and the shards a budget misses are reached by later ticks.
+func TestLiveness_StartShardRotatesPerTick(t *testing.T) {
+	m := newWorkerMocks(t)
+	l, _ := newLivenessForTest(m)
+	ctx := context.Background()
+	m.settings.EXPECT().ListEventIDs(gomock.Any()).Return([]string{"ev1", "ev2"}, nil).AnyTimes()
+	var starts []int
+	m.store.EXPECT().SweepLivenessTick(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), 10, gomock.Any(), 10*time.Second, 0, gomock.Any()).
+		DoAndReturn(func(_ context.Context, ev string, _, _ int64, _ int, _ int64, _ time.Duration, _ int, start int) (outbound.LivenessResult, []string, error) {
+			if ev == "ev1" {
+				starts = append(starts, start)
+			}
+			return outbound.LivenessResult{}, nil, nil
+		}).AnyTimes()
+
+	for i := 0; i < 3; i++ {
+		require.NoError(t, l.Run(ctx))
+	}
+	assert.Equal(t, []int{0, 1, 2}, starts, "tick i starts at shard i; ev2 shares the tick's start")
 }

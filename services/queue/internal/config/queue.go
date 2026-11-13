@@ -210,7 +210,7 @@ type Liveness struct {
 	NearInterval      time.Duration // QUEUE_HEARTBEAT_NEAR_INTERVAL_SECONDS, used near the head
 	StaleAfter        time.Duration // QUEUE_STALE_AFTER_SECONDS: silent longer than this -> STALE
 	EndAfter          time.Duration // QUEUE_END_AFTER_SECONDS: silent longer than this -> ENDED (only without admission)
-	BatchMax          int           // QUEUE_LIVENESS_BATCH_MAX entries marked/ended per event and shard per tick
+	BatchMax          int           // QUEUE_LIVENESS_BATCH_MAX entries staled or ended per event and tick, across all shards
 	Shards            int           // QUEUE_LIVENESS_SHARDS: hb/hbstale index is split across this many keys (ADR-030 Amendment)
 }
 

@@ -62,8 +62,9 @@ type IQueueStore interface {
 	// and releases the lease in ONE round-trip (liveness_tick.lua). The liveness worker uses it (topN=0) so the
 	// promoter tick issues a single command under heartbeat load, keeping the tick within +20 % of base
 	// (design-change §4.3). ttl bounds the lease the script holds for its own execution; the returned slice is the
-	// top-N live WAITING ids by seq (nil when topN=0 or LEASE_LOST).
-	SweepLivenessTick(ctx context.Context, eventID string, staleBeforeMs, endBeforeMs int64, batch int, nowMs int64, ttl time.Duration, topN int) (LivenessResult, []string, error)
+	// top-N live WAITING ids by seq (nil when topN=0 or LEASE_LOST). batch is the budget of the WHOLE tick (entries
+	// staled plus ended, across all shards); startShard is the shard the sweep begins at (C8.7).
+	SweepLivenessTick(ctx context.Context, eventID string, staleBeforeMs, endBeforeMs int64, batch int, nowMs int64, ttl time.Duration, topN int, startShard int) (LivenessResult, []string, error)
 	// WaitingSeqAt returns the seq of the live (WAITING, non-STALE) entry at 0-based position idx.
 	WaitingSeqAt(ctx context.Context, eventID string, idx int64) (int64, bool, error)
 	// WaitingCount returns the number of live waiting entries.

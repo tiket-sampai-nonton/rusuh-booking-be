@@ -446,7 +446,7 @@ func (s *fakeStore) FindLastByVisitor(context.Context, string, string) (entity.E
 func (s *fakeStore) SweepLiveness(context.Context, string, string, int64, int64, int, int64) (outbound.LivenessResult, error) {
 	return outbound.LivenessResult{}, nil
 }
-func (s *fakeStore) SweepLivenessTick(context.Context, string, int64, int64, int, int64, time.Duration, int) (outbound.LivenessResult, []string, error) {
+func (s *fakeStore) SweepLivenessTick(context.Context, string, int64, int64, int, int64, time.Duration, int, int) (outbound.LivenessResult, []string, error) {
 	return outbound.LivenessResult{}, nil, nil
 }
 func (s *fakeStore) WaitingSeqAt(ctx context.Context, ev string, idx int64) (int64, bool, error) {

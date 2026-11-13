@@ -12,7 +12,8 @@ import (
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/port/outbound"
 )
 
-// LivenessTuning holds the heartbeat thresholds (R03.8) and the per-tick batch.
+// LivenessTuning holds the heartbeat thresholds (R03.8) and the per-tick budget (BatchMax counts the entries staled
+// plus ended per event and tick, across all shards).
 type LivenessTuning struct {
 	StaleAfter time.Duration
 	EndAfter   time.Duration
@@ -34,6 +35,10 @@ type Liveness struct {
 	// leaseHeld counts consecutive passes per event that found the promoter lease held. It is touched only from
 	// Run, which the runner calls from a single goroutine (one goroutine per job), so it needs no mutex.
 	leaseHeld map[string]int
+
+	// tick counts the sweeps run by Run. Its value is the shard each sweep begins at, so the budget of a tick that
+	// falls short of some shards is spent on other shards in the next tick (C8.7). Run is single-goroutine too.
+	tick int
 }
 
 // leaseHeldWarnEvery is the number of consecutive skipped passes between starvation warnings (~30 s at 5 s).
@@ -63,9 +68,12 @@ func (l *Liveness) Run(ctx context.Context) error {
 		return err
 	}
 	l.evictRemoved(ids)
+	// One start shard per tick, shared by every event of the tick.
+	startShard := l.tick
+	l.tick++
 	var errs []error
 	for _, eventID := range ids {
-		if err := l.runEvent(ctx, eventID); err != nil {
+		if err := l.runEvent(ctx, eventID, startShard); err != nil {
 			errs = append(errs, fmt.Errorf("liveness event %s: %w", eventID, err))
 		}
 	}
@@ -88,12 +96,12 @@ func (l *Liveness) evictRemoved(ids []string) {
 	}
 }
 
-func (l *Liveness) runEvent(ctx context.Context, eventID string) error {
+func (l *Liveness) runEvent(ctx context.Context, eventID string, startShard int) error {
 	// One round-trip: acquire-sweep-release inside liveness_tick.lua. Separate acquire/sweep/release calls each queue
 	// behind heartbeat traffic on Valkey's single command thread and push the promoter tick past +20 % of base
 	// (design-change §4.3). A busy event (lease held by the promoter) is skipped this tick via LEASE_LOST.
 	now := l.clock.Now().UnixMilli()
-	res, _, err := l.store.SweepLivenessTick(ctx, eventID, now-l.tuning.StaleAfter.Milliseconds(), now-l.tuning.EndAfter.Milliseconds(), l.tuning.BatchMax, now, l.tuning.LeaseTTL, 0)
+	res, _, err := l.store.SweepLivenessTick(ctx, eventID, now-l.tuning.StaleAfter.Milliseconds(), now-l.tuning.EndAfter.Milliseconds(), l.tuning.BatchMax, now, l.tuning.LeaseTTL, 0, startShard)
 	if err != nil {
 		return err
 	}

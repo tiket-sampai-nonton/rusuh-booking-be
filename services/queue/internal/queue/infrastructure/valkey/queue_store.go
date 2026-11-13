@@ -686,17 +686,16 @@ func (s *QueueStore) FindLastByVisitor(ctx context.Context, eventID, visitorID s
 	return s.GetEntry(ctx, eventID, id)
 }
 
-// SweepLiveness runs liveness.lua once per shard under the lease token (ADR-030 Amendment: the hb/hbstale index is
-// sharded, so the per-tick sweep fans out over all shards instead of contending on one key). The lease fence is
-// re-checked at the start of every shard call; a lost lease aborts the whole fan-out. batch bounds the work PER
-// SHARD (so up to shards*batch entries can be swept per tick).
+// SweepLiveness runs liveness.lua in one EVAL under the lease token over the sharded hb/hbstale index (ADR-030
+// Amendment). batch is the budget of the whole sweep (entries staled plus ended, across all shards), and the sweep
+// begins at shard 0; the production tick uses SweepLivenessTick, which rotates the start shard (C8.7).
 func (s *QueueStore) SweepLiveness(ctx context.Context, eventID, leaseToken string, staleBeforeMs, endBeforeMs int64, batch int, nowMs int64) (outbound.LivenessResult, error) {
 	// One EVAL sweeps ALL shards (the script loops s=0..B-1). Fanning out as B separate EVALs multiplied the
 	// promoter-tick latency because every round-trip queues behind the heartbeat traffic on Valkey's single command
 	// thread (design-change §4.3); a single round-trip keeps the tick within +20 % of base under load.
 	arr, err := s.liveness.Exec(ctx, s.c, []string{s.kSeq(eventID)}, []string{
 		s.prefix(eventID), leaseToken, strconv.FormatInt(staleBeforeMs, 10), strconv.FormatInt(endBeforeMs, 10),
-		strconv.Itoa(batch), strconv.FormatInt(nowMs, 10), strconv.Itoa(s.shards), retentionMs(),
+		strconv.Itoa(batch), strconv.FormatInt(nowMs, 10), strconv.Itoa(s.shards), retentionMs(), "0",
 	}).ToArray()
 	if err != nil {
 		return outbound.LivenessResult{}, fmt.Errorf("valkey: liveness.lua (B=%d): %w", s.shards, err)
@@ -716,7 +715,7 @@ func (s *QueueStore) SweepLiveness(ctx context.Context, eventID, leaseToken stri
 // queues behind the heartbeat traffic, so collapsing three round-trips into one keeps the tick within +20 % of base
 // (design-change §4.3). ttl bounds the lease the script takes for the duration of its own execution. The entry
 // liveness rules (STALE/revive/end) are identical to SweepLiveness.
-func (s *QueueStore) SweepLivenessTick(ctx context.Context, eventID string, staleBeforeMs, endBeforeMs int64, batch int, nowMs int64, ttl time.Duration, topN int) (outbound.LivenessResult, []string, error) {
+func (s *QueueStore) SweepLivenessTick(ctx context.Context, eventID string, staleBeforeMs, endBeforeMs int64, batch int, nowMs int64, ttl time.Duration, topN int, startShard int) (outbound.LivenessResult, []string, error) {
 	tok, err := newLeaseToken()
 	if err != nil {
 		return outbound.LivenessResult{}, nil, err
@@ -724,7 +723,7 @@ func (s *QueueStore) SweepLivenessTick(ctx context.Context, eventID string, stal
 	arr, err := s.livenessTick.Exec(ctx, s.c, []string{s.kLease(eventID)}, []string{
 		s.prefix(eventID), tok, strconv.FormatInt(staleBeforeMs, 10), strconv.FormatInt(endBeforeMs, 10),
 		strconv.Itoa(batch), strconv.FormatInt(nowMs, 10), strconv.Itoa(s.shards), strconv.FormatInt(ttl.Milliseconds(), 10),
-		strconv.Itoa(topN), retentionMs(),
+		strconv.Itoa(topN), retentionMs(), strconv.Itoa(startShard),
 	}).ToArray()
 	if err != nil {
 		return outbound.LivenessResult{}, nil, fmt.Errorf("valkey: liveness_tick.lua (B=%d): %w", s.shards, err)
