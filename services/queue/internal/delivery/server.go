@@ -24,9 +24,18 @@ func RunServer(ctx context.Context, cfg config.Config, logger *slog.Logger, need
 	if err != nil {
 		return err
 	}
+
+	mod, err := newQueueModule(cfg, clients, logger)
+	if err != nil {
+		clients.Close()
+		return err
+	}
+	// One module per process. Registered before clients.Close so it runs after the audit flush; httpx.Run has
+	// already drained the server by then.
+	defer func() { _ = mod.Close() }()
 	defer clients.Close()
 
-	handler, err := NewHandler(cfg, clients, logger)
+	handler, err := NewHandler(cfg, mod, logger)
 	if err != nil {
 		return err
 	}
@@ -34,17 +43,14 @@ func RunServer(ctx context.Context, cfg config.Config, logger *slog.Logger, need
 	return httpx.Run(ctx, srv, cfg.HTTP.ShutdownTimeout, logger)
 }
 
-// NewHandler builds the HTTP handler. Setiap domain mendaftarkan rute miliknya (route registrar).
-func NewHandler(cfg config.Config, clients *Clients, logger *slog.Logger) (http.Handler, error) {
-	health := usecase.NewCheckHealth(config.ServiceName, healthcheck.New(clients.Pingers(), cfg.HTTP.HealthTimeout), clock.System{})
+// NewHandler builds the HTTP handler around the given module (built once per process by the caller). Setiap domain
+// mendaftarkan rute miliknya (route registrar).
+func NewHandler(cfg config.Config, mod *queueModule, logger *slog.Logger) (http.Handler, error) {
+	health := usecase.NewCheckHealth(config.ServiceName, healthcheck.New(mod.pingers, cfg.HTTP.HealthTimeout), clock.System{})
 
 	mux := http.NewServeMux()
 	queuehttp.NewHealthHandler(health).Register(mux)
 
-	mod, err := newQueueModule(cfg, clients, logger)
-	if err != nil {
-		return nil, err
-	}
 	mod.Register(mux)
 
 	mux.Handle("GET /metrics", telemetry.Handler())

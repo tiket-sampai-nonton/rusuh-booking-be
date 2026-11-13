@@ -24,6 +24,7 @@ import (
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/config"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/application/usecase"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/infrastructure/bookingclient"
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/infrastructure/healthcheck"
 	queuehttp "github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/infrastructure/http"
 	queuepg "github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/infrastructure/postgres"
 	queuerabbitmq "github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/infrastructure/rabbitmq"
@@ -39,9 +40,11 @@ type registrar interface{ Register(*http.ServeMux) }
 // queueModule bundles the wired HTTP handlers, worker jobs, and the Booking-event consumer.
 type queueModule struct {
 	handlers []registrar
+	pingers  []healthcheck.Pinger // GET /health targets, taken from the clients the module was built with
 	jobs     []Job
 	consumer *queuerabbitmq.Consumer
 	rmqConn  *rabbitmq.Connection
+	rmqPub   *rabbitmq.Publisher
 	depth    *queuetelemetry.DepthCollector // NFR-09 queue depth; registered by the API server only
 }
 
@@ -52,11 +55,30 @@ func (m *queueModule) Register(mux *http.ServeMux) {
 	}
 }
 
+// Close releases the event publisher channel, then the AMQP connection it runs on. It is nil-safe and idempotent:
+// once released, a field is cleared, so a second call does nothing. Call it only after the jobs and the HTTP server
+// have stopped publishing.
+func (m *queueModule) Close() error {
+	if m == nil {
+		return nil
+	}
+	var err error
+	if m.rmqPub != nil {
+		err = errors.Join(err, m.rmqPub.Close())
+		m.rmqPub = nil
+	}
+	if m.rmqConn != nil {
+		err = errors.Join(err, m.rmqConn.Close())
+		m.rmqConn = nil
+	}
+	return err
+}
+
 // newQueueModule wires adapters to usecases (composition root). Without Postgres/Valkey (e.g. the
 // /health-only unit test) it returns an empty module so only /health is mounted.
 func newQueueModule(cfg config.Config, clients *Clients, logger *slog.Logger) (*queueModule, error) {
 	if clients.PG == nil || clients.VK == nil {
-		return &queueModule{}, nil
+		return &queueModule{pingers: clients.Pingers()}, nil
 	}
 	clk := clock.System{}
 
@@ -154,8 +176,8 @@ func newQueueModule(cfg config.Config, clients *Clients, logger *slog.Logger) (*
 
 	consumer := queuerabbitmq.NewConsumer(store, clk)
 
-	return &queueModule{handlers: handlers, jobs: jobs, consumer: consumer, rmqConn: rmqConn,
-		depth: queuetelemetry.NewDepthCollector(settingsRepo, store)}, nil
+	return &queueModule{handlers: handlers, pingers: clients.Pingers(), jobs: jobs, consumer: consumer,
+		rmqConn: rmqConn, rmqPub: rmqPub, depth: queuetelemetry.NewDepthCollector(settingsRepo, store)}, nil
 }
 
 // statusTTL derives the status-doc TTL from the status publisher's own cadence (QUEUE_STATUS_INTERVAL_MS).

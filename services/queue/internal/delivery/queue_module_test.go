@@ -221,3 +221,14 @@ func TestAdmissionTTL_UnchangedAndBounded(t *testing.T) {
 	cfg.Token.AdmissionTTL = 6 * time.Minute
 	assert.Error(t, cfg.Token.Validate())
 }
+
+// C8.12: Close is nil-safe and idempotent; a module without a publisher or connection closes cleanly.
+func TestQueueModule_CloseIsNilSafe(t *testing.T) {
+	var nilMod *queueModule
+	assert.NoError(t, nilMod.Close())
+	assert.NoError(t, (&queueModule{}).Close())
+
+	m := &queueModule{}
+	assert.NoError(t, m.Close())
+	assert.NoError(t, m.Close(), "second Close must be a no-op")
+}

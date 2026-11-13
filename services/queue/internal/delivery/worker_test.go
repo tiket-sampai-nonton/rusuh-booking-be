@@ -167,5 +167,5 @@ func TestRunJobs_ErrorAndPanicIsolated(t *testing.T) {
 }
 
 func TestJobs_EmptyWithoutClients(t *testing.T) {
-	assert.Empty(t, jobs(testConfig(t), &Clients{}, discardLogger()))
+	assert.Empty(t, jobs(&queueModule{}))
 }

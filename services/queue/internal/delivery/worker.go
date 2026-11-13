@@ -26,24 +26,24 @@ func RunWorker(ctx context.Context, cfg config.Config, logger *slog.Logger, need
 	if err != nil {
 		return err
 	}
+
+	mod, err := newQueueModule(cfg, clients, logger)
+	if err != nil {
+		clients.Close()
+		return err
+	}
+	// One module per process. Registered before clients.Close so it runs after the audit flush; runJobs and the
+	// server have already returned by then.
+	defer func() { _ = mod.Close() }()
 	defer clients.Close()
 
-	handler, err := NewHandler(cfg, clients, logger)
+	handler, err := NewHandler(cfg, mod, logger)
 	if err != nil {
 		return err
 	}
 	errCh := make(chan error, 1)
 	go func() { errCh <- serve(ctx, cfg, handler, logger) }()
 
-	mod, err := newQueueModule(cfg, clients, logger)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if mod.rmqConn != nil {
-			_ = mod.rmqConn.Close()
-		}
-	}()
 	// Consume Booking events (release slots, block quota, close on sold-out) alongside the jobs.
 	if clients.MQ != nil && mod.consumer != nil {
 		go func() {
@@ -118,15 +118,7 @@ func runOnce(ctx context.Context, j Job, logger *slog.Logger) {
 	}
 }
 
-// jobs builds the worker's background jobs from a composed module (empty without Postgres/Valkey).
-func jobs(cfg config.Config, clients *Clients, logger *slog.Logger) []Job {
-	mod, err := newQueueModule(cfg, clients, logger)
-	if err != nil {
-		logger.Error("queue: gagal menyusun worker jobs", "error", err)
-		return nil
-	}
-	if mod.rmqConn != nil {
-		_ = mod.rmqConn.Close()
-	}
+// jobs returns the worker's background jobs of the given module (none without Postgres/Valkey).
+func jobs(mod *queueModule) []Job {
 	return mod.jobs
 }
