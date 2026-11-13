@@ -448,6 +448,8 @@ UI otomatis, k6, dan pentest: [tests/README.md](tests/README.md).
 | Image | Trivy, SBOM, hadolint | Lulus | CI |
 | Pipeline | GitHub Actions | 5 run terakhir di `main` sukses (11–12 Nov 2026) | tab Actions |
 
+Tangkapan laporan uji sebagai gambar (TC, pentest, k6): [`docs/product/img/bukti/`](docs/product/img/bukti/), daftar dan keterangannya di [`tests/README.md`](tests/README.md#bukti-dalam-bentuk-gambar).
+
 Matriks lengkap dan pemetaan TC: [docs/product/CAPABILITIES-AND-EVIDENCE.md](docs/product/CAPABILITIES-AND-EVIDENCE.md#3-matriks-bukti-kualitas).
 
 ---

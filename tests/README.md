@@ -16,6 +16,25 @@ Test Plan dan ID TC: [`docs/analisa/06-TP-RBT-001.md`](../docs/analisa/06-TP-RBT
 
 Yang di-commit ke repo hanya laporan (HTML dan Markdown), kode suite yang diperlukan untuk menjalankan tes, dan README ini. Keluaran mentah (CSV, JSON, log, trace, video, hasil scan) tidak di-commit dan dibuat ulang setiap run.
 
+## Bukti dalam bentuk gambar
+
+GitHub menampilkan `.html` sebagai kode sumber, jadi laporan utama juga tersedia sebagai gambar yang bisa diklik langsung. Setiap gambar adalah tangkapan halaman laporan aslinya (13 November 2026), lengkap dengan banner waktu pembuatan.
+
+| Gambar | Menunjukkan | Sumber |
+|---|---|---|
+| [`tc-api-ringkasan-bdd-dan-e2e.png`](../docs/product/img/bukti/tc-api-ringkasan-bdd-dan-e2e.png) | TC API: 29 dari 31 skenario BDD lulus, 10 tes Go e2e lulus | `reports/api/ringkasan-api.html` |
+| [`tc-ui-ringkasan-web-prod-dan-dev.png`](../docs/product/img/bukti/tc-ui-ringkasan-web-prod-dan-dev.png) | TC UI web: prod dan dev, desktop dan mobile (9/9 dan 10/10) | `reports/ui/ringkasan-ui.html` |
+| [`pentest-zap-api-lokal-booking.png`](../docs/product/img/bukti/pentest-zap-api-lokal-booking.png) | Pentest ZAP API lokal (contoh Booking): 0 High, 1 Medium, 1 Low. Dipotong ke bagian ringkasan | `pentest/evidence/zap-api-lokal-2026-11-13-booking.html` |
+| [`pentest-zap-baseline-dev.png`](../docs/product/img/bukti/pentest-zap-baseline-dev.png) | Pentest ZAP baseline pasif di dev. Dipotong ke bagian ringkasan | `pentest/evidence/zap-baseline-dev-2026-11-13.html` |
+| [`pentest-testssl-tls-dev.png`](../docs/product/img/bukti/pentest-testssl-tls-dev.png) | Protokol dan cipher TLS di dev (TLS 1.0 dan 1.1 masih aktif). Dipotong ke bagian protokol dan cipher | `pentest/evidence/testssl-dev-2026-11-13.html` |
+| [`k6-lokal-waiting-room-1000vu.png`](../docs/product/img/bukti/k6-lokal-waiting-room-1000vu.png) | k6 lokal, waiting room 1.000 VU: p95 1 ms, 0% error | `k6/reports/local/waiting/analysis.html` |
+| [`k6-lokal-stress-titik-jenuh.png`](../docs/product/img/bukti/k6-lokal-stress-titik-jenuh.png) | k6 lokal, stress: titik jenuh sekitar S5 sampai S6 | `k6/reports/local/stress/analysis.html` |
+| [`k6-lokal-laju-join.png`](../docs/product/img/bukti/k6-lokal-laju-join.png) | k6 lokal, laju join sampai 1.500 per detik, tanpa error | `k6/reports/local/joinrate/analysis.html` |
+| [`k6-dev-waiting-room-3000vu.png`](../docs/product/img/bukti/k6-dev-waiting-room-3000vu.png) | k6 dev, waiting room 3.000 VU: p95 181 ms, 0% error | `k6/reports/dev/waiting/analysis.html` |
+| [`k6-prod-waiting-room-batas-join-per-ip.png`](../docs/product/img/bukti/k6-prod-waiting-room-batas-join-per-ip.png) | k6 prod, 500 VU, **dihentikan sekitar 20 detik**. Tertulis FAIL dan 5,88% error, tetapi seluruhnya 429 dari batas join per IP (200 per menit). **Bukan ukuran kapasitas**; jangan dikutip tanpa keterangan ini | `k6/reports/prod/waiting/analysis.html` |
+
+Catatan: hasil k6 lokal berasal dari satu laptop, jadi merupakan batas bawah dan bukan kapasitas produksi. Dashboard deret waktu bawaan k6 (`report.html`) ada di folder yang sama dengan masing-masing sumber.
+
 ## Laporan HTML
 
 GitHub menampilkan berkas `.html` sebagai kode sumber, bukan halaman. Untuk membacanya langsung di browser, buka tautan relatif di bawah dari clone lokal, atau gunakan `https://htmlpreview.github.io/?https://github.com/tiket-sampai-nonton/rusuh-booking-be/blob/<branch>/<path>` setelah branch di-push.
