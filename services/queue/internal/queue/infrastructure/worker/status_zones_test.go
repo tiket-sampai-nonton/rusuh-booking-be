@@ -75,6 +75,12 @@ type oneSettings struct {
 }
 
 func (o oneSettings) ListEventIDs(context.Context) ([]string, error) { return []string{"ev"}, nil }
+func (o oneSettings) ListActiveEventIDs(context.Context, time.Time) ([]string, error) {
+	return []string{"ev"}, nil
+}
+func (o oneSettings) UpdateSaleWindow(context.Context, string, time.Time, time.Time) error {
+	return nil
+}
 func (o oneSettings) Get(context.Context, string) (entity.EventSettings, bool, error) {
 	return o.s, true, nil
 }

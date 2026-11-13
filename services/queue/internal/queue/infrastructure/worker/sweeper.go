@@ -35,11 +35,11 @@ func NewSweeper(store outbound.IQueueStore, settings outbound.IEventSettingsRepo
 	return &Sweeper{store: store, settings: settings, clock: clk, batchMax: batchMax}
 }
 
-// Run sweeps every configured event once, in two passes (R30). The first pass expires every event, so one event's drain
+// Run sweeps every active event once, in two passes (R30). The first pass expires every event, so one event's drain
 // never delays another event's expiry past the tick. The second pass drains each sold-out event. A failure in one event
 // is collected and does not stop the others; the drain of an event runs even when its expiry failed.
 func (s *Sweeper) Run(ctx context.Context) error {
-	ids, err := s.settings.ListEventIDs(ctx)
+	ids, err := s.settings.ListActiveEventIDs(ctx, s.clock.Now())
 	if err != nil {
 		return err
 	}

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/clock"
@@ -23,6 +24,9 @@ type StatusPublisher struct {
 	booking  outbound.IBookingClient
 	clock    clock.IClock
 	ttl      time.Duration
+
+	windowMu sync.Mutex          // guards windows
+	windows  map[string][2]int64 // sale window (starts, ends in ms) last written to event_settings, per event
 }
 
 // NewStatusPublisher accepts interfaces and returns the concrete worker. ttl is the cache TTL of the
@@ -31,12 +35,12 @@ func NewStatusPublisher(store outbound.IQueueStore, settings outbound.IEventSett
 	if ttl <= 0 {
 		ttl = time.Second
 	}
-	return &StatusPublisher{store: store, settings: settings, booking: booking, clock: clk, ttl: ttl}
+	return &StatusPublisher{store: store, settings: settings, booking: booking, clock: clk, ttl: ttl, windows: map[string][2]int64{}}
 }
 
 // Run publishes one document per configured event.
 func (p *StatusPublisher) Run(ctx context.Context) error {
-	ids, err := p.settings.ListEventIDs(ctx)
+	ids, err := p.settings.ListActiveEventIDs(ctx, p.clock.Now())
 	if err != nil {
 		return err
 	}
@@ -61,6 +65,7 @@ func (p *StatusPublisher) runEvent(ctx context.Context, eventID string) error {
 	supply, serr := p.booking.Supply(ctx, eventID) // best-effort; on error the previous boundaries are kept
 	if serr == nil {
 		p.cacheSaleWindow(ctx, eventID, supply)
+		p.persistSaleWindow(ctx, eventID, supply)
 		if p.reopenable(sale, supply) {
 			if err := p.store.SetSale(ctx, eventID, dto.SaleOpen, false); err != nil {
 				return fmt.Errorf("status publisher: reopen sale: %w", err)
@@ -107,6 +112,26 @@ func (p *StatusPublisher) cacheSaleWindow(ctx context.Context, eventID string, s
 	if err := p.store.SetSaleWindow(ctx, eventID, supply.SalesStartsAt.UnixMilli(), supply.SalesEndsAt.UnixMilli()); err != nil {
 		slog.Warn("status publisher: cache sale window failed", "eventId", eventID, "error", err)
 	}
+}
+
+// persistSaleWindow stores Booking's sale window in event_settings, which decides how long the workers iterate the event
+// (D-C8.10). It writes only when the window differs from the one this process last wrote. A failed write is logged and not
+// remembered, so the next tick retries it. A zero window is not written: the event then stays iterated.
+func (p *StatusPublisher) persistSaleWindow(ctx context.Context, eventID string, supply outbound.SupplySnapshot) {
+	if supply.SalesStartsAt.IsZero() || supply.SalesEndsAt.IsZero() {
+		return
+	}
+	window := [2]int64{supply.SalesStartsAt.UnixMilli(), supply.SalesEndsAt.UnixMilli()}
+	p.windowMu.Lock()
+	defer p.windowMu.Unlock()
+	if last, ok := p.windows[eventID]; ok && last == window {
+		return
+	}
+	if err := p.settings.UpdateSaleWindow(ctx, eventID, supply.SalesStartsAt, supply.SalesEndsAt); err != nil {
+		slog.Warn("status publisher: write sale window failed", "eventId", eventID, "error", err)
+		return
+	}
+	p.windows[eventID] = window
 }
 
 // reopenable reports whether a sold-out sale should reopen (D-C5.3): Booking has free stock again and now is inside

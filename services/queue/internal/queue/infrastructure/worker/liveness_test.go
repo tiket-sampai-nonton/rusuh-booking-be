@@ -36,7 +36,7 @@ func TestLiveness_LeaseHeldSkipsAndWarnsAfterSixConsecutive(t *testing.T) {
 	m := newWorkerMocks(t)
 	l, buf := newLivenessForTest(m)
 	ctx := context.Background()
-	m.settings.EXPECT().ListEventIDs(gomock.Any()).Return([]string{"ev1", "ev2"}, nil).AnyTimes()
+	m.settings.EXPECT().ListActiveEventIDs(gomock.Any(), gomock.Any()).Return([]string{"ev1", "ev2"}, nil).AnyTimes()
 
 	// ev1 is always held; ev2 is held only on the first pass, then succeeds.
 	m.store.EXPECT().SweepLivenessTick(gomock.Any(), "ev1", gomock.Any(), gomock.Any(), 10, gomock.Any(), 10*time.Second, 0, gomock.Any()).
@@ -67,7 +67,7 @@ func TestLiveness_SuccessResetsCounter(t *testing.T) {
 	m := newWorkerMocks(t)
 	l, buf := newLivenessForTest(m)
 	ctx := context.Background()
-	m.settings.EXPECT().ListEventIDs(gomock.Any()).Return([]string{"ev1"}, nil).AnyTimes()
+	m.settings.EXPECT().ListActiveEventIDs(gomock.Any(), gomock.Any()).Return([]string{"ev1"}, nil).AnyTimes()
 	held := outbound.LivenessResult{LeaseLost: true}
 	seq := []outbound.LivenessResult{held, held, held, held, held, {}, held, held, held, held, held, held}
 	i := 0
@@ -88,7 +88,7 @@ func TestLiveness_SuccessResetsCounter(t *testing.T) {
 // Invariant #2 / QWC-04.3: with the lease held by another holder, a promoter tick calls neither Promote nor Booking.
 func TestPromoter_LeaseHeldMakesNoPromoteOrReserve(t *testing.T) {
 	m := newWorkerMocks(t)
-	m.settings.EXPECT().ListEventIDs(gomock.Any()).Return([]string{"ev1"}, nil).AnyTimes()
+	m.settings.EXPECT().ListActiveEventIDs(gomock.Any(), gomock.Any()).Return([]string{"ev1"}, nil).AnyTimes()
 	m.store.EXPECT().AcquirePromoterLease(gomock.Any(), "ev1", 10*time.Second).Return("", false, nil).Times(20)
 	p := worker.NewPromoter(m.store, m.settings, m.booking, m.pub, m.audit, clock.System{}, nil,
 		worker.PromoterTuning{BatchMax: 10, LeaseTTL: 10 * time.Second, NoSupplySuspectTicks: 50})
@@ -100,7 +100,7 @@ func TestPromoter_LeaseHeldMakesNoPromoteOrReserve(t *testing.T) {
 // Invariant #2 / QWC-04.5: at capacity (free == 0) 50 promoter ticks make no Booking reservation.
 func TestPromoter_NoFreeSlotMakesNoReserveBatch(t *testing.T) {
 	m := newWorkerMocks(t)
-	m.settings.EXPECT().ListEventIDs(gomock.Any()).Return([]string{"ev1"}, nil).AnyTimes()
+	m.settings.EXPECT().ListActiveEventIDs(gomock.Any(), gomock.Any()).Return([]string{"ev1"}, nil).AnyTimes()
 	m.store.EXPECT().AcquirePromoterLease(gomock.Any(), "ev1", 10*time.Second).Return("1", true, nil).Times(50)
 	m.store.EXPECT().ReleasePromoterLease(gomock.Any(), "ev1", "1").Return(nil).Times(50)
 	m.settings.EXPECT().Get(gomock.Any(), "ev1").Return(entity.EventSettings{ActiveSlotCapacity: 3}, true, nil).AnyTimes()
@@ -119,9 +119,9 @@ func TestLiveness_EvictsCounterOfRemovedEvent(t *testing.T) {
 	l, buf := newLivenessForTest(m)
 	ctx := context.Background()
 	gomock.InOrder(
-		m.settings.EXPECT().ListEventIDs(gomock.Any()).Return([]string{"ev1"}, nil).Times(5),
-		m.settings.EXPECT().ListEventIDs(gomock.Any()).Return([]string{}, nil).Times(1),
-		m.settings.EXPECT().ListEventIDs(gomock.Any()).Return([]string{"ev1"}, nil).Times(1),
+		m.settings.EXPECT().ListActiveEventIDs(gomock.Any(), gomock.Any()).Return([]string{"ev1"}, nil).Times(5),
+		m.settings.EXPECT().ListActiveEventIDs(gomock.Any(), gomock.Any()).Return([]string{}, nil).Times(1),
+		m.settings.EXPECT().ListActiveEventIDs(gomock.Any(), gomock.Any()).Return([]string{"ev1"}, nil).Times(1),
 	)
 	m.store.EXPECT().SweepLivenessTick(gomock.Any(), "ev1", gomock.Any(), gomock.Any(), 10, gomock.Any(), 10*time.Second, 0, gomock.Any()).
 		Return(outbound.LivenessResult{LeaseLost: true}, nil, nil).AnyTimes()
@@ -138,7 +138,7 @@ func TestLiveness_StartShardRotatesPerTick(t *testing.T) {
 	m := newWorkerMocks(t)
 	l, _ := newLivenessForTest(m)
 	ctx := context.Background()
-	m.settings.EXPECT().ListEventIDs(gomock.Any()).Return([]string{"ev1", "ev2"}, nil).AnyTimes()
+	m.settings.EXPECT().ListActiveEventIDs(gomock.Any(), gomock.Any()).Return([]string{"ev1", "ev2"}, nil).AnyTimes()
 	var starts []int
 	m.store.EXPECT().SweepLivenessTick(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), 10, gomock.Any(), 10*time.Second, 0, gomock.Any()).
 		DoAndReturn(func(_ context.Context, ev string, _, _ int64, _ int, _ int64, _ time.Duration, _ int, start int) (outbound.LivenessResult, []string, error) {

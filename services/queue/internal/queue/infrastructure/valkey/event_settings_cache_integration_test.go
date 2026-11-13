@@ -32,6 +32,14 @@ func (s *stubSettingsSource) ListEventIDs(_ context.Context) ([]string, error) {
 	return []string{"ev-list"}, nil
 }
 
+func (s *stubSettingsSource) ListActiveEventIDs(_ context.Context, _ time.Time) ([]string, error) {
+	return []string{"ev-active"}, nil
+}
+
+func (s *stubSettingsSource) UpdateSaleWindow(_ context.Context, _ string, _, _ time.Time) error {
+	return nil
+}
+
 func TestEventSettingsCache(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
@@ -151,6 +159,14 @@ func (s *gatedSettingsSource) Get(_ context.Context, _ string) (entity.EventSett
 }
 
 func (s *gatedSettingsSource) ListEventIDs(_ context.Context) ([]string, error) { return nil, nil }
+
+func (s *gatedSettingsSource) ListActiveEventIDs(_ context.Context, _ time.Time) ([]string, error) {
+	return nil, nil
+}
+
+func (s *gatedSettingsSource) UpdateSaleWindow(_ context.Context, _ string, _, _ time.Time) error {
+	return nil
+}
 
 // C8.6 (PF-P3-2): 20 concurrent misses on one event read Postgres once; every caller gets the same settings.
 func TestEventSettingsCache_SingleflightOnMiss(t *testing.T) {

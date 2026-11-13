@@ -83,11 +83,11 @@ func (p *Promoter) WithMetrics(m outbound.IPromoterMetrics) *Promoter {
 	return p
 }
 
-// Run promotes one batch for every configured event. A failing event never stops the others: the errors are joined.
+// Run promotes one batch for every active event (D-C8.10). A failing event never stops the others: the errors are joined.
 // The turn.arrived announcements and the pre-turn notify of an event run after its lease is released (C8.3, PF-P1-5;
 // C8.8, PF-P2-2), never inside the lease. The announcements are bounded (R36, see announce).
 func (p *Promoter) Run(ctx context.Context) error {
-	ids, err := p.settings.ListEventIDs(ctx)
+	ids, err := p.settings.ListActiveEventIDs(ctx, p.clock.Now())
 	if err != nil {
 		return err
 	}

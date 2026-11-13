@@ -307,6 +307,14 @@ func (s perEventSettings) ListEventIDs(context.Context) ([]string, error) {
 	return []string{"ev1", "ev2"}, nil
 }
 
+func (s perEventSettings) ListActiveEventIDs(context.Context, time.Time) ([]string, error) {
+	return []string{"ev1", "ev2"}, nil
+}
+
+func (s perEventSettings) UpdateSaleWindow(context.Context, string, time.Time, time.Time) error {
+	return nil
+}
+
 // blockingPub blocks the announcement of entry "a" until its context is done (a broker stall). The 5 s fallback only keeps a
 // regression from hanging the suite: an unbounded publish reports an error after it.
 type blockingPub struct {

@@ -17,7 +17,7 @@ import (
 
 // expect one reserved-and-granted candidate flow up to Promote, for the lease tests below.
 func expectGrantedFlow(m workerMocks, token string, promoteFn func(context.Context, string, []outbound.PromoteCandidate, int, int64, outbound.PromoteOpts) (outbound.PromoteResult, error)) {
-	m.settings.EXPECT().ListEventIDs(gomock.Any()).Return([]string{"ev1"}, nil)
+	m.settings.EXPECT().ListActiveEventIDs(gomock.Any(), gomock.Any()).Return([]string{"ev1"}, nil)
 	m.store.EXPECT().AcquirePromoterLease(gomock.Any(), "ev1", 10*time.Second).Return(token, true, nil)
 	m.settings.EXPECT().Get(gomock.Any(), "ev1").Return(entity.EventSettings{ActiveSlotCapacity: 10}, true, nil)
 	m.store.EXPECT().ActiveCount(gomock.Any(), "ev1").Return(0, nil)
@@ -54,7 +54,7 @@ func TestPromoter_TickContextIsBoundedBelowTheLeaseTTL(t *testing.T) {
 	ctx := context.Background()
 	start := time.Now()
 	var deadline time.Time
-	m.settings.EXPECT().ListEventIDs(gomock.Any()).Return([]string{"ev1"}, nil)
+	m.settings.EXPECT().ListActiveEventIDs(gomock.Any(), gomock.Any()).Return([]string{"ev1"}, nil)
 	m.store.EXPECT().AcquirePromoterLease(gomock.Any(), "ev1", 5*time.Second).Return("tok", true, nil)
 	m.store.EXPECT().ReleasePromoterLease(gomock.Any(), "ev1", "tok").Return(nil)
 	m.settings.EXPECT().Get(gomock.Any(), "ev1").DoAndReturn(func(c context.Context, _ string) (entity.EventSettings, bool, error) {
@@ -122,7 +122,7 @@ func TestPromoter_ReleasesOnlyScriptProvenTerminalSkips(t *testing.T) {
 // TC-QUE-27: one failing event never starves the others; the errors are joined.
 func TestPromoter_OneEventsFailureDoesNotStopTheOthers(t *testing.T) {
 	m := newWorkerMocks(t)
-	m.settings.EXPECT().ListEventIDs(gomock.Any()).Return([]string{"ev1", "ev2"}, nil)
+	m.settings.EXPECT().ListActiveEventIDs(gomock.Any(), gomock.Any()).Return([]string{"ev1", "ev2"}, nil)
 	m.store.EXPECT().AcquirePromoterLease(gomock.Any(), "ev1", gomock.Any()).Return("", false, errors.New("valkey down for ev1"))
 	m.store.EXPECT().AcquirePromoterLease(gomock.Any(), "ev2", gomock.Any()).Return("t2", true, nil)
 	m.store.EXPECT().ReleasePromoterLease(gomock.Any(), "ev2", "t2").Return(nil)
@@ -152,7 +152,7 @@ func TestPromoter_NotifyRunsOnEveryReturnPathAfterTheLease(t *testing.T) {
 	for name, setup := range cases {
 		t.Run(name, func(t *testing.T) {
 			m := newWorkerMocks(t)
-			m.settings.EXPECT().ListEventIDs(gomock.Any()).Return([]string{"ev1"}, nil)
+			m.settings.EXPECT().ListActiveEventIDs(gomock.Any(), gomock.Any()).Return([]string{"ev1"}, nil)
 			m.store.EXPECT().AcquirePromoterLease(gomock.Any(), "ev1", gomock.Any()).Return("tok", true, nil)
 			m.store.EXPECT().ReleasePromoterLease(gomock.Any(), "ev1", "tok").Return(nil)
 			m.settings.EXPECT().Get(gomock.Any(), "ev1").Return(enabled, true, nil)

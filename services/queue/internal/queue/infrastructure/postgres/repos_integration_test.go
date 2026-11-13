@@ -163,3 +163,39 @@ func TestAsyncEntryAudit_CopyFromWritesRows(t *testing.T) {
 	require.NoError(t, pool.QueryRow(ctx, `SELECT count(*) FROM entry_audit`).Scan(&n))
 	assert.Equal(t, 2, n, "the failed batch wrote nothing")
 }
+
+// TC-C8.10 (D-C8.10): the workers iterate an event until one day after its sale ends. An unknown window stays in the list.
+func TestListActiveEventIDs_DropsEventsEndedOverADay(t *testing.T) {
+	pool := setup(t)
+	ctx := context.Background()
+	repo := NewEventSettings(pool)
+	now := time.Date(2026, 11, 13, 12, 0, 0, 0, time.UTC)
+	const (
+		unknownWindow = "11111111-1111-1111-1111-111111111111" // window not written yet: iterated
+		endedHourAgo  = "22222222-2222-2222-2222-222222222222" // ended 1 h ago: iterated (retirement runs inside the day)
+		endedDayAgo   = "33333333-3333-3333-3333-333333333333" // ended exactly 24 h ago: dropped
+		endedLongAgo  = "44444444-4444-4444-4444-444444444444" // ended 48 h ago: dropped
+		upcoming      = "55555555-5555-5555-5555-555555555555" // sale ends in 72 h: iterated
+	)
+	for _, ev := range []string{unknownWindow, endedHourAgo, endedDayAgo, endedLongAgo, upcoming} {
+		_, err := pool.Exec(ctx, `INSERT INTO event_settings (event_id) VALUES ($1::uuid)`, ev)
+		require.NoError(t, err)
+	}
+	require.NoError(t, repo.UpdateSaleWindow(ctx, endedHourAgo, now.Add(-48*time.Hour), now.Add(-time.Hour)))
+	require.NoError(t, repo.UpdateSaleWindow(ctx, endedDayAgo, now.Add(-72*time.Hour), now.Add(-24*time.Hour)))
+	require.NoError(t, repo.UpdateSaleWindow(ctx, endedLongAgo, now.Add(-96*time.Hour), now.Add(-48*time.Hour)))
+	require.NoError(t, repo.UpdateSaleWindow(ctx, upcoming, now, now.Add(72*time.Hour)))
+
+	ids, err := repo.ListActiveEventIDs(ctx, now)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{unknownWindow, endedHourAgo, upcoming}, ids)
+
+	// The cut-off moves with now: a day later the event that ended an hour before no longer qualifies.
+	ids, err = repo.ListActiveEventIDs(ctx, now.Add(24*time.Hour))
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{unknownWindow, upcoming}, ids)
+
+	all, err := repo.ListEventIDs(ctx)
+	require.NoError(t, err)
+	assert.Len(t, all, 5, "ListEventIDs still lists every configured event (depth metrics)")
+}

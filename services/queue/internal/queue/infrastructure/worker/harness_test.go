@@ -53,6 +53,12 @@ func (f *fakeSettings) Get(context.Context, string) (entity.EventSettings, bool,
 	return f.s, true, nil
 }
 func (f *fakeSettings) ListEventIDs(context.Context) ([]string, error) { return []string{"ev"}, nil }
+func (f *fakeSettings) ListActiveEventIDs(context.Context, time.Time) ([]string, error) {
+	return []string{"ev"}, nil
+}
+func (f *fakeSettings) UpdateSaleWindow(context.Context, string, time.Time, time.Time) error {
+	return nil
+}
 
 type fakePub struct {
 	mu      sync.Mutex

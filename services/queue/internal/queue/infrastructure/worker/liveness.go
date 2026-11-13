@@ -61,9 +61,9 @@ func (l *Liveness) WithLogger(lg *slog.Logger) *Liveness {
 	return l
 }
 
-// Run sweeps every configured event once; one event's failure never stops the others.
+// Run sweeps every active event once (D-C8.10); one event's failure never stops the others.
 func (l *Liveness) Run(ctx context.Context) error {
-	ids, err := l.settings.ListEventIDs(ctx)
+	ids, err := l.settings.ListActiveEventIDs(ctx, l.clock.Now())
 	if err != nil {
 		return err
 	}

@@ -56,7 +56,7 @@ func TestSweeper_SoldOutDrainStopsWhenSaleReopens_Real(t *testing.T) {
 
 	wrapped := &reopenAfterFirstBatch{IQueueStore: store, ev: ev}
 	settings := mock_outbound.NewMockIEventSettingsRepo(gomock.NewController(t))
-	settings.EXPECT().ListEventIDs(gomock.Any()).Return([]string{ev}, nil)
+	settings.EXPECT().ListActiveEventIDs(gomock.Any(), gomock.Any()).Return([]string{ev}, nil)
 
 	s := worker.NewSweeper(wrapped, settings, wnow, 500)
 	require.NoError(t, s.Run(ctx))

@@ -14,6 +14,7 @@ import (
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/clock"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/domain/entity"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/infrastructure/worker"
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/port/outbound"
 )
 
 // mutableSettings is a settings repo whose rows can appear, change and vanish between ticks, like the admin PUT does.
@@ -47,6 +48,14 @@ func (m *mutableSettings) ListEventIDs(context.Context) ([]string, error) {
 	return ids, nil
 }
 
+func (m *mutableSettings) ListActiveEventIDs(ctx context.Context, _ time.Time) ([]string, error) {
+	return m.ListEventIDs(ctx)
+}
+
+func (m *mutableSettings) UpdateSaleWindow(context.Context, string, time.Time, time.Time) error {
+	return nil
+}
+
 // listedButRowless lists an id whose row is gone (deleted between ListEventIDs and Get).
 type listedButRowless struct{ mutableSettings }
 
@@ -54,10 +63,11 @@ func (l *listedButRowless) ListEventIDs(context.Context) ([]string, error) {
 	return []string{"ev"}, nil
 }
 
-func newMutableHarness(t *testing.T, st interface {
-	Get(context.Context, string) (entity.EventSettings, bool, error)
-	ListEventIDs(context.Context) ([]string, error)
-}, stock int) *harness {
+func (l *listedButRowless) ListActiveEventIDs(context.Context, time.Time) ([]string, error) {
+	return []string{"ev"}, nil
+}
+
+func newMutableHarness(t *testing.T, st outbound.IEventSettingsRepo, stock int) *harness {
 	t.Helper()
 	h := &harness{t: t, store: newFakeStore(), metrics: newFakeMetrics(), pub: &fakePub{}, pii: &fakePII{}}
 	h.clk = &clock.Fixed{T: time.Date(2026, 10, 20, 10, 0, 0, 0, time.UTC)}

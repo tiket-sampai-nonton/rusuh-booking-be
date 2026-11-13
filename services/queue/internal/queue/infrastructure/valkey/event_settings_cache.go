@@ -3,6 +3,7 @@ package valkey
 import (
 	"context"
 	"encoding/json"
+	"sync"
 	"time"
 
 	vk "github.com/valkey-io/valkey-go"
@@ -12,7 +13,12 @@ import (
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/port/outbound"
 )
 
-const eventSettingsCacheTTL = 30 * time.Second
+const (
+	eventSettingsCacheTTL = 30 * time.Second
+	// activeEventsTTL bounds how long the in-process active-event list is reused (D-C8.10). The four worker jobs read it
+	// once per window instead of once each.
+	activeEventsTTL = 5 * time.Second
+)
 
 // EventSettingsCache wraps IEventSettingsRepo with a Valkey read-through cache (TTL 30s).
 // All instances share the same key so a PUT by admin is consistent within one TTL window.
@@ -22,6 +28,11 @@ type EventSettingsCache struct {
 	source outbound.IEventSettingsRepo
 	// fill collapses concurrent Postgres reads of one event, so a cold key under load costs one read (PF-P3-2).
 	fill singleflight.Group
+
+	activeMu  sync.Mutex // serializes the read of the active list, so concurrent jobs share one Postgres query
+	activeIDs []string
+	activeAt  time.Time // the now of the read that filled the cache
+	activeOK  bool
 }
 
 // settingsFill is the shared result of one Postgres read.
@@ -71,4 +82,25 @@ func (r *EventSettingsCache) Invalidate(ctx context.Context, eventID string) err
 // ListEventIDs delegates to Postgres; this method is only used by workers to iterate events, not on the hot path.
 func (r *EventSettingsCache) ListEventIDs(ctx context.Context) ([]string, error) {
 	return r.source.ListEventIDs(ctx)
+}
+
+// ListActiveEventIDs returns the active-event list from an in-process cache for up to activeEventsTTL (D-C8.10). The
+// cache is per process and keyed by the caller's now: a read at or after the cached now within the TTL reuses it.
+// Callers get a copy, so they cannot change the cached list.
+func (r *EventSettingsCache) ListActiveEventIDs(ctx context.Context, now time.Time) ([]string, error) {
+	r.activeMu.Lock()
+	defer r.activeMu.Unlock()
+	if !r.activeOK || now.Before(r.activeAt) || now.Sub(r.activeAt) >= activeEventsTTL {
+		ids, err := r.source.ListActiveEventIDs(ctx, now)
+		if err != nil {
+			return nil, err
+		}
+		r.activeIDs, r.activeAt, r.activeOK = ids, now, true
+	}
+	return append([]string(nil), r.activeIDs...), nil
+}
+
+// UpdateSaleWindow delegates to Postgres. The cached list is not dropped: the next list read after the TTL sees the change.
+func (r *EventSettingsCache) UpdateSaleWindow(ctx context.Context, eventID string, starts, ends time.Time) error {
+	return r.source.UpdateSaleWindow(ctx, eventID, starts, ends)
 }

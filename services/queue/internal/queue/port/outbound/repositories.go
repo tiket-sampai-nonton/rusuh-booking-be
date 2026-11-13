@@ -13,6 +13,11 @@ import (
 type IEventSettingsRepo interface {
 	Get(ctx context.Context, eventID string) (entity.EventSettings, bool, error)
 	ListEventIDs(ctx context.Context) ([]string, error)
+	// ListActiveEventIDs returns the events the workers iterate at now: every event whose sale ended less than a day
+	// before now, and every event whose sale window is not known yet (D-C8.10).
+	ListActiveEventIDs(ctx context.Context, now time.Time) ([]string, error)
+	// UpdateSaleWindow stores the sale window Booking reported for eventID (D-C8.10).
+	UpdateSaleWindow(ctx context.Context, eventID string, starts, ends time.Time) error
 }
 
 // ISettingsCacheInvalidator drops the cached settings of one event so the next read sees a committed change. A failed

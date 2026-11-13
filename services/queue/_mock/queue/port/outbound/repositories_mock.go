@@ -12,6 +12,7 @@ package mock_outbound
 import (
 	context "context"
 	reflect "reflect"
+	time "time"
 
 	entity "github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/domain/entity"
 	outbound "github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/port/outbound"
@@ -58,6 +59,21 @@ func (mr *MockIEventSettingsRepoMockRecorder) Get(ctx, eventID any) *gomock.Call
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Get", reflect.TypeOf((*MockIEventSettingsRepo)(nil).Get), ctx, eventID)
 }
 
+// ListActiveEventIDs mocks base method.
+func (m *MockIEventSettingsRepo) ListActiveEventIDs(ctx context.Context, now time.Time) ([]string, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ListActiveEventIDs", ctx, now)
+	ret0, _ := ret[0].([]string)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// ListActiveEventIDs indicates an expected call of ListActiveEventIDs.
+func (mr *MockIEventSettingsRepoMockRecorder) ListActiveEventIDs(ctx, now any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListActiveEventIDs", reflect.TypeOf((*MockIEventSettingsRepo)(nil).ListActiveEventIDs), ctx, now)
+}
+
 // ListEventIDs mocks base method.
 func (m *MockIEventSettingsRepo) ListEventIDs(ctx context.Context) ([]string, error) {
 	m.ctrl.T.Helper()
@@ -71,6 +87,20 @@ func (m *MockIEventSettingsRepo) ListEventIDs(ctx context.Context) ([]string, er
 func (mr *MockIEventSettingsRepoMockRecorder) ListEventIDs(ctx any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListEventIDs", reflect.TypeOf((*MockIEventSettingsRepo)(nil).ListEventIDs), ctx)
+}
+
+// UpdateSaleWindow mocks base method.
+func (m *MockIEventSettingsRepo) UpdateSaleWindow(ctx context.Context, eventID string, starts, ends time.Time) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "UpdateSaleWindow", ctx, eventID, starts, ends)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// UpdateSaleWindow indicates an expected call of UpdateSaleWindow.
+func (mr *MockIEventSettingsRepoMockRecorder) UpdateSaleWindow(ctx, eventID, starts, ends any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateSaleWindow", reflect.TypeOf((*MockIEventSettingsRepo)(nil).UpdateSaleWindow), ctx, eventID, starts, ends)
 }
 
 // MockISettingsCacheInvalidator is a mock of ISettingsCacheInvalidator interface.
