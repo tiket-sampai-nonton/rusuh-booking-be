@@ -120,16 +120,18 @@ func bstr(b bool) string {
 
 // Join runs join.lua atomically and maps the array reply to a JoinResult (ADR-030: anonymous join).
 func (s *QueueStore) Join(ctx context.Context, p outbound.JoinParams) (outbound.JoinResult, error) {
+	// Idempotency scope (C6.2, P1-13): an account or a verified visitor token scopes by its id; a tokenless guest scopes
+	// by its device hash or keyed client IP. A guest without a scope gets no idempotency key, so nothing is replayed.
 	idem := ""
 	if p.IdemKey != "" {
-		scope := "n"
 		switch {
 		case p.AccountID != "":
-			scope = "a:" + p.AccountID
+			idem = "a:" + p.AccountID + ":" + p.IdemKey
 		case p.TokenVisitorID != "":
-			scope = "v:" + p.TokenVisitorID
+			idem = "v:" + p.TokenVisitorID + ":" + p.IdemKey
+		case p.GuestScope != "":
+			idem = "n:" + p.GuestScope + ":" + p.IdemKey
 		}
-		idem = scope + ":" + p.IdemKey
 	}
 	idemTTL := int(p.IdemTTL.Seconds())
 	if idemTTL < 1 {

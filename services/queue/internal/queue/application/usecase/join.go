@@ -142,6 +142,7 @@ func (u *JoinQueue) Join(ctx context.Context, in inbound.JoinInput) (dto.QueueEn
 		TokenVisitorID:      in.VisitorID,
 		AccountID:           accountID,
 		IdemKey:             in.IdempotencyKey,
+		GuestScope:          in.GuestScope,
 		NowMs:               now.UnixMilli(),
 		IdemTTL:             10 * time.Minute,
 		OneActivePerVisitor: settings.OneActivePerVisitor,

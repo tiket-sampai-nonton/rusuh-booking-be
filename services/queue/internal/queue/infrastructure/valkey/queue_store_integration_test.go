@@ -100,6 +100,30 @@ func endEntryNow(t *testing.T, s *QueueStore, ev, id string) {
 	require.NoError(t, s.c.Do(context.Background(), s.c.B().Zrem().Key(s.kWaiting(ev)).Member(id).Build()).Error())
 }
 
+// C6.2 (P1-13): a tokenless guest's Idempotency-Key replays only inside the guest's own scope (device hash or keyed
+// client IP). Without a scope the key is ignored, so a reused key cannot return another guest's entry.
+func TestJoin_GuestIdempotencyIsScoped(t *testing.T) {
+	s := newTestStore(t)
+	const ev, key = "ev-guest-scope", "idem-test-guest-scope-01"
+
+	d1 := join(t, s, ev, outbound.JoinParams{EntryID: "g1", NewVisitorID: "vg1", IdemKey: key, GuestScope: "d1", IdemTTL: time.Minute})
+	assert.Equal(t, outbound.JoinCreated, d1.Outcome)
+
+	d2 := join(t, s, ev, outbound.JoinParams{EntryID: "g2", NewVisitorID: "vg2", IdemKey: key, GuestScope: "d2", IdemTTL: time.Minute})
+	assert.Equal(t, outbound.JoinCreated, d2.Outcome, "another guest scope is a new join")
+	assert.NotEqual(t, d1.EntryID, d2.EntryID)
+	assert.NotEqual(t, d1.VisitorID, d2.VisitorID)
+
+	again := join(t, s, ev, outbound.JoinParams{EntryID: "g3", NewVisitorID: "vg3", IdemKey: key, GuestScope: "d1", IdemTTL: time.Minute})
+	assert.Equal(t, outbound.JoinExisting, again.Outcome, "same guest scope replays")
+	assert.Equal(t, d1.EntryID, again.EntryID)
+	assert.Equal(t, d1.VisitorID, again.VisitorID)
+
+	none := join(t, s, ev, outbound.JoinParams{EntryID: "g4", NewVisitorID: "vg4", IdemKey: key, IdemTTL: time.Minute})
+	assert.Equal(t, outbound.JoinCreated, none.Outcome, "no guest scope: the key is ignored, no replay")
+	assert.NotEqual(t, d1.EntryID, none.EntryID)
+}
+
 // ADR-030 decision table (TC-ANON-02) against the real script: T1, T2, T3, T5, T6, T9, T10, T11, T12, T14, T15, T16, T17, T18, T19, T19b.
 func TestJoinLua_DecisionTable(t *testing.T) {
 	s := newTestStore(t)
@@ -204,8 +228,8 @@ func TestJoinLua_DecisionTable(t *testing.T) {
 	})
 
 	t.Run("T16 Idempotency-Key replay returns the same entry", func(t *testing.T) {
-		first := join(t, s, "ev-t16", outbound.JoinParams{EntryID: "a", NewVisitorID: "v-a", IdemKey: "idem-test-t16-replay", IdemTTL: time.Minute})
-		again := join(t, s, "ev-t16", outbound.JoinParams{EntryID: "b", NewVisitorID: "v-b", IdemKey: "idem-test-t16-replay", IdemTTL: time.Minute})
+		first := join(t, s, "ev-t16", outbound.JoinParams{EntryID: "a", NewVisitorID: "v-a", IdemKey: "idem-test-t16-replay", GuestScope: "d-t16", IdemTTL: time.Minute})
+		again := join(t, s, "ev-t16", outbound.JoinParams{EntryID: "b", NewVisitorID: "v-b", IdemKey: "idem-test-t16-replay", GuestScope: "d-t16", IdemTTL: time.Minute})
 		assert.Equal(t, outbound.JoinExisting, again.Outcome)
 		assert.Equal(t, first.EntryID, again.EntryID)
 		assert.Equal(t, first.VisitorID, again.VisitorID)

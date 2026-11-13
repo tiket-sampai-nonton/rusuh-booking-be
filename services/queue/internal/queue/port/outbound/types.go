@@ -19,6 +19,8 @@ type JoinParams struct {
 	TokenGen int64
 	// TokenTTL is the lifetime of the server-side token record (vtok), equal to the visitor token's lifetime.
 	TokenTTL time.Duration
+	// GuestScope scopes IdemKey for a tokenless guest (device hash or keyed client IP, C6.2). "" = the key is ignored.
+	GuestScope string
 }
 
 // JoinOutcome enumerates the join.lua result kinds.

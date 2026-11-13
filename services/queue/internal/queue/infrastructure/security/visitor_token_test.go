@@ -1,6 +1,7 @@
 package security_test
 
 import (
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -91,6 +92,31 @@ func TestVisitorToken_ExpiredOrForgedIsInvalid(t *testing.T) {
 	r.Header.Set("X-Visitor-Token", parts[0]+"."+parts[1]+".AAAA")
 	_, ok = auth.ResolveToken(r)
 	assert.False(t, ok, "bad signature")
+}
+
+// C6.2 (P1-13): GuestScope is the device hash when X-Device-Id is sent, else a keyed hash of the client IP; it is
+// empty without a hasher or without any identity, so the idempotency key is then ignored.
+func TestVisitorAuthenticator_GuestScope(t *testing.T) {
+	_, auth, dh := newVisitorPair(t)
+	_, verifier := newSigner(t)
+	noHasher := security.NewVisitorAuthenticator(verifier, time.Now)
+	req := func(device string) *http.Request {
+		r := httptest.NewRequest("POST", "/", nil)
+		if device != "" {
+			r.Header.Set("X-Device-Id", device)
+		}
+		return r
+	}
+
+	assert.Equal(t, dh.Hash("device-raw-id-123"), auth.GuestScope(req("device-raw-id-123"), "203.0.113.7"), "device wins over IP")
+
+	ip := auth.GuestScope(req(""), "203.0.113.7")
+	assert.Regexp(t, `^ip-[0-9a-f]{32}$`, ip)
+	assert.NotContains(t, ip, "203.0.113.7")
+	assert.Equal(t, ip, auth.GuestScope(req(""), "203.0.113.7"), "stable")
+	assert.NotEqual(t, ip, auth.GuestScope(req(""), "203.0.113.8"), "per IP")
+	assert.Empty(t, auth.GuestScope(req(""), ""), "no device and no IP: no scope")
+	assert.Empty(t, noHasher.GuestScope(req("device-raw-id-123"), "203.0.113.7"), "no hasher: no scope")
 }
 
 func TestDeviceHasher_RequiresKeyAndIsKeyed(t *testing.T) {

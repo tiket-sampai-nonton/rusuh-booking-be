@@ -151,9 +151,9 @@ func TestVisitorToken_ExistingJoinRefreshesRecordTTL(t *testing.T) {
 	})
 	t.Run("idempotent replay EXISTING", func(t *testing.T) {
 		ev := evID(t)
-		c := vjoin(t, s, ev, outbound.JoinParams{EntryID: "e-2", NewVisitorID: "vis-2", IdemKey: "idem-test-replay-01", IdemTTL: time.Minute})
+		c := vjoin(t, s, ev, outbound.JoinParams{EntryID: "e-2", NewVisitorID: "vis-2", IdemKey: "idem-test-replay-01", GuestScope: "d-replay", IdemTTL: time.Minute})
 		shrink(ev, c.VisitorID)
-		r := vjoin(t, s, ev, outbound.JoinParams{IdemKey: "idem-test-replay-01", IdemTTL: time.Minute})
+		r := vjoin(t, s, ev, outbound.JoinParams{IdemKey: "idem-test-replay-01", GuestScope: "d-replay", IdemTTL: time.Minute})
 		require.Equal(t, outbound.JoinExisting, r.Outcome)
 		assertRefreshed(ev, c.VisitorID)
 	})
@@ -167,9 +167,9 @@ func TestVisitorToken_ExistingJoinRefreshesRecordTTL(t *testing.T) {
 	})
 	t.Run("EXPIRE on a missing record does not create it", func(t *testing.T) {
 		ev := evID(t)
-		c := vjoin(t, s, ev, outbound.JoinParams{EntryID: "e-4", NewVisitorID: "vis-4", IdemKey: "idem-test-expire-01", IdemTTL: time.Minute})
+		c := vjoin(t, s, ev, outbound.JoinParams{EntryID: "e-4", NewVisitorID: "vis-4", IdemKey: "idem-test-expire-01", GuestScope: "d-expire", IdemTTL: time.Minute})
 		require.NoError(t, s.c.Do(ctx, s.c.B().Del().Key(vtokKey(s, ev, c.VisitorID)).Build()).Error())
-		r := vjoin(t, s, ev, outbound.JoinParams{IdemKey: "idem-test-expire-01", IdemTTL: time.Minute})
+		r := vjoin(t, s, ev, outbound.JoinParams{IdemKey: "idem-test-expire-01", GuestScope: "d-expire", IdemTTL: time.Minute})
 		require.Equal(t, outbound.JoinExisting, r.Outcome)
 		assert.False(t, keyExists(t, s, vtokKey(s, ev, c.VisitorID)), "no record is resurrected")
 	})

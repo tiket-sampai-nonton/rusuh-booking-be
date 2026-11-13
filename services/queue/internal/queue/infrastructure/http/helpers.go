@@ -34,9 +34,11 @@ type VisitorAuthenticator interface {
 }
 
 // VisitorTokenAuthenticator also exposes the token generation and the device claim (ADR-030): join, heartbeat and me
-// compare the generation with the server record and bind tokens to the X-Device-Id hash.
+// compare the generation with the server record and bind tokens to the X-Device-Id hash. GuestScope is the
+// idempotency scope of a tokenless join (C6.2).
 type VisitorTokenAuthenticator interface {
 	VisitorAuthenticator
 	ResolveToken(r *stdhttp.Request) (outbound.VisitorClaim, bool)
 	DeviceHash(r *stdhttp.Request) string
+	GuestScope(r *stdhttp.Request, clientIP string) string
 }

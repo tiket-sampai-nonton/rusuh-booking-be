@@ -21,6 +21,9 @@ type JoinInput struct {
 	// TokenGen is the generation of the verified visitor token (0 = none); DeviceHash is the HMAC of X-Device-Id.
 	TokenGen   int64
 	DeviceHash string
+	// GuestScope scopes the Idempotency-Key of a tokenless guest: the device hash, else a keyed hash of the client IP
+	// (C6.2). "" means no scope, so the key is ignored.
+	GuestScope string
 }
 
 // IJoinUsecase joins a queue (design §2.1).

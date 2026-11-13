@@ -36,6 +36,12 @@ func (f fakeAuth) DeviceHash(r *http.Request) string {
 	}
 	return "dh-of-device"
 }
+func (f fakeAuth) GuestScope(r *http.Request, clientIP string) string {
+	if dh := f.DeviceHash(r); dh != "" {
+		return dh
+	}
+	return "ip-fake"
+}
 
 func TestJoinHandler_Created(t *testing.T) {
 	ctrl := gomock.NewController(t)
