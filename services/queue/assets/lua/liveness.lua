@@ -6,8 +6,8 @@
 -- traffic on Valkey's single command thread and multiply the promoter-tick latency (design-change §4.3). Admitted
 -- entries are in neither set, so silence can never end an entry that holds an allocation. Positions are strict FIFO by
 -- seq (the opening-window draw was dropped); there is no draw/pending state.
--- ARGV: 1=P 2=leaseToken 3=staleBeforeMs 4=endBeforeMs 5=batch 6=nowMs 7=shardCount(B)
---       (strict: score < threshold)
+-- ARGV: 1=P 2=leaseToken 3=staleBeforeMs 4=endBeforeMs 5=batch 6=nowMs 7=shardCount(B) 8=retentionMs
+--       (strict: score < threshold; retentionMs is the PEXPIRE of an entry this sweep ends, D-C8.2)
 -- Reply: {LEASE_LOST} | {OK, staled, ended}
 local P = ARGV[1]
 if redis.call('GET', P .. 'promoter:lock') ~= ARGV[2] then return {'LEASE_LOST'} end
@@ -47,6 +47,7 @@ for sh = 0, B - 1 do
       redis.call('ZREM', P .. 'stale', id)
       redis.call('ZREM', hbKey, id)
       redis.call('HSET', ek, 'status', 'ENDED', 'endReason', 'STALE_TIMEOUT', 'endedAtMs', ARGV[6])
+      redis.call('PEXPIRE', ek, ARGV[8])
       local h = redis.call('HMGET', ek, 'visitorId', 'accountId')
       if h[1] and redis.call('GET', P .. 'visitor:' .. h[1]) == id then redis.call('DEL', P .. 'visitor:' .. h[1]) end
       if h[2] and h[2] ~= '' and redis.call('GET', P .. 'account:' .. h[2]) == id then redis.call('DEL', P .. 'account:' .. h[2]) end

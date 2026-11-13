@@ -37,6 +37,14 @@ type fakeStore struct {
 
 	windowCalls []saleWindowCall // SetSaleWindow calls, in order
 	windowErr   error            // injected SetSaleWindow failure
+
+	retired []retireCall // RetireEvent calls, in order (D-C8.2)
+}
+
+// retireCall records one RetireEvent invocation.
+type retireCall struct {
+	eventID string
+	ttl     time.Duration
 }
 
 // saleWindowCall records one SetSaleWindow invocation.
@@ -393,6 +401,26 @@ func (s *fakeStore) WaitingCount(context.Context, string) (int64, error) {
 	defer s.mu.Unlock()
 	return int64(len(s.waiting)), nil
 }
+func (s *fakeStore) StaleCount(context.Context, string) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var n int64
+	for _, e := range s.entries {
+		if e.Status == valueobject.StatusStale {
+			n++
+		}
+	}
+	return n, nil
+}
+
+// RetireEvent only records the call: the fake does not model Valkey key TTLs.
+func (s *fakeStore) RetireEvent(_ context.Context, ev string, ttl time.Duration) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.retired = append(s.retired, retireCall{eventID: ev, ttl: ttl})
+	return nil
+}
+
 func (s *fakeStore) LivePosition(context.Context, string, int64) (int64, error) { return 1, nil }
 
 // EndWaitingSoldOut mirrors end_sold_out.lua: WAITING/STALE become SOLD_OUT, ADMITTED/CLAIMED are untouched.

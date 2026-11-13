@@ -7,6 +7,7 @@
 -- only the lease handling and the candidate read are folded in.
 -- KEYS[1]=<tag>:promoter:lock
 -- ARGV: 1=P 2=leaseToken 3=staleBeforeMs 4=endBeforeMs 5=batch 6=nowMs 7=shardCount(B) 8=leaseTtlMs 9=topN
+--       10=retentionMs (PEXPIRE of an entry this sweep ends, D-C8.2)
 -- Reply: {LEASE_LOST} | {OK, staled, ended, {top ids...}}
 local lockKey = KEYS[1]
 local P = ARGV[1]
@@ -60,6 +61,7 @@ for sh = 0, B - 1 do
       redis.call('ZREM', P .. 'stale', id)
       redis.call('ZREM', hbKey, id)
       redis.call('HSET', ek, 'status', 'ENDED', 'endReason', 'STALE_TIMEOUT', 'endedAtMs', ARGV[6])
+      redis.call('PEXPIRE', ek, ARGV[10])
       local h = redis.call('HMGET', ek, 'visitorId', 'accountId')
       if h[1] and redis.call('GET', P .. 'visitor:' .. h[1]) == id then redis.call('DEL', P .. 'visitor:' .. h[1]) end
       if h[2] and h[2] ~= '' and redis.call('GET', P .. 'account:' .. h[2]) == id then redis.call('DEL', P .. 'account:' .. h[2]) end

@@ -118,6 +118,9 @@ func bstr(b bool) string {
 	return "0"
 }
 
+// retentionMs is the retention ARGV the terminal-writing scripts take as their last argument (D-C8.2).
+func retentionMs() string { return strconv.FormatInt(outbound.EntryRetention.Milliseconds(), 10) }
+
 // Join runs join.lua atomically and maps the array reply to a JoinResult (ADR-030: anonymous join).
 func (s *QueueStore) Join(ctx context.Context, p outbound.JoinParams) (outbound.JoinResult, error) {
 	// Idempotency scope (C6.2, P1-13): an account or a verified visitor token scopes by its id; a tokenless guest scopes
@@ -255,7 +258,7 @@ func mapPromote(arr []vk.ValkeyMessage) (outbound.PromoteResult, error) {
 // claimMaxMs bounds the CLAIMED slot (C6.5, P2-15).
 func (s *QueueStore) Claim(ctx context.Context, eventID, entryID, visitorID string, nowMs, claimMaxMs int64) (outbound.ClaimResult, error) {
 	keys := []string{s.kEntry(eventID, entryID), s.kActive(eventID)}
-	args := []string{entryID, strconv.FormatInt(nowMs, 10), visitorID, strconv.FormatInt(claimMaxMs, 10)}
+	args := []string{entryID, strconv.FormatInt(nowMs, 10), visitorID, strconv.FormatInt(claimMaxMs, 10), retentionMs()}
 	arr, err := s.claim.Exec(ctx, s.c, keys, args).ToArray()
 	if err != nil {
 		return outbound.ClaimResult{}, fmt.Errorf("valkey: claim.lua: %w", err)
@@ -305,7 +308,7 @@ func (s *QueueStore) Leave(ctx context.Context, eventID, entryID, visitorID stri
 	shard := s.shardOf(entryID)
 	args := []string{
 		entryID, visitorID, strconv.FormatInt(nowMs, 10), s.prefix(eventID),
-		s.kHbShard(eventID, shard), s.kHbStaleShard(eventID, shard),
+		s.kHbShard(eventID, shard), s.kHbStaleShard(eventID, shard), retentionMs(),
 	}
 	arr, err := s.leave.Exec(ctx, s.c, keys, args).ToArray()
 	if err != nil {
@@ -345,7 +348,7 @@ func (s *QueueStore) EndEntry(ctx context.Context, eventID, entryID, outcome str
 	shard := s.shardOf(entryID)
 	args := []string{
 		entryID, outcome, strconv.FormatInt(nowMs, 10), s.prefix(eventID),
-		s.kHbShard(eventID, shard), s.kHbStaleShard(eventID, shard),
+		s.kHbShard(eventID, shard), s.kHbStaleShard(eventID, shard), retentionMs(),
 	}
 	arr, err := s.endEntry.Exec(ctx, s.c, keys, args).ToArray()
 	if err != nil {
@@ -386,6 +389,7 @@ func (s *QueueStore) EndWaitingSoldOut(ctx context.Context, eventID string, nowM
 		shard := s.shardOf(id)
 		args = append(args, id, s.kHbShard(eventID, shard), s.kHbStaleShard(eventID, shard))
 	}
+	args = append(args, retentionMs())
 	arr, err := s.endSoldOut.Exec(ctx, s.c, []string{s.kSeq(eventID)}, args).ToArray()
 	if err != nil {
 		return outbound.SoldOutBatch{}, fmt.Errorf("valkey: end_sold_out.lua: %w", err)
@@ -652,7 +656,7 @@ func (s *QueueStore) SweepLiveness(ctx context.Context, eventID, leaseToken stri
 	// thread (design-change §4.3); a single round-trip keeps the tick within +20 % of base under load.
 	arr, err := s.liveness.Exec(ctx, s.c, []string{s.kSeq(eventID)}, []string{
 		s.prefix(eventID), leaseToken, strconv.FormatInt(staleBeforeMs, 10), strconv.FormatInt(endBeforeMs, 10),
-		strconv.Itoa(batch), strconv.FormatInt(nowMs, 10), strconv.Itoa(s.shards),
+		strconv.Itoa(batch), strconv.FormatInt(nowMs, 10), strconv.Itoa(s.shards), retentionMs(),
 	}).ToArray()
 	if err != nil {
 		return outbound.LivenessResult{}, fmt.Errorf("valkey: liveness.lua (B=%d): %w", s.shards, err)
@@ -680,7 +684,7 @@ func (s *QueueStore) SweepLivenessTick(ctx context.Context, eventID string, stal
 	arr, err := s.livenessTick.Exec(ctx, s.c, []string{s.kLease(eventID)}, []string{
 		s.prefix(eventID), tok, strconv.FormatInt(staleBeforeMs, 10), strconv.FormatInt(endBeforeMs, 10),
 		strconv.Itoa(batch), strconv.FormatInt(nowMs, 10), strconv.Itoa(s.shards), strconv.FormatInt(ttl.Milliseconds(), 10),
-		strconv.Itoa(topN),
+		strconv.Itoa(topN), retentionMs(),
 	}).ToArray()
 	if err != nil {
 		return outbound.LivenessResult{}, nil, fmt.Errorf("valkey: liveness_tick.lua (B=%d): %w", s.shards, err)
@@ -717,6 +721,41 @@ func (s *QueueStore) WaitingCount(ctx context.Context, eventID string) (int64, e
 		return 0, fmt.Errorf("valkey: zcard waiting: %w", err)
 	}
 	return n, nil
+}
+
+// StaleCount is ZCARD stale: silent entries a heartbeat can still revive, or the liveness sweep will end.
+func (s *QueueStore) StaleCount(ctx context.Context, eventID string) (int64, error) {
+	n, err := s.c.Do(ctx, s.c.B().Zcard().Key(s.k(eventID, "stale")).Build()).AsInt64()
+	if err != nil {
+		return 0, fmt.Errorf("valkey: zcard stale: %w", err)
+	}
+	return n, nil
+}
+
+// RetireEvent sets EXPIRE NX on the fixed keys of a finished event, so Valkey reclaims them after ttl (D-C8.2, P3-13).
+// NX is what makes it safe to call on every status tick: a key keeps the first deadline it got, instead of the
+// deadline moving forward each second and the keys never expiring. A key written again later (for example the sale
+// hash) without a TTL gets one on the next call.
+func (s *QueueStore) RetireEvent(ctx context.Context, eventID string, ttl time.Duration) error {
+	keys := []string{
+		s.kSeq(eventID), s.kWaiting(eventID), s.k(eventID, "stale"), s.k(eventID, "pending"), s.kActive(eventID),
+		s.kStatus(eventID), s.kSale(eventID), s.kUnused(eventID), s.kLease(eventID),
+	}
+	for sh := 0; sh < s.shards; sh++ {
+		shard := strconv.Itoa(sh)
+		keys = append(keys, s.kHbShard(eventID, shard), s.kHbStaleShard(eventID, shard))
+	}
+	secs := int64(ttl / time.Second)
+	cmds := make(vk.Commands, 0, len(keys))
+	for _, k := range keys {
+		cmds = append(cmds, s.c.B().Expire().Key(k).Seconds(secs).Nx().Build())
+	}
+	for _, res := range s.c.DoMulti(ctx, cmds...) {
+		if err := res.Error(); err != nil {
+			return fmt.Errorf("valkey: retire event: %w", err)
+		}
+	}
+	return nil
 }
 
 // LivePosition returns 1 + ZCOUNT waiting -inf (seq.

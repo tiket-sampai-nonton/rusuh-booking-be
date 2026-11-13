@@ -43,6 +43,11 @@ func (s *seqStore) SetSale(_ context.Context, _ string, state string, soldOut bo
 	return nil
 }
 func (s *seqStore) SetSaleWindow(context.Context, string, int64, int64) error { return nil }
+
+// ActiveCount, StaleCount and RetireEvent answer the retirement check (D-C8.2) of an ended sale: nothing is live here.
+func (s *seqStore) ActiveCount(context.Context, string) (int, error)         { return 0, nil }
+func (s *seqStore) StaleCount(context.Context, string) (int64, error)        { return 0, nil }
+func (s *seqStore) RetireEvent(context.Context, string, time.Duration) error { return nil }
 func (s *seqStore) WaitingCount(context.Context, string) (int64, error) {
 	if s.countErr != nil {
 		return 0, s.countErr

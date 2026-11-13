@@ -3,6 +3,7 @@
 -- KEYS[4]=nik:<h> KEYS[5]=visitor:<v> KEYS[6]=email:<eh>
 -- ARGV: 1=entryId 2=visitorId 3=nowMs 4=P (prefix for the global stale/pending sets)
 --       5=hbShardKey 6=hbstaleShardKey (the entry's sharded liveness keys; ADR-030 Amendment)
+--       7=retentionMs (D-C8.2: the LEFT entry hash gets PEXPIRE)
 -- Reply: {ERR,NOT_FOUND} | {IGNORED,<status>} | {OK,<prevStatus>,<allocationId>}
 local st = redis.call('HGET', KEYS[1], 'status')
 if not st then return {'ERR','NOT_FOUND'} end
@@ -22,5 +23,6 @@ redis.call('ZREM', ARGV[6], ARGV[1])                    -- sharded hbstale:{s}
 redis.call('ZREM', ARGV[4] .. 'stale', ARGV[1])         -- global ordering set
 redis.call('ZREM', ARGV[4] .. 'pending', ARGV[1])       -- global (draw dropped; harmless)
 redis.call('HSET', KEYS[1], 'status', 'LEFT', 'endReason', 'LEFT', 'endedAtMs', ARGV[3])
+redis.call('PEXPIRE', KEYS[1], ARGV[7])
 if st ~= 'ADMITTED' then alloc = '' end
 return {'OK', st, alloc}

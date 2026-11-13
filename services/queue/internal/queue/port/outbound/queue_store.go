@@ -65,6 +65,12 @@ type IQueueStore interface {
 	WaitingSeqAt(ctx context.Context, eventID string, idx int64) (int64, bool, error)
 	// WaitingCount returns the number of live waiting entries.
 	WaitingCount(ctx context.Context, eventID string) (int64, error)
+	// StaleCount returns the number of silent (STALE) entries, which a heartbeat can still revive.
+	StaleCount(ctx context.Context, eventID string) (int64, error)
+	// RetireEvent gives the fixed keys of a finished event (seq, waiting, stale, pending, active, hb/hbstale shards,
+	// status, sale, unused, promoter lock) a TTL, once nothing in it is live (D-C8.2, P3-13). Keys that already carry
+	// a TTL keep their deadline, so calling it on every status tick does not push the expiry forward.
+	RetireEvent(ctx context.Context, eventID string, ttl time.Duration) error
 	// LivePosition returns 1 + the number of live entries with a smaller seq.
 	LivePosition(ctx context.Context, eventID string, seq int64) (int64, error)
 }

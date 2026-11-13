@@ -3,6 +3,7 @@
 -- KEYS[1]=entry:<id> KEYS[2]=active KEYS[3..5]=nik/visitor/email keys KEYS[6]=waiting
 -- ARGV: 1=entryId 2=outcome 3=nowMs 4=P (prefix for the global stale/pending sets)
 --       5=hbShardKey 6=hbstaleShardKey (the entry's sharded liveness keys; ADR-030 Amendment)
+--       7=retentionMs (D-C8.2: every terminal write sets PEXPIRE on the entry hash)
 -- outcome=SWEEP_MISSED (Queue sweeper, deadline lewat); ALREADY_ACTIVE (promoter, WAITING-only; ADR-030 removed
 -- BUYER_QUOTA_EXHAUSTED and UNREADABLE_PII); PROMOTER_ORPHAN needs no class (hash gone => NO_ENTRY branch below);
 -- anything else = Booking outcome (PAID|UNCLAIMED|REFUNDED|...).
@@ -65,6 +66,7 @@ if ARGV[2]=='SWEEP_MISSED' then
   redis.call('ZREM', KEYS[2], ARGV[1])
   redis.call('ZREM', KEYS[6], ARGV[1])
   redis.call('HSET', KEYS[1], 'status', final, 'endReason', reason, 'endedAtMs', ARGV[3])
+  redis.call('PEXPIRE', KEYS[1], ARGV[7])
   dropSets()
   if redis.call('GET', KEYS[3])==ARGV[1] then redis.call('DEL', KEYS[3]) end
   if redis.call('GET', KEYS[4])==ARGV[1] then redis.call('DEL', KEYS[4]) end
@@ -79,6 +81,7 @@ if ARGV[2]=='ALREADY_ACTIVE' then
   redis.call('ZREM', KEYS[6], ARGV[1])
   dropSets()
   redis.call('HSET', KEYS[1], 'status', 'ENDED', 'endReason', ARGV[2], 'endedAtMs', ARGV[3])
+  redis.call('PEXPIRE', KEYS[1], ARGV[7])
   if redis.call('GET', KEYS[3])==ARGV[1] then redis.call('DEL', KEYS[3]) end
   if redis.call('GET', KEYS[4])==ARGV[1] then redis.call('DEL', KEYS[4]) end
   if redis.call('GET', KEYS[5])==ARGV[1] then redis.call('DEL', KEYS[5]) end
@@ -101,6 +104,7 @@ redis.call('ZREM', KEYS[2], ARGV[1])
 redis.call('ZREM', KEYS[6], ARGV[1])
 dropSets()
 redis.call('HSET', KEYS[1], 'status', final, 'endReason', ARGV[2], 'endedAtMs', ARGV[3])
+redis.call('PEXPIRE', KEYS[1], ARGV[7])
 if redis.call('GET', KEYS[3])==ARGV[1] then redis.call('DEL', KEYS[3]) end
 if redis.call('GET', KEYS[4])==ARGV[1] then redis.call('DEL', KEYS[4]) end
 if redis.call('GET', KEYS[5])==ARGV[1] then redis.call('DEL', KEYS[5]) end

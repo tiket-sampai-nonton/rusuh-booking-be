@@ -73,6 +73,10 @@ type LivenessResult struct {
 // End outcome originated by the liveness sweeper.
 const EndStaleTimeout = "STALE_TIMEOUT"
 
+// EntryRetention is how long a terminal entry hash, and the fixed keys of a finished event, stay in Valkey before
+// they expire (D-C8.2, P1-4, P3-13). Live entries (WAITING, ADMITTED, CLAIMED) never get a TTL.
+const EntryRetention = 24 * time.Hour
+
 // PromoteCandidate is one reserved entry to move waiting→active.
 type PromoteCandidate struct {
 	EntryID         string
