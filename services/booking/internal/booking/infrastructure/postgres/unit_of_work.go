@@ -1154,13 +1154,15 @@ func moveHeldCounters(ctx context.Context, tx pgx.Tx, eventID string, buyerHash 
 	return c, nil
 }
 
-// catArrays splits a per-category unit count into the parallel arrays the counter statements unnest.
-func catArrays(byCat map[string]int) ([]string, []int32) {
+// catArrays splits a per-category unit count into the parallel arrays the counter statements unnest. The counts stay
+// Go ints: pgx encodes them into the statement's int[] parameter and refuses a value outside int4, so there is no
+// unchecked narrowing here (gosec G115).
+func catArrays(byCat map[string]int) ([]string, []int) {
 	ids := make([]string, 0, len(byCat))
-	counts := make([]int32, 0, len(byCat))
+	counts := make([]int, 0, len(byCat))
 	for c, k := range byCat {
 		ids = append(ids, c)
-		counts = append(counts, int32(k))
+		counts = append(counts, k)
 	}
 	return ids, counts
 }
