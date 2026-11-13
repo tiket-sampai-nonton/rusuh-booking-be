@@ -39,3 +39,16 @@ func NextHeartbeatMs(baseMs, nearMs, nearSeqs, seq, headSeq int64, jitter float6
 	}
 	return baseMs + int64(float64(baseMs)*0.4*(jitter-0.5))
 }
+
+// NextPollMs is the server-chosen poll interval for an entry at live position (design §2.2 poll policy): farMs when
+// position > farAbove, midMs when position > midAbove, else nearMs. position <= 0 (admitted, or unknown) uses nearMs.
+func NextPollMs(position, farMs, midMs, nearMs, farAbove, midAbove int64) int64 {
+	switch {
+	case position > farAbove:
+		return farMs
+	case position > midAbove:
+		return midMs
+	default:
+		return nearMs
+	}
+}

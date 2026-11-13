@@ -874,6 +874,13 @@ components:
         nextHeartbeatMs:
           type: integer
           description: Interval heartbeat berikutnya (±20% jitter; lebih pendek dekat head)
+        nextPollAfterMs:
+          type: integer
+          description: |
+            Jeda sebelum klien memanggil lagi /queue-entries/me dan /queue-status (tambahkan jitter ±20% di klien).
+            Bertingkat dari exactPosition menurut kebijakan poll event: pollFarMs bila posisi > pollFarAbove,
+            pollMidMs bila > pollMidAbove, selain itu pollNearMs. ADMITTED/CLAIMED memakai pollNearMs.
+            Tidak dikirim saat ENDED (berhenti polling). Gunakan nilai ini, bukan nextPollAfterMs di Status Document.
         claimDeadline:
           type: string
           format: date-time

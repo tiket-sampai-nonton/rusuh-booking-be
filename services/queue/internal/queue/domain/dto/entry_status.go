@@ -13,7 +13,10 @@ type EntryStatus struct {
 	// Zone is GUARANTEED | POSSIBLE | NOT_ENOUGH, computed on seq by the server; null while ENDED.
 	Zone            *string `json:"zone"`
 	NextHeartbeatMs int64   `json:"nextHeartbeatMs,omitempty"`
-	ClaimDeadline   string  `json:"claimDeadline,omitempty"`
+	// NextPollAfterMs is when the client should poll /me and /queue-status again, tiered on ExactPosition by the
+	// event's poll policy (far/mid/near). Omitted once ENDED: there is nothing left to poll for.
+	NextPollAfterMs int64  `json:"nextPollAfterMs,omitempty"`
+	ClaimDeadline   string `json:"claimDeadline,omitempty"`
 	// Reason explains an ENDED entry: LEFT | STALE_TIMEOUT | CLAIM_WINDOW_EXPIRED | PAGE_TIMER_EXPIRED | JOURNEY_ENDED.
 	Reason   string `json:"reason,omitempty"`
 	Redirect string `json:"redirect,omitempty"`
