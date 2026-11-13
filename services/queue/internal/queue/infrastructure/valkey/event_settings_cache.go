@@ -20,8 +20,10 @@ const (
 	activeEventsTTL = 5 * time.Second
 )
 
-// EventSettingsCache wraps IEventSettingsRepo with a Valkey read-through cache (TTL 30s).
+// EventSettingsCache wraps IEventSettingsRepo with a Valkey read-through cache (TTL 30s) for Get.
 // All instances share the same key so a PUT by admin is consistent within one TTL window.
+// The active-event list (ListActiveEventIDs, D-C8.10) is an in-process cache, not Valkey: each process keeps its own copy
+// for activeEventsTTL.
 type EventSettingsCache struct {
 	c      vk.Client
 	keyer  Keyer
@@ -79,7 +81,9 @@ func (r *EventSettingsCache) Invalidate(ctx context.Context, eventID string) err
 	return r.c.Do(ctx, r.c.B().Del().Key(r.cacheKey(eventID)).Build()).Error()
 }
 
-// ListEventIDs delegates to Postgres; this method is only used by workers to iterate events, not on the hot path.
+// ListEventIDs delegates to Postgres and is not cached. It is read by the depth collector (every metrics scrape) and by
+// liveness (every tick, so every configured event is swept and the inactive ones are retired, R40). Neither is on the
+// request path.
 func (r *EventSettingsCache) ListEventIDs(ctx context.Context) ([]string, error) {
 	return r.source.ListEventIDs(ctx)
 }

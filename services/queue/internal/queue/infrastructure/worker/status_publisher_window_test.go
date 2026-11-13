@@ -127,3 +127,27 @@ func TestStatusPublisher_WritesSaleWindowOnlyOnChange(t *testing.T) {
 	tick(t)
 	assert.Len(t, st.attempts, 5, "after a successful write the window is quiet again")
 }
+
+// C8.10 Part B (R40, I2): a window whose end is not after its start is never written, because it would drop the event from
+// the iteration for good. It is not remembered either, so the next sane window is written.
+func TestStatusPublisher_RejectsWindowEndingNotAfterStart(t *testing.T) {
+	at := wnow.Now()
+	equal := outbound.SupplySnapshot{SalesStartsAt: at, SalesEndsAt: at}
+	backwards := outbound.SupplySnapshot{SalesStartsAt: at.Add(time.Hour), SalesEndsAt: at}
+	sane := outbound.SupplySnapshot{SalesStartsAt: at.Add(-time.Hour), SalesEndsAt: at.Add(time.Hour)}
+
+	st := &windowSettings{oneSettings: oneSettings{s: entity.EventSettings{ActiveSlotCapacity: 10, NearFrontMultiplier: 2}}}
+	supply := &stepSupply{snap: equal}
+	sp := worker.NewStatusPublisher(newFakeStore(), st, supply, wnow, time.Second)
+	tick := func(t *testing.T) { t.Helper(); require.NoError(t, sp.Run(context.Background())) }
+
+	tick(t)
+	assert.Empty(t, st.attempts, "ends equal to starts is not written")
+	supply.snap = backwards
+	tick(t)
+	assert.Empty(t, st.attempts, "ends before starts is not written")
+	supply.snap = sane
+	tick(t)
+	assert.Equal(t, [][2]int64{{sane.SalesStartsAt.UnixMilli(), sane.SalesEndsAt.UnixMilli()}}, st.attempts,
+		"a sane window is written; the rejected ones were not remembered")
+}

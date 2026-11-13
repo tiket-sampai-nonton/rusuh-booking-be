@@ -121,6 +121,12 @@ func (p *StatusPublisher) persistSaleWindow(ctx context.Context, eventID string,
 	if supply.SalesStartsAt.IsZero() || supply.SalesEndsAt.IsZero() {
 		return
 	}
+	if !supply.SalesEndsAt.After(supply.SalesStartsAt) {
+		// A window that ends before it starts would drop the event from the iteration for good (R40): not written, not remembered.
+		slog.Warn("status publisher: sale window rejected, ends not after starts", "eventId", eventID,
+			"startsAt", supply.SalesStartsAt, "endsAt", supply.SalesEndsAt)
+		return
+	}
 	window := [2]int64{supply.SalesStartsAt.UnixMilli(), supply.SalesEndsAt.UnixMilli()}
 	p.windowMu.Lock()
 	defer p.windowMu.Unlock()

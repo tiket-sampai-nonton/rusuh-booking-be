@@ -36,6 +36,7 @@ func TestLiveness_LeaseHeldSkipsAndWarnsAfterSixConsecutive(t *testing.T) {
 	m := newWorkerMocks(t)
 	l, buf := newLivenessForTest(m)
 	ctx := context.Background()
+	m.settings.EXPECT().ListEventIDs(gomock.Any()).Return([]string{"ev1", "ev2"}, nil).AnyTimes()
 	m.settings.EXPECT().ListActiveEventIDs(gomock.Any(), gomock.Any()).Return([]string{"ev1", "ev2"}, nil).AnyTimes()
 
 	// ev1 is always held; ev2 is held only on the first pass, then succeeds.
@@ -67,6 +68,7 @@ func TestLiveness_SuccessResetsCounter(t *testing.T) {
 	m := newWorkerMocks(t)
 	l, buf := newLivenessForTest(m)
 	ctx := context.Background()
+	m.settings.EXPECT().ListEventIDs(gomock.Any()).Return([]string{"ev1"}, nil).AnyTimes()
 	m.settings.EXPECT().ListActiveEventIDs(gomock.Any(), gomock.Any()).Return([]string{"ev1"}, nil).AnyTimes()
 	held := outbound.LivenessResult{LeaseLost: true}
 	seq := []outbound.LivenessResult{held, held, held, held, held, {}, held, held, held, held, held, held}
@@ -118,10 +120,12 @@ func TestLiveness_EvictsCounterOfRemovedEvent(t *testing.T) {
 	m := newWorkerMocks(t)
 	l, buf := newLivenessForTest(m)
 	ctx := context.Background()
+	// The counter is evicted when the event leaves the configured list (ListEventIDs); the active list is not what matters here.
+	m.settings.EXPECT().ListActiveEventIDs(gomock.Any(), gomock.Any()).Return([]string{"ev1"}, nil).AnyTimes()
 	gomock.InOrder(
-		m.settings.EXPECT().ListActiveEventIDs(gomock.Any(), gomock.Any()).Return([]string{"ev1"}, nil).Times(5),
-		m.settings.EXPECT().ListActiveEventIDs(gomock.Any(), gomock.Any()).Return([]string{}, nil).Times(1),
-		m.settings.EXPECT().ListActiveEventIDs(gomock.Any(), gomock.Any()).Return([]string{"ev1"}, nil).Times(1),
+		m.settings.EXPECT().ListEventIDs(gomock.Any()).Return([]string{"ev1"}, nil).Times(5),
+		m.settings.EXPECT().ListEventIDs(gomock.Any()).Return([]string{}, nil).Times(1),
+		m.settings.EXPECT().ListEventIDs(gomock.Any()).Return([]string{"ev1"}, nil).Times(1),
 	)
 	m.store.EXPECT().SweepLivenessTick(gomock.Any(), "ev1", gomock.Any(), gomock.Any(), 10, gomock.Any(), 10*time.Second, 0, gomock.Any()).
 		Return(outbound.LivenessResult{LeaseLost: true}, nil, nil).AnyTimes()
@@ -138,6 +142,7 @@ func TestLiveness_StartShardRotatesPerTick(t *testing.T) {
 	m := newWorkerMocks(t)
 	l, _ := newLivenessForTest(m)
 	ctx := context.Background()
+	m.settings.EXPECT().ListEventIDs(gomock.Any()).Return([]string{"ev1", "ev2"}, nil).AnyTimes()
 	m.settings.EXPECT().ListActiveEventIDs(gomock.Any(), gomock.Any()).Return([]string{"ev1", "ev2"}, nil).AnyTimes()
 	var starts []int
 	m.store.EXPECT().SweepLivenessTick(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), 10, gomock.Any(), 10*time.Second, 0, gomock.Any()).
@@ -152,4 +157,113 @@ func TestLiveness_StartShardRotatesPerTick(t *testing.T) {
 		require.NoError(t, l.Run(ctx))
 	}
 	assert.Equal(t, []int{0, 1, 2}, starts, "tick i starts at shard i; ev2 shares the tick's start")
+}
+
+// C8.10 Part B (R40, I1): liveness iterates every configured event, so an event past its cut-off whose entries still
+// heartbeat has them ended once they go silent. Liveness also retires an inactive event once the store reports nothing
+// live, and remembers a retirement so the event is not retired again on every tick.
+func TestLiveness_RetiresInactiveEventOnlyOnce(t *testing.T) {
+	m := newWorkerMocks(t)
+	l, _ := newLivenessForTest(m)
+	ctx := context.Background()
+	m.settings.EXPECT().ListEventIDs(gomock.Any()).Return([]string{"old"}, nil).AnyTimes()
+	m.settings.EXPECT().ListActiveEventIDs(gomock.Any(), gomock.Any()).Return([]string{}, nil).AnyTimes()
+	m.store.EXPECT().SweepLivenessTick(gomock.Any(), "old", gomock.Any(), gomock.Any(), 10, gomock.Any(), 10*time.Second, 0, gomock.Any()).
+		Return(outbound.LivenessResult{}, nil, nil).AnyTimes()
+	m.store.EXPECT().RetireEvent(gomock.Any(), "old", outbound.EntryRetention).Return(true, nil).Times(1)
+
+	for range 3 {
+		require.NoError(t, l.Run(ctx))
+	}
+}
+
+// A refusal (live entries left) is not remembered: the event is retried on the next tick until the store accepts it.
+func TestLiveness_RetriesRefusedRetirementNextTick(t *testing.T) {
+	m := newWorkerMocks(t)
+	l, _ := newLivenessForTest(m)
+	ctx := context.Background()
+	m.settings.EXPECT().ListEventIDs(gomock.Any()).Return([]string{"old"}, nil).AnyTimes()
+	m.settings.EXPECT().ListActiveEventIDs(gomock.Any(), gomock.Any()).Return([]string{}, nil).AnyTimes()
+	m.store.EXPECT().SweepLivenessTick(gomock.Any(), "old", gomock.Any(), gomock.Any(), 10, gomock.Any(), 10*time.Second, 0, gomock.Any()).
+		Return(outbound.LivenessResult{}, nil, nil).AnyTimes()
+	gomock.InOrder(
+		m.store.EXPECT().RetireEvent(gomock.Any(), "old", outbound.EntryRetention).Return(false, nil).Times(2),
+		m.store.EXPECT().RetireEvent(gomock.Any(), "old", outbound.EntryRetention).Return(true, nil).Times(1),
+	)
+
+	for range 4 {
+		require.NoError(t, l.Run(ctx))
+	}
+}
+
+// An active event is swept but never retired by liveness: the status publisher owns the retirement of active events.
+func TestLiveness_DoesNotRetireActiveEvent(t *testing.T) {
+	m := newWorkerMocks(t)
+	l, _ := newLivenessForTest(m)
+	ctx := context.Background()
+	m.settings.EXPECT().ListEventIDs(gomock.Any()).Return([]string{"ev1"}, nil).AnyTimes()
+	m.settings.EXPECT().ListActiveEventIDs(gomock.Any(), gomock.Any()).Return([]string{"ev1"}, nil).AnyTimes()
+	m.store.EXPECT().SweepLivenessTick(gomock.Any(), "ev1", gomock.Any(), gomock.Any(), 10, gomock.Any(), 10*time.Second, 0, gomock.Any()).
+		Return(outbound.LivenessResult{}, nil, nil).AnyTimes()
+	// No RetireEvent expectation: gomock fails the test on any call.
+
+	for range 2 {
+		require.NoError(t, l.Run(ctx))
+	}
+}
+
+// A lease held by the promoter skips the sweep of an inactive event, and the retirement with it (the next tick tries again).
+func TestLiveness_LeaseHeldSkipsRetirement(t *testing.T) {
+	m := newWorkerMocks(t)
+	l, _ := newLivenessForTest(m)
+	ctx := context.Background()
+	m.settings.EXPECT().ListEventIDs(gomock.Any()).Return([]string{"old"}, nil).AnyTimes()
+	m.settings.EXPECT().ListActiveEventIDs(gomock.Any(), gomock.Any()).Return([]string{}, nil).AnyTimes()
+	gomock.InOrder(
+		m.store.EXPECT().SweepLivenessTick(gomock.Any(), "old", gomock.Any(), gomock.Any(), 10, gomock.Any(), 10*time.Second, 0, gomock.Any()).
+			Return(outbound.LivenessResult{LeaseLost: true}, nil, nil),
+		m.store.EXPECT().SweepLivenessTick(gomock.Any(), "old", gomock.Any(), gomock.Any(), 10, gomock.Any(), 10*time.Second, 0, gomock.Any()).
+			Return(outbound.LivenessResult{}, nil, nil),
+	)
+	m.store.EXPECT().RetireEvent(gomock.Any(), "old", outbound.EntryRetention).Return(true, nil).Times(1)
+
+	require.NoError(t, l.Run(ctx))
+	require.NoError(t, l.Run(ctx))
+}
+
+// An event that becomes active again is not retired while it is active, and is retired again once it is inactive again.
+func TestLiveness_ReactivatedEventIsRetiredAgainWhenInactive(t *testing.T) {
+	m := newWorkerMocks(t)
+	l, _ := newLivenessForTest(m)
+	ctx := context.Background()
+	m.settings.EXPECT().ListEventIDs(gomock.Any()).Return([]string{"ev1"}, nil).AnyTimes()
+	m.store.EXPECT().SweepLivenessTick(gomock.Any(), "ev1", gomock.Any(), gomock.Any(), 10, gomock.Any(), 10*time.Second, 0, gomock.Any()).
+		Return(outbound.LivenessResult{}, nil, nil).AnyTimes()
+	gomock.InOrder(
+		m.settings.EXPECT().ListActiveEventIDs(gomock.Any(), gomock.Any()).Return([]string{}, nil),
+		m.store.EXPECT().RetireEvent(gomock.Any(), "ev1", outbound.EntryRetention).Return(true, nil),
+		m.settings.EXPECT().ListActiveEventIDs(gomock.Any(), gomock.Any()).Return([]string{"ev1"}, nil),
+		m.settings.EXPECT().ListActiveEventIDs(gomock.Any(), gomock.Any()).Return([]string{}, nil),
+		m.store.EXPECT().RetireEvent(gomock.Any(), "ev1", outbound.EntryRetention).Return(true, nil),
+	)
+
+	for range 3 {
+		require.NoError(t, l.Run(ctx))
+	}
+}
+
+// Promoter, sweeper and status publisher iterate only the active list: an inactive event is never touched by them.
+// Their store and Booking mocks have no expectations, so any call fails the test.
+func TestInactiveEvents_NotTouchedByPromoterSweeperOrStatus(t *testing.T) {
+	m := newWorkerMocks(t)
+	ctx := context.Background()
+	m.settings.EXPECT().ListActiveEventIDs(gomock.Any(), gomock.Any()).Return([]string{}, nil).AnyTimes()
+
+	p := worker.NewPromoter(m.store, m.settings, m.booking, m.pub, m.audit, clock.System{}, nil,
+		worker.PromoterTuning{BatchMax: 10, LeaseTTL: 10 * time.Second, NoSupplySuspectTicks: 50})
+	sw := worker.NewSweeper(m.store, m.settings, clock.System{}, 10)
+	sp := worker.NewStatusPublisher(m.store, m.settings, m.booking, clock.System{}, time.Second)
+	require.NoError(t, p.Run(ctx))
+	require.NoError(t, sw.Run(ctx))
+	require.NoError(t, sp.Run(ctx))
 }

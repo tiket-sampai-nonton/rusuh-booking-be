@@ -3,3 +3,6 @@
 ALTER TABLE event_settings
     ADD COLUMN sales_starts_at timestamptz,
     ADD COLUMN sales_ends_at   timestamptz;
+-- Operator note (R40): setting sales_ends_at back to NULL re-activates the event, so the workers iterate it again. Use it
+-- to extend a sale past its cut-off. The status publisher writes Booking's window again only when that window changes or
+-- after a restart, so after a NULL the window stays as set until one of those happens.
