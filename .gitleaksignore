@@ -29,3 +29,7 @@ e795b45aa2619e0700a46f050d478a751ce23228:services/payment/internal/payment/infra
 
 # False positive: referensi env var di payment spec (bukan secret aktual)
 e52f3e5812405ba873a81370ce9c4dd3abdcab8c:specs/payment-service/design.md:generic-api-key:332
+# False positive: konstanta Idempotency-Key palsu di tes integrasi booking (bukan rahasia)
+da7914d49ab70196acaa4cbd35176025be21a2be:services/booking/internal/booking/infrastructure/postgres/repos_integration_test.go:generic-api-key:449
+da7914d49ab70196acaa4cbd35176025be21a2be:services/booking/internal/booking/infrastructure/postgres/repos_integration_test.go:generic-api-key:461
+da7914d49ab70196acaa4cbd35176025be21a2be:services/booking/internal/booking/infrastructure/postgres/repos_integration_test.go:generic-api-key:475

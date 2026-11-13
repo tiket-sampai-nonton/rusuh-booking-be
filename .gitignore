@@ -41,3 +41,24 @@ backend.tf
 # Setelan AI pribadi (konfigurasi bersama ada di CLAUDE.md, .claude/, .kiro/)
 .claude/settings.local.json
 CLAUDE.local.md
+
+# Keluaran mentah tes: hanya laporan HTML/Markdown dan kode suite yang di-commit (lihat tests/*/README.md).
+tests/k6/reports/**/*.csv
+tests/k6/reports/**/*.json
+tests/k6/reports/**/*.log
+tests/pentest/results/
+tests/ui/**/node_modules/
+tests/ui/**/package-lock.json
+tests/ui/**/test-results/
+tests/ui/**/playwright-report/
+tests/ui/**/*.ndjson
+tests/ui/**/*.webm
+tests/ui/**/*.trace
+tests/ui/**/*.zip
+tests/reports/**/*.ndjson
+tests/reports/api/*.json
+tests/reports/api/*.txt
+tests/reports/ui/cucumber-*.json
+tests/reports/ui/cucumber-*.html
+.schemathesis/
+.hypothesis/

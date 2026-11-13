@@ -1,4 +1,4 @@
-# Analisis kapasitas: waiting @ local (2026-11-10T07:04:40.832Z)
+# Analisis kapasitas: waiting @ local (2026-11-13T02:13:17.079Z)
 
 Status: PASS
 
@@ -6,21 +6,21 @@ Status: PASS
 CAPACITY ANALYSIS
 
 Maximum Tested Load               : all: -
-Maximum Tested Virtual Users      : 200
-Peak Concurrent VUs               : 200
-Maximum Observed RPS (1 s peak)   : 114.0
-Maximum Level Avg RPS             : 38.5
-Overall Avg RPS                   : 38.5
-Overall P95 / P99                 : 8 ms / 16 ms
+Maximum Tested Virtual Users      : 3000
+Peak Concurrent VUs               : 3000
+Maximum Observed RPS (1 s peak)   : 1083.0
+Maximum Level Avg RPS             : 586.6
+Overall Avg RPS                   : 586.6
+Overall P95 / P99                 : 2 ms / 8 ms
 Overall Error Rate                : 0.00%
 
 Maximum Sustainable Capacity      : all: -
-Maximum Sustainable RPS           : 38.5
-Recommended Operating RPS (70%)   : 26.9
+Maximum Sustainable RPS           : 586.6
+Recommended Operating RPS (70%)   : 410.6
 Latency Knee (p95 > 2x awal / SLO): tidak teramati
 Error Rate Starts Rising          : tidak teramati
 Breaking Point (status FAIL)      : tidak tercapai di rentang uji
-Hottest Container at Top Level    : rabbitmq CPU avg 8%
+Hottest Container at Top Level    : queue-worker CPU avg 53%
 ```
 
 

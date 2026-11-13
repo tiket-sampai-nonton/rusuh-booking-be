@@ -58,6 +58,7 @@ npm run test:stress
 npm run test:spike
 npm run test:soak         # SOAK_MINUTES=30 (bawaan)
 npm run test:waiting      # PROFILE=A|B|C VUS=200 RAMP=30s HOLD=60s
+TEST_ENV=prod CONFIRM_PROD=yes npm run test:readonly   # BACA-SAJA: katalog + queue-status, bertahap, rem otomatis (lihat bagian Prod)
 npm run test:all          # smoke (harus lulus), lalu e2e, concurrency, load, stress, spike (soak terpisah)
 ```
 
@@ -68,8 +69,11 @@ Variabel lingkungan:
 | `TEST_ENV` | `local` (bawaan), `dev`, `prod`. Prod butuh `CONFIRM_PROD=yes` |
 | `BASE_URL` | domain API untuk dev/prod |
 | `ADMIN_URL` | API admin booking lewat tunnel (dev: `deployments/dev/dev-tunnel.sh`, prod: `aws-admin-tunnel.sh`), bawaan `http://127.0.0.1:18082` |
-| `QUEUE_ADMIN_URL` | API admin queue untuk `PUT queue-settings` event uji (lokal otomatis `:8081`; dev/prod bawaan `http://127.0.0.1:18081`, tunnel bawaan hanya meneruskan booking sehingga perlu `-L` tambahan ke port queue) |
+| `QUEUE_ADMIN_URL` | API admin queue untuk `PUT queue-settings` event uji (lokal otomatis `:8081`; dev bawaan `http://127.0.0.1:18081`, disediakan `deployments/dev/dev-tunnel.sh` yang mencari IP kontainer queue-api di VPS saat dibuka, jadi buka ulang tunnel bila queue-api dibuat ulang; prod tidak punya tunnel queue dan tidak dipakai karena tes prod tidak membuat event) |
 | `QUEUE_ACTIVE_SLOTS` | `activeSlotCapacity` event uji (bawaan 1000) |
+| `CACHE_BUST` | `1` menambah `?cb=<acak>` pada `queue-status` (profil `readonly`) agar cache edge tidak dipakai dan origin yang terukur |
+| `CF_BYPASS_HEADER`, `CF_BYPASS_VALUE` | header bypass untuk aturan Cloudflare (WAF/rate limit) bila beban uji terhalang; nilainya rahasia dan tidak dicetak |
+| `LEVELS`, `RAMP`, `HOLD` | profil `readonly`: daftar level VU (bawaan `50,200,500,1000`), detik ramp (20) dan hold per level (60) |
 | `AUTH_TOKEN` | token akun admin untuk dev/prod (di lokal login OTP otomatis lewat Mailpit) |
 | `LOAD_FACTOR` | pengali semua level beban (mis. `0.5`) |
 | `SLO_P95_MS`, `SLO_P99_MS`, `SLO_ERROR_RATE`, `SLO_CHECK_RATE` | SLO untuk PASS/WARNING/FAIL |
@@ -88,6 +92,30 @@ jangan menjalankan E2E dengan domain email sungguhan.
   Midtrans **Sandbox**, dalam jumlah kecil; pelunasan memakai webhook bertanda tangan lokal, bukan uang sungguhan.
 - Rem darurat: stress, spike, dan soak berhenti otomatis bila error melewati 30%.
 - `summary.json` tidak memuat data `setup` (yang berisi token admin).
+
+## Uji di prod (baca-saja, bertahap)
+
+Prod adalah PoC (EC2 `t4g.small`, data tier satu host, di belakang Cloudflare), jadi uji di sana hanya mengukur kapasitas PoC
+dan tidak boleh mengganggu data demo. Profil `readonly` (`scenarios/readonly.js`) memenuhi itu: hanya `GET` katalog, facet,
+detail, dan `queue-status`; tidak membuat event, tidak join antrean, tidak memakai token admin, tidak menulis ke DB.
+
+```bash
+TEST_ENV=prod CONFIRM_PROD=yes LEVELS=50,200,500,1000 HOLD=60 bash tests/k6/scripts/run.sh readonly      # yang dialami pengantre (cache edge)
+TEST_ENV=prod CONFIRM_PROD=yes CACHE_BUST=1 LEVELS=20,50,100,200 HOLD=60 bash tests/k6/scripts/run.sh readonly   # origin saja
+```
+
+- **Syarat sebelum menjalankan:** persetujuan eksplisit pemilik, AWS menyala dan sehat, di luar jendela demo, dan tim diberi tahu.
+- **Rem otomatis:** error di atas 5% atau p95 di atas 2 detik (setelah 20 detik) menghentikan run. Naikkan level satu per satu;
+  jangan melompat ke 1.000 VU sebelum level di bawahnya bersih.
+- **Dua mode, dua arti.** Tanpa `CACHE_BUST`, hampir semua `queue-status` dijawab cache Cloudflare (`queue_status_from_cache`):
+  yang terukur adalah edge dan beban yang dialami pengantre. Dengan `CACHE_BUST=1`, setiap request melewati edge ke origin:
+  yang terukur kapasitas origin PoC. Laporkan keduanya terpisah.
+- **Cloudflare.** Jangan mengaktifkan Bot Fight Mode (menantang webhook Midtrans). Bila WAF atau rate limit memblokir load
+  generator, jawabannya HTML 403/503 dan dihitung sebagai `edge_blocked`, bukan kapasitas sistem. Tambahkan aturan skip untuk
+  header rahasia (`CF_BYPASS_HEADER`, `CF_BYPASS_VALUE`, tidak dicetak) atau allowlist IP penguji; jangan mematikan WAF.
+- **Batas pengukuran.** Generator berjalan di laptop lewat jaringan dan ISP biasa, sehingga bandwidth dan latensi jaringan ikut
+  terukur; sumber daya server prod tidak diukur lewat k6 (lihat CloudWatch). Beban 300.000 pengguna serentak tidak bisa
+  dibangkitkan dari satu laptop; lihat `ANALISIS-KAPASITAS.md` untuk model dan batasnya.
 
 ## Membaca laporan
 

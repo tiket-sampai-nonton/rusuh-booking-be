@@ -1,4 +1,4 @@
-# Analisis kapasitas: smoke @ local (2026-11-10T11:04:20.020Z)
+# Analisis kapasitas: smoke @ local (2026-11-13T01:47:46.552Z)
 
 Status: PASS
 
@@ -6,8 +6,8 @@ Status: PASS
 CAPACITY ANALYSIS
 
 Virtual Users                     : 1
-Observed RPS (1 s peak)           : 37.0
-Overall P95 / P99                 : 15 ms / 163 ms
+Observed RPS (1 s peak)           : 35.0
+Overall P95 / P99                 : 9 ms / 362 ms
 
 Kapasitas TIDAK DISIMPULKAN: ini tes fungsional dengan beban sangat kecil.
 Gunakan hasil load/stress untuk kapasitas.
