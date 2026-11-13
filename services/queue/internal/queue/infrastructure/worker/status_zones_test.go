@@ -22,11 +22,24 @@ type seqStore struct {
 	seqs []int64
 	doc  []byte
 	prev []byte
+	sale outbound.SaleState // zero value reads as OPEN (the publisher's default)
+	sets []saleSet          // SetSale calls, in order
+}
+
+// saleSet records one SetSale invocation.
+type saleSet struct {
+	state   string
+	soldOut bool
 }
 
 func (s *seqStore) GetSale(context.Context, string) (outbound.SaleState, error) {
-	return outbound.SaleState{SaleState: "OPEN"}, nil
+	return s.sale, nil
 }
+func (s *seqStore) SetSale(_ context.Context, _ string, state string, soldOut bool) error {
+	s.sets = append(s.sets, saleSet{state: state, soldOut: soldOut})
+	return nil
+}
+func (s *seqStore) SetSaleWindow(context.Context, string, int64, int64) error { return nil }
 func (s *seqStore) WaitingCount(context.Context, string) (int64, error) {
 	return int64(len(s.seqs)), nil
 }
@@ -66,8 +79,12 @@ func (b supplyStub) Supply(context.Context, string) (outbound.SupplySnapshot, er
 
 func publish(t *testing.T, st *seqStore, snap outbound.SupplySnapshot, serr error) dto.StatusDocument {
 	t.Helper()
-	sp := worker.NewStatusPublisher(st, oneSettings{s: entity.EventSettings{ActiveSlotCapacity: 10, NearFrontMultiplier: 2}},
-		supplyStub{snap: snap, err: serr}, wnow, time.Second)
+	return publishWith(t, st, entity.EventSettings{ActiveSlotCapacity: 10, NearFrontMultiplier: 2}, snap, serr)
+}
+
+func publishWith(t *testing.T, st *seqStore, s entity.EventSettings, snap outbound.SupplySnapshot, serr error) dto.StatusDocument {
+	t.Helper()
+	sp := worker.NewStatusPublisher(st, oneSettings{s: s}, supplyStub{snap: snap, err: serr}, wnow, time.Second)
 	require.NoError(t, sp.Run(context.Background()))
 	var doc dto.StatusDocument
 	require.NoError(t, json.Unmarshal(st.doc, &doc))
@@ -135,4 +152,73 @@ func TestStatusPublisher_SupplyDownKeepsPreviousBoundaries(t *testing.T) {
 	assert.EqualValues(t, 12, val(doc.GuaranteedUntilSeq))
 	assert.EqualValues(t, 20, val(doc.PossibleUntilSeq))
 	assert.EqualValues(t, 1, val(doc.HeadSeq))
+}
+
+// A sold-out sale reopens only when Booking has free stock again and the sale window is still open (D-C5.3).
+// Booking reports a cancelled event as soldOut, so a cancelled or ended sale must stay closed.
+func TestStatusPublisher_ReopensSaleWhenStockReturns(t *testing.T) {
+	now := wnow.T
+	soldOutSale := outbound.SaleState{SaleState: dto.SaleClosed, SoldOut: true}
+	open := outbound.SupplySnapshot{RemainingTickets: 3, FreeUnits: 3, SalesStartsAt: now.Add(-time.Hour), SalesEndsAt: now.Add(time.Hour)}
+	tests := []struct {
+		name        string
+		sale        outbound.SaleState
+		snap        outbound.SupplySnapshot
+		wantSets    []saleSet
+		wantSoldOut bool
+	}{
+		{name: "stock back inside the window reopens", sale: soldOutSale, snap: open,
+			wantSets: []saleSet{{state: dto.SaleOpen, soldOut: false}}, wantSoldOut: false},
+		{name: "window ended stays closed", sale: soldOutSale, snap: withWindow(open, now.Add(-time.Hour), now.Add(-time.Minute)),
+			wantSets: nil, wantSoldOut: true},
+		{name: "window not started stays closed", sale: soldOutSale, snap: withWindow(open, now.Add(time.Minute), now.Add(time.Hour)),
+			wantSets: nil, wantSoldOut: true},
+		{name: "cancelled (Booking soldOut) stays closed", sale: soldOutSale,
+			snap:     outbound.SupplySnapshot{SoldOut: true, RemainingTickets: 3, SalesStartsAt: now.Add(-time.Hour), SalesEndsAt: now.Add(time.Hour)},
+			wantSets: nil, wantSoldOut: true},
+		{name: "no free stock stays closed", sale: soldOutSale, snap: withStock(open, 0), wantSets: nil, wantSoldOut: true},
+		{name: "manual close without soldOut is not reopened", sale: outbound.SaleState{SaleState: dto.SaleClosed}, snap: open,
+			wantSets: nil, wantSoldOut: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			st := &seqStore{sale: tt.sale}
+			doc := publish(t, st, tt.snap, nil)
+			assert.Equal(t, tt.wantSets, st.sets)
+			assert.Equal(t, tt.wantSoldOut, doc.SoldOut)
+		})
+	}
+}
+
+func withWindow(s outbound.SupplySnapshot, starts, ends time.Time) outbound.SupplySnapshot {
+	s.SalesStartsAt, s.SalesEndsAt = starts, ends
+	return s
+}
+
+func withStock(s outbound.SupplySnapshot, remaining int) outbound.SupplySnapshot {
+	s.RemainingTickets, s.FreeUnits = remaining, remaining
+	return s
+}
+
+// TC-ANON-07 (AC-C5.5 P1-12): LIMITED is derived from the real sold/total of each category.
+func TestCategoriesFrom_LimitedWithRealSoldTotal(t *testing.T) {
+	s := entity.EventSettings{ActiveSlotCapacity: 10, NearFrontMultiplier: 2, CategoryLimitedThresholdPct: 5}
+	tests := []struct {
+		name        string
+		sold, total int
+		want        string
+	}{
+		{name: "4 of 100 left is LIMITED at 5%", sold: 96, total: 100, want: dto.CategoryLimited},
+		{name: "10 of 100 left is AVAILABLE", sold: 90, total: 100, want: dto.CategoryAvailable},
+		{name: "none left is SOLD_OUT", sold: 100, total: 100, want: dto.CategorySoldOut},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			snap := outbound.SupplySnapshot{RemainingTickets: tt.total - tt.sold,
+				Categories: []outbound.SupplyCategory{{Code: "VIP", Name: "VIP", Sold: tt.sold, Total: tt.total}}}
+			doc := publishWith(t, &seqStore{}, s, snap, nil)
+			require.Len(t, doc.Categories, 1)
+			assert.Equal(t, tt.want, doc.Categories[0].State)
+		})
+	}
 }

@@ -61,6 +61,12 @@ func (p *StatusPublisher) runEvent(ctx context.Context, eventID string) error {
 	supply, serr := p.booking.Supply(ctx, eventID) // best-effort; on error the previous boundaries are kept
 	if serr == nil {
 		p.cacheSaleWindow(ctx, eventID, supply)
+		if p.reopenable(sale, supply) {
+			if err := p.store.SetSale(ctx, eventID, dto.SaleOpen, false); err != nil {
+				return fmt.Errorf("status publisher: reopen sale: %w", err)
+			}
+			sale.SaleState, sale.SoldOut = dto.SaleOpen, false
+		}
 	}
 
 	doc := p.build(eventID, settings, sale, supply, serr == nil)
@@ -83,6 +89,15 @@ func (p *StatusPublisher) cacheSaleWindow(ctx context.Context, eventID string, s
 	if err := p.store.SetSaleWindow(ctx, eventID, supply.SalesStartsAt.UnixMilli(), supply.SalesEndsAt.UnixMilli()); err != nil {
 		slog.Warn("status publisher: cache sale window failed", "eventId", eventID, "error", err)
 	}
+}
+
+// reopenable reports whether a sold-out sale should reopen (D-C5.3): Booking has free stock again and now is inside
+// the sale window. A cancelled event (Booking reports soldOut) or an ended sale stays closed; a zero window never
+// matches, so an unknown window does not reopen anything.
+func (p *StatusPublisher) reopenable(sale outbound.SaleState, supply outbound.SupplySnapshot) bool {
+	now := p.clock.Now()
+	inWindow := !now.Before(supply.SalesStartsAt) && now.Before(supply.SalesEndsAt)
+	return sale.SoldOut && !supply.SoldOut && supply.RemainingTickets > 0 && inWindow
 }
 
 func (p *StatusPublisher) build(eventID string, s entity.EventSettings, sale outbound.SaleState, supply outbound.SupplySnapshot, haveSupply bool) dto.StatusDocument {
