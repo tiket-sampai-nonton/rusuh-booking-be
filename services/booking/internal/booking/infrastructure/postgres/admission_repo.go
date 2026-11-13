@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -137,13 +138,7 @@ func (r *AdmissionRepo) ReserveBatch(ctx context.Context, eventID string, entrie
 			}
 			return nil
 		}
-		// R18: the existing admissions of the batch are locked once, in id order, before any supply lock. The same read is
-		// the replay lookup, so it needs no second round trip.
-		existing, err := lockBatchAdmissions(ctx, tx, entries)
-		if err != nil {
-			return err
-		}
-		out, err = decideBatch(ctx, tx, eventID, entries, existing, ended, at)
+		out, err = decideBatch(ctx, tx, eventID, entries, ended, at)
 		return err
 	})
 	if err != nil {
@@ -152,19 +147,57 @@ func (r *AdmissionRepo) ReserveBatch(ctx context.Context, eventID string, entrie
 	return out, nil
 }
 
-// decideBatch answers the entries of a batch in order, inside tx after the admission rows are locked. A queue entry that
-// repeats in the batch gets the outcome of its first occurrence, as a replay would.
-func decideBatch(ctx context.Context, tx pgx.Tx, eventID string, entries []outbound.ReserveEntry, existing map[string]batchRow, ended bool, at time.Time) ([]outbound.ReserveOutcome, error) {
+// uuidText is the canonical 8-4-4-4-12 hex form that Queue sends. Any other value is a malformed entry (R24).
+var uuidText = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+
+// entryFault reports an entry that cannot be written on its own, with the outcome the per-entry path gave it (R24): a
+// malformed id failed the insert (NO_SUPPLY_NOW), and a queue_seq or units outside the admission CHECK gave SOLD_OUT.
+func entryFault(e outbound.ReserveEntry) (outcome string, faulty bool) {
+	if !uuidText.MatchString(e.QueueEntryID) || !uuidText.MatchString(e.VisitorID) || !uuidText.MatchString(e.AdmissionJTI) ||
+		(e.AccountID != "" && !uuidText.MatchString(e.AccountID)) {
+		return "NO_SUPPLY_NOW", true
+	}
+	if e.Seq < 1 || e.Units < 1 {
+		return "SOLD_OUT", true
+	}
+	return "", false
+}
+
+// decideBatch answers the entries of a batch in order, inside tx. An entry that cannot be written on its own is answered
+// alone (R24). The admission rows of the others are locked once, in id order, before any supply lock (R18), and that read
+// is their replay lookup. A queue entry that repeats in the batch gets the outcome of its first occurrence.
+func decideBatch(ctx context.Context, tx pgx.Tx, eventID string, entries []outbound.ReserveEntry, ended bool, at time.Time) ([]outbound.ReserveOutcome, error) {
 	out := make([]outbound.ReserveOutcome, len(entries))
 	first := make(map[string]int, len(entries))
-	var pending []pendingEntry
+	var checked []int
 	for i, e := range entries {
 		out[i] = outbound.ReserveOutcome{QueueEntryID: e.QueueEntryID, Units: e.Units}
 		if _, dup := first[e.QueueEntryID]; dup {
 			continue
 		}
 		first[e.QueueEntryID] = i
-		row, exists := existing[e.QueueEntryID]
+		if fault, faulty := entryFault(e); faulty {
+			out[i].Outcome = fault
+			if ended {
+				out[i].Outcome = "SOLD_OUT"
+			}
+			continue
+		}
+		checked = append(checked, i)
+	}
+
+	ids := make([]string, 0, len(checked))
+	for _, i := range checked {
+		ids = append(ids, entries[i].QueueEntryID)
+	}
+	existing, err := lockBatchAdmissions(ctx, tx, ids)
+	if err != nil {
+		return nil, err
+	}
+
+	var pending []pendingEntry
+	for _, i := range checked {
+		row, exists := existing[entries[i].QueueEntryID]
 		switch {
 		case exists && !row.lapsedUnclaimed():
 			out[i] = replayOutcome(out[i], row)
@@ -263,11 +296,6 @@ func grantPending(ctx context.Context, tx pgx.Tx, eventID string, entries []outb
 		if units > free {
 			units = free
 		}
-		if units < 1 {
-			// The admission CHECK (units BETWEEN 1 AND 3) refused a zero grant before the batch; keep that answer.
-			o.Outcome = "SOLD_OUT"
-			continue
-		}
 		alloc += units
 		free -= units
 		o.Outcome, o.Units = "GRANTED", units
@@ -323,54 +351,36 @@ func buyerRemaining(ctx context.Context, tx pgx.Tx, eventID string, nikHash []by
 	return maxQ - (heldQ + paidQ), true
 }
 
-// writeGrants writes the granted units of the batch: the supply counter once, the lapsed rows it re-grants (D-C6.6) in
-// one update, and the new admissions in one bulk insert. Every statement runs in the batch transaction, so a failure
-// rolls the whole batch back and Queue retries it.
+// writeGrants writes the granted units, each entry on its own (R24). A lapsed row is re-granted under its own savepoint,
+// and the new rows go in one bulk insert that skips conflicts (ON CONFLICT DO NOTHING). An entry whose row was not written
+// answers ALREADY_ACTIVE (the old per-entry conflict outcome) and its units are not counted. The supply counter moves once,
+// by the units that were written.
 func writeGrants(ctx context.Context, tx pgx.Tx, eventID string, entries []outbound.ReserveEntry, grants []batchGrant, out []outbound.ReserveOutcome, at time.Time) error {
 	if len(grants) == 0 {
 		return nil
 	}
-	total := 0
-	var fresh, regrants []batchGrant
+	landed := make(map[string]landedRow, len(grants))
+	written := 0
+	var fresh []batchGrant
 	for _, g := range grants {
-		total += g.units
-		if g.regrantID != "" {
-			regrants = append(regrants, g)
-		} else {
+		e := entries[g.entry]
+		if g.regrantID == "" {
 			fresh = append(fresh, g)
+			continue
 		}
-	}
-	if _, err := tx.Exec(ctx, `
-		UPDATE booking.event_supply
-		   SET allocated_units = allocated_units + $2, version = version + 1, updated_at = $3
-		 WHERE event_id = $1::uuid`, eventID, total, at); err != nil {
-		return fmt.Errorf("admissions: allocate supply: %w", err)
+		row, err := regrantRow(ctx, tx, g, at)
+		switch {
+		case err == nil:
+			landed[e.QueueEntryID] = row
+			written += g.units
+		case pkgpg.IsCode(err, pkgpg.CodeUniqueViolation):
+			// The visitor or account holds another active admission now: the lapsed row stays as it is.
+			out[g.entry] = outbound.ReserveOutcome{QueueEntryID: e.QueueEntryID, Units: e.Units, Outcome: "ALREADY_ACTIVE", AllocationID: g.regrantID}
+		default:
+			out[g.entry] = outbound.ReserveOutcome{QueueEntryID: e.QueueEntryID, Units: e.Units, Outcome: "NO_SUPPLY_NOW"}
+		}
 	}
 
-	landed := make(map[string]landedRow, len(grants))
-	if len(regrants) > 0 {
-		ids := make([]string, 0, len(regrants))
-		units := make([]int, 0, len(regrants))
-		for _, g := range regrants {
-			ids = append(ids, g.regrantID)
-			units = append(units, g.units)
-		}
-		rows, err := tx.Query(ctx, `
-			UPDATE booking.admissions a
-			   SET status = 'RESERVED', units = g.units, outstanding_units = g.units,
-			       reserved_at = $3::timestamptz,
-			       expires_at = $3::timestamptz + make_interval(secs => ev.claim_window_seconds),
-			       ended_at = NULL, end_reason = NULL
-			  FROM unnest($1::text[], $2::int[]) AS g(id, units), booking.events ev
-			 WHERE a.id = g.id::uuid AND a.status = 'EXPIRED' AND ev.id = a.event_id
-			RETURNING a.queue_entry_id::text, a.id::text, a.expires_at`, ids, units, at)
-		if err != nil {
-			return fmt.Errorf("admissions: regrant: %w", err)
-		}
-		if err := scanLanded(rows, landed); err != nil {
-			return fmt.Errorf("admissions: regrant: %w", err)
-		}
-	}
 	if len(fresh) > 0 {
 		var qids, visitors, jtis, accounts, emails, maskeds []string
 		var seqs []int64
@@ -405,26 +415,104 @@ func writeGrants(ctx context.Context, tx pgx.Tx, eventID string, entries []outbo
 				AS g(queue_entry_id, seq, visitor_id, nik_hash, email_enc, nik_masked, units, admission_jti, account_id)
 			  CROSS JOIN booking.events ev
 			 WHERE ev.id = $1::uuid
+			ON CONFLICT DO NOTHING
 			RETURNING queue_entry_id::text, id::text, expires_at`,
 			eventID, at, qids, seqs, visitors, nikHashes, emails, maskeds, units, jtis, accounts)
 		if err != nil {
 			return fmt.Errorf("admissions: bulk insert: %w", err)
 		}
-		if err := scanLanded(rows, landed); err != nil {
+		inserted := make(map[string]landedRow, len(fresh))
+		if err := scanLanded(rows, inserted); err != nil {
 			return fmt.Errorf("admissions: bulk insert: %w", err)
+		}
+		var conflicts []batchGrant
+		for _, g := range fresh {
+			qid := entries[g.entry].QueueEntryID
+			if row, ok := inserted[qid]; ok {
+				landed[qid] = row
+				written += g.units
+				continue
+			}
+			conflicts = append(conflicts, g)
+		}
+		if err := answerConflicts(ctx, tx, entries, conflicts, out); err != nil {
+			return err
 		}
 	}
 
+	if written > 0 {
+		if _, err := tx.Exec(ctx, `
+			UPDATE booking.event_supply
+			   SET allocated_units = allocated_units + $2, version = version + 1, updated_at = $3
+			 WHERE event_id = $1::uuid`, eventID, written, at); err != nil {
+			return fmt.Errorf("admissions: allocate supply: %w", err)
+		}
+	}
 	for _, g := range grants {
-		qid := entries[g.entry].QueueEntryID
-		row, ok := landed[qid]
+		row, ok := landed[entries[g.entry].QueueEntryID]
 		if !ok {
-			return fmt.Errorf("admissions: batch wrote no row for queue entry %s", qid)
+			continue // answered above as ALREADY_ACTIVE or NO_SUPPLY_NOW
 		}
 		o := &out[g.entry]
 		o.AllocationID = row.id
 		deadline := row.expiresAt
 		o.ClaimDeadline = &deadline
+	}
+	return nil
+}
+
+// regrantRow re-grants one lapsed row (D-C6.6) in its own savepoint, so a conflict on that row alone does not abort the batch.
+func regrantRow(ctx context.Context, tx pgx.Tx, g batchGrant, at time.Time) (landedRow, error) {
+	if _, err := tx.Exec(ctx, "SAVEPOINT regrant"); err != nil {
+		return landedRow{}, err
+	}
+	var row landedRow
+	err := tx.QueryRow(ctx, `
+		UPDATE booking.admissions a
+		   SET status = 'RESERVED', units = $2, outstanding_units = $2,
+		       reserved_at = $3::timestamptz,
+		       expires_at = $3::timestamptz + make_interval(secs => ev.claim_window_seconds),
+		       ended_at = NULL, end_reason = NULL
+		  FROM booking.events ev
+		 WHERE a.id = $1::uuid AND a.status = 'EXPIRED' AND ev.id = a.event_id
+		RETURNING a.id::text, a.expires_at`, g.regrantID, g.units, at).Scan(&row.id, &row.expiresAt)
+	if err != nil {
+		_, _ = tx.Exec(ctx, "ROLLBACK TO SAVEPOINT regrant")
+		return landedRow{}, err
+	}
+	_, _ = tx.Exec(ctx, "RELEASE SAVEPOINT regrant")
+	return row, nil
+}
+
+// answerConflicts answers the new grants whose row the bulk insert skipped (R24) ALREADY_ACTIVE. The allocation id is the
+// admission of the same queue entry when a concurrent batch wrote it; a visitor or account conflict has none.
+func answerConflicts(ctx context.Context, tx pgx.Tx, entries []outbound.ReserveEntry, conflicts []batchGrant, out []outbound.ReserveOutcome) error {
+	if len(conflicts) == 0 {
+		return nil
+	}
+	qids := make([]string, 0, len(conflicts))
+	for _, g := range conflicts {
+		qids = append(qids, entries[g.entry].QueueEntryID)
+	}
+	rows, err := tx.Query(ctx, `SELECT queue_entry_id::text, id::text FROM booking.admissions WHERE queue_entry_id = ANY($1::uuid[])`, qids)
+	if err != nil {
+		return fmt.Errorf("admissions: conflict lookup: %w", err)
+	}
+	defer rows.Close()
+	allocation := make(map[string]string, len(qids))
+	for rows.Next() {
+		var qid, id string
+		if err := rows.Scan(&qid, &id); err != nil {
+			return fmt.Errorf("admissions: conflict lookup: %w", err)
+		}
+		allocation[qid] = id
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("admissions: conflict lookup: %w", err)
+	}
+	for _, g := range conflicts {
+		e := entries[g.entry]
+		out[g.entry] = outbound.ReserveOutcome{QueueEntryID: e.QueueEntryID, Units: e.Units, Outcome: "ALREADY_ACTIVE", AllocationID: allocation[e.QueueEntryID]}
 	}
 	return nil
 }
@@ -483,13 +571,13 @@ func saleGate(ctx context.Context, tx pgx.Tx, eventID string, at time.Time) (gat
 	return "", !at.Before(endsAt), nil
 }
 
-// lockBatchAdmissions locks the existing admission rows of the batch's entries once, in id order (R18), and returns them
-// keyed by queue_entry_id. It runs after saleGate and before any event_supply lock, so the batch follows the
-// admission-then-supply order that Release and ExpireSession use. Locking by queue_entry_id matches the replay lookup.
-func lockBatchAdmissions(ctx context.Context, tx pgx.Tx, entries []outbound.ReserveEntry) (map[string]batchRow, error) {
-	ids := make([]string, 0, len(entries))
-	for _, e := range entries {
-		ids = append(ids, e.QueueEntryID)
+// lockBatchAdmissions locks the existing admission rows of the batch's queue entries once, in id order (R18), and returns
+// them keyed by queue_entry_id. It runs before any event_supply lock, so the batch follows the admission-then-supply order
+// that Release and ExpireSession use. The rows are the replay lookup too: they are locked before they are read.
+func lockBatchAdmissions(ctx context.Context, tx pgx.Tx, ids []string) (map[string]batchRow, error) {
+	existing := make(map[string]batchRow, len(ids))
+	if len(ids) == 0 {
+		return existing, nil
 	}
 	rows, err := tx.Query(ctx, `
 		SELECT queue_entry_id::text, id::text, status, COALESCE(end_reason, ''), units, expires_at
@@ -499,7 +587,6 @@ func lockBatchAdmissions(ctx context.Context, tx pgx.Tx, entries []outbound.Rese
 		return nil, fmt.Errorf("admissions: lock batch: %w", err)
 	}
 	defer rows.Close()
-	existing := make(map[string]batchRow, len(ids))
 	for rows.Next() {
 		var qid string
 		var row batchRow

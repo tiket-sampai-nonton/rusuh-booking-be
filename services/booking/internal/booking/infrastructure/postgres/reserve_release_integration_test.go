@@ -963,3 +963,81 @@ func TestReserveBatch_ConcurrentWithHoldsKeepsLedger(t *testing.T) {
 	assert.Equal(t, heldItems, l.held, "held_units = HELD items")
 	assert.LessOrEqual(t, l.alloc+l.held+l.sold, l.total)
 }
+
+// R24 (C7.2 fix round 1): an entry that cannot be written alone is answered alone. Its visitor already holds an active
+// admission on the event, so its row conflicts: it is ALREADY_ACTIVE, the entries around it are granted, and the supply
+// counts only the units that were written.
+func TestReserveBatch_VisitorAlreadyActiveAnswersOnlyThatEntry(t *testing.T) {
+	ctx := context.Background()
+	f := newAcctFixture(t, suffixFor(t), 20)
+	_, busyVisitor := f.reserve(t, 9, 1, true) // one active admission of another buyer: 1 unit allocated
+	entries := []outbound.ReserveEntry{anonEntry(1, 3), anonEntry(2, 3), anonEntry(3, 3)}
+	entries[1].VisitorID = busyVisitor
+
+	out, err := NewAdmissionRepo(f.pool).ReserveBatch(ctx, f.eventID, entries, time.Now())
+	require.NoError(t, err)
+	require.Len(t, out, 3)
+	assert.Equal(t, "GRANTED", out[0].Outcome)
+	assert.Equal(t, 3, out[0].Units)
+	assert.Equal(t, "ALREADY_ACTIVE", out[1].Outcome, "the busy visitor's entry, alone")
+	assert.Equal(t, "GRANTED", out[2].Outcome)
+	assert.Equal(t, 1+3+3, f.ledger(t).alloc, "supply counts entries 1 and 3 only")
+	assert.Equal(t, 3, admissionRows(t, f), "the busy entry writes no admission row")
+}
+
+// R24: a lapsed admission (EXPIRED/UNCLAIMED) is granted again in place unless its visitor now holds another active
+// admission on the event. That entry is ALREADY_ACTIVE (its old allocation id), and the rest of the batch is granted.
+func TestReserveBatch_RegrantConflictAnswersOnlyThatEntry(t *testing.T) {
+	ctx := context.Background()
+	f := newAcctFixture(t, suffixFor(t), 20)
+	repo := NewAdmissionRepo(f.pool)
+	lapsed := anonEntry(1, 2)
+	first, err := repo.ReserveBatch(ctx, f.eventID, []outbound.ReserveEntry{lapsed}, time.Now())
+	require.NoError(t, err)
+	require.Equal(t, "GRANTED", first[0].Outcome)
+	require.NoError(t, repo.ExpireSession(ctx, first[0].AllocationID, time.Now())) // EXPIRED/UNCLAIMED, units given back
+
+	taking := anonEntry(2, 1) // the same visitor now holds a new active admission under another queue entry
+	taking.VisitorID = lapsed.VisitorID
+	got, err := repo.ReserveBatch(ctx, f.eventID, []outbound.ReserveEntry{taking}, time.Now())
+	require.NoError(t, err)
+	require.Equal(t, "GRANTED", got[0].Outcome)
+
+	out, err := repo.ReserveBatch(ctx, f.eventID, []outbound.ReserveEntry{lapsed, anonEntry(3, 2)}, time.Now())
+	require.NoError(t, err)
+	require.Len(t, out, 2)
+	assert.Equal(t, "ALREADY_ACTIVE", out[0].Outcome, "the lapsed row cannot be granted again: the visitor is active")
+	assert.Equal(t, first[0].AllocationID, out[0].AllocationID)
+	assert.Equal(t, "GRANTED", out[1].Outcome)
+	assert.Equal(t, 1+2, f.ledger(t).alloc, "taking (1) and the new entry (2); the conflicting re-grant adds nothing")
+}
+
+// R24: one malformed entry is answered alone with the old per-entry outcome. A malformed id failed the insert
+// (NO_SUPPLY_NOW); a queue_seq or units outside the admission CHECK gave SOLD_OUT. The entries around it are granted.
+func TestReserveBatch_MalformedEntryAnswersOnlyItself(t *testing.T) {
+	cases := map[string]struct {
+		mutate func(e *outbound.ReserveEntry)
+		want   string
+	}{
+		"queue entry id": {func(e *outbound.ReserveEntry) { e.QueueEntryID = "not-a-uuid" }, "NO_SUPPLY_NOW"},
+		"visitor id":     {func(e *outbound.ReserveEntry) { e.VisitorID = "x" }, "NO_SUPPLY_NOW"},
+		"admission jti":  {func(e *outbound.ReserveEntry) { e.AdmissionJTI = "x" }, "NO_SUPPLY_NOW"},
+		"account id":     {func(e *outbound.ReserveEntry) { e.AccountID = "nope" }, "NO_SUPPLY_NOW"},
+		"queue_seq zero": {func(e *outbound.ReserveEntry) { e.Seq = 0 }, "SOLD_OUT"},
+		"units zero":     {func(e *outbound.ReserveEntry) { e.Units = 0 }, "SOLD_OUT"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			f := newAcctFixture(t, suffixFor(t), 20)
+			entries := []outbound.ReserveEntry{anonEntry(1, 3), anonEntry(2, 3), anonEntry(3, 3)}
+			tc.mutate(&entries[1])
+			out, err := NewAdmissionRepo(f.pool).ReserveBatch(context.Background(), f.eventID, entries, time.Now())
+			require.NoError(t, err, "a malformed entry must not fail the batch")
+			require.Len(t, out, 3)
+			assert.Equal(t, "GRANTED", out[0].Outcome)
+			assert.Equal(t, tc.want, out[1].Outcome)
+			assert.Equal(t, "GRANTED", out[2].Outcome)
+			assert.Equal(t, 6, f.ledger(t).alloc, "only the two valid entries took units")
+		})
+	}
+}
