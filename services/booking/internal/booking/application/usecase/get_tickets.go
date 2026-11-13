@@ -20,12 +20,13 @@ type TicketLinkVerifier interface {
 type GetTickets struct {
 	bookings outbound.IBookingRepo
 	tickets  outbound.ITicketRepo
+	events   outbound.IEventRepo
 	links    TicketLinkVerifier
 }
 
 // NewGetTickets wires the ticket usecase.
-func NewGetTickets(bookings outbound.IBookingRepo, tickets outbound.ITicketRepo, links TicketLinkVerifier) *GetTickets {
-	return &GetTickets{bookings: bookings, tickets: tickets, links: links}
+func NewGetTickets(bookings outbound.IBookingRepo, tickets outbound.ITicketRepo, events outbound.IEventRepo, links TicketLinkVerifier) *GetTickets {
+	return &GetTickets{bookings: bookings, tickets: tickets, events: events, links: links}
 }
 
 // GetTickets returns the ticket list. Access is the booking's visitor (verified token), its buyer account (verified
@@ -52,7 +53,11 @@ func (uc *GetTickets) GetTickets(ctx context.Context, bookingID string, access i
 	if err != nil {
 		return dto.TicketList{}, err
 	}
-	return mapper.ToTicketList(booking, tickets, qrPayload), nil
+	event, err := uc.events.GetByID(ctx, booking.EventID)
+	if err != nil {
+		return dto.TicketList{}, err
+	}
+	return mapper.ToTicketList(booking, event, tickets, qrPayload), nil
 }
 
 // qrPayload builds a QR string from the ticket's public code. The QR never embeds PII.

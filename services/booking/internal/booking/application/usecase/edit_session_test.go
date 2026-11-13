@@ -142,16 +142,19 @@ func TestGetTickets_Success(t *testing.T) {
 	tickets := []entity.Ticket{
 		{ID: "t1", BookingID: sessionID, PublicCode: "TICKET-001"},
 	}
-	uc := usecase.NewGetTickets(&fakeBookingRepo{booking: bk}, &fakeTicketRepo{tickets: tickets}, nil)
+	startsAt := time.Date(2026, 12, 20, 19, 30, 0, 0, time.UTC)
+	events := &fakeEventRepo{event: entity.Event{ID: eventID, StartsAt: startsAt}}
+	uc := usecase.NewGetTickets(&fakeBookingRepo{booking: bk}, &fakeTicketRepo{tickets: tickets}, events, nil)
 	result, err := uc.GetTickets(context.Background(), sessionID, inbound.TicketAccess{VisitorID: visitor})
 	require.NoError(t, err)
 	assert.Equal(t, sessionID, result.BookingID)
 	assert.Len(t, result.Tickets, 1)
+	assert.Equal(t, startsAt, result.EventStartsAt, "tanggal acara ikut di respons tiket")
 }
 
 func TestGetTickets_NotPaid(t *testing.T) {
 	bk := entity.Booking{ID: sessionID, Status: "PENDING_PAYMENT", VisitorID: visitor}
-	uc := usecase.NewGetTickets(&fakeBookingRepo{booking: bk}, &fakeTicketRepo{}, nil)
+	uc := usecase.NewGetTickets(&fakeBookingRepo{booking: bk}, &fakeTicketRepo{}, &fakeEventRepo{}, nil)
 	_, err := uc.GetTickets(context.Background(), sessionID, inbound.TicketAccess{VisitorID: visitor})
 	assert.ErrorIs(t, err, inbound.ErrNotPayable)
 }
@@ -164,7 +167,7 @@ func (l linkCheck) Valid(_, tok string) bool { return tok == l.ok }
 func TestGetTickets_OnlyTheOwnerOrTheEmailLinkCanRead(t *testing.T) {
 	bk := entity.Booking{ID: sessionID, Status: "PAID", VisitorID: visitor, AccountID: "acc-1"}
 	tickets := []entity.Ticket{{ID: "t1", BookingID: sessionID, PublicCode: "TK-1"}}
-	uc := usecase.NewGetTickets(&fakeBookingRepo{booking: bk}, &fakeTicketRepo{tickets: tickets}, linkCheck{ok: "good-link"})
+	uc := usecase.NewGetTickets(&fakeBookingRepo{booking: bk}, &fakeTicketRepo{tickets: tickets}, &fakeEventRepo{}, linkCheck{ok: "good-link"})
 	ctx := context.Background()
 
 	for name, a := range map[string]inbound.TicketAccess{
@@ -191,7 +194,7 @@ func TestGetTickets_OnlyTheOwnerOrTheEmailLinkCanRead(t *testing.T) {
 	}
 
 	guestBooking := entity.Booking{ID: sessionID, Status: "PAID"} // no account: an empty account id must not match
-	g := usecase.NewGetTickets(&fakeBookingRepo{booking: guestBooking}, &fakeTicketRepo{tickets: tickets}, nil)
+	g := usecase.NewGetTickets(&fakeBookingRepo{booking: guestBooking}, &fakeTicketRepo{tickets: tickets}, &fakeEventRepo{}, nil)
 	_, err := g.GetTickets(ctx, sessionID, inbound.TicketAccess{})
 	assert.ErrorIs(t, err, inbound.ErrNotFound)
 }

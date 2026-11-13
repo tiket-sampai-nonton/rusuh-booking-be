@@ -136,8 +136,9 @@ func ToBooking(b entity.Booking, editsRemaining int, now time.Time) dto.Booking 
 	}
 }
 
-// ToTicketList maps issued tickets to the ticket-list DTO. qrPayloadFn builds the per-ticket QR string.
-func ToTicketList(b entity.Booking, tickets []entity.Ticket, qrPayloadFn func(entity.Ticket) string) dto.TicketList {
+// ToTicketList maps issued tickets to the ticket-list DTO; ev supplies the event date. qrPayloadFn builds the per-ticket
+// QR string.
+func ToTicketList(b entity.Booking, ev entity.Event, tickets []entity.Ticket, qrPayloadFn func(entity.Ticket) string) dto.TicketList {
 	views := make([]dto.TicketView, 0, len(tickets))
 	for _, t := range tickets {
 		views = append(views, dto.TicketView{
@@ -150,6 +151,6 @@ func ToTicketList(b entity.Booking, tickets []entity.Ticket, qrPayloadFn func(en
 	}
 	return dto.TicketList{
 		BookingID: b.ID, OrderID: b.PublicRef, PublicRef: b.PublicRef, AmountMinor: b.AmountMinor,
-		TicketQuantity: b.ItemQuantity, BuyerNIKMasked: b.BuyerNIKMasked, Tickets: views,
+		TicketQuantity: b.ItemQuantity, BuyerNIKMasked: b.BuyerNIKMasked, EventStartsAt: ev.StartsAt, Tickets: views,
 	}
 }

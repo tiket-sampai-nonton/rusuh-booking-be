@@ -81,6 +81,7 @@ type TicketList struct {
 	AmountMinor    int64        `json:"amountMinor"`
 	TicketQuantity int          `json:"ticketQuantity"`
 	BuyerNIKMasked string       `json:"buyerNikMasked"`
+	EventStartsAt  time.Time    `json:"eventStartsAt"`
 	Tickets        []TicketView `json:"tickets"`
 }
 

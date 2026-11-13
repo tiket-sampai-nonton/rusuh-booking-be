@@ -138,8 +138,10 @@ func TestToBooking_OnlyActiveItemsAndLock(t *testing.T) {
 func TestToTicketList(t *testing.T) {
 	tickets := []entity.Ticket{{PublicCode: "TK-1", CategoryCode: "VIP", AttendeeName: "A", AttendeeNIKMasked: "3174********0001"}}
 	b := entity.Booking{ID: "b1", PublicRef: "RB-7F3A9C21", AmountMinor: 1500000, BuyerNIKMasked: "3174********0009", ItemQuantity: 1}
-	out := mapper.ToTicketList(b, tickets, func(tk entity.Ticket) string { return "QR:" + tk.PublicCode })
+	startsAt := time.Date(2026, 12, 20, 19, 30, 0, 0, time.UTC)
+	out := mapper.ToTicketList(b, entity.Event{StartsAt: startsAt}, tickets, func(tk entity.Ticket) string { return "QR:" + tk.PublicCode })
 	assert.Equal(t, "b1", out.BookingID)
+	assert.Equal(t, startsAt, out.EventStartsAt)
 	assert.Equal(t, "RB-7F3A9C21", out.OrderID)
 	assert.Equal(t, "RB-7F3A9C21", out.PublicRef)
 	assert.EqualValues(t, 1500000, out.AmountMinor)

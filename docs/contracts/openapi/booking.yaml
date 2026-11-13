@@ -1661,6 +1661,10 @@ components:
         buyerNikMasked:
           type: string
           example: 3174********0001
+        eventStartsAt:
+          type: string
+          format: date-time
+          description: Waktu mulai acara (sama dengan `startsAt` event), untuk ditampilkan di e-tiket.
         tickets:
           type: array
           items:
@@ -1672,6 +1676,7 @@ components:
       - amountMinor
       - ticketQuantity
       - buyerNikMasked
+      - eventStartsAt
       - tickets
     MyBookings:
       type: object

@@ -269,11 +269,11 @@ func TestListMyBookings_Ownership(t *testing.T) {
 
 func TestGetTickets_RequiresPaid(t *testing.T) {
 	owner := inbound.TicketAccess{VisitorID: visitor}
-	uc := usecase.NewGetTickets(&fakeBookingRepo{booking: entity.Booking{ID: eventID, Status: vo.BookingPendingPayment, VisitorID: visitor}}, &fakeTicketRepo{}, nil)
+	uc := usecase.NewGetTickets(&fakeBookingRepo{booking: entity.Booking{ID: eventID, Status: vo.BookingPendingPayment, VisitorID: visitor}}, &fakeTicketRepo{}, &fakeEventRepo{}, nil)
 	_, err := uc.GetTickets(context.Background(), eventID, owner)
 	assert.ErrorIs(t, err, inbound.ErrNotPayable)
 
-	uc2 := usecase.NewGetTickets(&fakeBookingRepo{booking: entity.Booking{ID: eventID, Status: vo.BookingPaid, VisitorID: visitor}}, &fakeTicketRepo{tickets: []entity.Ticket{{PublicCode: "TK-1"}}}, nil)
+	uc2 := usecase.NewGetTickets(&fakeBookingRepo{booking: entity.Booking{ID: eventID, Status: vo.BookingPaid, VisitorID: visitor}}, &fakeTicketRepo{tickets: []entity.Ticket{{PublicCode: "TK-1"}}}, &fakeEventRepo{}, nil)
 	out, err := uc2.GetTickets(context.Background(), eventID, owner)
 	require.NoError(t, err)
 	assert.Len(t, out.Tickets, 1)

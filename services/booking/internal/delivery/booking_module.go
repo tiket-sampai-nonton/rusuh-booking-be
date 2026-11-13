@@ -107,7 +107,7 @@ func newBookingModule(cfg config.Config, clients *Clients, logger *slog.Logger) 
 	if err != nil {
 		return nil, err
 	}
-	tickets := usecase.NewGetTickets(bookingRepo, ticketRepo, links)
+	tickets := usecase.NewGetTickets(bookingRepo, ticketRepo, eventRepo, links)
 	history := usecase.NewListMyBookings(bookingRepo)
 	getBooking := usecase.NewGetBooking(bookingRepo, clk)
 	payable := usecase.NewGetPayable(bookingRepo, clk)
