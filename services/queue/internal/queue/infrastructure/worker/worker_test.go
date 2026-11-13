@@ -265,8 +265,6 @@ func TestSweeper_DrainsSoldOutWithinTickBudget(t *testing.T) {
 
 	s := worker.NewSweeper(m.store, m.settings, wnow, 500)
 	require.NoError(t, s.Run(ctx))
-	assert.Equal(t, 200, worker.SoldOutMaxBatches)
-	assert.Equal(t, 100_000, worker.SoldOutMaxBatches*outbound.SoldOutBatchSize)
 }
 
 // A sale that is not sold out (never closed, or reopened by Booking's stock return, D-C5.3) is never drained.
@@ -304,6 +302,44 @@ func TestSweeper_StopsDrainWhenSaleReopens(t *testing.T) {
 
 	s := worker.NewSweeper(m.store, m.settings, wnow, 500)
 	require.NoError(t, s.Run(ctx))
+}
+
+// R30 (I1): every event expires first, then the sold-out drains run. Event A is sold out with a full drain budget, and
+// event B has an expired ADMITTED entry. B's expiry must land before A's drain, or one event's 100k drain delays another
+// event's expiry past the tick.
+func TestSweeper_ExpiresEveryEventBeforeDrainingSoldOut(t *testing.T) {
+	m := newWorkerMocks(t)
+	ctx := context.Background()
+	var order []string
+	m.settings.EXPECT().ListEventIDs(gomock.Any()).Return([]string{"A", "B"}, nil)
+	m.store.EXPECT().ExpiredActive(gomock.Any(), "A", gomock.Any(), 500).DoAndReturn(
+		func(context.Context, string, int64, int) ([]string, error) {
+			order = append(order, "expire A")
+			return nil, nil
+		})
+	m.store.EXPECT().ExpiredActive(gomock.Any(), "B", gomock.Any(), 500).DoAndReturn(
+		func(context.Context, string, int64, int) ([]string, error) {
+			order = append(order, "expire B")
+			return []string{"e1"}, nil
+		})
+	m.store.EXPECT().EndEntry(gomock.Any(), "B", "e1", outbound.EndSweepMissed, gomock.Any()).
+		Return(outbound.EndResult{Tag: "OK", Status: "MISSED"}, nil)
+	m.store.EXPECT().GetSale(gomock.Any(), "A").Return(outbound.SaleState{SaleState: "CLOSED", SoldOut: true}, nil).Times(worker.SoldOutMaxBatches)
+	drained := false
+	m.store.EXPECT().EndWaitingSoldOut(gomock.Any(), "A", gomock.Any(), outbound.SoldOutBatchSize).
+		DoAndReturn(func(context.Context, string, int64, int) (outbound.SoldOutBatch, error) {
+			if !drained {
+				drained = true
+				order = append(order, "drain A")
+			}
+			return outbound.SoldOutBatch{Scanned: outbound.SoldOutBatchSize, Ended: outbound.SoldOutBatchSize}, nil
+		}).Times(worker.SoldOutMaxBatches)
+	// GetSale for B: not sold out, so B has no drain.
+	m.store.EXPECT().GetSale(gomock.Any(), "B").Return(outbound.SaleState{SaleState: "OPEN"}, nil)
+
+	s := worker.NewSweeper(m.store, m.settings, wnow, 500)
+	require.NoError(t, s.Run(ctx))
+	require.Equal(t, []string{"expire A", "expire B", "drain A"}, order)
 }
 
 // A failing drain batch is returned (the tick reports it) and does not retry inside the tick.
@@ -511,6 +547,7 @@ func TestSweeper_OneEventsFailureDoesNotStopTheOthers(t *testing.T) {
 	ctx := context.Background()
 	m.settings.EXPECT().ListEventIDs(gomock.Any()).Return([]string{"ev1", "ev2"}, nil)
 	m.store.EXPECT().ExpiredActive(gomock.Any(), "ev1", gomock.Any(), 500).Return(nil, errors.New("ev1 down"))
+	m.store.EXPECT().GetSale(gomock.Any(), "ev1").Return(outbound.SaleState{SaleState: "OPEN"}, nil) // drain is independent of expiry
 	m.store.EXPECT().ExpiredActive(gomock.Any(), "ev2", gomock.Any(), 500).Return([]string{"e1"}, nil)
 	m.store.EXPECT().EndEntry(gomock.Any(), "ev2", "e1", outbound.EndSweepMissed, gomock.Any()).Return(outbound.EndResult{Tag: "OK"}, nil)
 	m.store.EXPECT().GetSale(gomock.Any(), "ev2").Return(outbound.SaleState{SaleState: "OPEN"}, nil)

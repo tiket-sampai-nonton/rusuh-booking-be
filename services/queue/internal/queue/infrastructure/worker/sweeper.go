@@ -35,7 +35,9 @@ func NewSweeper(store outbound.IQueueStore, settings outbound.IEventSettingsRepo
 	return &Sweeper{store: store, settings: settings, clock: clk, batchMax: batchMax}
 }
 
-// Run sweeps every configured event once.
+// Run sweeps every configured event once, in two passes (R30). The first pass expires every event, so one event's drain
+// never delays another event's expiry past the tick. The second pass drains each sold-out event. A failure in one event
+// is collected and does not stop the others; the drain of an event runs even when its expiry failed.
 func (s *Sweeper) Run(ctx context.Context) error {
 	ids, err := s.settings.ListEventIDs(ctx)
 	if err != nil {
@@ -43,14 +45,19 @@ func (s *Sweeper) Run(ctx context.Context) error {
 	}
 	var errs []error
 	for _, eventID := range ids {
-		if err := s.runEvent(ctx, eventID); err != nil {
+		if err := s.expireEvent(ctx, eventID); err != nil {
+			errs = append(errs, fmt.Errorf("sweeper event %s: %w", eventID, err))
+		}
+	}
+	for _, eventID := range ids {
+		if err := s.drainSoldOut(ctx, eventID); err != nil {
 			errs = append(errs, fmt.Errorf("sweeper event %s: %w", eventID, err))
 		}
 	}
 	return errors.Join(errs...)
 }
 
-func (s *Sweeper) runEvent(ctx context.Context, eventID string) error {
+func (s *Sweeper) expireEvent(ctx context.Context, eventID string) error {
 	nowMs := s.clock.Now().UnixMilli()
 	expired, err := s.store.ExpiredActive(ctx, eventID, nowMs, s.batchMax)
 	if err != nil {
@@ -68,9 +75,6 @@ func (s *Sweeper) runEvent(ctx context.Context, eventID string) error {
 		// Booking's session sweeper will release the allocation and publish
 		// booking.journey.ended(UNCLAIMED) when its own claim window expires (K7).
 	}
-	if err := s.drainSoldOut(ctx, eventID, nowMs); err != nil {
-		errs = append(errs, err)
-	}
 	return errors.Join(errs...)
 }
 
@@ -78,7 +82,7 @@ func (s *Sweeper) runEvent(ctx context.Context, eventID string) error {
 // it scanned from waiting/stale, so the head of the set is the next batch. A short batch means the set is empty.
 // The sale is re-read before every batch (R28): a sale that reopens (D-C5.3) stops the drain at once, so no further
 // WAITING entry is ended with SOLD_OUT. The window that remains is the one batch already in flight.
-func (s *Sweeper) drainSoldOut(ctx context.Context, eventID string, nowMs int64) error {
+func (s *Sweeper) drainSoldOut(ctx context.Context, eventID string) error {
 	for i := 0; i < SoldOutMaxBatches; i++ {
 		sale, err := s.store.GetSale(ctx, eventID)
 		if err != nil {
@@ -87,7 +91,7 @@ func (s *Sweeper) drainSoldOut(ctx context.Context, eventID string, nowMs int64)
 		if !sale.SoldOut {
 			return nil
 		}
-		res, err := s.store.EndWaitingSoldOut(ctx, eventID, nowMs, outbound.SoldOutBatchSize)
+		res, err := s.store.EndWaitingSoldOut(ctx, eventID, s.clock.Now().UnixMilli(), outbound.SoldOutBatchSize)
 		if err != nil {
 			return fmt.Errorf("sweeper end waiting sold out: %w", err)
 		}
