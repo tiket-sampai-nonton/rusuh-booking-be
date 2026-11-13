@@ -85,6 +85,17 @@ func (r *AdmissionRepo) Activate(ctx context.Context, jti string, at time.Time) 
 func (r *AdmissionRepo) ReserveBatch(ctx context.Context, eventID string, entries []outbound.ReserveEntry, at time.Time) ([]outbound.ReserveOutcome, error) {
 	out := make([]outbound.ReserveOutcome, 0, len(entries))
 	err := pkgpg.WithTx(ctx, r.pool, pgx.TxOptions{IsoLevel: pgx.ReadCommitted}, func(tx pgx.Tx) error {
+		// The sales window and cancellation are read once per batch, before any entry can be granted (AC-C4.4).
+		gate, err := saleGate(ctx, tx, eventID, at)
+		if err != nil {
+			return err
+		}
+		if gate != "" {
+			for _, e := range entries {
+				out = append(out, outbound.ReserveOutcome{QueueEntryID: e.QueueEntryID, Units: e.Units, Outcome: gate})
+			}
+			return nil
+		}
 		// Per batch: the booking.sold_out row is written once, by the first entry that finds nothing left.
 		soldOutAnnounced := false
 		for _, e := range entries {
@@ -256,6 +267,32 @@ func (r *AdmissionRepo) reserveOne(ctx context.Context, tx pgx.Tx, eventID strin
 	d := expiresAt
 	res.ClaimDeadline = &d
 	return res
+}
+
+// saleGate returns the outcome every entry of a batch gets when the event cannot grant at time at, or "" when it can.
+// A cancelled event or one past sales_ends_at answers SOLD_OUT, and that answer writes no booking.sold_out row
+// (D-C4.4a): the queue ends on SOLD_OUT, and nothing can come back. Before the window opens, entries wait (NO_SUPPLY_NOW).
+func saleGate(ctx context.Context, tx pgx.Tx, eventID string, at time.Time) (string, error) {
+	var status string
+	var published bool
+	var startsAt, endsAt time.Time
+	err := tx.QueryRow(ctx, `
+		SELECT status, published_at IS NOT NULL, sales_starts_at, sales_ends_at
+		  FROM booking.events WHERE id = $1::uuid`, eventID).
+		Scan(&status, &published, &startsAt, &endsAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "NO_SUPPLY_NOW", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("admissions: read event: %w", err)
+	}
+	switch {
+	case status == "CANCELLED", !at.Before(endsAt):
+		return "SOLD_OUT", nil
+	case !published, at.Before(startsAt):
+		return "NO_SUPPLY_NOW", nil
+	}
+	return "", nil
 }
 
 // announceSoldOutTx writes the booking.sold_out outbox row. The row is written only while *announced is false, so a

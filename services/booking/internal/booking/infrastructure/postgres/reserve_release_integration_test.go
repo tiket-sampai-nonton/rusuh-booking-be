@@ -546,3 +546,72 @@ func TestReserveBatch_SoldOutIsAnnouncedOnce(t *testing.T) {
 	assert.Equal(t, "AVAILABLE", status, "the stored status is not changed; SOLD_OUT is derived from supply")
 	assert.Equal(t, 1, soldOutRows(t, f), "booking.sold_out is announced exactly once per batch")
 }
+
+// C4.4 (AC-C4.4 F-window): a batch grants nothing outside the sales window. Before sales_starts_at every entry waits
+// (NO_SUPPLY_NOW). At or after sales_ends_at every entry is SOLD_OUT and no booking.sold_out row is written, because
+// nothing can come back for the queue to wait for.
+func TestReserveBatch_OutsideSalesWindow(t *testing.T) {
+	ctx := context.Background()
+	t.Run("sales_starts_at in the future", func(t *testing.T) {
+		f := newAcctFixture(t, suffixFor(t), 5)
+		_, err := f.pool.Exec(ctx, `UPDATE booking.events SET sales_starts_at = now() + interval '1 hour' WHERE id=$1::uuid`, f.eventID)
+		require.NoError(t, err)
+		out, err := NewAdmissionRepo(f.pool).ReserveBatch(ctx, f.eventID,
+			[]outbound.ReserveEntry{anonEntry(1, 2), anonEntry(2, 2)}, time.Now())
+		require.NoError(t, err)
+		require.Len(t, out, 2)
+		assert.Equal(t, "NO_SUPPLY_NOW", out[0].Outcome)
+		assert.Equal(t, "NO_SUPPLY_NOW", out[1].Outcome)
+		assert.Equal(t, 0, f.ledger(t).alloc, "allocated_units = 0")
+		assert.Equal(t, 0, admissionRows(t, f))
+	})
+	t.Run("sales_ends_at in the past", func(t *testing.T) {
+		f := newAcctFixture(t, suffixFor(t), 5)
+		_, err := f.pool.Exec(ctx, `UPDATE booking.events SET sales_ends_at = now() - interval '1 minute' WHERE id=$1::uuid`, f.eventID)
+		require.NoError(t, err)
+		out, err := NewAdmissionRepo(f.pool).ReserveBatch(ctx, f.eventID,
+			[]outbound.ReserveEntry{anonEntry(1, 2), anonEntry(2, 2)}, time.Now())
+		require.NoError(t, err)
+		require.Len(t, out, 2)
+		assert.Equal(t, "SOLD_OUT", out[0].Outcome)
+		assert.Equal(t, "SOLD_OUT", out[1].Outcome)
+		assert.Equal(t, 0, f.ledger(t).alloc, "allocated_units = 0")
+		assert.Equal(t, 0, admissionRows(t, f))
+		assert.Equal(t, 0, outboxRows(t, f), "no outbox row after the sales end")
+	})
+}
+
+// C4.4 (AC-C4.4 F-cancel, D-C4.4a): a cancelled event answers SOLD_OUT to every entry, grants nothing, and writes no
+// booking.sold_out row: SOLD_OUT here means the queue ends, so the announcement is not sent for it.
+func TestReserveBatch_CancelledEventIsSoldOut(t *testing.T) {
+	ctx := context.Background()
+	f := newAcctFixture(t, suffixFor(t), 5)
+	_, err := f.pool.Exec(ctx, `UPDATE booking.events SET status='CANCELLED' WHERE id=$1::uuid`, f.eventID)
+	require.NoError(t, err)
+
+	out, err := NewAdmissionRepo(f.pool).ReserveBatch(ctx, f.eventID,
+		[]outbound.ReserveEntry{anonEntry(1, 2), anonEntry(2, 2)}, time.Now())
+	require.NoError(t, err)
+	require.Len(t, out, 2)
+	assert.Equal(t, "SOLD_OUT", out[0].Outcome)
+	assert.Equal(t, "SOLD_OUT", out[1].Outcome)
+	assert.Equal(t, 0, f.ledger(t).alloc, "allocated_units = 0")
+	assert.Equal(t, 0, admissionRows(t, f))
+	assert.Equal(t, 0, soldOutRows(t, f), "a cancelled event does not announce booking.sold_out")
+}
+
+func admissionRows(t *testing.T, f acctFixture) int {
+	t.Helper()
+	var n int
+	require.NoError(t, f.pool.QueryRow(context.Background(),
+		`SELECT count(*) FROM booking.admissions WHERE event_id=$1::uuid`, f.eventID).Scan(&n))
+	return n
+}
+
+func outboxRows(t *testing.T, f acctFixture) int {
+	t.Helper()
+	var n int
+	require.NoError(t, f.pool.QueryRow(context.Background(),
+		`SELECT count(*) FROM booking.outbox_events WHERE aggregate_id=$1::uuid`, f.eventID).Scan(&n))
+	return n
+}

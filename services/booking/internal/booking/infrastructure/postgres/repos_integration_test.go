@@ -848,7 +848,7 @@ func TestEventRepo_CancelledEventLeavesTheListButStaysReadable(t *testing.T) {
 		AdmissionJTI: f.q(t, `SELECT gen_random_uuid()::text`),
 	}}, time.Now())
 	require.NoError(t, err)
-	assert.Equal(t, "NO_SUPPLY_NOW", out[0].Outcome, "tidak ada admission baru untuk event dibatalkan")
+	assert.Equal(t, "SOLD_OUT", out[0].Outcome, "tidak ada admission baru untuk event dibatalkan (D-C4.4a: antrean berakhir)")
 
 	assert.ErrorIs(t, write.Cancel(ctx, "00000000-0000-0000-0000-000000000000", "acct-test"), inbound.ErrNotFound)
 }
