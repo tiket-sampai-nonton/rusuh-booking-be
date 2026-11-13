@@ -189,15 +189,14 @@ func ValidateSettings(s EventSettings) shared.ValidationErrors {
 	if s.PollMidAbove >= s.PollFarAbove {
 		errs = append(errs, shared.ValidationError{Field: "pollMidAbove", Message: "tidak boleh lebih besar dari atau sama dengan pollFarAbove"})
 	}
-	if !s.OneActivePerVisitor {
-		errs = append(errs, shared.ValidationError{Field: "oneActivePerVisitor", Message: "harus true"})
-	}
 	return errs
 }
 
 // LockedFieldsChanged reports whether a rule locked while the sale is open differs between old and merged.
+// oneActivePerVisitor is locked only in the true-to-false direction: false is rejected by Decide, so a false-to-true
+// repair (P2-14) is never blocked by the lock.
 func LockedFieldsChanged(old, merged EventSettings) bool {
-	return old.OneActivePerVisitor != merged.OneActivePerVisitor || old.OneActivePerEmail != merged.OneActivePerEmail
+	return (old.OneActivePerVisitor && !merged.OneActivePerVisitor) || old.OneActivePerEmail != merged.OneActivePerEmail
 }
 
 // DiffSettings lists changed fields in a stable order. On create (exists=false) every field is reported with Old=nil.
@@ -243,7 +242,13 @@ func Decide(p SettingsPatch, saleOpen bool) SettingsDecider {
 			base = DefaultSettings(cur.EventID)
 		}
 		merged := p.Apply(base)
-		if errs := ValidateSettings(merged); len(errs) > 0 {
+		errs := ValidateSettings(merged)
+		// P2-14: a PATCH may not set oneActivePerVisitor to false. Only the supplied field is checked, so a stored
+		// false is not a merged-value error and stays repairable: an omitted field does not fail the PUT.
+		if p.OneActivePerVisitor != nil && !*p.OneActivePerVisitor {
+			errs = append(errs, shared.ValidationError{Field: "oneActivePerVisitor", Message: "harus true"})
+		}
+		if len(errs) > 0 {
 			return EventSettings{}, errs
 		}
 		if saleOpen && LockedFieldsChanged(base, merged) {

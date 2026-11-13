@@ -145,7 +145,7 @@ func (u *JoinQueue) Join(ctx context.Context, in inbound.JoinInput) (dto.QueueEn
 		GuestScope:          in.GuestScope,
 		NowMs:               now.UnixMilli(),
 		IdemTTL:             10 * time.Minute,
-		OneActivePerVisitor: settings.OneActivePerVisitor,
+		OneActivePerVisitor: true, // P2-14: never false in effect, even when the stored settings row says false
 		TokenGen:            in.TokenGen,
 		TokenTTL:            u.s.VisitorTokenTTL,
 	})

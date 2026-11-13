@@ -181,6 +181,39 @@ func TestSetQueueSettings_SaleOpenBoundaryAndActor(t *testing.T) {
 	}
 }
 
+// P2-14 repair path: a stored false during an open sale is fixed by PATCH true; an omitted field does not fail the PUT.
+func TestSetQueueSettings_StoredFalseRepairableDuringSale(t *testing.T) {
+	start := time.Date(2026, 11, 6, 10, 0, 0, 0, time.UTC)
+	cases := []struct {
+		name        string
+		patch       dto.QueueSettingsRequest
+		wantVisitor bool
+	}{
+		{"patch true repairs", dto.QueueSettingsRequest{ActiveSlotCapacity: ptrInt(5), OneActivePerVisitor: ptrBool(true)}, true},
+		{"omitted field keeps stored false", dto.QueueSettingsRequest{ActiveSlotCapacity: ptrInt(5)}, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			f := newSetFixture(t, start.Add(time.Minute)) // sale open
+			cur := entity.DefaultSettings(setEv)
+			cur.OneActivePerVisitor = false
+			f.repo.EXPECT().Get(gomock.Any(), setEv).Return(cur, true, nil)
+			f.book.EXPECT().Supply(gomock.Any(), setEv).Return(outbound.SupplySnapshot{EventID: setEv, SalesStartsAt: start, SalesEndsAt: start.Add(2 * time.Hour)}, nil).Times(1)
+			f.admin.EXPECT().Apply(gomock.Any(), gomock.Any()).DoAndReturn(
+				func(_ context.Context, p outbound.ApplySettingsParams) (outbound.ApplySettingsResult, error) {
+					merged, err := p.Decide(cur, true)
+					if err != nil {
+						return outbound.ApplySettingsResult{}, err
+					}
+					return outbound.ApplySettingsResult{Settings: merged, Changed: true}, nil
+				}).Times(1)
+			got, _, err := f.uc.Set(context.Background(), inbound.SetSettingsInput{EventID: setEv, Actor: "a", Patch: c.patch})
+			require.NoError(t, err)
+			assert.Equal(t, c.wantVisitor, got.OneActivePerVisitor)
+		})
+	}
+}
+
 func TestSetQueueSettings_CreatedFlagAndResponse(t *testing.T) {
 	now := time.Date(2026, 11, 6, 10, 0, 0, 0, time.UTC)
 	f := newSetFixture(t, now)

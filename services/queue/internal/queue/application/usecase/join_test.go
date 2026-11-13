@@ -106,6 +106,25 @@ func TestJoin_AnonymousGuestWaiting(t *testing.T) {
 	assert.Equal(t, "/api/v1/queue-status/ev1", resp.StatusURL)
 }
 
+// P2-14: oneActivePerVisitor=false is never in effect; the join script gets true even when the stored row says false.
+func TestJoin_OneActivePerVisitorAlwaysTrueEvenWhenStoredFalse(t *testing.T) {
+	uc, m := newJoin(t)
+	ctx := context.Background()
+
+	m.limiter.EXPECT().Allow(ctx, "join:ip:1.2.3.4", 60, time.Minute).Return(true, nil)
+	m.settings.EXPECT().Get(ctx, "ev1").Return(entity.EventSettings{ActiveSlotCapacity: 0, OneActivePerVisitor: false}, true, nil)
+	m.store.EXPECT().Join(ctx, gomock.Any()).DoAndReturn(func(_ context.Context, p outbound.JoinParams) (outbound.JoinResult, error) {
+		assert.True(t, p.OneActivePerVisitor)
+		return created(p, 7), nil
+	})
+	m.audit.EXPECT().Append(ctx, gomock.Any()).Return(nil)
+	m.tokens.EXPECT().IssueQueue(gomock.Any(), gomock.Any(), gomock.Any()).Return("qt", nil)
+	m.tokens.EXPECT().IssueVisitor(gomock.Any(), gomock.Any()).Return("vt", nil)
+
+	_, err := uc.Join(ctx, inbound.JoinInput{EventID: "ev1", ClientIP: "1.2.3.4"})
+	require.NoError(t, err)
+}
+
 // The bearer identifies the account only: its NIK claims are never read and no NIK/email reaches the store.
 func TestJoin_BearerAccountIsPassedAsIdentityOnly(t *testing.T) {
 	uc, m := newJoin(t)

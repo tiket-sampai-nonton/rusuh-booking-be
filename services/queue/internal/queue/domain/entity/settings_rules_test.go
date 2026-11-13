@@ -112,20 +112,35 @@ func TestDecide_MergedCrossRuleWithOmittedField(t *testing.T) {
 	assert.Equal(t, []string{"pollNearMs"}, fieldsOf(err))
 }
 
-func TestValidateSettings_OneActivePerVisitorMustBeTrue(t *testing.T) {
-	s := DefaultSettings("e")
-	assert.Empty(t, ValidateSettings(s))
-
-	s.OneActivePerVisitor = false
-	errs := ValidateSettings(s)
-	require.Len(t, errs, 1)
-	assert.Equal(t, shared.ValidationError{Field: "oneActivePerVisitor", Message: "harus true"}, errs[0])
-
+// P2-14: a PATCH may not set oneActivePerVisitor to false, in either sale state.
+func TestDecide_PatchOneActivePerVisitorMustBeTrue(t *testing.T) {
+	cur := DefaultSettings("e")
 	for _, saleOpen := range []bool{false, true} {
-		_, err := Decide(SettingsPatch{OneActivePerVisitor: bp(false)}, saleOpen)(DefaultSettings("e"), true)
+		_, err := Decide(SettingsPatch{OneActivePerVisitor: bp(false)}, saleOpen)(cur, true)
 		assert.Equal(t, []string{"oneActivePerVisitor"}, fieldsOf(err), "saleOpen=%v", saleOpen)
 		assert.NotErrorIs(t, err, ErrRulesLocked, "saleOpen=%v", saleOpen)
 	}
+	_, err := Decide(SettingsPatch{OneActivePerVisitor: bp(false)}, false)(cur, true)
+	var ve shared.ValidationErrors
+	require.ErrorAs(t, err, &ve)
+	assert.Equal(t, shared.ValidationError{Field: "oneActivePerVisitor", Message: "harus true"}, ve[0])
+}
+
+// A stored false is not a merged-value rule: a PATCH that sends true repairs it (even while the sale is open), and a
+// PATCH that omits the field still succeeds and keeps the stored value.
+func TestDecide_StoredFalseIsRepairableAndOmittedFieldAllowed(t *testing.T) {
+	stored := DefaultSettings("e")
+	stored.OneActivePerVisitor = false
+	assert.Empty(t, ValidateSettings(stored))
+
+	got, err := Decide(SettingsPatch{OneActivePerVisitor: bp(true)}, true)(stored, true)
+	require.NoError(t, err)
+	assert.True(t, got.OneActivePerVisitor)
+
+	got, err = Decide(patchCap(9), true)(stored, true)
+	require.NoError(t, err)
+	assert.False(t, got.OneActivePerVisitor)
+	assert.Equal(t, 9, got.ActiveSlotCapacity)
 }
 
 func TestDecide_LockMatrix(t *testing.T) {
