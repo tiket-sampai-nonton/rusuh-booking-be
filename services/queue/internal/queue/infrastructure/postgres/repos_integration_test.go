@@ -157,7 +157,7 @@ func TestAsyncEntryAudit_CopyFromWritesRows(t *testing.T) {
 
 	// A row the database rejects fails its whole batch: it is counted and Close reports it.
 	bad := NewAsyncEntryAudit(pool, 100, 500, time.Hour)
-	bad.Append(ctx, outbound.AuditRecord{EventID: "bukan-uuid", EntryID: rec.EntryID, Seq: 8, Action: "JOINED", OccurredAt: time.Now()})
+	require.NoError(t, bad.Append(ctx, outbound.AuditRecord{EventID: "bukan-uuid", EntryID: rec.EntryID, Seq: 8, Action: "JOINED", OccurredAt: time.Now()}))
 	assert.Error(t, bad.Close(ctx))
 	assert.EqualValues(t, 1, bad.Dropped())
 	require.NoError(t, pool.QueryRow(ctx, `SELECT count(*) FROM entry_audit`).Scan(&n))

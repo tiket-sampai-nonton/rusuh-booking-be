@@ -26,7 +26,7 @@ type Clients struct {
 	VK *valkey.Client
 	MQ *rabbitmq.Connection
 
-	audit *queuepg.AsyncEntryAudit // best-effort entry_audit writer; runs on ctx, flushed by Close (D-C8.5)
+	audit *queuepg.AsyncEntryAudit // best-effort entry_audit writer; runs until Close (D-C8.5)
 }
 
 // NewClients connects (and pings) every needed dependency. Gagal satu, semua yang sudah terbuka ditutup.
@@ -40,7 +40,7 @@ func NewClients(ctx context.Context, cfg config.Config, need Need) (*Clients, er
 			return nil, err
 		}
 		c.PG = pg
-		c.audit = startEntryAudit(ctx, pg.Pool())
+		c.audit = startEntryAudit(pg.Pool())
 	}
 
 	if need.Valkey {

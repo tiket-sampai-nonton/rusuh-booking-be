@@ -165,3 +165,67 @@ func TestAsyncEntryAudit_CloseIsBoundedWhenWriterIsStuck(t *testing.T) {
 	assert.Less(t, time.Since(started), 2*time.Second, "shutdown waits at most the given deadline")
 	assert.Positive(t, a.Dropped())
 }
+
+// hangingInserter is a database that never answers: every COPY waits until its context ends.
+type hangingInserter struct {
+	startedOnce, abortedOnce sync.Once
+	started, aborted         chan struct{}
+}
+
+func newHangingInserter() *hangingInserter {
+	return &hangingInserter{started: make(chan struct{}), aborted: make(chan struct{})}
+}
+
+func (h *hangingInserter) insert(ctx context.Context, _ []outbound.AuditRecord) error {
+	h.startedOnce.Do(func() { close(h.started) })
+	<-ctx.Done()
+	h.abortedOnce.Do(func() { close(h.aborted) })
+	return ctx.Err()
+}
+
+// A COPY that never returns must not hold shutdown past its deadline, and its context must end so the connection is
+// released before the pool closes.
+func TestAsyncEntryAudit_CloseAbortsBlockedCopyAtDeadline(t *testing.T) {
+	ins := newHangingInserter()
+	a := newAsyncEntryAudit(ins.insert, 10, 5, time.Millisecond)
+	go a.Run(context.Background())
+	for i := range 5 {
+		require.NoError(t, a.Append(context.Background(), auditRow(i)))
+	}
+	select {
+	case <-ins.started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the writer never started the COPY")
+	}
+
+	closeCtx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	began := time.Now()
+	err := a.Close(closeCtx)
+	assert.Less(t, time.Since(began), time.Second, "Close returns at its deadline, not when the COPY would finish")
+	assert.Error(t, err, "the aborted batch is reported")
+
+	select {
+	case <-ins.aborted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the blocked COPY never saw its context end")
+	}
+	assert.Eventually(t, func() bool { return a.Dropped() == 5 }, 5*time.Second, 5*time.Millisecond,
+		"the aborted batch is counted once")
+}
+
+// A SIGTERM cancels the context passed to Run while the HTTP drain still calls Append. Flushing must go on until
+// Close, so rows appended during the drain are not left to fill the buffer.
+func TestAsyncEntryAudit_ParentCancelDoesNotStopFlushing(t *testing.T) {
+	ins := &fakeInserter{}
+	a := newAsyncEntryAudit(ins.insert, 100, 500, 5*time.Millisecond)
+	ctx, cancel := context.WithCancel(context.Background())
+	go a.Run(ctx)
+	cancel()
+
+	require.NoError(t, a.Append(context.Background(), auditRow(1)))
+	require.Eventually(t, func() bool { return ins.written() == 1 }, 5*time.Second, 5*time.Millisecond,
+		"the interval flush still runs after the parent context ended")
+	require.NoError(t, a.Close(context.Background()))
+	assert.Zero(t, a.Dropped())
+}

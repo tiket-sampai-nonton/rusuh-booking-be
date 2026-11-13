@@ -192,10 +192,11 @@ const (
 	entryAuditDrainTimeout = 5 * time.Second // bounds the flush on shutdown
 )
 
-// startEntryAudit starts the entry_audit writer on ctx. Clients.Close stops it and flushes what is buffered.
-func startEntryAudit(ctx context.Context, pool *pgxpool.Pool) *queuepg.AsyncEntryAudit {
+// startEntryAudit starts the entry_audit writer. It keeps flushing through the HTTP drain after a SIGTERM and stops only
+// in Clients.Close, which flushes what is buffered before the pool closes.
+func startEntryAudit(pool *pgxpool.Pool) *queuepg.AsyncEntryAudit {
 	a := queuepg.NewAsyncEntryAudit(pool, entryAuditBuffer, entryAuditBatch, entryAuditEvery).WithMetrics(sharedEntryAuditMetrics())
-	go a.Run(ctx)
+	go a.Run(context.Background())
 	return a
 }
 

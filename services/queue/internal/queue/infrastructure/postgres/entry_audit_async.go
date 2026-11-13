@@ -27,12 +27,15 @@ type AsyncEntryAudit struct {
 	kick    chan struct{} // a full batch is waiting
 	stop    chan struct{}
 	runDone chan struct{}
+	life    context.Context    // context of every flush; abort ends it
+	abort   context.CancelFunc // called when the shutdown deadline passes, so a hung COPY is released
 	batch   int
 	every   time.Duration
 	metrics outbound.IEntryAuditMetrics
 
+	mu       sync.RWMutex // Append holds it shared around the closed check and the send; Close takes it exclusively
+	closed   bool
 	dropped  atomic.Int64
-	closed   atomic.Bool
 	running  atomic.Bool
 	stopOnce sync.Once
 }
@@ -44,12 +47,15 @@ func NewAsyncEntryAudit(pool *pgxpool.Pool, buffer, batch int, every time.Durati
 }
 
 func newAsyncEntryAudit(insert insertFunc, buffer, batch int, every time.Duration) *AsyncEntryAudit {
+	life, abort := context.WithCancel(context.Background())
 	return &AsyncEntryAudit{
 		insert:  insert,
 		rows:    make(chan outbound.AuditRecord, buffer),
 		kick:    make(chan struct{}, 1),
 		stop:    make(chan struct{}),
 		runDone: make(chan struct{}),
+		life:    life,
+		abort:   abort,
 		batch:   batch,
 		every:   every,
 	}
@@ -67,7 +73,9 @@ func (a *AsyncEntryAudit) Dropped() int64 { return a.dropped.Load() }
 // Append queues one row. It never blocks and never fails the caller: a full buffer or a closed writer drops the row
 // and counts it. It implements outbound.IEntryAuditRepo.
 func (a *AsyncEntryAudit) Append(_ context.Context, e outbound.AuditRecord) error {
-	if a.closed.Load() {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	if a.closed {
 		a.drop(1, outbound.AuditDropClosed)
 		return nil
 	}
@@ -86,45 +94,61 @@ func (a *AsyncEntryAudit) Append(_ context.Context, e outbound.AuditRecord) erro
 	return nil
 }
 
-// Run writes the buffered rows until ctx ends or Close is called. A batch that is already being written is finished
-// first, so a cancelled ctx does not cut a COPY in half.
-func (a *AsyncEntryAudit) Run(ctx context.Context) {
+// Run writes the buffered rows every `every` and whenever a full batch waits, until Close. It ignores cancellation of
+// ctx on purpose: a SIGTERM cancels the process context while the HTTP drain still appends rows, and those rows must
+// still be written. Only Close stops it. Run is started once.
+func (a *AsyncEntryAudit) Run(_ context.Context) {
 	a.running.Store(true)
 	defer close(a.runDone)
 	t := time.NewTicker(a.every)
 	defer t.Stop()
 	for {
 		select {
-		case <-ctx.Done():
-			return
 		case <-a.stop:
 			return
 		case <-t.C:
-			a.flush(context.WithoutCancel(ctx), len(a.rows))
+			a.flush(a.life, len(a.rows))
 		case <-a.kick:
-			a.flush(context.WithoutCancel(ctx), len(a.rows))
+			a.flush(a.life, len(a.rows))
 		}
 	}
 }
 
-// Close stops Run and writes the rows still buffered. It returns once they are written or ctx ends. Rows left at the
-// deadline are dropped and counted, and reported in the error. Rows appended after Close started are dropped too.
-// Close must run before the pool is closed.
+// Close stops Run and writes the rows still buffered. It returns when they are written, or when ctx ends. At the
+// deadline any flush still in progress is aborted, which releases its database connection; that matters because the
+// caller closes the pool right after. Rows that were not written are dropped and counted, and the error says so. Rows
+// appended after Close starts are dropped too.
 func (a *AsyncEntryAudit) Close(ctx context.Context) error {
 	before := a.dropped.Load()
-	a.closed.Store(true)
+	a.mu.Lock()
+	a.closed = true
+	a.mu.Unlock()
 	a.stopOnce.Do(func() { close(a.stop) })
+
+	// A deadline reached at any point, while Run or this Close is flushing, aborts that flush.
+	stopAbort := context.AfterFunc(ctx, a.abort)
+	defer stopAbort()
+
+	timedOut := false
 	if a.running.Load() {
 		select {
 		case <-a.runDone:
 		case <-ctx.Done():
+			timedOut = true
+			a.abort()
 		}
 	}
 	for len(a.rows) > 0 && ctx.Err() == nil {
-		a.flush(ctx, len(a.rows))
+		a.flush(a.life, len(a.rows))
 	}
 	a.discard()
-	if lost := a.dropped.Load() - before; lost > 0 {
+	a.abort()
+
+	lost := a.dropped.Load() - before
+	switch {
+	case timedOut:
+		return fmt.Errorf("entry_audit: shutdown deadline reached: %d rows dropped, an in-flight batch aborted", lost)
+	case lost > 0:
 		return fmt.Errorf("entry_audit: %d rows not written at shutdown", lost)
 	}
 	return nil
@@ -159,7 +183,8 @@ func (a *AsyncEntryAudit) take(n int) []outbound.AuditRecord {
 	return rows
 }
 
-// discard empties the buffer without writing and counts the rows as dropped after shutdown.
+// discard empties the buffer without writing and counts the rows as dropped after shutdown. Called only after Close
+// has set closed under the exclusive lock, so no Append can add a row that is not counted.
 func (a *AsyncEntryAudit) discard() {
 	n := 0
 	for {
