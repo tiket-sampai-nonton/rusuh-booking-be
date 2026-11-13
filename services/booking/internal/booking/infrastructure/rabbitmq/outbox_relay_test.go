@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -47,6 +48,77 @@ type fakeOutboxPublisher struct {
 func (f *fakeOutboxPublisher) Publish(_ context.Context, _ string, env pkgrabbitmq.Envelope) error {
 	f.envelopes = append(f.envelopes, env)
 	return nil
+}
+
+// drainingOutboxStore hands out the batch scripted for each Claim call (1-based) and records what was marked published.
+type drainingOutboxStore struct {
+	batch     func(call int) []bookingrabbitmq.OutboxRow
+	claims    int
+	published []string
+}
+
+func (s *drainingOutboxStore) Claim(_ context.Context, _ int, _ time.Duration) ([]bookingrabbitmq.OutboxRow, error) {
+	s.claims++
+	return s.batch(s.claims), nil
+}
+
+func (s *drainingOutboxStore) MarkPublished(_ context.Context, id string) error {
+	s.published = append(s.published, id)
+	return nil
+}
+
+func (s *drainingOutboxStore) MarkFailed(context.Context, string, int, string, time.Duration) error {
+	return nil
+}
+
+// outboxRows returns n pending rows whose ids are unique per claim call.
+func outboxRows(call, n int) []bookingrabbitmq.OutboxRow {
+	rows := make([]bookingrabbitmq.OutboxRow, n)
+	for i := range rows {
+		rows[i] = bookingrabbitmq.OutboxRow{
+			ID: fmt.Sprintf("claim-%d-row-%d", call, i), RoutingKey: "booking.expired", AggregateID: "b1",
+			SchemaVersion: 1, Payload: json.RawMessage(`{"bookingId":"b1"}`),
+		}
+	}
+	return rows
+}
+
+func TestOutboxRelay_DrainsWhileBatchFull(t *testing.T) {
+	// A full batch (100) means more rows may be waiting; the relay keeps claiming until a short batch arrives.
+	sizes := []int{100, 100, 7}
+	store := &drainingOutboxStore{batch: func(call int) []bookingrabbitmq.OutboxRow {
+		if call > len(sizes) {
+			return nil
+		}
+		return outboxRows(call, sizes[call-1])
+	}}
+	pub := &fakeOutboxPublisher{}
+	require.NoError(t, bookingrabbitmq.NewOutboxRelay(store, pub, time.Now, logger()).RunOnce(context.Background()))
+	assert.Equal(t, 3, store.claims)
+	assert.Len(t, pub.envelopes, 207)
+	assert.Len(t, store.published, 207)
+}
+
+func TestOutboxRelay_StopsAfterMaxBatchesWhenAlwaysFull(t *testing.T) {
+	// Endless full batches: the run is capped at 50 batches so the job returns and the next tick can run.
+	store := &drainingOutboxStore{batch: func(call int) []bookingrabbitmq.OutboxRow { return outboxRows(call, 100) }}
+	pub := &fakeOutboxPublisher{}
+	require.NoError(t, bookingrabbitmq.NewOutboxRelay(store, pub, time.Now, logger()).RunOnce(context.Background()))
+	assert.Equal(t, 50, store.claims)
+	assert.Len(t, pub.envelopes, 50*100)
+}
+
+func TestOutboxRelay_StopsWhenContextDone(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	store := &drainingOutboxStore{batch: func(call int) []bookingrabbitmq.OutboxRow {
+		if call == 2 {
+			cancel()
+		}
+		return outboxRows(call, 100)
+	}}
+	require.NoError(t, bookingrabbitmq.NewOutboxRelay(store, &fakeOutboxPublisher{}, time.Now, logger()).RunOnce(ctx))
+	assert.Equal(t, 2, store.claims, "ctx selesai: batch berikutnya tidak diklaim")
 }
 
 func TestOutboxRelay_MessageIDIsRowID(t *testing.T) {

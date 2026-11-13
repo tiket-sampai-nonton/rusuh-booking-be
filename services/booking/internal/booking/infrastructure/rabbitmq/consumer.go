@@ -132,11 +132,33 @@ func NewOutboxRelay(store OutboxStore, pub OutboxPublisher, now func() time.Time
 	return &OutboxRelay{store: store, pub: pub, now: now, logger: logger, batch: 100}
 }
 
-// RunOnce claims and publishes one batch of due rows. Called every WORKER_INTERVAL.
+// maxBatchesPerRun caps how many full batches one RunOnce drains, so a large backlog cannot hold the relay job for
+// good. Rows left over wait for the next tick.
+const maxBatchesPerRun = 50
+
+// RunOnce drains due rows in batches of r.batch for as long as a claim comes back full, at most maxBatchesPerRun
+// batches per call. It stops early when ctx is done. Called by the worker's outbox-relay job.
 func (r *OutboxRelay) RunOnce(ctx context.Context) error {
+	for i := 0; i < maxBatchesPerRun; i++ {
+		if ctx.Err() != nil {
+			return nil
+		}
+		n, err := r.runBatch(ctx)
+		if err != nil {
+			return err
+		}
+		if n < r.batch {
+			return nil
+		}
+	}
+	return nil
+}
+
+// runBatch claims one batch of due rows, publishes them and returns how many rows it claimed.
+func (r *OutboxRelay) runBatch(ctx context.Context) (int, error) {
 	rows, err := r.store.Claim(ctx, r.batch, outboxLease)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	for _, row := range rows {
 		env, err := pkgrabbitmq.NewEnvelope(row.RoutingKey, "booking-service", row.AggregateID, row.AggregateID, row.Payload, r.now())
@@ -157,10 +179,10 @@ func (r *OutboxRelay) RunOnce(ctx context.Context) error {
 			continue
 		}
 		if merr := r.store.MarkPublished(ctx, row.ID); merr != nil {
-			return merr
+			return len(rows), merr
 		}
 	}
-	return nil
+	return len(rows), nil
 }
 
 // parseRFC3339 parses an RFC3339 timestamp string; returns zero time on parse error.
