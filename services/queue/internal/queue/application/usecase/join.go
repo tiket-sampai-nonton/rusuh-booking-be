@@ -162,8 +162,8 @@ func (u *JoinQueue) Join(ctx context.Context, in inbound.JoinInput) (dto.QueueEn
 	}
 	if res.Outcome == outbound.JoinCreated {
 		u.audit(ctx, in.EventID, ent, "JOINED", now)
-		if u.tryDirectAdmission(ctx, in.EventID, &ent, settings, now) {
-			u.audit(ctx, in.EventID, ent, "ADMITTED", now)
+		if admittedAt, ok := u.tryDirectAdmission(ctx, in.EventID, &ent, settings, now); ok {
+			u.audit(ctx, in.EventID, ent, "ADMITTED", admittedAt)
 		}
 	} else if cur, ok, gerr := u.d.Store.GetEntry(ctx, in.EventID, res.EntryID); gerr == nil && ok {
 		// An existing entry is returned as it is now (any state), never re-admitted here.
@@ -251,19 +251,20 @@ func (u *JoinQueue) rateLimit(ctx context.Context, in inbound.JoinInput) error {
 // §5.4a). Best-effort: on any dependency hiccup the entry simply stays WAITING for the promoter.
 //
 // Order (rule 1): cheap lock-free pre-checks -> promoter lease (one jittered retry) -> re-check under the lease ->
-// ReserveBatch -> Promote(RequireHead, LeaseToken) -> release the lease. Capacity and head are verified BEFORE any
-// Booking call, so an ordinary deferral (slot busy, not head, lease busy) leaves no RESERVED row that could later
-// age into a permanent ALREADY_ACTIVE for a live buyer.
-func (u *JoinQueue) tryDirectAdmission(ctx context.Context, eventID string, ent *entity.Entry, settings entity.EventSettings, now time.Time) bool {
+// ReserveBatch -> re-read the clock -> Promote(RequireHead, LeaseToken) -> release the lease. Capacity and head are
+// verified BEFORE any Booking call, so an ordinary deferral (slot busy, not head, lease busy) leaves no RESERVED row
+// that could later age into a permanent ALREADY_ACTIVE for a live buyer. The returned time is the admission instant
+// (the clock read after the Booking call); it is meaningful only when admitted is true.
+func (u *JoinQueue) tryDirectAdmission(ctx context.Context, eventID string, ent *entity.Entry, settings entity.EventSettings, now time.Time) (admittedAt time.Time, admitted bool) {
 	if settings.ActiveSlotCapacity <= 0 {
-		return false
+		return time.Time{}, false
 	}
 	if !u.slotAndHeadOK(ctx, eventID, ent.ID, settings.ActiveSlotCapacity) {
-		return false // pre-check without a lock; no Booking call, no lease
+		return time.Time{}, false // pre-check without a lock; no Booking call, no lease
 	}
 	token, ok := u.acquireAdmissionLease(ctx, eventID)
 	if !ok {
-		return false
+		return time.Time{}, false
 	}
 	defer func() {
 		// compare-and-delete by token; must run even if the request context was cancelled mid-flight
@@ -276,7 +277,7 @@ func (u *JoinQueue) tryDirectAdmission(ctx context.Context, eventID string, ent 
 	// Re-check under the lease: between the pre-check and now another path may have taken the slot or a lower seq
 	// may have appeared. This is what makes FULL/NOT_HEAD after a grant unreachable (L1).
 	if !u.slotAndHeadOK(ctx, eventID, ent.ID, settings.ActiveSlotCapacity) {
-		return false
+		return time.Time{}, false
 	}
 	resp, err := u.d.Booking.ReserveBatch(ctx, outbound.AllocationBatchRequest{
 		EventID: eventID,
@@ -286,44 +287,46 @@ func (u *JoinQueue) tryDirectAdmission(ctx context.Context, eventID string, ent 
 		}},
 	})
 	if err != nil || len(resp.Allocations) == 0 {
-		return false
+		return time.Time{}, false
 	}
 	a := resp.Allocations[0]
 	if a.Status != "GRANTED" {
-		return false
+		return time.Time{}, false
 	}
+	// The reservation took time: every instant below (fallback deadline, Promote nowMs, ADMITTED) is read after it.
+	now = u.d.Clock.Now()
 	deadline := now.Add(u.s.ClaimWindow)
 	if dl, derr := time.Parse(time.RFC3339, a.ClaimDeadline); derr == nil {
 		deadline = dl
 	}
 	if !deadline.After(now) {
 		// Lapsed replay (rule 3a): never hand the buyer a turn whose Booking deadline has already passed.
-		return false
+		return time.Time{}, false
 	}
 	pres, err := u.d.Store.Promote(ctx, eventID,
 		[]outbound.PromoteCandidate{{EntryID: ent.ID, AllocationID: a.AllocationID, ClaimDeadlineMs: deadline.UnixMilli()}},
 		settings.ActiveSlotCapacity, now.UnixMilli(), outbound.PromoteOpts{RequireHead: true, LeaseToken: token})
 	if err != nil {
-		return false // possibly committed, possibly not: never release; the RESERVED row is replayed by the promoter
+		return time.Time{}, false // possibly committed, possibly not: never release; the RESERVED row is replayed by the promoter
 	}
 	if pres.LeaseLost {
 		u.metrics.Inc(outbound.MetricLeaseLost)
-		return false
+		return time.Time{}, false
 	}
 	if pres.Full {
 		u.metrics.Inc(outbound.MetricFullAfterGrant)
 		u.logger.Error("Promote FULL setelah alokasi diberikan pada admisi langsung; baris dipertahankan", "eventId", eventID, "entryId", ent.ID)
-		return false
+		return time.Time{}, false
 	}
 	outbound.ReleaseTerminal(ctx, u.d.Booking, u.logger, pres.Skipped, map[string]string{ent.ID: a.AllocationID})
 	if len(pres.Promoted) == 0 {
-		return false
+		return time.Time{}, false
 	}
 	ent.Status = valueobject.StatusAdmitted
 	ent.AllocationID = a.AllocationID
 	ent.AdmittedAtMs = now.UnixMilli()
 	ent.ClaimDeadlineMs = deadline.UnixMilli()
-	return true
+	return now, true
 }
 
 // slotAndHeadOK reports whether a slot is free and the entry is the head of waiting (strict FIFO).
