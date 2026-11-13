@@ -125,7 +125,7 @@ func newQueueModule(cfg config.Config, clients *Clients, logger *slog.Logger) (*
 		WithLimiter(limiter, cfg.RateLimit.MePerVisitor, cfg.RateLimit.MePerVisitorWindow)
 	heartbeatUC := usecase.NewHeartbeat(store, clk, hbPolicy).
 		WithLimiter(limiter, cfg.RateLimit.HeartbeatPerVisitor, cfg.RateLimit.MePerVisitorWindow)
-	claimUC := usecase.NewClaimTurn(store, tokens, clk, cfg.Booking.PageBaseURL)
+	claimUC := usecase.NewClaimTurn(store, tokens, clk, cfg.Booking.PageBaseURL, cfg.WorkerTuning.ClaimedSlotMax)
 	leaveUC := usecase.NewLeaveQueue(store, booking, clk)
 	getSettingsUC := usecase.NewGetQueueSettings(settingsRepo)
 	setSettingsUC := usecase.NewSetQueueSettings(settingsRepo, booking, settingsAdminRepo, clk)

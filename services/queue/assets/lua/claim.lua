@@ -1,6 +1,6 @@
 -- claim.lua — atomic claim dengan deadline check dan galat spesifik per status (design §5.3, QSH-T04)
 -- KEYS[1]=entry:<id> KEYS[2]=active
--- ARGV: 1=entryId 2=nowMs 3=visitorId
+-- ARGV: 1=entryId 2=nowMs 3=visitorId 4=claimMaxMs (C6.5: upper bound of the CLAIMED slot, in ms)
 -- Reply: {ERR,NOT_FOUND|NOT_ADMITTED|TURN_MISSED|GONE|SOLD_OUT} | {OK,CLAIMED|ALREADY,<allocationId>}
 local st = redis.call('HGET', KEYS[1], 'status')
 if not st then return {'ERR','NOT_FOUND'} end
@@ -17,7 +17,9 @@ if dl == nil or tonumber(ARGV[2]) >= dl then
   redis.call('HSET', KEYS[1], 'status', 'MISSED')           -- tetap di active; sweeper berikutnya membersihkan
   return {'ERR','TURN_MISSED'}
 end
-redis.call('HSET', KEYS[1], 'status','CLAIMED', 'claimedAtMs', ARGV[2])
--- keluarkan dari scan kedaluwarsa: slot CLAIMED tetap dihitung ZCARD, dibebaskan oleh journey.ended
-redis.call('ZADD', KEYS[2], 'XX', 'inf', ARGV[1])
+-- C6.5 (P2-15): batas atas slot CLAIMED = nowMs + claimMaxMs. Slot tetap dihitung ZCARD dan dibebaskan oleh
+-- journey.ended; bila tidak ada outcome sampai batas itu, end_entry.lua mengakhirinya (ENDED/CLAIM_TIMEOUT).
+local expires = string.format('%d', tonumber(ARGV[2]) + tonumber(ARGV[4]))
+redis.call('HSET', KEYS[1], 'status','CLAIMED', 'claimedAtMs', ARGV[2], 'claimExpiresMs', expires)
+redis.call('ZADD', KEYS[2], 'XX', expires, ARGV[1])
 return {'OK','CLAIMED', alloc}

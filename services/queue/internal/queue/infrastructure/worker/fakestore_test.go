@@ -160,7 +160,7 @@ func (s *fakeStore) Promote(_ context.Context, _ string, cands []outbound.Promot
 	return res, nil
 }
 
-func (s *fakeStore) Claim(context.Context, string, string, string, int64) (outbound.ClaimResult, error) {
+func (s *fakeStore) Claim(context.Context, string, string, string, int64, int64) (outbound.ClaimResult, error) {
 	return outbound.ClaimResult{}, errors.New("unused")
 }
 

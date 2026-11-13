@@ -61,7 +61,7 @@ func TestVisitorToken_RotatedOutTokenCannotTouchALiveAdmittedEntry(t *testing.T)
 	booking := mock_outbound.NewMockIBookingClient(ctrl) // any ReleaseAllocation call fails the test
 	tokens := mock_outbound.NewMockITokenIssuer(ctrl)
 	for _, entryID := range []string{"e-rot", "someone-elses", "does-not-exist"} {
-		_, cerr := usecase.NewClaimTurn(s, tokens, clock.System{}, "https://app/book").Claim(ctx, inbound.ClaimInput{EntryID: entryID, VisitorID: first.VisitorID, Gen: 1, EventID: ev})
+		_, cerr := usecase.NewClaimTurn(s, tokens, clock.System{}, "https://app/book", 5700*time.Second).Claim(ctx, inbound.ClaimInput{EntryID: entryID, VisitorID: first.VisitorID, Gen: 1, EventID: ev})
 		lerr := usecase.NewLeaveQueue(s, booking, clock.System{}).Leave(ctx, inbound.LeaveInput{EntryID: entryID, VisitorID: first.VisitorID, Gen: 1, EventID: ev})
 		assert.ErrorIs(t, cerr, entity.ErrVisitorTokenInvalid, entryID)
 		assert.ErrorIs(t, lerr, entity.ErrVisitorTokenInvalid, entryID)
@@ -84,7 +84,7 @@ func TestVisitorToken_ForeignAndAbsentEntryAreIdentical404(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	booking := mock_outbound.NewMockIBookingClient(ctrl)
 	tokens := mock_outbound.NewMockITokenIssuer(ctrl)
-	claim := usecase.NewClaimTurn(s, tokens, clock.System{}, "https://app/book")
+	claim := usecase.NewClaimTurn(s, tokens, clock.System{}, "https://app/book", 5700*time.Second)
 	leave := usecase.NewLeaveQueue(s, booking, clock.System{})
 
 	var msgs []string
@@ -114,7 +114,7 @@ func TestVisitorToken_NeverJoinedEventIs404(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	booking := mock_outbound.NewMockIBookingClient(ctrl)
 	tokens := mock_outbound.NewMockITokenIssuer(ctrl)
-	_, cerr := usecase.NewClaimTurn(s, tokens, clock.System{}, "https://app/book").Claim(ctx, inbound.ClaimInput{EntryID: "e-a", VisitorID: "vis-x", Gen: 1, EventID: evB})
+	_, cerr := usecase.NewClaimTurn(s, tokens, clock.System{}, "https://app/book", 5700*time.Second).Claim(ctx, inbound.ClaimInput{EntryID: "e-a", VisitorID: "vis-x", Gen: 1, EventID: evB})
 	lerr := usecase.NewLeaveQueue(s, booking, clock.System{}).Leave(ctx, inbound.LeaveInput{EntryID: "e-a", VisitorID: "vis-x", Gen: 1, EventID: evB})
 	_, merr := usecase.NewGetMyEntry(s).GetMyEntry(ctx, inbound.MyEntryInput{EventID: evB, VisitorID: "vis-x", Gen: 1})
 	assert.ErrorIs(t, cerr, entity.ErrNotFound)

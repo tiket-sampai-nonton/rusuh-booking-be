@@ -75,12 +75,12 @@ func TestQueueStore_EntryLifecycle(t *testing.T) {
 	assert.False(t, found)
 
 	// Claim: only the owner, and only before the deadline.
-	_, err = s.Claim(ctx, ev, a, "visitor-lain", now)
+	_, err = s.Claim(ctx, ev, a, "visitor-lain", now, testClaimMaxMs)
 	assert.ErrorIs(t, err, entity.ErrNotFound)
-	claim, err := s.Claim(ctx, ev, a, visA, now)
+	claim, err := s.Claim(ctx, ev, a, visA, now, testClaimMaxMs)
 	require.NoError(t, err)
 	assert.Equal(t, "CLAIMED", claim.Status)
-	_, err = s.Claim(ctx, ev, b, visB, now)
+	_, err = s.Claim(ctx, ev, b, visB, now, testClaimMaxMs)
 	assert.ErrorIs(t, err, entity.ErrTurnMissed, "tenggat klaim sudah lewat")
 
 	// Sweeper: the expired turn is found, marked missed, and its constraint keys are cleaned so the buyer can rejoin.

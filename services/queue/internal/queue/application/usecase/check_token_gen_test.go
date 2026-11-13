@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -44,7 +45,7 @@ func TestTokenGenCheck_ThreeWay(t *testing.T) {
 	}
 	runners := []runner{
 		{"claim", func(t *testing.T, store *mock_outbound.MockIQueueStore, ctrl *gomock.Controller, ev string, gen int64) error {
-			_, err := usecase.NewClaimTurn(store, mock_outbound.NewMockITokenIssuer(ctrl), fixedNow, "https://app/book").
+			_, err := usecase.NewClaimTurn(store, mock_outbound.NewMockITokenIssuer(ctrl), fixedNow, "https://app/book", 5700*time.Second).
 				Claim(context.Background(), inbound.ClaimInput{EntryID: "e1", VisitorID: "v1", EventID: ev, Gen: gen})
 			return err
 		}},
@@ -71,7 +72,7 @@ func TestTokenGenCheck_ThreeWay(t *testing.T) {
 					sentinel := errors.New("past-the-check")
 					switch r.name {
 					case "claim":
-						store.EXPECT().Claim(gomock.Any(), tt.eventID, "e1", "v1", gomock.Any()).Return(outbound.ClaimResult{}, sentinel)
+						store.EXPECT().Claim(gomock.Any(), tt.eventID, "e1", "v1", gomock.Any(), gomock.Any()).Return(outbound.ClaimResult{}, sentinel)
 					case "leave":
 						store.EXPECT().Leave(gomock.Any(), tt.eventID, "e1", "v1", gomock.Any()).Return(outbound.LeaveResult{}, sentinel)
 					case "me":
@@ -103,11 +104,11 @@ func TestClaimAndLeave_RotatedTokenIsIdenticalForOwnForeignAndAbsentEntries(t *t
 			booking := mock_outbound.NewMockIBookingClient(ctrl)
 			tokens := mock_outbound.NewMockITokenIssuer(ctrl)
 			store.EXPECT().CheckTokenGen(gomock.Any(), "ev1", "v1", gomock.Any()).Return(outbound.TokenGenInvalid, nil).Times(2)
-			store.EXPECT().Claim(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
+			store.EXPECT().Claim(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
 			store.EXPECT().Leave(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
 			booking.EXPECT().ReleaseAllocation(gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
 
-			_, cerr := usecase.NewClaimTurn(store, tokens, fixedNow, "https://app/book").
+			_, cerr := usecase.NewClaimTurn(store, tokens, fixedNow, "https://app/book", 5700*time.Second).
 				Claim(context.Background(), inbound.ClaimInput{EntryID: entryID, VisitorID: "v1", EventID: "ev1", Gen: 2})
 			lerr := usecase.NewLeaveQueue(store, booking, fixedNow).
 				Leave(context.Background(), inbound.LeaveInput{EntryID: entryID, VisitorID: "v1", EventID: "ev1", Gen: 2})
@@ -124,11 +125,11 @@ func TestClaimAndLeave_ForeignAndAbsentEntryAreIndistinguishable(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	store := mock_outbound.NewMockIQueueStore(ctrl)
 	store.EXPECT().CheckTokenGen(gomock.Any(), "ev1", "v1", gomock.Any()).Return(outbound.TokenGenOK, nil).AnyTimes()
-	store.EXPECT().Claim(gomock.Any(), "ev1", gomock.Any(), "v1", gomock.Any()).Return(outbound.ClaimResult{}, entity.ErrNotFound).Times(2)
+	store.EXPECT().Claim(gomock.Any(), "ev1", gomock.Any(), "v1", gomock.Any(), gomock.Any()).Return(outbound.ClaimResult{}, entity.ErrNotFound).Times(2)
 	store.EXPECT().Leave(gomock.Any(), "ev1", gomock.Any(), "v1", gomock.Any()).Return(outbound.LeaveResult{}, entity.ErrNotFound).Times(2)
 	tokens := mock_outbound.NewMockITokenIssuer(ctrl)
 	booking := mock_outbound.NewMockIBookingClient(ctrl)
-	claim := usecase.NewClaimTurn(store, tokens, fixedNow, "https://app/book")
+	claim := usecase.NewClaimTurn(store, tokens, fixedNow, "https://app/book", 5700*time.Second)
 	leave := usecase.NewLeaveQueue(store, booking, fixedNow)
 
 	var got []string

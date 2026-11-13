@@ -204,6 +204,40 @@ func TestEndEntry_MissedCleanupKeepsNewerConstraintKeys(t *testing.T) {
 	_ = r
 }
 
+// C6.5 (P2-15): a CLAIMED slot is bounded by the claimMaxMs of its claim. Past that bound SWEEP_MISSED ends it as
+// ENDED/CLAIM_TIMEOUT and frees the slot; a later Booking outcome is ignored because the entry is already terminal.
+func TestEndEntry_ClaimedPastBoundIsEnded(t *testing.T) {
+	s := mustStore(t)
+	ctx := context.Background()
+	ev := evID(t)
+	t0 := time.Now().UnixMilli()
+
+	id, vis, nik := joinAdmit(t, s, ev, 1, t0+60_000, t0)
+	_, err := s.Claim(ctx, ev, id, vis, t0, 1000)
+	require.NoError(t, err)
+
+	expired, err := s.ExpiredActive(ctx, ev, t0+999, 100)
+	require.NoError(t, err)
+	assert.NotContains(t, expired, id, "belum melewati batas klaim")
+	expired, err = s.ExpiredActive(ctx, ev, t0+1000, 100)
+	require.NoError(t, err)
+	assert.Contains(t, expired, id, "tepat di batas klaim sudah kedaluwarsa")
+
+	r, err := s.EndEntry(ctx, ev, id, "SWEEP_MISSED", t0+1000)
+	require.NoError(t, err)
+	assert.Equal(t, "OK", r.Tag)
+	assert.Equal(t, "ENDED", r.Status)
+	assert.Equal(t, "ENDED", hget(t, s, s.kEntry(ev, id), "status"))
+	assert.Equal(t, "CLAIM_TIMEOUT", hget(t, s, s.kEntry(ev, id), "endReason"))
+	assert.Equal(t, int64(0), zcard(t, s, s.kActive(ev)), "slot dibebaskan")
+	constraintKeysGone(t, s, ev, nik, vis, 1)
+
+	r, err = s.EndEntry(ctx, ev, id, "PAID", t0+2000)
+	require.NoError(t, err)
+	assert.Equal(t, "IGNORED", r.Tag, "outcome Booking terlambat diabaikan")
+	assert.Equal(t, "ENDED", hget(t, s, s.kEntry(ev, id), "status"))
+}
+
 // REQ-QSH-11.2: ExpiredActive is bounded, and a limit of zero is a programming error.
 func TestExpiredActive_RespectsLimit(t *testing.T) {
 	s := mustStore(t)

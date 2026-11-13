@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/clock"
 
@@ -19,13 +20,15 @@ type ClaimTurn struct {
 	store          outbound.IQueueStore
 	tokens         outbound.ITokenIssuer
 	clock          clock.IClock
-	bookingPageURL string // public booking page base (BOOKING_PAGE_BASE_URL), e.g. "https://app/book"
+	bookingPageURL string        // public booking page base (BOOKING_PAGE_BASE_URL), e.g. "https://app/book"
+	claimMax       time.Duration // upper bound of a CLAIMED slot (QUEUE_CLAIMED_SLOT_MAX_SECONDS, C6.5)
 }
 
 // NewClaimTurn accepts interfaces and returns the concrete usecase. bookingPageBase is the public booking page base
-// URL; it is joined with the (path-escaped) event id to form the page URL. The URL never carries a token.
-func NewClaimTurn(store outbound.IQueueStore, tokens outbound.ITokenIssuer, clk clock.IClock, bookingPageBase string) *ClaimTurn {
-	return &ClaimTurn{store: store, tokens: tokens, clock: clk, bookingPageURL: strings.TrimRight(bookingPageBase, "/")}
+// URL; it is joined with the (path-escaped) event id to form the page URL. The URL never carries a token. claimMax
+// bounds how long a claimed slot may hold capacity before it is ended.
+func NewClaimTurn(store outbound.IQueueStore, tokens outbound.ITokenIssuer, clk clock.IClock, bookingPageBase string, claimMax time.Duration) *ClaimTurn {
+	return &ClaimTurn{store: store, tokens: tokens, clock: clk, bookingPageURL: strings.TrimRight(bookingPageBase, "/"), claimMax: claimMax}
 }
 
 // Claim validates the turn via claim.lua then issues an EdDSA admission token (TTL 60s). The allocation id comes
@@ -36,7 +39,7 @@ func (u *ClaimTurn) Claim(ctx context.Context, in inbound.ClaimInput) (dto.Claim
 		return dto.ClaimResponse{}, err
 	}
 	now := u.clock.Now()
-	res, err := u.store.Claim(ctx, in.EventID, in.EntryID, in.VisitorID, now.UnixMilli())
+	res, err := u.store.Claim(ctx, in.EventID, in.EntryID, in.VisitorID, now.UnixMilli(), u.claimMax.Milliseconds())
 	if err != nil {
 		return dto.ClaimResponse{}, err
 	}

@@ -4,7 +4,6 @@ package valkey
 
 import (
 	"context"
-	"math"
 	"testing"
 	"time"
 
@@ -115,23 +114,23 @@ func TestClaim_StatusSpecificErrors(t *testing.T) {
 	now := time.Now().UnixMilli()
 
 	wait, visW, _ := joinOne(t, s, ev, 1, now)
-	_, err := s.Claim(ctx, ev, wait, visW, now)
+	_, err := s.Claim(ctx, ev, wait, visW, now, testClaimMaxMs)
 	assert.ErrorIs(t, err, entity.ErrNotAdmitted, "WAITING belum punya giliran")
 
 	for i, st := range []string{"LEFT", "ENDED", "COMPLETED"} {
 		id, vis, _ := joinOne(t, s, ev, 10+i, now)
 		hsetRaw(t, s, s.kEntry(ev, id), "status", st)
-		_, err := s.Claim(ctx, ev, id, vis, now)
+		_, err := s.Claim(ctx, ev, id, vis, now, testClaimMaxMs)
 		assert.ErrorIs(t, err, entity.ErrNotFound, st)
 	}
 
 	missed, visM, _ := joinOne(t, s, ev, 20, now)
 	hsetRaw(t, s, s.kEntry(ev, missed), "status", "MISSED")
-	_, err = s.Claim(ctx, ev, missed, visM, now)
+	_, err = s.Claim(ctx, ev, missed, visM, now, testClaimMaxMs)
 	assert.ErrorIs(t, err, entity.ErrTurnMissed)
 
 	exp, visE, _ := joinAdmit(t, s, ev, 30, now-1, now)
-	_, err = s.Claim(ctx, ev, exp, visE, now)
+	_, err = s.Claim(ctx, ev, exp, visE, now, testClaimMaxMs)
 	assert.ErrorIs(t, err, entity.ErrTurnMissed)
 	assert.Equal(t, "MISSED", hget(t, s, s.kEntry(ev, exp), "status"))
 	_, still := zscore(t, s, s.kActive(ev), exp)
@@ -145,8 +144,8 @@ func TestClaim_WrongVisitorIsAnsweredLikeUnknown(t *testing.T) {
 	ev := evID(t)
 	now := time.Now().UnixMilli()
 	id, _, _ := joinAdmit(t, s, ev, 1, now+60_000, now)
-	_, errWrong := s.Claim(ctx, ev, id, "visitor-lain", now)
-	_, errUnknown := s.Claim(ctx, ev, "tidak-ada", "visitor-lain", now)
+	_, errWrong := s.Claim(ctx, ev, id, "visitor-lain", now, testClaimMaxMs)
+	_, errUnknown := s.Claim(ctx, ev, "tidak-ada", "visitor-lain", now, testClaimMaxMs)
 	require.ErrorIs(t, errWrong, entity.ErrNotFound)
 	require.ErrorIs(t, errUnknown, entity.ErrNotFound)
 	assert.Equal(t, errWrong.Error(), errUnknown.Error())
@@ -159,20 +158,20 @@ func TestClaim_LiveAdmittedReturnsAllocationAndLeavesTheExpiryScan(t *testing.T)
 	now := time.Now().UnixMilli()
 	id, vis, _ := joinAdmit(t, s, ev, 1, now+1_000, now)
 
-	res, err := s.Claim(ctx, ev, id, vis, now)
+	res, err := s.Claim(ctx, ev, id, vis, now, testClaimMaxMs)
 	require.NoError(t, err)
 	assert.Equal(t, "CLAIMED", res.Status)
 	assert.Equal(t, "alloc-1", res.AllocationID, "allocationId datang dari script, bukan dari GetEntry kedua")
 	assert.Equal(t, "CLAIMED", hget(t, s, s.kEntry(ev, id), "status"))
 	score, ok := zscore(t, s, s.kActive(ev), id)
 	require.True(t, ok, "slot CLAIMED tetap dihitung di active")
-	assert.True(t, math.IsInf(score, 1))
+	assert.Equal(t, float64(now+testClaimMaxMs), score, "skor CLAIMED = batas klaim (C6.5), bukan +inf")
 
 	expired, err := s.ExpiredActive(ctx, ev, now+3_600_000, 100)
 	require.NoError(t, err)
-	assert.NotContains(t, expired, id, "CLAIMED tidak boleh pernah dikembalikan scan kedaluwarsa (INV-3/4)")
+	assert.NotContains(t, expired, id, "CLAIMED belum melewati batas klaim (C6.5)")
 
-	again, err := s.Claim(ctx, ev, id, vis, now)
+	again, err := s.Claim(ctx, ev, id, vis, now, testClaimMaxMs)
 	require.NoError(t, err)
 	assert.Equal(t, "ALREADY", again.Status)
 	assert.Equal(t, "alloc-1", again.AllocationID)
@@ -185,7 +184,7 @@ func TestClaimVsSweep_ClaimedEntryIsNeverMissed(t *testing.T) {
 	ev := evID(t)
 	now := time.Now().UnixMilli()
 	id, vis, _ := joinAdmit(t, s, ev, 1, now+500, now)
-	_, err := s.Claim(ctx, ev, id, vis, now)
+	_, err := s.Claim(ctx, ev, id, vis, now, testClaimMaxMs)
 	require.NoError(t, err)
 	r, err := s.EndEntry(ctx, ev, id, "SWEEP_MISSED", now+10_000) // long after the original deadline
 	require.NoError(t, err)
@@ -262,7 +261,7 @@ func TestSoldOutEntryIsTerminal(t *testing.T) {
 	assert.Equal(t, "entry-fresh", joined.EntryID, "join dengan token yang sama membuat entry baru")
 	assert.Equal(t, "WAITING", hget(t, s, s.kEntry(ev, "entry-fresh"), "status"))
 
-	_, err = s.Claim(ctx, ev, id, vis, now)
+	_, err = s.Claim(ctx, ev, id, vis, now, testClaimMaxMs)
 	assert.ErrorIs(t, err, entity.ErrSoldOut)
 
 	lr, err := s.Leave(ctx, ev, id, vis, now)

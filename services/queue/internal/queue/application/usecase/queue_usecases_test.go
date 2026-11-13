@@ -31,10 +31,11 @@ func TestClaim_Success(t *testing.T) {
 	ctx := context.Background()
 
 	// The allocation id comes from claim.lua itself: no second GetEntry (it could race a concurrent change).
-	store.EXPECT().Claim(ctx, "ev1", "e1", "v1", gomock.Any()).Return(outbound.ClaimResult{Status: "CLAIMED", AllocationID: "alloc-1"}, nil)
+	// C6.5: the configured claim bound (5700 s) reaches the store in milliseconds.
+	store.EXPECT().Claim(ctx, "ev1", "e1", "v1", gomock.Any(), int64(5_700_000)).Return(outbound.ClaimResult{Status: "CLAIMED", AllocationID: "alloc-1"}, nil)
 	tokens.EXPECT().IssueAdmission("e1", "ev1", "alloc-1", fixedNow.T).Return("adm-token", fixedNow.T.Add(time.Minute), nil)
 
-	uc := usecase.NewClaimTurn(store, tokens, fixedNow, "https://app/book")
+	uc := usecase.NewClaimTurn(store, tokens, fixedNow, "https://app/book", 5700*time.Second)
 	resp, err := uc.Claim(ctx, inbound.ClaimInput{EntryID: "e1", VisitorID: "v1", EventID: "ev1", Gen: 1})
 	require.NoError(t, err)
 	assert.Equal(t, "adm-token", resp.AdmissionToken)
@@ -49,9 +50,9 @@ func TestClaim_EmptyAllocationIDIsDependencyUnavailableAndSignsNothing(t *testin
 	store.EXPECT().CheckTokenGen(gomock.Any(), "ev1", gomock.Any(), gomock.Any()).Return(outbound.TokenGenOK, nil).AnyTimes()
 	tokens := mock_outbound.NewMockITokenIssuer(ctrl) // IssueAdmission must never be called
 	ctx := context.Background()
-	store.EXPECT().Claim(ctx, "ev1", "e1", "v1", gomock.Any()).Return(outbound.ClaimResult{Status: "CLAIMED"}, nil)
+	store.EXPECT().Claim(ctx, "ev1", "e1", "v1", gomock.Any(), gomock.Any()).Return(outbound.ClaimResult{Status: "CLAIMED"}, nil)
 
-	uc := usecase.NewClaimTurn(store, tokens, fixedNow, "https://app/book")
+	uc := usecase.NewClaimTurn(store, tokens, fixedNow, "https://app/book", 5700*time.Second)
 	_, err := uc.Claim(ctx, inbound.ClaimInput{EntryID: "e1", VisitorID: "v1", EventID: "ev1", Gen: 1})
 	assert.ErrorIs(t, err, entity.ErrDependencyUnavailable)
 }
@@ -69,8 +70,8 @@ func TestClaim_StoreErrorsAreReturned(t *testing.T) {
 			store.EXPECT().CheckTokenGen(gomock.Any(), "ev1", gomock.Any(), gomock.Any()).Return(outbound.TokenGenOK, nil).AnyTimes()
 			tokens := mock_outbound.NewMockITokenIssuer(ctrl)
 			ctx := context.Background()
-			store.EXPECT().Claim(ctx, "ev1", "e1", "v1", gomock.Any()).Return(outbound.ClaimResult{}, storeErr)
-			uc := usecase.NewClaimTurn(store, tokens, fixedNow, "https://app/book")
+			store.EXPECT().Claim(ctx, "ev1", "e1", "v1", gomock.Any(), gomock.Any()).Return(outbound.ClaimResult{}, storeErr)
+			uc := usecase.NewClaimTurn(store, tokens, fixedNow, "https://app/book", 5700*time.Second)
 			resp, err := uc.Claim(ctx, inbound.ClaimInput{EntryID: "e1", VisitorID: "v1", EventID: "ev1", Gen: 1})
 			assert.ErrorIs(t, err, storeErr)
 			assert.Equal(t, dto.ClaimResponse{}, resp, "no token and no URL on failure")
@@ -210,7 +211,7 @@ func TestClaimAndLeave_RotatedOutTokenIsRefused(t *testing.T) {
 			ctx := context.Background()
 			store.EXPECT().CheckTokenGen(ctx, "ev1", "v1", gomock.Any()).Return(outbound.TokenGenInvalid, nil).Times(2)
 
-			_, err := usecase.NewClaimTurn(store, tokens, fixedNow, "https://app/book").
+			_, err := usecase.NewClaimTurn(store, tokens, fixedNow, "https://app/book", 5700*time.Second).
 				Claim(ctx, inbound.ClaimInput{EntryID: "e1", VisitorID: "v1", EventID: "ev1", Gen: gen})
 			assert.ErrorIs(t, err, entity.ErrVisitorTokenInvalid)
 			err = usecase.NewLeaveQueue(store, booking, fixedNow).
@@ -239,12 +240,12 @@ func TestClaim_BookingURLShape(t *testing.T) {
 			store.EXPECT().CheckTokenGen(gomock.Any(), tt.eventID, gomock.Any(), gomock.Any()).Return(outbound.TokenGenOK, nil).AnyTimes()
 			tokens := mock_outbound.NewMockITokenIssuer(ctrl)
 			ctx := context.Background()
-			store.EXPECT().Claim(ctx, tt.eventID, "entry-secret-id", "visitor-secret-id", gomock.Any()).
+			store.EXPECT().Claim(ctx, tt.eventID, "entry-secret-id", "visitor-secret-id", gomock.Any(), gomock.Any()).
 				Return(outbound.ClaimResult{Status: "CLAIMED", AllocationID: "alloc-1"}, nil)
 			tokens.EXPECT().IssueAdmission("entry-secret-id", tt.eventID, "alloc-1", fixedNow.T).
 				Return("distinctive.admission.token", fixedNow.T.Add(time.Minute), nil)
 
-			resp, err := usecase.NewClaimTurn(store, tokens, fixedNow, tt.base).
+			resp, err := usecase.NewClaimTurn(store, tokens, fixedNow, tt.base, 5700*time.Second).
 				Claim(ctx, inbound.ClaimInput{EntryID: "entry-secret-id", VisitorID: "visitor-secret-id", EventID: tt.eventID, Gen: 1})
 			require.NoError(t, err)
 			assert.Equal(t, tt.want, resp.BookingURL)

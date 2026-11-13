@@ -88,6 +88,8 @@ func TestLoad_QueueHardeningDefaults(t *testing.T) {
 	assert.Equal(t, 50, cfg.WorkerTuning.NoSupplySuspectTicks)
 	// REQ-5: status-doc TTL multiplier defaults to 4 (within the 3..5 bound).
 	assert.Equal(t, 4, cfg.WorkerTuning.StatusTTLMultiplier)
+	// C6.5 (P2-15): default 5700 s = Booking selection TTL 1800 s + payment TTL 3600 s + 300 s margin.
+	assert.Equal(t, 5700*time.Second, cfg.WorkerTuning.ClaimedSlotMax)
 }
 
 // REQ-5 AC7: StatusTTL returns the configured multiple of the effective publish cadence (Worker.Interval),
@@ -208,6 +210,8 @@ func TestLoad_QueueHardeningValidation(t *testing.T) {
 		{"sweep batch at max", map[string]string{"QUEUE_SWEEP_BATCH_MAX": "5000"}, ""},
 		{"suspect ticks 1 rejected (a single race must never label)", map[string]string{"QUEUE_NO_SUPPLY_SUSPECT_TICKS": "1"}, "QUEUE_NO_SUPPLY_SUSPECT_TICKS"},
 		{"suspect ticks 2 ok", map[string]string{"QUEUE_NO_SUPPLY_SUSPECT_TICKS": "2"}, ""},
+		{"claimed slot max 599s rejected", map[string]string{"QUEUE_CLAIMED_SLOT_MAX_SECONDS": "599"}, "QUEUE_CLAIMED_SLOT_MAX_SECONDS"},
+		{"claimed slot max 600s ok", map[string]string{"QUEUE_CLAIMED_SLOT_MAX_SECONDS": "600"}, ""},
 		{"rate window under 1ms", map[string]string{"RATE_LIMIT_JOIN_PER_IP_WINDOW": "500us"}, "RATE_LIMIT_JOIN_PER_IP_WINDOW"},
 		{"ip window zero", map[string]string{"RATE_LIMIT_JOIN_PER_IP_WINDOW": "0s"}, "RATE_LIMIT_JOIN_PER_IP_WINDOW"},
 		{"me window zero", map[string]string{"RATE_LIMIT_ME_PER_VISITOR_WINDOW": "0s"}, "RATE_LIMIT_ME_PER_VISITOR_WINDOW"},

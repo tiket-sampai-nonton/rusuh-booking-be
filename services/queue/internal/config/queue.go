@@ -109,6 +109,10 @@ type WorkerTuning struct {
 	SweepBatchMax int
 	// NoSupplySuspectTicks labels a head that answers NO_SUPPLY_NOW this many consecutive ticks as suspect.
 	NoSupplySuspectTicks int
+	// ClaimedSlotMax bounds how long a CLAIMED slot may hold capacity without a journey outcome
+	// (QUEUE_CLAIMED_SLOT_MAX_SECONDS). It must cover Booking's selection TTL plus payment TTL, so no live buyer loses
+	// the slot (P2-15, D-C6.5). Validate keeps it at or above minClaimedSlotMax.
+	ClaimedSlotMax time.Duration
 }
 
 // StatusTTL returns the Valkey TTL for the published status document: StatusTTLMultiplier times the
@@ -128,6 +132,7 @@ const (
 	minRateLimitWindow = time.Millisecond
 	minStatusTTLMult   = 3
 	maxStatusTTLMult   = 5
+	minClaimedSlotMax  = 600 * time.Second
 )
 
 // Validate checks WorkerTuning against the booking client timeout (the lease must outlive two Booking calls).
@@ -157,6 +162,9 @@ func (w WorkerTuning) Validate(bookingTimeout time.Duration) error {
 	}
 	if w.NoSupplySuspectTicks < minSuspectTicks {
 		errs = append(errs, fmt.Errorf("QUEUE_NO_SUPPLY_SUSPECT_TICKS %d harus >= %d", w.NoSupplySuspectTicks, minSuspectTicks))
+	}
+	if w.ClaimedSlotMax < minClaimedSlotMax {
+		errs = append(errs, fmt.Errorf("QUEUE_CLAIMED_SLOT_MAX_SECONDS %s harus >= %s", w.ClaimedSlotMax, minClaimedSlotMax))
 	}
 	if w.StatusTTLMultiplier < minStatusTTLMult || w.StatusTTLMultiplier > maxStatusTTLMult {
 		errs = append(errs, fmt.Errorf("QUEUE_STATUS_TTL_MULTIPLIER %d di luar rentang %d..%d", w.StatusTTLMultiplier, minStatusTTLMult, maxStatusTTLMult))

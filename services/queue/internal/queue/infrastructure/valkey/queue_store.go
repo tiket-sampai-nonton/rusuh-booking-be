@@ -252,9 +252,10 @@ func mapPromote(arr []vk.ValkeyMessage) (outbound.PromoteResult, error) {
 }
 
 // Claim runs claim.lua (design §5.3). Maps ERR tags to domain errors; GONE (terminal) is reported as not found.
-func (s *QueueStore) Claim(ctx context.Context, eventID, entryID, visitorID string, nowMs int64) (outbound.ClaimResult, error) {
+// claimMaxMs bounds the CLAIMED slot (C6.5, P2-15).
+func (s *QueueStore) Claim(ctx context.Context, eventID, entryID, visitorID string, nowMs, claimMaxMs int64) (outbound.ClaimResult, error) {
 	keys := []string{s.kEntry(eventID, entryID), s.kActive(eventID)}
-	args := []string{entryID, strconv.FormatInt(nowMs, 10), visitorID}
+	args := []string{entryID, strconv.FormatInt(nowMs, 10), visitorID, strconv.FormatInt(claimMaxMs, 10)}
 	arr, err := s.claim.Exec(ctx, s.c, keys, args).ToArray()
 	if err != nil {
 		return outbound.ClaimResult{}, fmt.Errorf("valkey: claim.lua: %w", err)

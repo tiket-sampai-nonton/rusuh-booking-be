@@ -13,7 +13,8 @@ import (
 type IQueueStore interface {
 	Join(ctx context.Context, p JoinParams) (JoinResult, error)
 	Promote(ctx context.Context, eventID string, cands []PromoteCandidate, capacity int, nowMs int64, opts PromoteOpts) (PromoteResult, error)
-	Claim(ctx context.Context, eventID, entryID, visitorID string, nowMs int64) (ClaimResult, error)
+	// Claim sets the CLAIMED slot's upper bound to nowMs+claimMaxMs (C6.5, P2-15); past it EndEntry ends the slot.
+	Claim(ctx context.Context, eventID, entryID, visitorID string, nowMs, claimMaxMs int64) (ClaimResult, error)
 	Leave(ctx context.Context, eventID, entryID, visitorID string, nowMs int64) (LeaveResult, error)
 	EndEntry(ctx context.Context, eventID, entryID, outcome string, nowMs int64) (EndResult, error)
 	// EndWaitingSoldOut ends up to batch WAITING/STALE entries with status SOLD_OUT (booking.sold_out, SRS-F-10-02).

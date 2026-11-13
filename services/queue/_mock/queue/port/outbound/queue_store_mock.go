@@ -90,18 +90,18 @@ func (mr *MockIQueueStoreMockRecorder) CheckTokenGen(ctx, eventID, visitorID, ge
 }
 
 // Claim mocks base method.
-func (m *MockIQueueStore) Claim(ctx context.Context, eventID, entryID, visitorID string, nowMs int64) (outbound.ClaimResult, error) {
+func (m *MockIQueueStore) Claim(ctx context.Context, eventID, entryID, visitorID string, nowMs, claimMaxMs int64) (outbound.ClaimResult, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Claim", ctx, eventID, entryID, visitorID, nowMs)
+	ret := m.ctrl.Call(m, "Claim", ctx, eventID, entryID, visitorID, nowMs, claimMaxMs)
 	ret0, _ := ret[0].(outbound.ClaimResult)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // Claim indicates an expected call of Claim.
-func (mr *MockIQueueStoreMockRecorder) Claim(ctx, eventID, entryID, visitorID, nowMs any) *gomock.Call {
+func (mr *MockIQueueStoreMockRecorder) Claim(ctx, eventID, entryID, visitorID, nowMs, claimMaxMs any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Claim", reflect.TypeOf((*MockIQueueStore)(nil).Claim), ctx, eventID, entryID, visitorID, nowMs)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Claim", reflect.TypeOf((*MockIQueueStore)(nil).Claim), ctx, eventID, entryID, visitorID, nowMs, claimMaxMs)
 }
 
 // EndEntry mocks base method.
