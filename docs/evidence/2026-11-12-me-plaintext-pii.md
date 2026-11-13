@@ -4,7 +4,7 @@ Tanggal: 2026-11-13. Keputusan pemilik akun atas temuan P2-23 audit anomali 2026
 
 ## Keputusan
 - `GET /api/v1/me` tetap mengembalikan `email` dan `nik` dalam bentuk asli, hanya kepada pemilik akun.
-- Respons tetap `Cache-Control: no-store`. Kontrak `docs/contracts/openapi/user.yaml` tidak diubah.
+- Respons tetap `Cache-Control: no-store`. Kontrak `docs/contracts/openapi/user.yaml` tidak diubah untuk P2-23 (perubahan 429 pada PATCH /me berasal dari U4).
 - Endpoint lain tetap hanya mengirim bentuk tersamar.
 
 ## Alasan
