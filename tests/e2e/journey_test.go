@@ -77,6 +77,7 @@ func newPublishedEvent(t *testing.T, adminToken string, capacity, perOrder int) 
 	// Event baru berstatus draf: tidak tampil di katalog sampai diterbitkan (SCRUM-55).
 	mustStatus(t, 404, call(t, "GET", bookingURL+"/api/v1/events/"+eventID, nil, nil), "draf tidak tampil di katalog")
 	mustStatus(t, 200, call(t, "POST", bookingURL+"/internal/v1/admin/events/"+eventID+"/publish", map[string]string{"Authorization": "Bearer " + adminToken}, nil), "publish event")
+	time.Sleep(2500 * time.Millisecond) // cache baca katalog 2 dtk (D-C7.7)
 	d := call(t, "GET", bookingURL+"/api/v1/events/"+eventID, nil, nil)
 	mustStatus(t, 200, d, "event detail")
 	cats, _ := d.Data["categories"].([]any)
@@ -322,6 +323,7 @@ func TestCancelledEvent_LeavesTheListButStaysReadable(t *testing.T) {
 	hdr := map[string]string{"Authorization": "Bearer " + admin}
 
 	mustStatus(t, 200, call(t, "POST", bookingURL+"/internal/v1/admin/events/"+eventID+"/cancel", hdr, nil), "cancel event")
+	time.Sleep(2500 * time.Millisecond) // cache baca katalog 2 dtk (D-C7.7)
 	d := call(t, "GET", bookingURL+"/api/v1/events/"+eventID, nil, nil)
 	mustStatus(t, 200, d, "detail tetap terbuka")
 	ev, _ := d.Data["event"].(map[string]any)

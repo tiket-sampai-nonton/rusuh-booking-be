@@ -15,51 +15,9 @@ Dokumen ini membedakan tiga hal dengan tegas:
 
 ## 1. HLD: topologi produksi saat ini (DEPLOYED, PoC)
 
-```mermaid
-flowchart TB
-  subgraph Klien
-    WEB[Web Expo<br/>rusuhbooking.my.id]
-    APP[Android / iOS<br/>Expo]
-  end
-  subgraph Cloudflare[Cloudflare edge]
-    CF[Proxy + TLS<br/>Cache Rule queue-status 1 dtk<br/>Transform Rule CORS per host]
-  end
-  subgraph AWS[AWS ap-southeast-2, VPC 10.20.0.0/16, 2 subnet publik / 2 AZ]
-    ALB[ALB publik<br/>HTTPS 443, ACM<br/>routing per path]
-    subgraph ASGQ[ASG queue: t4g.small, min 1 max 3]
-      QA[queue api]
-      QW[queue worker]
-    end
-    subgraph ASGC[ASG core: t4g.small, min 1 max 2]
-      BA[booking api + worker]
-      PA[payment api + worker]
-      UA[user api]
-    end
-    IALB[ALB internal<br/>Booking untuk panggilan antar service]
-    subgraph DATA[EC2 data host t4g.small + EBS gp3 50 GB]
-      PG[(PostgreSQL 16)]
-      VK[(Valkey 8.1)]
-      MQ[[RabbitMQ 3.13]]
-      NA[notification api + worker]
-    end
-    SSM[SSM Parameter Store<br/>env per service]
-    ECR[ECR<br/>image per service]
-    CW[CloudWatch<br/>log, dashboard, alarm, budget]
-    S3[S3<br/>backup dan gambar event]
-  end
-  MT[Midtrans Snap<br/>Sandbox]
-  RS[Resend<br/>email]
+![Topologi produksi PoC di AWS ap-southeast-2](img/hld-poc-aws.png)
 
-  WEB & APP --> CF --> ALB
-  ALB --> QA & BA & PA & UA & NA
-  QA & PA --> IALB --> BA
-  QA & QW & BA & UA --- VK
-  BA & PA & UA & NA & QA --- PG
-  QW & BA & PA & NA & UA -.event.-> MQ
-  PA <--> MT
-  MT -- webhook bertanda tangan --> CF
-  NA --> RS
-```
+Komponen pendukung yang tidak digambar: SSM Parameter Store (env per service), ECR (image), CloudWatch (log, alarm, budget), dan S3 (backup dan gambar event). ALB juga meneruskan `/api/v1/push-subscriptions*` ke Notification di host data.
 
 ### 1.1 Peran tiap komponen
 
@@ -99,19 +57,9 @@ Satu host data adalah titik kegagalan tunggal (OPS-001, RPO hingga 24 jam dari s
 
 ## 2. Arsitektur produksi target (PLANNED / RECOMMENDED)
 
-```mermaid
-flowchart TB
-  CF[Cloudflare Pro/Business<br/>WAF managed rules, rate limiting] --> ALB[ALB Multi-AZ]
-  ALB --> Q[ASG queue<br/>c7g, skala terjadwal sebelum jam buka]
-  ALB --> C[ASG core<br/>t4g.medium / m7g]
-  Q --- EC[(ElastiCache Valkey<br/>primary + replika)]
-  C --- RDS[(RDS PostgreSQL Multi-AZ<br/>PITR)]
-  Q & C -.-> AMQ[[Amazon MQ RabbitMQ<br/>cluster 3 node]]
-  C --> MT[Midtrans production]
-  C --> EM[Resend Pro/Scale atau SES]
-```
+![Arsitektur produksi target: data tier terkelola dan edge berbayar](img/hld-target-aws.png)
 
-Rincian, alasan, dan harga per skenario: [INFRASTRUCTURE-PRICING.md](INFRASTRUCTURE-PRICING.md). Ukuran instance untuk skala 100 ribu sampai 1 juta pengantre harus ditetapkan dari uji beban di infrastruktur target, bukan dari angka lokal.
+Belum dibangun. Rincian, alasan, dan harga per skenario: [INFRASTRUCTURE-PRICING.md](INFRASTRUCTURE-PRICING.md). Ukuran instance untuk skala 100 ribu sampai 1 juta pengantre harus ditetapkan dari uji beban di infrastruktur target, bukan dari angka lokal.
 
 ---
 

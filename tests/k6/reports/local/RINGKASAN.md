@@ -8,16 +8,11 @@ terbaru; perbandingan antar-run ada di riwayat di bawah. Teks di luar blok otoma
 <!-- auto:terbaru:mulai -->
 | Jenis | Waktu (WIB) | Commit | VU maks | Request | RPS rata-rata | RPS puncak | p95 | p99 | Error | Status | Laporan |
 |---|---|---|---:|---:|---:|---:|---:|---:|---:|---|---|
-| concurrency | 2026-11-13 08:48:13 | 99fd2b2ae9* | 1 | 126 | 1.9 | 39.0 | 10 ms | 15 ms | 18.25% | PASS | [analysis](concurrency/analysis.html) |
-| e2e | 2026-11-13 08:47:54 | 99fd2b2ae9* | 3 | 177 | 9.3 | 60.0 | 10 ms | 159 ms | 0.00% | PASS | [analysis](e2e/analysis.html) |
-| joinrate | 2026-11-13 08:49:19 | 99fd2b2ae9* | 200 | 97500 | 647.7 | 1513.0 | 2 ms | 9 ms | 0.00% | PASS | [analysis](joinrate/analysis.html) |
-| load | 2026-11-13 08:51:51 | 99fd2b2ae9* | 420 | 67844 | 193.5 | 808.0 | 2 ms | 4 ms | 0.00% | PASS | [analysis](load/analysis.html) |
+| e2e | 2026-11-13 19:37:57 | 031b6c4cce* | 3 | 177 | 9.1 | 46.0 | 10 ms | 104 ms | 0.00% | PASS | [analysis](e2e/analysis.html) |
+| joinrate | 2026-11-13 19:38:18 | 031b6c4cce* | 200 | 97504 | 647.7 | 1501.0 | 1 ms | 3 ms | 0.00% | PASS | [analysis](joinrate/analysis.html) |
 | readonly | 2026-11-13 09:14:54 | 99fd2b2ae9* | 1000 | 58435 | 180.6 | 522.0 | 1 ms | 4 ms | 0.00% | PASS | [analysis](readonly/analysis.html) |
-| smoke | 2026-11-13 08:47:46 | 99fd2b2ae9* | 1 | 57 | 7.7 | 35.0 | 9 ms | 362 ms | 0.00% | PASS | [analysis](smoke/analysis.html) |
-| soak | 2026-11-13 08:01:53 | 99fd2b2ae9* | 270 | 65708 | 182.5 | 747.0 | 2 ms | 5 ms | 0.00% | PASS | [analysis](soak/analysis.html) |
-| spike | 2026-11-13 09:04:46 | 99fd2b2ae9* | 1120 | 103748 | 471.4 | 1498.0 | 2 ms | 4 ms | 0.00% | PASS | [analysis](spike/analysis.html) |
-| stress | 2026-11-13 08:57:42 | 99fd2b2ae9* | 2594 | 394167 | 936.0 | 2874.0 | 123 ms | 2004 ms | 0.00% | WARNING | [analysis](stress/analysis.html) |
-| waiting | 2026-11-13 09:13:17 | 99fd2b2ae9* | 3000 | 56571 | 586.6 | 1083.0 | 2 ms | 8 ms | 0.00% | PASS | [analysis](waiting/analysis.html) |
+| smoke | 2026-11-13 19:37:50 | 031b6c4cce* | 1 | 57 | 8.4 | 38.0 | 7 ms | 46 ms | 0.00% | PASS | [analysis](smoke/analysis.html) |
+| waiting | 2026-11-13 19:40:49 | 031b6c4cce* | 1000 | 44756 | 470.6 | 875.0 | 1 ms | 3 ms | 0.00% | PASS | [analysis](waiting/analysis.html) |
 
 \* commit memiliki perubahan yang belum di-commit saat run.
 <!-- auto:terbaru:selesai -->
@@ -29,6 +24,10 @@ Satu baris per run, terbaru di atas. RPS berkelanjutan = level tertinggi yang me
 <!-- auto:riwayat -->
 | Waktu (WIB) | Jenis | Commit | VU maks | Request | RPS rata-rata | RPS puncak | p95 | p99 | Error | RPS berkelanjutan | Status |
 |---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---|
+| 2026-11-13 19:40:49 | waiting | 031b6c4cce* | 1000 | 44756 | 470.6 | 875.0 | 1 ms | 3 ms | 0.00% | 470.6 | PASS |
+| 2026-11-13 19:38:18 | joinrate | 031b6c4cce* | 200 | 97504 | 647.7 | 1501.0 | 1 ms | 3 ms | 0.00% | 1500.0 | PASS |
+| 2026-11-13 19:37:57 | e2e | 031b6c4cce* | 3 | 177 | 9.1 | 46.0 | 10 ms | 104 ms | 0.00% | - | PASS |
+| 2026-11-13 19:37:50 | smoke | 031b6c4cce* | 1 | 57 | 8.4 | 38.0 | 7 ms | 46 ms | 0.00% | - | PASS |
 | 2026-11-13 09:14:54 | readonly | 99fd2b2ae9* | 1000 | 58435 | 180.6 | 522.0 | 1 ms | 4 ms | 0.00% | 432.7 | PASS |
 | 2026-11-13 09:13:17 | waiting | 99fd2b2ae9* | 3000 | 56571 | 586.6 | 1083.0 | 2 ms | 8 ms | 0.00% | 586.6 | PASS |
 | 2026-11-13 09:11:40 | waiting | 99fd2b2ae9* | 1000 | 21374 | 223.5 | 426.0 | 2 ms | 5 ms | 0.00% | 223.5 | PASS |
