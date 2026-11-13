@@ -9,6 +9,10 @@ import (
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/port/outbound"
 )
 
+// onSaleEvents limits the admission and booking counts to the events on sale now: not cancelled and inside their sales
+// window (D-C7.6). The funnel is a view of live sales, so ended and upcoming events are left out of the scrape.
+const onSaleEvents = `event_id IN (SELECT id FROM booking.events WHERE status <> 'CANCELLED' AND sales_starts_at <= now() AND sales_ends_at > now())`
+
 // FunnelStats implements outbound.IFunnelStats: row counts per event and status, read at scrape time (NFR-09), plus
 // event names. Only event ids, names and status columns are read; no buyer data leaves the database.
 type FunnelStats struct{ pool *pgxpool.Pool }
@@ -16,15 +20,15 @@ type FunnelStats struct{ pool *pgxpool.Pool }
 // NewFunnelStats accepts the pool and returns the concrete reader.
 func NewFunnelStats(pool *pgxpool.Pool) *FunnelStats { return &FunnelStats{pool: pool} }
 
-// AdmissionCounts groups admissions by event, status, and end reason ("" while active).
+// AdmissionCounts groups the admissions of events on sale by event, status, and end reason ("" while active).
 func (s *FunnelStats) AdmissionCounts(ctx context.Context) ([]outbound.FunnelCount, error) {
 	return s.counts(ctx, `SELECT event_id::text, status, COALESCE(end_reason, ''), count(*)
-		FROM booking.admissions GROUP BY 1, 2, 3`)
+		FROM booking.admissions WHERE `+onSaleEvents+` GROUP BY 1, 2, 3`)
 }
 
-// BookingCounts groups bookings by event and status.
+// BookingCounts groups the bookings of events on sale by event and status.
 func (s *FunnelStats) BookingCounts(ctx context.Context) ([]outbound.FunnelCount, error) {
-	return s.counts(ctx, `SELECT event_id::text, status, '', count(*) FROM booking.bookings GROUP BY 1, 2`)
+	return s.counts(ctx, `SELECT event_id::text, status, '', count(*) FROM booking.bookings WHERE `+onSaleEvents+` GROUP BY 1, 2`)
 }
 
 // EventNames lists id and name of every event. Names are not personal data and /metrics is internal-only.

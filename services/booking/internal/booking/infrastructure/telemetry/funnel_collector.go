@@ -4,6 +4,7 @@ package telemetry
 import (
 	"context"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -14,13 +15,22 @@ import (
 // scrapeTimeout bounds the funnel queries so a slow database never stalls the whole /metrics response.
 const scrapeTimeout = 2 * time.Second
 
+// funnelCacheTTL is how long one read of the funnel serves every scrape (D-C7.6): the counts are an operations view, so
+// they may lag by up to this long, and a scrape costs at most one set of queries per TTL per instance.
+const funnelCacheTTL = 30 * time.Second
+
 // FunnelCollector reads the conversion funnel (admissions and bookings per event and status) at scrape time and
 // derives the three rates ops watch per event, computed once here so Grafana and CloudWatch show the same numbers
 // (CloudWatch metric math cannot divide per event): conversion = bookings PAID / admissions, missed turn = admissions
 // ended UNCLAIMED / admissions, expired = bookings EXPIRED / bookings. A rate is omitted while its denominator is 0.
-// Every instance reports the same rows, so dashboards aggregate with max, never sum.
+// Every instance reports the same rows, so dashboards aggregate with max, never sum. The read is cached for
+// funnelCacheTTL, so frequent scrapes do not each run the funnel queries.
 type FunnelCollector struct {
 	stats      outbound.IFunnelStats
+	now        func() time.Time
+	mu         sync.Mutex
+	last       *funnelRead // the most recent read, nil until the first scrape
+	lastAt     time.Time
 	admissions *prometheus.Desc
 	bookings   *prometheus.Desc
 	eventInfo  *prometheus.Desc
@@ -30,10 +40,11 @@ type FunnelCollector struct {
 	up         *prometheus.Desc
 }
 
-// NewFunnelCollector accepts the funnel port and returns the concrete collector.
-func NewFunnelCollector(stats outbound.IFunnelStats) *FunnelCollector {
+// NewFunnelCollector accepts the funnel port and the clock that dates the cached read, and returns the concrete collector.
+func NewFunnelCollector(stats outbound.IFunnelStats, now func() time.Time) *FunnelCollector {
 	return &FunnelCollector{
 		stats: stats,
+		now:   now,
 		admissions: prometheus.NewDesc("rbt_booking_admissions",
 			"Admission (sesi detail) per event, status, dan alasan akhir; dibaca dari PostgreSQL saat scrape.",
 			[]string{"event_id", "status", "reason"}, nil),
@@ -68,35 +79,59 @@ func (c *FunnelCollector) Describe(ch chan<- *prometheus.Desc) {
 // eventTotals are the per-event sums behind the three rates.
 type eventTotals struct{ admissions, unclaimed, bookings, paid, expired int64 }
 
+// funnelRead is one read of the funnel: the rows behind every metric of a scrape. A failed read is kept too, so an outage
+// costs one query per TTL rather than one per scrape.
+type funnelRead struct {
+	admissions []outbound.FunnelCount
+	bookings   []outbound.FunnelCount
+	names      []outbound.EventName
+	err        error
+}
+
+// load returns the funnel read no more than funnelCacheTTL ago, and reads PostgreSQL again only when that read is older.
+// The lock also makes concurrent scrapes wait for the one read in flight instead of starting their own.
+func (c *FunnelCollector) load() funnelRead {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	now := c.now()
+	if c.last != nil && now.Sub(c.lastAt) < funnelCacheTTL {
+		return *c.last
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), scrapeTimeout)
+	defer cancel()
+	var r funnelRead
+	r.admissions, r.err = c.stats.AdmissionCounts(ctx)
+	if r.err == nil {
+		r.bookings, r.err = c.stats.BookingCounts(ctx)
+	}
+	if r.err == nil {
+		r.names, r.err = c.stats.EventNames(ctx)
+	}
+	if r.err != nil {
+		slog.Warn("metrik funnel gagal dibaca", "error", r.err)
+	}
+	c.last, c.lastAt = &r, now
+	return r
+}
+
 // Collect implements prometheus.Collector. A read failure reports up=0 instead of an error: an error would fail the
 // whole /metrics response and hide the HTTP metrics too.
 func (c *FunnelCollector) Collect(ch chan<- prometheus.Metric) {
-	ctx, cancel := context.WithTimeout(context.Background(), scrapeTimeout)
-	defer cancel()
-	adm, err := c.stats.AdmissionCounts(ctx)
-	var bk []outbound.FunnelCount
-	if err == nil {
-		bk, err = c.stats.BookingCounts(ctx)
-	}
-	var names []outbound.EventName
-	if err == nil {
-		names, err = c.stats.EventNames(ctx)
-	}
-	if err != nil {
-		slog.Warn("metrik funnel gagal dibaca", "error", err)
+	r := c.load()
+	if r.err != nil {
 		ch <- prometheus.MustNewConstMetric(c.up, prometheus.GaugeValue, 0)
 		return
 	}
-	for _, r := range adm {
-		ch <- prometheus.MustNewConstMetric(c.admissions, prometheus.GaugeValue, float64(r.Count), r.EventID, r.Status, r.EndReason)
+	for _, row := range r.admissions {
+		ch <- prometheus.MustNewConstMetric(c.admissions, prometheus.GaugeValue, float64(row.Count), row.EventID, row.Status, row.EndReason)
 	}
-	for _, r := range bk {
-		ch <- prometheus.MustNewConstMetric(c.bookings, prometheus.GaugeValue, float64(r.Count), r.EventID, r.Status)
+	for _, row := range r.bookings {
+		ch <- prometheus.MustNewConstMetric(c.bookings, prometheus.GaugeValue, float64(row.Count), row.EventID, row.Status)
 	}
-	for _, n := range names {
+	for _, n := range r.names {
 		ch <- prometheus.MustNewConstMetric(c.eventInfo, prometheus.GaugeValue, 1, n.EventID, n.Name)
 	}
-	totals := tally(adm, bk)
+	totals := tally(r.admissions, r.bookings)
 	for id, t := range totals {
 		if t.admissions > 0 {
 			ch <- prometheus.MustNewConstMetric(c.conversion, prometheus.GaugeValue, percent(t.paid, t.admissions), id)

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/require"
@@ -43,7 +44,7 @@ func TestFunnelCollector_ExposesAdmissionsAndBookingsPerEvent(t *testing.T) {
 			{EventID: "e1", Status: "PENDING_PAYMENT", Count: 1},
 		},
 		names: []outbound.EventName{{EventID: "e1", Name: "Jazz Night"}, {EventID: "e3", Name: "Event \"Tanpa\" Data"}},
-	})
+	}, time.Now)
 	want := `
 # HELP rbt_booking_admissions Admission (sesi detail) per event, status, dan alasan akhir; dibaca dari PostgreSQL saat scrape.
 # TYPE rbt_booking_admissions gauge
@@ -80,7 +81,7 @@ rbt_booking_missed_turn_percent{event_id="e2"} 0
 
 // A failing read must not break /metrics (HTTP metrics would vanish too): it reports up=0 and no stale numbers.
 func TestFunnelCollector_ReadFailureReportsDown(t *testing.T) {
-	c := telemetry.NewFunnelCollector(fakeFunnel{err: errors.New("db down")})
+	c := telemetry.NewFunnelCollector(fakeFunnel{err: errors.New("db down")}, time.Now)
 	want := `
 # HELP rbt_booking_funnel_up 1 bila metrik funnel terbaca dari PostgreSQL pada scrape ini, 0 bila gagal.
 # TYPE rbt_booking_funnel_up gauge
@@ -92,11 +93,50 @@ rbt_booking_funnel_up 0
 // The event names come from the same database: if they cannot be read the funnel is reported down too, never a
 // funnel without names that the dashboard would show as bare UUIDs.
 func TestFunnelCollector_EventNamesFailureReportsDown(t *testing.T) {
-	c := telemetry.NewFunnelCollector(fakeFunnel{namesErr: errors.New("db down")})
+	c := telemetry.NewFunnelCollector(fakeFunnel{namesErr: errors.New("db down")}, time.Now)
 	want := `
 # HELP rbt_booking_funnel_up 1 bila metrik funnel terbaca dari PostgreSQL pada scrape ini, 0 bila gagal.
 # TYPE rbt_booking_funnel_up gauge
 rbt_booking_funnel_up 0
 `
 	require.NoError(t, testutil.CollectAndCompare(c, strings.NewReader(want)))
+}
+
+// countingFunnel counts the reads of the funnel, so a test can see how many queries a run of scrapes made.
+type countingFunnel struct {
+	fakeFunnel
+	reads int
+}
+
+func (f *countingFunnel) AdmissionCounts(ctx context.Context) ([]outbound.FunnelCount, error) {
+	f.reads++
+	return f.fakeFunnel.AdmissionCounts(ctx)
+}
+func (f *countingFunnel) BookingCounts(ctx context.Context) ([]outbound.FunnelCount, error) {
+	f.reads++
+	return f.fakeFunnel.BookingCounts(ctx)
+}
+func (f *countingFunnel) EventNames(ctx context.Context) ([]outbound.EventName, error) {
+	f.reads++
+	return f.fakeFunnel.EventNames(ctx)
+}
+
+// C7.6: the funnel is read at most once per 30 s per instance, so frequent scrapes share one set of queries
+// (one read is three queries: admissions, bookings and event names).
+func TestFunnelCollector_CachesFor30s(t *testing.T) {
+	base := time.Date(2026, 11, 13, 10, 0, 0, 0, time.UTC)
+	now := base
+	stats := &countingFunnel{fakeFunnel: fakeFunnel{
+		admissions: []outbound.FunnelCount{{EventID: "e1", Status: "ACTIVE", Count: 1}},
+	}}
+	c := telemetry.NewFunnelCollector(stats, func() time.Time { return now })
+
+	require.Positive(t, testutil.CollectAndCount(c))
+	now = base.Add(10 * time.Second)
+	require.Positive(t, testutil.CollectAndCount(c))
+	require.Equal(t, 3, stats.reads, "two scrapes within 30 s must share one read of the funnel")
+
+	now = base.Add(31 * time.Second)
+	require.Positive(t, testutil.CollectAndCount(c))
+	require.Equal(t, 6, stats.reads, "a scrape after 30 s must read the funnel again")
 }

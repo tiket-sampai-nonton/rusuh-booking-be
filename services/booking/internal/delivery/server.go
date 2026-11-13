@@ -71,6 +71,6 @@ func registerFunnelMetrics(clients *Clients) {
 	}
 	pool := clients.PG.Pool()
 	funnelOnce.Do(func() {
-		telemetry.MustRegister(bookingtelemetry.NewFunnelCollector(bookingpg.NewFunnelStats(pool)))
+		telemetry.MustRegister(bookingtelemetry.NewFunnelCollector(bookingpg.NewFunnelStats(pool), time.Now))
 	})
 }
