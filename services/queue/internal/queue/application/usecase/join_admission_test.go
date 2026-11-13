@@ -353,8 +353,14 @@ func TestJoin_DirectAdmissionUsesClockAfterBooking(t *testing.T) {
 		audits = append(audits, r)
 		return nil
 	}).AnyTimes()
-	m.tokens.EXPECT().IssueQueue(gomock.Any(), gomock.Any(), gomock.Any()).Return("qt", nil)
-	m.tokens.EXPECT().IssueVisitor(gomock.Any(), gomock.Any()).Return("vt", nil)
+	var issuedAt []time.Time // token iat instants: the response must not carry the pre-Booking reading
+	m.tokens.EXPECT().IssueQueue(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
+		func(_, _ string, at time.Time) (string, error) { issuedAt = append(issuedAt, at); return "qt", nil })
+	m.tokens.EXPECT().IssueVisitor(gomock.Any(), gomock.Any()).DoAndReturn(
+		func(_ outbound.VisitorClaim, at time.Time) (string, error) {
+			issuedAt = append(issuedAt, at)
+			return "vt", nil
+		})
 	m.store.EXPECT().ActiveCount(ctx, "ev1").Return(0, nil).Times(2)
 	m.store.EXPECT().TopWaiting(ctx, "ev1", 1).DoAndReturn(c.topWaiting()).Times(2)
 	m.store.EXPECT().AcquirePromoterLease(ctx, "ev1", 10*time.Second).Return("tok", true, nil)
@@ -371,9 +377,9 @@ func TestJoin_DirectAdmissionUsesClockAfterBooking(t *testing.T) {
 		})
 	m.store.EXPECT().ReleasePromoterLease(gomock.Any(), "ev1", "tok").Return(nil)
 
-	status, err := e.join(ctx)
+	resp, err := e.uc.Join(ctx, inbound.JoinInput{EventID: "ev1", ClientIP: "1.2.3.4"})
 	require.NoError(t, err)
-	assert.Equal(t, "ADMITTED", status)
+	assert.Equal(t, "ADMITTED", resp.Status)
 
 	occurred := map[string]time.Time{}
 	for _, r := range audits {
@@ -381,4 +387,16 @@ func TestJoin_DirectAdmissionUsesClockAfterBooking(t *testing.T) {
 	}
 	assert.Equal(t, t0, occurred["JOINED"], "JOINED memakai pembacaan jam pertama")
 	assert.Equal(t, after, occurred["ADMITTED"], "ADMITTED memakai pembacaan jam setelah Booking")
+
+	// The response answers with the admission instant: serverTime and the token iat are the post-Booking reading, so
+	// claimDeadline - serverTime is the claim window and not the window minus the Booking latency.
+	require.Len(t, issuedAt, 2)
+	assert.Equal(t, after, issuedAt[0], "iat token antrean memakai pembacaan jam setelah Booking")
+	assert.Equal(t, after, issuedAt[1], "iat token pengunjung memakai pembacaan jam setelah Booking")
+	serverTime, err := time.Parse(time.RFC3339, resp.ServerTime)
+	require.NoError(t, err)
+	assert.Equal(t, after, serverTime, "serverTime memakai pembacaan jam setelah Booking")
+	claimDeadline, err := time.Parse(time.RFC3339, resp.ClaimDeadline)
+	require.NoError(t, err)
+	assert.Equal(t, time.Minute, claimDeadline.Sub(serverTime), "claimDeadline - serverTime == ClaimWindow")
 }

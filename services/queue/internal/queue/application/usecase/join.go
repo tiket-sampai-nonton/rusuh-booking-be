@@ -160,17 +160,21 @@ func (u *JoinQueue) Join(ctx context.Context, in inbound.JoinInput) (dto.QueueEn
 		ID: res.EntryID, VisitorID: res.VisitorID, AccountID: accountID,
 		Seq: valueobject.Seq(res.Seq), Status: valueobject.Status(res.Status), JoinedAtMs: now.UnixMilli(),
 	}
+	// respAt is the instant the response is built at: the first reading, or the post-Booking reading when this join
+	// was admitted directly (the claim deadline is measured from it, so serverTime and the token iat must match).
+	respAt := now
 	if res.Outcome == outbound.JoinCreated {
 		u.audit(ctx, in.EventID, ent, "JOINED", now)
 		if admittedAt, ok := u.tryDirectAdmission(ctx, in.EventID, &ent, settings, now); ok {
 			u.audit(ctx, in.EventID, ent, "ADMITTED", admittedAt)
+			respAt = admittedAt
 		}
 	} else if cur, ok, gerr := u.d.Store.GetEntry(ctx, in.EventID, res.EntryID); gerr == nil && ok {
 		// An existing entry is returned as it is now (any state), never re-admitted here.
 		ent = cur
 	}
 
-	out := u.buildResponse(in, ent, outbound.VisitorClaim{VisitorID: res.VisitorID, Gen: res.Gen, DeviceHash: in.DeviceHash}, now)
+	out := u.buildResponse(in, ent, outbound.VisitorClaim{VisitorID: res.VisitorID, Gen: res.Gen, DeviceHash: in.DeviceHash}, respAt)
 	out.Existing = res.Outcome != outbound.JoinCreated
 	return out, nil
 }
