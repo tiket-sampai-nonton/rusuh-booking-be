@@ -899,6 +899,7 @@ func TestReserveBatch_HundredEntriesOneSupplyUpdate(t *testing.T) {
 		}
 	}
 	assert.Equal(t, 150, f.ledger(t).alloc, "allocated_units = 150")
+	assert.Equal(t, 1, counter.countPrefix("SELECT s.total_capacity"), "the supply row is locked once for the whole batch")
 	assert.Equal(t, 1, counter.countPrefix("UPDATE booking.event_supply"), "one supply update for the whole batch")
 	assert.Equal(t, 1, counter.countPrefix("INSERT INTO booking.admissions"), "one bulk insert for the whole batch")
 }
@@ -1040,4 +1041,90 @@ func TestReserveBatch_MalformedEntryAnswersOnlyItself(t *testing.T) {
 			assert.Equal(t, 6, f.ledger(t).alloc, "only the two valid entries took units")
 		})
 	}
+}
+
+// C7.2 fix round 2 (R27): the buyer's quota counts across the batch. Two entries with one NIK hash share the 3 units left
+// on the quota: the first takes 2, the second only the 1 left, and a third finds the quota exhausted.
+func TestReserveBatch_SameBuyerNIKCountsAcrossBatch(t *testing.T) {
+	ctx := context.Background()
+	f := newAcctFixture(t, suffixFor(t), 20)
+	nik := []byte("buyer-nik-fixture-01")
+	entries := []outbound.ReserveEntry{anonEntry(1, 2), anonEntry(2, 2), anonEntry(3, 2)}
+	for i := range entries {
+		entries[i].BuyerNIKHash = nik
+	}
+
+	out, err := NewAdmissionRepo(f.pool).ReserveBatch(ctx, f.eventID, entries, time.Now())
+	require.NoError(t, err)
+	require.Len(t, out, 3)
+	assert.Equal(t, "GRANTED", out[0].Outcome)
+	assert.Equal(t, 2, out[0].Units)
+	assert.Equal(t, "GRANTED", out[1].Outcome)
+	assert.Equal(t, 1, out[1].Units, "the quota left after the first entry of the batch")
+	assert.Equal(t, "BUYER_QUOTA_EXHAUSTED", out[2].Outcome, "3 units are taken: the buyer's quota is used up")
+	assert.Equal(t, 3, f.ledger(t).alloc, "the buyer never gets more than 3 units on the event")
+}
+
+// waitForSupplyLockWait polls until a statement of the database waits on the event_supply lock of the batch.
+func waitForSupplyLockWait(t *testing.T, pool *pgxpool.Pool) {
+	t.Helper()
+	for i := 0; i < 500; i++ {
+		var n int
+		require.NoError(t, pool.QueryRow(context.Background(), `
+			SELECT count(*) FROM pg_stat_activity
+			 WHERE datname = current_database() AND wait_event_type = 'Lock' AND query LIKE '%FOR UPDATE OF s%'`).Scan(&n))
+		if n > 0 {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("the batch never waited on the supply lock")
+}
+
+// C7.2 fix round 2 (R27): another batch commits the RESERVED admission of entry 1 after this batch has read the admissions
+// but before it inserts. Entry 1 is GRANTED with that row's id, units and claim deadline, not ALREADY_ACTIVE; entry 2 is
+// granted as usual. The other batch's transaction holds the event_supply lock until this batch is waiting on it, so the
+// commit lands between the read and the insert.
+func TestReserveBatch_ConflictWithReservedRowIsGranted(t *testing.T) {
+	ctx := context.Background()
+	f := newAcctFixture(t, suffixFor(t), 20)
+	entries := []outbound.ReserveEntry{anonEntry(1, 3), anonEntry(2, 3)}
+
+	other, err := f.pool.Begin(ctx)
+	require.NoError(t, err)
+	defer func() { _ = other.Rollback(ctx) }()
+	var otherID string
+	var expires time.Time
+	require.NoError(t, other.QueryRow(ctx, `
+		INSERT INTO booking.admissions (
+			event_id, queue_entry_id, queue_seq, visitor_id, units, outstanding_units, status, admission_jti,
+			attendee_checks, edit_count, cfg_selection_ttl_seconds, cfg_payment_ttl_seconds, cfg_submit_grace_seconds,
+			cfg_edit_enabled, cfg_max_edits, cfg_allow_mixed_categories, reserved_at, expires_at)
+		VALUES ($1::uuid, $2::uuid, 1, $3::uuid, 3, 3, 'RESERVED', $4::uuid, 0, 0, 300, 600, 5, true, 3, true,
+			now(), now() + interval '5 minutes')
+		RETURNING id::text, expires_at`, f.eventID, entries[0].QueueEntryID, newTestUUID(), newTestUUID()).Scan(&otherID, &expires))
+	_, err = other.Exec(ctx, `UPDATE booking.event_supply SET allocated_units = allocated_units + 3 WHERE event_id=$1::uuid`, f.eventID)
+	require.NoError(t, err)
+
+	var out []outbound.ReserveOutcome
+	var batchErr error
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		out, batchErr = NewAdmissionRepo(f.pool).ReserveBatch(ctx, f.eventID, entries, time.Now())
+	}()
+	waitForSupplyLockWait(t, f.pool)
+	require.NoError(t, other.Commit(ctx))
+	<-done
+
+	require.NoError(t, batchErr)
+	require.Len(t, out, 2)
+	assert.Equal(t, "GRANTED", out[0].Outcome, "the RESERVED row of the other batch is this entry's grant")
+	assert.Equal(t, otherID, out[0].AllocationID)
+	assert.Equal(t, 3, out[0].Units)
+	require.NotNil(t, out[0].ClaimDeadline)
+	assert.True(t, expires.Equal(*out[0].ClaimDeadline), "claim deadline is the row's own")
+	assert.Equal(t, "GRANTED", out[1].Outcome)
+	assert.Equal(t, 3+3, f.ledger(t).alloc, "the other batch's 3 units and entry 2's 3 units; entry 1 is not counted twice")
+	assert.Equal(t, 2, admissionRows(t, f))
 }

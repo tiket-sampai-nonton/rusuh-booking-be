@@ -250,6 +250,8 @@ func grantPending(ctx context.Context, tx pgx.Tx, eventID string, entries []outb
 	alloc := sup.alloc
 	free := sup.total - sup.alloc - sup.held - sup.sold
 	soldOutAnnounced := false
+	// granted counts the units this batch has granted to each buyer NIK hash, so that entries of one buyer share the quota.
+	granted := make(map[string]int)
 	var grants []batchGrant
 	for _, p := range pending {
 		e := entries[p.entry]
@@ -259,14 +261,17 @@ func grantPending(ctx context.Context, tx pgx.Tx, eventID string, entries []outb
 			continue
 		}
 
-		// Buyer quota: only an entry that still carries a NIK hash (legacy; ADR-030 moved the check to hold).
+		// Buyer quota: only an entry that still carries a NIK hash (legacy; ADR-030 moved the check to hold). The quota left
+		// is the stored remainder minus what the earlier entries of this batch took for the same buyer (R27).
 		remaining := sup.maxPerOrder
+		nik := string(e.BuyerNIKHash)
 		if len(e.BuyerNIKHash) > 0 {
 			left, ok := buyerRemaining(ctx, tx, eventID, e.BuyerNIKHash)
 			if !ok {
 				o.Outcome = "NO_SUPPLY_NOW"
 				continue
 			}
+			left -= granted[nik]
 			if left <= 0 {
 				o.Outcome = "BUYER_QUOTA_EXHAUSTED"
 				continue
@@ -298,6 +303,9 @@ func grantPending(ctx context.Context, tx pgx.Tx, eventID string, entries []outb
 		}
 		alloc += units
 		free -= units
+		if len(e.BuyerNIKHash) > 0 {
+			granted[nik] += units
+		}
 		o.Outcome, o.Units = "GRANTED", units
 		grants = append(grants, batchGrant{entry: p.entry, units: units, regrantID: p.regrantID})
 	}
@@ -484,8 +492,10 @@ func regrantRow(ctx context.Context, tx pgx.Tx, g batchGrant, at time.Time) (lan
 	return row, nil
 }
 
-// answerConflicts answers the new grants whose row the bulk insert skipped (R24) ALREADY_ACTIVE. The allocation id is the
-// admission of the same queue entry when a concurrent batch wrote it; a visitor or account conflict has none.
+// answerConflicts answers the new grants whose row the bulk insert skipped (R24). When the conflicting row is the same queue
+// entry's and it is RESERVED, a concurrent batch has just granted it: the entry gets that grant, as a replay would (R27).
+// Any other row, or a visitor or account conflict, is ALREADY_ACTIVE; the allocation id is the same queue entry's admission
+// when one exists.
 func answerConflicts(ctx context.Context, tx pgx.Tx, entries []outbound.ReserveEntry, conflicts []batchGrant, out []outbound.ReserveOutcome) error {
 	if len(conflicts) == 0 {
 		return nil
@@ -494,25 +504,32 @@ func answerConflicts(ctx context.Context, tx pgx.Tx, entries []outbound.ReserveE
 	for _, g := range conflicts {
 		qids = append(qids, entries[g.entry].QueueEntryID)
 	}
-	rows, err := tx.Query(ctx, `SELECT queue_entry_id::text, id::text FROM booking.admissions WHERE queue_entry_id = ANY($1::uuid[])`, qids)
+	rows, err := tx.Query(ctx, `
+		SELECT queue_entry_id::text, id::text, status, units, expires_at
+		  FROM booking.admissions WHERE queue_entry_id = ANY($1::uuid[])`, qids)
 	if err != nil {
 		return fmt.Errorf("admissions: conflict lookup: %w", err)
 	}
 	defer rows.Close()
-	allocation := make(map[string]string, len(qids))
+	existing := make(map[string]batchRow, len(qids))
 	for rows.Next() {
-		var qid, id string
-		if err := rows.Scan(&qid, &id); err != nil {
+		var qid string
+		var row batchRow
+		if err := rows.Scan(&qid, &row.id, &row.status, &row.units, &row.expiresAt); err != nil {
 			return fmt.Errorf("admissions: conflict lookup: %w", err)
 		}
-		allocation[qid] = id
+		existing[qid] = row
 	}
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("admissions: conflict lookup: %w", err)
 	}
 	for _, g := range conflicts {
 		e := entries[g.entry]
-		out[g.entry] = outbound.ReserveOutcome{QueueEntryID: e.QueueEntryID, Units: e.Units, Outcome: "ALREADY_ACTIVE", AllocationID: allocation[e.QueueEntryID]}
+		o := outbound.ReserveOutcome{QueueEntryID: e.QueueEntryID, Units: e.Units, Outcome: "ALREADY_ACTIVE"}
+		if row, ok := existing[e.QueueEntryID]; ok {
+			o = replayOutcome(o, row)
+		}
+		out[g.entry] = o
 	}
 	return nil
 }
