@@ -5,6 +5,8 @@ package valkey
 import (
 	"context"
 	"fmt"
+	"sort"
+	"sync"
 	"testing"
 	"time"
 
@@ -147,16 +149,6 @@ func TestQueueStore_SaleStatusDocLeaseAndNotifications(t *testing.T) {
 	require.True(t, ok)
 	assert.JSONEq(t, `{"x":1}`, string(doc))
 
-	// "Your turn is soon" is sent once per entry.
-	was, err := s.WasNotifiedSoon(ctx, ev, "e1")
-	require.NoError(t, err)
-	assert.False(t, was)
-	require.NoError(t, s.MarkNotifiedSoon(ctx, ev, "e1"))
-	require.NoError(t, s.MarkNotifiedSoon(ctx, ev, "e1"), "menandai dua kali idempoten, bukan galat 'valkey nil message'")
-	was, err = s.WasNotifiedSoon(ctx, ev, "e1")
-	require.NoError(t, err)
-	assert.True(t, was)
-
 	// Only one worker instance promotes an event at a time.
 	tok, got, err := s.AcquirePromoterLease(ctx, ev, 5*time.Second)
 	require.NoError(t, err)
@@ -187,4 +179,61 @@ func TestRateLimiter_AllowsUpToTheLimitPerWindow(t *testing.T) {
 	other, err := rl.Allow(ctx, key+"-lain", 3, time.Minute)
 	require.NoError(t, err)
 	assert.True(t, other, "kunci lain tidak terpengaruh")
+}
+
+// TC-C8.3 (PF-P1-5, D-C8.3): the pre-turn notify watermark advances atomically. Two concurrent advances to 50 see the old
+// value exactly once (one gets 0, the other 50), so no seq is handed out twice. A lower target never moves it back.
+func TestNotifyWatermark_AdvancesOnce(t *testing.T) {
+	s := mustStore(t)
+	ctx := context.Background()
+	ev := evID(t)
+
+	var wg sync.WaitGroup
+	prev := make([]int64, 2)
+	errs := make([]error, 2)
+	for i := range prev {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			prev[i], errs[i] = s.AdvanceNotifyWatermark(ctx, ev, 50)
+		}(i)
+	}
+	wg.Wait()
+	require.NoError(t, errs[0])
+	require.NoError(t, errs[1])
+	sort.Slice(prev, func(a, b int) bool { return prev[a] < prev[b] })
+	assert.Equal(t, []int64{0, 50}, prev, "one advance sees 0 and the other sees 50")
+
+	p, err := s.AdvanceNotifyWatermark(ctx, ev, 30)
+	require.NoError(t, err)
+	assert.Equal(t, int64(50), p, "a lower target does not move the watermark back")
+	p, err = s.AdvanceNotifyWatermark(ctx, ev, 60)
+	require.NoError(t, err)
+	assert.Equal(t, int64(50), p)
+	p, err = s.AdvanceNotifyWatermark(ctx, ev, 60)
+	require.NoError(t, err)
+	assert.Equal(t, int64(60), p, "a repeat to the same target sees that target")
+}
+
+// TC-C8.3: WaitingBetween returns the live waiting ids with afterSeq < seq <= upToSeq, FIFO by seq, at most limit of them.
+func TestWaitingBetween_SeqWindowFIFO(t *testing.T) {
+	s := mustStore(t)
+	ctx := context.Background()
+	ev := evID(t)
+	now := time.Now().UnixMilli()
+	var ids []string
+	for n := 1; n <= 5; n++ {
+		id, _, _ := joinOne(t, s, ev, n, now+int64(n))
+		ids = append(ids, id) // seq n
+	}
+
+	got, err := s.WaitingBetween(ctx, ev, 1, 4, 10)
+	require.NoError(t, err)
+	assert.Equal(t, ids[1:4], got, "seqs 2..4 in FIFO order")
+	got, err = s.WaitingBetween(ctx, ev, 0, 5, 2)
+	require.NoError(t, err)
+	assert.Equal(t, ids[:2], got, "the limit keeps the first ids by seq")
+	got, err = s.WaitingBetween(ctx, ev, 5, 9, 10)
+	require.NoError(t, err)
+	assert.Empty(t, got, "nothing above the watermark")
 }

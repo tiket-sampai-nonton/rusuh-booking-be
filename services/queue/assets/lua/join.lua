@@ -133,6 +133,8 @@ end
 local seq = redis.call('INCR', P .. 'seq')
 -- D-C8.2: a retired event leaves seq with a TTL (retire_event.lua); the live entry created here must not inherit it.
 redis.call('PERSIST', P .. 'seq')
+-- The same for the pre-turn notify watermark: left under its TTL it would expire under this live entry and re-notify it.
+redis.call('PERSIST', P .. 'notify_seq')
 local id = ARGV[2]
 redis.call('HSET', ekey(id), 'seq', seq, 'visitorId', vid, 'accountId', acct, 'status', 'WAITING',
   'joinedAtMs', now, 'lastSignalMs', now, 'shard', shardIdx)

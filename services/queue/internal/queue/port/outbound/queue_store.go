@@ -31,10 +31,11 @@ type IQueueStore interface {
 	SetSaleWindow(ctx context.Context, eventID string, startsMs, endsMs int64) error
 	SetStatusDoc(ctx context.Context, eventID string, doc []byte, ttl time.Duration) error
 	GetStatusDoc(ctx context.Context, eventID string) ([]byte, bool, error)
-	// WasNotifiedSoon reports whether a pre-turn notification was already sent for this entry.
-	WasNotifiedSoon(ctx context.Context, eventID, entryID string) (bool, error)
-	// MarkNotifiedSoon records that a pre-turn notification was sent (idempotent SETNX, TTL=10min).
-	MarkNotifiedSoon(ctx context.Context, eventID, entryID string) error
+	// AdvanceNotifyWatermark moves the event's pre-turn notify watermark up to upToSeq (never back) and returns the value it
+	// had before. The caller announces the live waiting entries with seq in (previous, upToSeq] (D-C8.3, PF-P1-5).
+	AdvanceNotifyWatermark(ctx context.Context, eventID string, upToSeq int64) (int64, error)
+	// WaitingBetween returns up to limit live waiting ids with afterSeq < seq <= upToSeq, FIFO by seq.
+	WaitingBetween(ctx context.Context, eventID string, afterSeq, upToSeq int64, limit int) ([]string, error)
 	// AcquirePromoterLease tries to acquire a per-event distributed lock (SET NX PX) so only one
 	// worker instance promotes a given event per tick (spec 11.R3, req 6.12, Property 7).
 	// Returns true if the lease was acquired, false if another instance holds it.
@@ -66,9 +67,9 @@ type IQueueStore interface {
 	// WaitingCount returns the number of live waiting entries.
 	WaitingCount(ctx context.Context, eventID string) (int64, error)
 	// RetireEvent gives the fixed keys of a finished event (seq, waiting, stale, pending, active, hb/hbstale shards,
-	// status, sale, unused, promoter lock) a TTL in one atomic step, and only while nothing in it is live: no active,
-	// waiting or stale entry. It reports whether it did (D-C8.2, P3-13). A key keeps its first deadline, so calling it on
-	// every status tick is harmless.
+	// status, sale, unused, promoter lock, notify watermark) a TTL in one atomic step, and only while nothing in it is
+	// live: no active, waiting or stale entry. It reports whether it did (D-C8.2, P3-13). A key keeps its first deadline,
+	// so calling it on every status tick is harmless.
 	RetireEvent(ctx context.Context, eventID string, ttl time.Duration) (bool, error)
 	// LivePosition returns 1 + the number of live entries with a smaller seq.
 	LivePosition(ctx context.Context, eventID string, seq int64) (int64, error)

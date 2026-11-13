@@ -39,6 +39,9 @@ type fakeStore struct {
 	windowErr   error            // injected SetSaleWindow failure
 
 	retired []retireCall // RetireEvent calls, in order (D-C8.2)
+
+	notifyWM map[string]int64 // per-event pre-turn notify watermark (C8.3)
+	order    []string         // ordered log of lease releases and turn.soon publishes (C8.3 ordering checks)
 }
 
 // retireCall records one RetireEvent invocation.
@@ -54,7 +57,45 @@ type saleWindowCall struct {
 }
 
 func newFakeStore() *fakeStore {
-	return &fakeStore{entries: map[string]*entity.Entry{}, active: map[string]bool{}, unreadable: map[string]int{}, orphanSeq: map[string]int64{}}
+	return &fakeStore{entries: map[string]*entity.Entry{}, active: map[string]bool{}, unreadable: map[string]int{}, orphanSeq: map[string]int64{}, notifyWM: map[string]int64{}}
+}
+
+// record appends one event to the ordered call log (C8.3).
+func (s *fakeStore) record(ev string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.order = append(s.order, ev)
+}
+
+// AdvanceNotifyWatermark mirrors notify_window.lua: it returns the previous watermark and stores max(prev, upToSeq).
+func (s *fakeStore) AdvanceNotifyWatermark(_ context.Context, ev string, upToSeq int64) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	prev := s.notifyWM[ev]
+	if upToSeq > prev {
+		s.notifyWM[ev] = upToSeq
+	}
+	return prev, nil
+}
+
+// WaitingBetween returns the live waiting ids with afterSeq < seq <= upToSeq, by seq ascending, at most limit of them.
+func (s *fakeStore) WaitingBetween(_ context.Context, _ string, afterSeq, upToSeq int64, limit int) ([]string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var ids []string
+	for _, id := range s.waiting {
+		if e, ok := s.entries[id]; ok && int64(e.Seq) > afterSeq && int64(e.Seq) <= upToSeq {
+			ids = append(ids, id)
+		}
+	}
+	sort.SliceStable(ids, func(i, j int) bool { return s.entries[ids[i]].Seq < s.entries[ids[j]].Seq })
+	if limit <= 0 {
+		return nil, nil
+	}
+	if len(ids) > limit {
+		ids = ids[:limit]
+	}
+	return ids, nil
 }
 
 // addWaitingAt adds a WAITING entry with an explicit seq (to put an entry back at the head).
@@ -346,8 +387,6 @@ func (s *fakeStore) SetStatusDoc(context.Context, string, []byte, time.Duration)
 func (s *fakeStore) GetStatusDoc(context.Context, string) ([]byte, bool, error) {
 	return nil, false, nil
 }
-func (s *fakeStore) WasNotifiedSoon(context.Context, string, string) (bool, error) { return true, nil } // not under test
-func (s *fakeStore) MarkNotifiedSoon(context.Context, string, string) error        { return nil }
 func (s *fakeStore) AcquirePromoterLease(_ context.Context, _ string, _ time.Duration) (string, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -363,6 +402,7 @@ func (s *fakeStore) AcquirePromoterLease(_ context.Context, _ string, _ time.Dur
 func (s *fakeStore) ReleasePromoterLease(_ context.Context, _, token string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.order = append(s.order, "release")
 	if s.leaseToken == token {
 		s.leaseToken = ""
 	}

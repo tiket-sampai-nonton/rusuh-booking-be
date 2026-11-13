@@ -51,7 +51,8 @@ type QueueStore struct {
 
 	tokenGen *vk.Lua
 
-	retireEvent *vk.Lua
+	retireEvent  *vk.Lua
+	notifyWindow *vk.Lua
 }
 
 // NewQueueStore returns the store with the embedded scripts loaded. shards is the liveness-index shard count
@@ -77,7 +78,8 @@ func NewQueueStore(c vk.Client, keyer Keyer, clk clock.IClock, shards int) *Queu
 
 		tokenGen: vk.NewLuaScript(lua.TokenGen),
 
-		retireEvent: vk.NewLuaScript(lua.RetireEvent),
+		retireEvent:  vk.NewLuaScript(lua.RetireEvent),
+		notifyWindow: vk.NewLuaScript(lua.NotifyWindow),
 	}
 }
 
@@ -100,6 +102,9 @@ func (s *QueueStore) kUnused(e string) string { return s.keyer.Key(s.tag(e) + ":
 func (s *QueueStore) kStatus(e string) string { return s.keyer.Key(s.tag(e) + ":status") }
 func (s *QueueStore) kSale(e string) string   { return s.keyer.Key(s.tag(e) + ":sale") }
 func (s *QueueStore) kLease(e string) string  { return s.keyer.Key(s.tag(e) + ":promoter:lock") }
+
+// kNotifySeq is the pre-turn notify watermark (C8.3): the highest seq whose waiting entries were announced.
+func (s *QueueStore) kNotifySeq(e string) string { return s.keyer.Key(s.tag(e) + ":notify_seq") }
 
 // shardOf returns the entry's liveness shard index as a string, deterministic per entry id.
 func (s *QueueStore) shardOf(entryID string) string {
@@ -466,24 +471,29 @@ func (s *QueueStore) ExpiredActive(ctx context.Context, eventID string, nowMs in
 	return ids, nil
 }
 
-// WasNotifiedSoon reports whether a pre-turn notification was already sent for this entry.
-func (s *QueueStore) WasNotifiedSoon(ctx context.Context, eventID, entryID string) (bool, error) {
-	key := s.keyer.Key(s.tag(eventID) + ":notified_soon:" + entryID)
-	exists, err := s.c.Do(ctx, s.c.B().Exists().Key(key).Build()).AsInt64()
+// AdvanceNotifyWatermark moves the event's pre-turn notify watermark up to upToSeq and returns the value it had before
+// (D-C8.3). The caller announces the live waiting entries with seq in (previous, upToSeq]. notify_window.lua reads and
+// writes in one step, so concurrent advances hand out disjoint windows: each seq is announced at most once.
+func (s *QueueStore) AdvanceNotifyWatermark(ctx context.Context, eventID string, upToSeq int64) (int64, error) {
+	prev, err := s.notifyWindow.Exec(ctx, s.c, []string{s.kNotifySeq(eventID)}, []string{strconv.FormatInt(upToSeq, 10)}).AsInt64()
 	if err != nil {
-		return false, fmt.Errorf("valkey: was_notified_soon: %w", err)
+		return 0, fmt.Errorf("valkey: notify_window.lua: %w", err)
 	}
-	return exists > 0, nil
+	return prev, nil
 }
 
-// MarkNotifiedSoon records that a pre-turn notification was sent (idempotent SETNX, TTL=600s).
-func (s *QueueStore) MarkNotifiedSoon(ctx context.Context, eventID, entryID string) error {
-	key := s.keyer.Key(s.tag(eventID) + ":notified_soon:" + entryID)
-	err := s.c.Do(ctx, s.c.B().Set().Key(key).Value("1").Nx().Ex(600*time.Second).Build()).Error()
-	if vk.IsValkeyNil(err) {
-		return nil // SET NX answers nil when the mark already exists: marking twice is idempotent
+// WaitingBetween returns up to limit live waiting ids whose seq is in (afterSeq, upToSeq], FIFO by seq.
+func (s *QueueStore) WaitingBetween(ctx context.Context, eventID string, afterSeq, upToSeq int64, limit int) ([]string, error) {
+	if limit <= 0 || upToSeq <= afterSeq {
+		return nil, nil
 	}
-	return err
+	ids, err := s.c.Do(ctx, s.c.B().Zrange().Key(s.kWaiting(eventID)).
+		Min("("+strconv.FormatInt(afterSeq, 10)).Max(strconv.FormatInt(upToSeq, 10)).
+		Byscore().Limit(0, int64(limit)).Build()).AsStrSlice()
+	if err != nil {
+		return nil, fmt.Errorf("valkey: zrangebyscore waiting window: %w", err)
+	}
+	return ids, nil
 }
 
 // SetSale writes the sale-state hash.
@@ -739,7 +749,7 @@ func (s *QueueStore) RetireEvent(ctx context.Context, eventID string, ttl time.D
 	}
 	zsets := len(keys)
 	keys = append(keys, s.kSeq(eventID), s.k(eventID, "pending"), s.kStatus(eventID), s.kSale(eventID),
-		s.kUnused(eventID), s.kLease(eventID))
+		s.kUnused(eventID), s.kLease(eventID), s.kNotifySeq(eventID))
 	args := []string{strconv.FormatInt(int64(ttl/time.Second), 10), strconv.Itoa(zsets)}
 	n, err := s.retireEvent.Exec(ctx, s.c, keys, args).AsInt64()
 	if err != nil {

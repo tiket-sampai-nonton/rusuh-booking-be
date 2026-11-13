@@ -84,6 +84,7 @@ func (p *Promoter) WithMetrics(m outbound.IPromoterMetrics) *Promoter {
 }
 
 // Run promotes one batch for every configured event. A failing event never stops the others: the errors are joined.
+// The pre-turn notify of an event runs after its lease is released (C8.3, PF-P1-5), never inside the lease.
 func (p *Promoter) Run(ctx context.Context) error {
 	ids, err := p.settings.ListEventIDs(ctx)
 	if err != nil {
@@ -91,23 +92,27 @@ func (p *Promoter) Run(ctx context.Context) error {
 	}
 	var errs []error
 	for _, eventID := range ids {
-		if err := p.runEvent(ctx, eventID); err != nil {
+		notifyPosition, err := p.runEvent(ctx, eventID)
+		if err != nil {
 			errs = append(errs, fmt.Errorf("promoter event %s: %w", eventID, err))
 		}
+		p.notifyPreTurn(ctx, eventID, notifyPosition)
 	}
 	return errors.Join(errs...)
 }
 
 func (p *Promoter) inc(name string, labels ...string) { p.metrics.Inc(name, labels...) }
 
-// runEvent runs one promoter tick for an event under the per-event lease (design §5.4a, ADR-029).
-func (p *Promoter) runEvent(ctx context.Context, eventID string) error {
+// runEvent runs one promoter tick for an event under the per-event lease (design §5.4a, ADR-029). It returns the pre-turn
+// notify position (0 when notify is off, the lease is held elsewhere, or the settings are unknown); Run notifies with it
+// once the lease is released.
+func (p *Promoter) runEvent(ctx context.Context, eventID string) (int, error) {
 	token, acquired, err := p.store.AcquirePromoterLease(ctx, eventID, p.tuning.LeaseTTL)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	if !acquired {
-		return nil // another instance is promoting this event this tick
+		return 0, nil // another instance is promoting this event this tick
 	}
 	// The release is compare-and-delete by token and must run even when ctx was cancelled mid-tick.
 	defer func() {
@@ -128,66 +133,67 @@ func (p *Promoter) runEvent(ctx context.Context, eventID string) error {
 
 	settings, ok, err := p.settings.Get(runCtx, eventID)
 	if err != nil || !ok {
-		return err
+		return 0, err
 	}
-	// Pre-turn notifications are attempted on every return path from here on (TC-QUE-31); a failure never changes the
+	// Pre-turn notifications are attempted on every return path after this point (TC-QUE-31); a failure never changes the
 	// result of the tick (INV-6).
+	notifyPosition := 0
 	if settings.PreTurnNotifyEnabled && settings.NearFrontMultiplier > 0 {
-		defer p.notifyPreTurn(runCtx, eventID, settings.ActiveSlotCapacity*settings.NearFrontMultiplier)
+		notifyPosition = settings.ActiveSlotCapacity * settings.NearFrontMultiplier
 	}
 	// free and the candidate list are read under the lease, and the same capacity is passed to Promote (L1).
 	active, err := p.store.ActiveCount(runCtx, eventID)
 	if err != nil {
-		return err
+		return notifyPosition, err
 	}
 	free := settings.ActiveSlotCapacity - active
 	if free <= 0 {
-		return nil
+		return notifyPosition, nil
 	}
 	if free > p.tuning.BatchMax {
 		free = p.tuning.BatchMax
 	}
 	candidates, err := p.store.TopWaiting(runCtx, eventID, free)
 	if err != nil {
-		return err
+		return notifyPosition, err
 	}
 	if len(candidates) == 0 {
 		p.dropRec(eventID) // C8 row 0
-		return nil
+		return notifyPosition, nil
 	}
 	headID := candidates[0]
 	now := p.clock.Now()
 
 	entries, visitorByEntry := p.buildEntries(runCtx, eventID, candidates, now)
 	if len(entries) == 0 {
-		return nil
+		return notifyPosition, nil
 	}
 	resp, err := p.booking.ReserveBatch(runCtx, outbound.AllocationBatchRequest{EventID: eventID, Entries: entries})
 	if err != nil {
-		return err // Booking down: entries stay waiting, retry next tick (record untouched, C8 row 2)
+		return notifyPosition, err // Booking down: entries stay waiting, retry next tick (record untouched, C8 row 2)
 	}
 
 	out := p.classify(runCtx, eventID, resp, now)
 
 	if len(out.promoteCands) == 0 {
 		p.observeHead(eventID, headID, out, nil)
-		return nil
+		return notifyPosition, nil
 	}
 	res, err := p.store.Promote(runCtx, eventID, out.promoteCands, settings.ActiveSlotCapacity, now.UnixMilli(), outbound.PromoteOpts{LeaseToken: token})
 	if err != nil {
 		// Possibly committed (ambiguous timeout) or not: never release. The RESERVED rows are replayed next tick.
-		return err
+		return notifyPosition, err
 	}
 	if res.LeaseLost {
 		p.inc(MetricLeaseLost)
 		p.logger.Warn("lease promoter hilang sebelum Promote; tidak ada yang dipromosikan", "eventId", eventID)
-		return nil
+		return notifyPosition, nil
 	}
 	if res.Full {
 		// L1 says this is unreachable under a valid lease: a defect signal. Keep the rows (never release).
 		p.inc(MetricFullAfterGrant)
 		p.logger.Error("Promote FULL setelah alokasi diberikan; baris RESERVED dipertahankan untuk replay", "eventId", eventID)
-		return nil
+		return notifyPosition, nil
 	}
 	outbound.ReleaseTerminal(runCtx, p.booking, p.logger, res.Skipped, out.grantedAlloc)
 
@@ -197,7 +203,7 @@ func (p *Promoter) runEvent(ctx context.Context, eventID string) error {
 		_ = p.pub.PublishTurnArrived(runCtx, eventID, entryID, visitorByEntry[entryID], time.UnixMilli(out.deadlineByEntry[entryID]).UTC())
 	}
 	p.observeHead(eventID, headID, out, promoted)
-	return nil
+	return notifyPosition, nil
 }
 
 // batchOutcome is the promoter's reading of one ReserveBatch answer.
@@ -337,26 +343,43 @@ func (p *Promoter) observeHead(eventID, headID string, out batchOutcome, promote
 	}
 }
 
-// notifyPreTurn publishes queue.turn.soon for waiting entries near the front (TC-QUE-13, SRS-F-25).
+// notifyPreTurn publishes queue.turn.soon for the live waiting entries inside the notify position that no earlier tick
+// announced (TC-QUE-13, SRS-F-25, D-C8.3). The per-event seq watermark advances before anything is published, so each seq
+// is announced at most once: a crash between the advance and a publish loses those messages (best effort, INV-6), and a
+// failed publish is not retried. It runs outside the promoter lease.
 func (p *Promoter) notifyPreTurn(ctx context.Context, eventID string, notifyPosition int) {
 	if notifyPosition <= 0 {
 		return
 	}
-	nearFront, err := p.store.TopWaiting(ctx, eventID, notifyPosition)
-	if err != nil || len(nearFront) == 0 {
+	count, err := p.store.WaitingCount(ctx, eventID)
+	if err != nil || count == 0 {
+		return
+	}
+	// upTo is the seq of the last live waiting entry inside the notify position (the last one when fewer are waiting).
+	upTo, ok, err := p.store.WaitingSeqAt(ctx, eventID, min(int64(notifyPosition), count)-1)
+	if err != nil || !ok {
+		return
+	}
+	prev, err := p.store.AdvanceNotifyWatermark(ctx, eventID, upTo)
+	if err != nil {
+		p.logger.Warn("pre-turn: watermark gagal dimajukan; tidak ada yang diumumkan tick ini", "eventId", eventID, "error", err)
+		return
+	}
+	if upTo <= prev {
+		return
+	}
+	nearFront, err := p.store.WaitingBetween(ctx, eventID, prev, upTo, notifyPosition)
+	if err != nil {
+		p.logger.Warn("pre-turn: jendela seq gagal dibaca; seq ini tidak diumumkan", "eventId", eventID, "error", err)
 		return
 	}
 	for _, entryID := range nearFront {
-		notified, err := p.store.WasNotifiedSoon(ctx, eventID, entryID)
-		if err != nil || notified {
-			continue
-		}
 		ent, found, err := p.store.GetEntry(ctx, eventID, entryID)
 		if err != nil || !found {
 			continue
 		}
-		if pubErr := p.pub.PublishTurnSoon(ctx, eventID, entryID, ent.VisitorID); pubErr == nil {
-			_ = p.store.MarkNotifiedSoon(ctx, eventID, entryID)
+		if pubErr := p.pub.PublishTurnSoon(ctx, eventID, entryID, ent.VisitorID); pubErr != nil {
+			p.logger.Warn("pre-turn: queue.turn.soon gagal dipublish; tidak diulang", "eventId", eventID, "entryId", entryID, "error", pubErr)
 		}
 	}
 }

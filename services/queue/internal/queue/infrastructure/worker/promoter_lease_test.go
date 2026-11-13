@@ -157,9 +157,10 @@ func TestPromoter_NotifyRunsOnEveryReturnPathAfterTheLease(t *testing.T) {
 			m.store.EXPECT().ReleasePromoterLease(gomock.Any(), "ev1", "tok").Return(nil)
 			m.settings.EXPECT().Get(gomock.Any(), "ev1").Return(enabled, true, nil)
 			wantErr := setup(m)
-			// notify: reads the near-front window, finds one entry already notified => no publish
-			m.store.EXPECT().TopWaiting(gomock.Any(), "ev1", 10).Return([]string{"n1"}, nil)
-			m.store.EXPECT().WasNotifiedSoon(gomock.Any(), "ev1", "n1").Return(true, nil)
+			// notify (after the release): the watermark already covers the window's last seq => no publish
+			m.store.EXPECT().WaitingCount(gomock.Any(), "ev1").Return(int64(1), nil)
+			m.store.EXPECT().WaitingSeqAt(gomock.Any(), "ev1", int64(0)).Return(int64(1), true, nil)
+			m.store.EXPECT().AdvanceNotifyWatermark(gomock.Any(), "ev1", int64(1)).Return(int64(1), nil)
 			p := worker.NewPromoter(m.store, m.settings, m.booking, m.pub, m.audit, wnow, nil, worker.PromoterTuning{BatchMax: 200})
 			err := p.Run(context.Background())
 			if wantErr != nil {

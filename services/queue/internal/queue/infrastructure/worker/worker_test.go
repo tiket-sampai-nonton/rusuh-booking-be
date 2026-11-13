@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -293,14 +294,15 @@ func TestPromoter_PublishesTurnSoon_WhenNearFront(t *testing.T) {
 	m.settings.EXPECT().Get(gomock.Any(), evID).Return(s, true, nil)
 	// Slots full — no promotion path
 	m.store.EXPECT().ActiveCount(gomock.Any(), evID).Return(5, nil)
-	// Pre-turn notify: fetch top 10 waiting entries
-	m.store.EXPECT().TopWaiting(gomock.Any(), evID, 10).Return([]string{entryID}, nil)
+	// Pre-turn notify (after the lease release): one waiting entry, seq 1, inside the position 10 window.
+	m.store.EXPECT().WaitingCount(gomock.Any(), evID).Return(int64(1), nil)
+	m.store.EXPECT().WaitingSeqAt(gomock.Any(), evID, int64(0)).Return(int64(1), true, nil)
+	m.store.EXPECT().AdvanceNotifyWatermark(gomock.Any(), evID, int64(1)).Return(int64(0), nil)
+	m.store.EXPECT().WaitingBetween(gomock.Any(), evID, int64(0), int64(1), 10).Return([]string{entryID}, nil)
 	m.store.EXPECT().GetEntry(gomock.Any(), evID, entryID).Return(
 		entity.Entry{ID: entryID, VisitorID: visitorID}, true, nil,
 	)
-	m.store.EXPECT().WasNotifiedSoon(gomock.Any(), evID, entryID).Return(false, nil)
 	m.pub.EXPECT().PublishTurnSoon(gomock.Any(), evID, entryID, visitorID).Return(nil)
-	m.store.EXPECT().MarkNotifiedSoon(gomock.Any(), evID, entryID).Return(nil)
 
 	p := worker.NewPromoter(m.store, m.settings, m.booking, m.pub, m.audit, wnow, nil, worker.PromoterTuning{BatchMax: 200})
 	require.NoError(t, p.Run(ctx))
@@ -311,7 +313,6 @@ func TestPromoter_SkipsTurnSoon_WhenAlreadyNotified(t *testing.T) {
 	ctx := context.Background()
 
 	evID := "evt-1"
-	entryID := "near-entry-1"
 
 	s := entity.EventSettings{
 		EventID: evID, ActiveSlotCapacity: 5, NearFrontMultiplier: 2,
@@ -321,9 +322,11 @@ func TestPromoter_SkipsTurnSoon_WhenAlreadyNotified(t *testing.T) {
 	expectLease(m, ctx, evID)
 	m.settings.EXPECT().Get(gomock.Any(), evID).Return(s, true, nil)
 	m.store.EXPECT().ActiveCount(gomock.Any(), evID).Return(5, nil)
-	m.store.EXPECT().TopWaiting(gomock.Any(), evID, 10).Return([]string{entryID}, nil)
-	m.store.EXPECT().WasNotifiedSoon(gomock.Any(), evID, entryID).Return(true, nil)
-	// GetEntry and PublishTurnSoon must NOT be called — already notified
+	// The watermark already covers the window's last seq (1): nothing is read or published (C8.3).
+	m.store.EXPECT().WaitingCount(gomock.Any(), evID).Return(int64(1), nil)
+	m.store.EXPECT().WaitingSeqAt(gomock.Any(), evID, int64(0)).Return(int64(1), true, nil)
+	m.store.EXPECT().AdvanceNotifyWatermark(gomock.Any(), evID, int64(1)).Return(int64(1), nil)
+	// WaitingBetween, GetEntry and PublishTurnSoon must NOT be called — already notified
 
 	p := worker.NewPromoter(m.store, m.settings, m.booking, m.pub, m.audit, wnow, nil, worker.PromoterTuning{BatchMax: 200})
 	require.NoError(t, p.Run(ctx))
@@ -346,6 +349,56 @@ func TestPromoter_SkipsTurnSoon_WhenDisabled(t *testing.T) {
 
 	p := worker.NewPromoter(m.store, m.settings, m.booking, m.pub, m.audit, wnow, nil, worker.PromoterTuning{BatchMax: 200})
 	require.NoError(t, p.Run(ctx))
+}
+
+// recordingTurnSoonPub records each queue.turn.soon publish into the fake store's ordered log (C8.3).
+type recordingTurnSoonPub struct {
+	*fakePub
+	store *fakeStore
+}
+
+func (p *recordingTurnSoonPub) PublishTurnSoon(_ context.Context, _, entryID, _ string) error {
+	p.store.record("publish:" + entryID)
+	return nil
+}
+
+// TC-C8.3 (PF-P1-5, D-C8.3): pre-turn notify keeps a per-event seq watermark, publishes only the seqs above it, and runs
+// after the promoter lease is released (never inside the lease).
+func TestPromoter_PreTurnNotifiesOnlyNewSeqsOutsideLease(t *testing.T) {
+	h := newHarness(t, 5, 0, worker.PromoterTuning{})
+	for i := 1; i <= 15; i++ {
+		h.store.addWaiting(fmt.Sprintf("e%d", i), 0) // seq i
+	}
+	// Five active slots: the event is full, so the tick promotes nothing and only the pre-turn step has work.
+	for i := 1; i <= 5; i++ {
+		h.store.active[fmt.Sprintf("a%d", i)] = true
+	}
+	h.settings.s = entity.EventSettings{EventID: "ev", ActiveSlotCapacity: 5, NearFrontMultiplier: 2, PreTurnNotifyEnabled: true}
+	pub := &recordingTurnSoonPub{fakePub: &fakePub{}, store: h.store}
+	p := worker.NewPromoter(h.store, h.settings, h.stub, pub, fakeAudit{}, h.clk, nil, worker.PromoterTuning{BatchMax: 200})
+	ctx := context.Background()
+
+	// Tick 1: notify position 10 -> seqs 1..10 publish, after the release of this tick's lease.
+	require.NoError(t, p.Run(ctx))
+	want := []string{"release"}
+	for i := 1; i <= 10; i++ {
+		want = append(want, fmt.Sprintf("publish:e%d", i))
+	}
+	assert.Equal(t, want, h.store.order, "tick 1 publishes e1..e10 after the release")
+
+	// Tick 2: the same window again publishes nothing; only the lease release is logged.
+	require.NoError(t, p.Run(ctx))
+	want = append(want, "release")
+	assert.Equal(t, want, h.store.order, "tick 2 publishes nothing new")
+
+	// Tick 3: the window widens to 15 -> only seqs 11..15 publish.
+	h.settings.s.NearFrontMultiplier = 3
+	require.NoError(t, p.Run(ctx))
+	want = append(want, "release")
+	for i := 11; i <= 15; i++ {
+		want = append(want, fmt.Sprintf("publish:e%d", i))
+	}
+	assert.Equal(t, want, h.store.order, "tick 3 publishes only e11..e15, after the release")
 }
 
 // QSH-T14/T15: fault isolation. A failing entry/event must not stop the rest; errors are aggregated.

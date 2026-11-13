@@ -32,4 +32,6 @@ var (
 	TokenGen string
 	//go:embed retire_event.lua
 	RetireEvent string
+	//go:embed notify_window.lua
+	NotifyWindow string
 )

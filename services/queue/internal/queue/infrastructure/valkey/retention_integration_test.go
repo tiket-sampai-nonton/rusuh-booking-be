@@ -160,11 +160,13 @@ func TestRetireEvent_ExpiresFixedKeys(t *testing.T) {
 	_, err := s.EndEntry(ctx, ev, id, "PAID", now) // nothing live is left in the event
 	require.NoError(t, err)
 	require.NoError(t, s.SetSale(ctx, ev, "OPEN", false))
+	_, err = s.AdvanceNotifyWatermark(ctx, ev, 1) // the pre-turn watermark exists once notify has run (C8.3)
+	require.NoError(t, err)
 	require.NoError(t, s.c.Do(ctx, s.c.B().Set().Key(s.kStatus(ev)).Value("{}").Build()).Error())
 	// A token record without a TTL: RetireEvent must leave it alone (vtok is not in the fixed list).
 	require.NoError(t, s.c.Do(ctx, s.c.B().Set().Key(s.k(ev, "vtok:"+vis)).Value("1").Build()).Error())
 
-	fixed := []string{s.kSeq(ev), s.kStatus(ev), s.kSale(ev)}
+	fixed := []string{s.kSeq(ev), s.kStatus(ev), s.kSale(ev), s.kNotifySeq(ev)}
 	for _, k := range fixed {
 		require.True(t, keyExists(t, s, k), "fixture key %s must exist", k)
 		require.Equal(t, int64(-1), pttl(t, s, k), "fixture key %s starts without a TTL", k)
@@ -225,13 +227,17 @@ func TestRetireEvent_JoinAfterRetireLeavesSeqPersistent(t *testing.T) {
 	done, _, _ := joinAdmit(t, s, ev, 1, now+60_000, now)
 	_, err := s.EndEntry(ctx, ev, done, "PAID", now)
 	require.NoError(t, err)
+	_, err = s.AdvanceNotifyWatermark(ctx, ev, 1)
+	require.NoError(t, err)
 	ok, err := s.RetireEvent(ctx, ev, time.Hour)
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Greater(t, pttl(t, s, s.kSeq(ev)), int64(0), "retired event: seq carries the TTL")
+	require.Greater(t, pttl(t, s, s.kNotifySeq(ev)), int64(0), "retired event: the notify watermark carries the TTL")
 
 	live, _, _ := joinOne(t, s, ev, 2, now+1)
 	assert.Equal(t, int64(-1), pttl(t, s, s.kSeq(ev)), "a live join must persist seq")
+	assert.Equal(t, int64(-1), pttl(t, s, s.kNotifySeq(ev)), "a live join must persist the notify watermark, or it expires under the live entry and re-notifies it")
 	assert.Equal(t, int64(-1), pttl(t, s, s.kWaiting(ev)), "waiting of the live entry must not expire")
 	assert.Equal(t, int64(-1), pttl(t, s, s.kEntry(ev, live)), "the live entry must not expire")
 }

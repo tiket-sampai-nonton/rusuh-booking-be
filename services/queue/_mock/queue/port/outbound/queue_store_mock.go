@@ -74,6 +74,21 @@ func (mr *MockIQueueStoreMockRecorder) ActiveCount(ctx, eventID any) *gomock.Cal
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ActiveCount", reflect.TypeOf((*MockIQueueStore)(nil).ActiveCount), ctx, eventID)
 }
 
+// AdvanceNotifyWatermark mocks base method.
+func (m *MockIQueueStore) AdvanceNotifyWatermark(ctx context.Context, eventID string, upToSeq int64) (int64, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "AdvanceNotifyWatermark", ctx, eventID, upToSeq)
+	ret0, _ := ret[0].(int64)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// AdvanceNotifyWatermark indicates an expected call of AdvanceNotifyWatermark.
+func (mr *MockIQueueStoreMockRecorder) AdvanceNotifyWatermark(ctx, eventID, upToSeq any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AdvanceNotifyWatermark", reflect.TypeOf((*MockIQueueStore)(nil).AdvanceNotifyWatermark), ctx, eventID, upToSeq)
+}
+
 // CheckTokenGen mocks base method.
 func (m *MockIQueueStore) CheckTokenGen(ctx context.Context, eventID, visitorID string, gen int64) (outbound.TokenGenCheck, error) {
 	m.ctrl.T.Helper()
@@ -288,20 +303,6 @@ func (mr *MockIQueueStoreMockRecorder) LivePosition(ctx, eventID, seq any) *gomo
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "LivePosition", reflect.TypeOf((*MockIQueueStore)(nil).LivePosition), ctx, eventID, seq)
 }
 
-// MarkNotifiedSoon mocks base method.
-func (m *MockIQueueStore) MarkNotifiedSoon(ctx context.Context, eventID, entryID string) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "MarkNotifiedSoon", ctx, eventID, entryID)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// MarkNotifiedSoon indicates an expected call of MarkNotifiedSoon.
-func (mr *MockIQueueStoreMockRecorder) MarkNotifiedSoon(ctx, eventID, entryID any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MarkNotifiedSoon", reflect.TypeOf((*MockIQueueStore)(nil).MarkNotifiedSoon), ctx, eventID, entryID)
-}
-
 // Promote mocks base method.
 func (m *MockIQueueStore) Promote(ctx context.Context, eventID string, cands []outbound.PromoteCandidate, capacity int, nowMs int64, opts outbound.PromoteOpts) (outbound.PromoteResult, error) {
 	m.ctrl.T.Helper()
@@ -434,6 +435,21 @@ func (mr *MockIQueueStoreMockRecorder) TopWaiting(ctx, eventID, n any) *gomock.C
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "TopWaiting", reflect.TypeOf((*MockIQueueStore)(nil).TopWaiting), ctx, eventID, n)
 }
 
+// WaitingBetween mocks base method.
+func (m *MockIQueueStore) WaitingBetween(ctx context.Context, eventID string, afterSeq, upToSeq int64, limit int) ([]string, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "WaitingBetween", ctx, eventID, afterSeq, upToSeq, limit)
+	ret0, _ := ret[0].([]string)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// WaitingBetween indicates an expected call of WaitingBetween.
+func (mr *MockIQueueStoreMockRecorder) WaitingBetween(ctx, eventID, afterSeq, upToSeq, limit any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "WaitingBetween", reflect.TypeOf((*MockIQueueStore)(nil).WaitingBetween), ctx, eventID, afterSeq, upToSeq, limit)
+}
+
 // WaitingCount mocks base method.
 func (m *MockIQueueStore) WaitingCount(ctx context.Context, eventID string) (int64, error) {
 	m.ctrl.T.Helper()
@@ -463,19 +479,4 @@ func (m *MockIQueueStore) WaitingSeqAt(ctx context.Context, eventID string, idx 
 func (mr *MockIQueueStoreMockRecorder) WaitingSeqAt(ctx, eventID, idx any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "WaitingSeqAt", reflect.TypeOf((*MockIQueueStore)(nil).WaitingSeqAt), ctx, eventID, idx)
-}
-
-// WasNotifiedSoon mocks base method.
-func (m *MockIQueueStore) WasNotifiedSoon(ctx context.Context, eventID, entryID string) (bool, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "WasNotifiedSoon", ctx, eventID, entryID)
-	ret0, _ := ret[0].(bool)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// WasNotifiedSoon indicates an expected call of WasNotifiedSoon.
-func (mr *MockIQueueStoreMockRecorder) WasNotifiedSoon(ctx, eventID, entryID any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "WasNotifiedSoon", reflect.TypeOf((*MockIQueueStore)(nil).WasNotifiedSoon), ctx, eventID, entryID)
 }
