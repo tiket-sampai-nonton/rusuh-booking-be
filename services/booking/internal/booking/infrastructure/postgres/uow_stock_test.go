@@ -137,5 +137,5 @@ func TestCountByCategoryAndArrays(t *testing.T) {
 	for i, id := range ids {
 		got[id] = counts[i]
 	}
-	assert.Equal(t, byCat, got, "array paralel: id ke-i berpasangan dengan count ke-i")
+	assert.Equal(t, byCat, got, "array parallel: id ke-i berpasangan dengan count ke-i")
 }
