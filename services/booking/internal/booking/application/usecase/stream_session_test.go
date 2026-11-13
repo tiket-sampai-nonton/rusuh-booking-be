@@ -15,6 +15,7 @@ import (
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/apperror"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/application/usecase"
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/domain/entity"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/port/inbound"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/port/outbound"
 )
@@ -90,6 +91,70 @@ func firstAvailabilityFrame(t *testing.T, stream string) availabilityFrame {
 	var f availabilityFrame
 	require.NoError(t, json.Unmarshal([]byte(body[:end]), &f))
 	return f
+}
+
+// stepAdmissionRepo answers each GetByID with the next outstanding-units value (the last one repeats), as a session
+// does once its buyer holds the reserved units: the first read sees the reservation, later reads see none.
+type stepAdmissionRepo struct {
+	*fakeAdmissionRepo
+	outstanding []int
+	reads       int
+}
+
+func (r *stepAdmissionRepo) GetByID(ctx context.Context, id string) (entity.Admission, error) {
+	a, err := r.fakeAdmissionRepo.GetByID(ctx, id)
+	if err != nil {
+		return a, err
+	}
+	i := r.reads
+	if i >= len(r.outstanding) {
+		i = len(r.outstanding) - 1
+	}
+	r.reads++
+	a.OutstandingUnits = r.outstanding[i]
+	return a, nil
+}
+
+// availabilityFrames decodes every "event: availability" frame in an SSE stream, in order.
+func availabilityFrames(t *testing.T, stream string) []availabilityFrame {
+	t.Helper()
+	const prefix = "event: availability\ndata: "
+	var out []availabilityFrame
+	rest := stream
+	for {
+		start := strings.Index(rest, prefix)
+		if start == -1 {
+			return out
+		}
+		body := rest[start+len(prefix):]
+		end := strings.Index(body, "\n\n")
+		require.NotEqual(t, -1, end, "availability frame is not terminated")
+		var f availabilityFrame
+		require.NoError(t, json.Unmarshal([]byte(body[:end]), &f))
+		out = append(out, f)
+		rest = body[end:]
+	}
+}
+
+// C5.1: the buyer's own outstanding units are read again on every tick. After the buyer's hold (outstanding 0) the
+// category frame must stop adding those units, instead of repeating the value read when the stream started.
+func TestStream_OwnReservedUnitsFollowTheHold(t *testing.T) {
+	adm := activeAdmission(true)
+	adm.OutstandingUnits = 3
+	repo := &stepAdmissionRepo{fakeAdmissionRepo: &fakeAdmissionRepo{admission: adm}, outstanding: []int{3, 0}}
+	cache := &fakeAvailCache{
+		snap: outbound.AvailabilitySnapshot{EventFree: 0, Categories: []outbound.CategoryAvailabilitySnap{{CategoryID: catA, Available: 5}}},
+	}
+	uc := usecase.NewStreamSession(repo, cache, fixedClock{t: time.Now()}, 20*time.Millisecond, 100)
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer cancel()
+	var buf bytes.Buffer
+	require.NoError(t, uc.Stream(ctx, sessionID, visitor, &buf, func() {}))
+
+	frames := availabilityFrames(t, buf.String())
+	require.Greater(t, len(frames), 2, "the stream must tick several times")
+	assert.Equal(t, 3, frames[0].Categories[0].Available, "the first frame shows the reserved units")
+	assert.Equal(t, 0, frames[len(frames)-1].Categories[0].Available, "after the hold the stream must stop adding them")
 }
 
 func TestStreamSession_CapExceeded(t *testing.T) {

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/clock"
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/domain/entity"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/port/inbound"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/port/outbound"
 )
@@ -75,19 +76,20 @@ func (uc *StreamSession) Stream(ctx context.Context, sessionID, visitorID string
 	// (3) Emit loop: one availability + one timer frame per tick, flushing after each pair.
 	ticker := time.NewTicker(uc.heartbeat)
 	defer ticker.Stop()
+	outstanding := adm.OutstandingUnits
 	for {
 		now := uc.clock.Now()
 
 		// availability frame: a category shows what is free for everyone, plus this buyer's own reserved units
-		// (already counted out of event free, and reserved for this buyer by invariant 2).
+		// (already counted out of event free, and reserved for this buyer by invariant 2). The units are re-read
+		// every tick below, so once the buyer holds them they are no longer added (C5.1).
 		snap, _ := uc.cache.GetAvailability(ctx, adm.EventID)
 		cats := make([]outbound.CategoryAvailabilitySnap, 0, len(snap.Categories))
 		for _, c := range snap.Categories {
-			avail := snap.EventFree + adm.OutstandingUnits
-			if c.Available < avail {
-				avail = c.Available
-			}
-			cats = append(cats, outbound.CategoryAvailabilitySnap{CategoryID: c.CategoryID, Available: avail})
+			cats = append(cats, outbound.CategoryAvailabilitySnap{
+				CategoryID: c.CategoryID,
+				Available:  entity.BuyerAvailable(c.Available, snap.EventFree, outstanding),
+			})
 		}
 		availData, _ := json.Marshal(map[string]any{
 			"categories": cats,
@@ -122,6 +124,11 @@ func (uc *StreamSession) Stream(ctx context.Context, sessionID, visitorID string
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
+		}
+
+		// Re-read the buyer's outstanding units for the next frame. A failed read keeps the last known value.
+		if fresh, err := uc.admissions.GetByID(ctx, sessionID); err == nil {
+			outstanding = fresh.OutstandingUnits
 		}
 	}
 }

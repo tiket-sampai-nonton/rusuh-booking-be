@@ -98,12 +98,28 @@ func (i Inventory) Available() int {
 	return a
 }
 
+// BuyerAvailable is the number of units a category shows: min(category free, event free + ownOutstanding). Event free
+// already excludes the units reserved by admissions, so a buyer's own reservation is added back through ownOutstanding
+// (the session view and the availability stream); the public detail passes 0. One rule for every surface.
+func BuyerAvailable(catFree, eventFree, ownOutstanding int) int {
+	avail := eventFree + ownOutstanding
+	if catFree < avail {
+		return catFree
+	}
+	return avail
+}
+
 // CategoryDetail pairs a category with its live availability for the event-detail DTO.
 type CategoryDetail struct {
 	Category  Category
 	Capacity  int // category_inventories.capacity
 	Sold      int // category_inventories.sold_quantity (paid only)
-	Available int
+	Available int // public availability: BuyerAvailable(CategoryFree, EventFree, 0)
+
+	// CategoryFree and EventFree are the two terms behind Available, carried apart so a session view can add the buyer's
+	// own outstanding units (BuyerAvailable). Internal to the read path: never exposed in a DTO.
+	CategoryFree int
+	EventFree    int
 }
 
 // EventDetail is an event plus its categories with availability (read model for GET detail).

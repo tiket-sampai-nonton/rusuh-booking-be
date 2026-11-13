@@ -791,6 +791,30 @@ func TestEventRepo_DetailAvailabilityIsCappedByEventFree(t *testing.T) {
 	assert.Equal(t, 1, d.Categories[0].Available, "min(kategori 10, event 10-8-1)")
 }
 
+// C5.1: an admitted buyer sees the units reserved for them even when the event has no free units left. The public
+// detail shows 0; the session view of the buyer adds back the buyer's own outstanding units.
+func TestEventRepo_SessionViewCountsBuyerOwnReservation(t *testing.T) {
+	f := seed(t)
+	ctx := context.Background()
+
+	// Seed: category capacity 10, event total 10, the seeded admission holds 1 outstanding unit. Allocate the rest.
+	_, err := f.pool.Exec(ctx, `UPDATE booking.event_supply SET allocated_units = total_capacity WHERE event_id=$1::uuid`, f.eventID)
+	require.NoError(t, err)
+	d, err := NewEventRepo(f.pool).GetDetail(ctx, f.eventID)
+	require.NoError(t, err)
+	require.Len(t, d.Categories, 1)
+	assert.Equal(t, 0, d.Categories[0].Available, "detail publik: event tidak punya unit bebas")
+	assert.Equal(t, 10, d.Categories[0].CategoryFree, "kategori: kapasitas - ditahan - terjual")
+	assert.Equal(t, 0, d.Categories[0].EventFree, "event: total - dialokasikan")
+
+	adm, err := NewAdmissionRepo(f.pool).GetByID(ctx, f.admissionID)
+	require.NoError(t, err)
+	require.Equal(t, 1, adm.OutstandingUnits, "admission seed memegang 1 unit")
+	sess := mapper.ToBookingSession(adm, d, nil, time.Now())
+	require.Len(t, sess.Categories, 1)
+	assert.Equal(t, 1, sess.Categories[0].Available, "sesi pembeli menampilkan unit miliknya sendiri")
+}
+
 // D-C5.2: the detail carries the category's capacity and paid sold count (the supply snapshot's total and sold).
 func TestEventRepo_DetailCarriesCapacityAndSold(t *testing.T) {
 	f := seed(t)
