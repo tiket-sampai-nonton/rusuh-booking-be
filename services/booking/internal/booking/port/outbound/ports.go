@@ -216,3 +216,15 @@ type IAvailabilityCache interface {
 type IAvailabilitySource interface {
 	OnSaleAvailability(ctx context.Context, now time.Time) (map[string]AvailabilitySnapshot, error)
 }
+
+// IRetention deletes rows past their retention window (retention job, D-C7.8). Each call is one DELETE of at most limit
+// rows that skips rows locked by another session, so the job never waits on a lock; it returns how many rows it deleted.
+type IRetention interface {
+	// PurgePublishedOutbox deletes published outbox rows whose published_at is before before. Unpublished rows are never deleted.
+	PurgePublishedOutbox(ctx context.Context, before time.Time, limit int) (int, error)
+	// PurgeExpiredIdempotency deletes idempotency records whose expires_at is before now, in any state.
+	PurgeExpiredIdempotency(ctx context.Context, now time.Time, limit int) (int, error)
+	// PurgeAttendeeChecks deletes attendee checks of admissions that ended before endedBefore. Active and editable
+	// admissions have no ended_at and are never deleted.
+	PurgeAttendeeChecks(ctx context.Context, endedBefore time.Time, limit int) (int, error)
+}

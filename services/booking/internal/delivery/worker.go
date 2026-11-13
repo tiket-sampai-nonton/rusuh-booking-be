@@ -14,6 +14,10 @@ import (
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/config"
 )
 
+// retentionEvery is the cadence of the retention job (D-C7.8). A run drains at most maxPurgeRounds batches per table, so
+// a backlog is worked off over several ticks without holding the worker.
+const retentionEvery = 10 * time.Minute
+
 // Job is one periodic background job (mis. sweeper TTL, outbox relay, rekonsiliasi). Every is its own cadence;
 // Every <= 0 means "use the runner's fallback interval" (WORKER_INTERVAL).
 type Job struct {
@@ -122,6 +126,9 @@ func startConsumer(ctx context.Context, cfg config.Config, clients *Clients, log
 	if mod.projAvail != nil {
 		js = append(js, Job{Name: "availability-projector", Run: mod.projAvail.ProjectAvailability})
 	}
+	if mod.purge != nil {
+		js = append(js, Job{Name: "retention", Every: retentionEvery, Run: mod.purge.Run})
+	}
 
 	if clients.MQ == nil || clients.PG == nil {
 		return js, nil
@@ -160,6 +167,9 @@ func jobs(clients *Clients) []Job {
 	}
 	if mod.projAvail != nil {
 		js = append(js, Job{Name: "availability-projector", Run: mod.projAvail.ProjectAvailability})
+	}
+	if mod.purge != nil {
+		js = append(js, Job{Name: "retention", Every: retentionEvery, Run: mod.purge.Run})
 	}
 	return js
 }

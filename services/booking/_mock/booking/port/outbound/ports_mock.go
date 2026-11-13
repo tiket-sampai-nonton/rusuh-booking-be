@@ -871,3 +871,72 @@ func (mr *MockIAvailabilitySourceMockRecorder) OnSaleAvailability(ctx, now any) 
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "OnSaleAvailability", reflect.TypeOf((*MockIAvailabilitySource)(nil).OnSaleAvailability), ctx, now)
 }
+
+// MockIRetention is a mock of IRetention interface.
+type MockIRetention struct {
+	ctrl     *gomock.Controller
+	recorder *MockIRetentionMockRecorder
+	isgomock struct{}
+}
+
+// MockIRetentionMockRecorder is the mock recorder for MockIRetention.
+type MockIRetentionMockRecorder struct {
+	mock *MockIRetention
+}
+
+// NewMockIRetention creates a new mock instance.
+func NewMockIRetention(ctrl *gomock.Controller) *MockIRetention {
+	mock := &MockIRetention{ctrl: ctrl}
+	mock.recorder = &MockIRetentionMockRecorder{mock}
+	return mock
+}
+
+// EXPECT returns an object that allows the caller to indicate expected use.
+func (m *MockIRetention) EXPECT() *MockIRetentionMockRecorder {
+	return m.recorder
+}
+
+// PurgeAttendeeChecks mocks base method.
+func (m *MockIRetention) PurgeAttendeeChecks(ctx context.Context, endedBefore time.Time, limit int) (int, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "PurgeAttendeeChecks", ctx, endedBefore, limit)
+	ret0, _ := ret[0].(int)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// PurgeAttendeeChecks indicates an expected call of PurgeAttendeeChecks.
+func (mr *MockIRetentionMockRecorder) PurgeAttendeeChecks(ctx, endedBefore, limit any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PurgeAttendeeChecks", reflect.TypeOf((*MockIRetention)(nil).PurgeAttendeeChecks), ctx, endedBefore, limit)
+}
+
+// PurgeExpiredIdempotency mocks base method.
+func (m *MockIRetention) PurgeExpiredIdempotency(ctx context.Context, now time.Time, limit int) (int, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "PurgeExpiredIdempotency", ctx, now, limit)
+	ret0, _ := ret[0].(int)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// PurgeExpiredIdempotency indicates an expected call of PurgeExpiredIdempotency.
+func (mr *MockIRetentionMockRecorder) PurgeExpiredIdempotency(ctx, now, limit any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PurgeExpiredIdempotency", reflect.TypeOf((*MockIRetention)(nil).PurgeExpiredIdempotency), ctx, now, limit)
+}
+
+// PurgePublishedOutbox mocks base method.
+func (m *MockIRetention) PurgePublishedOutbox(ctx context.Context, before time.Time, limit int) (int, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "PurgePublishedOutbox", ctx, before, limit)
+	ret0, _ := ret[0].(int)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// PurgePublishedOutbox indicates an expected call of PurgePublishedOutbox.
+func (mr *MockIRetentionMockRecorder) PurgePublishedOutbox(ctx, before, limit any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PurgePublishedOutbox", reflect.TypeOf((*MockIRetention)(nil).PurgePublishedOutbox), ctx, before, limit)
+}

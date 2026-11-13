@@ -42,6 +42,7 @@ type module struct {
 	sweepSess  *usecase.SweepSessions
 	sweepExp   *usecase.SweepExpiries
 	projAvail  *usecase.ProjectAvailability
+	purge      *usecase.Purge
 	settle     *usecase.Settle
 	outbox     *bookingpg.OutboxWriter
 }
@@ -159,6 +160,7 @@ func newBookingModule(cfg config.Config, clients *Clients, logger *slog.Logger) 
 		sweepSess:  usecase.NewSweepSessions(admissionRepo, clk),
 		sweepExp:   usecase.NewSweepExpiries(bookingRepo, expiry, clk),
 		projAvail:  projAvail,
+		purge:      usecase.NewPurge(bookingpg.NewRetention(pool), clk),
 		settle:     usecase.NewSettle(uow, links.Token),
 		outbox:     outboxWriter,
 	}, nil
