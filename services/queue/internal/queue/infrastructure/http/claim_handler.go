@@ -31,11 +31,15 @@ func (h *ClaimHandler) claim(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		writeDomainError(w, r, entity.ErrVisitorTokenInvalid)
 		return
 	}
+	eventID, ok := queryEventID(w, r)
+	if !ok {
+		return
+	}
 	resp, err := h.uc.Claim(r.Context(), inbound.ClaimInput{
 		EntryID:   r.PathValue("entryId"),
 		VisitorID: c.VisitorID,
 		Gen:       c.Gen,
-		EventID:   r.URL.Query().Get("eventId"),
+		EventID:   eventID,
 	})
 	if err != nil {
 		writeDomainError(w, r, err)

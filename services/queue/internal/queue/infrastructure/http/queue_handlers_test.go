@@ -172,13 +172,13 @@ func TestStatusHandler_NotFound(t *testing.T) {
 func TestMyEntryHandler_OK(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	uc := mock_inbound.NewMockIMyEntryUsecase(ctrl)
-	uc.EXPECT().GetMyEntry(gomock.Any(), inbound.MyEntryInput{EventID: "ev1", VisitorID: "v1", Gen: 1}).
+	uc.EXPECT().GetMyEntry(gomock.Any(), inbound.MyEntryInput{EventID: "5b1f2c9e-0000-4000-8000-000000000001", VisitorID: "v1", Gen: 1}).
 		Return(dto.EntryStatus{EntryID: "e1", Seq: 5, Status: "WAITING"}, nil)
 
 	h := queuehttp.NewMyEntryHandler(uc, fakeAuth{id: "v1", ok: true})
 	mux := http.NewServeMux()
 	h.Register(mux)
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/queue-entries/me?eventId=ev1", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/queue-entries/me?eventId=5b1f2c9e-0000-4000-8000-000000000001", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	assert.Equal(t, http.StatusOK, rec.Code)
@@ -190,7 +190,7 @@ func TestMyEntryHandler_Unauthorized(t *testing.T) {
 	h := queuehttp.NewMyEntryHandler(uc, fakeAuth{ok: false})
 	mux := http.NewServeMux()
 	h.Register(mux)
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/queue-entries/me?eventId=ev1", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/queue-entries/me?eventId=5b1f2c9e-0000-4000-8000-000000000001", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	assert.Equal(t, http.StatusUnauthorized, rec.Code, "R01.6: invalid token -> 401 VISITOR_TOKEN_INVALID")
@@ -200,13 +200,13 @@ func TestMyEntryHandler_Unauthorized(t *testing.T) {
 func TestClaimHandler_OK(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	uc := mock_inbound.NewMockIClaimUsecase(ctrl)
-	uc.EXPECT().Claim(gomock.Any(), inbound.ClaimInput{EntryID: "e1", VisitorID: "v1", EventID: "ev1", Gen: 1}).
+	uc.EXPECT().Claim(gomock.Any(), inbound.ClaimInput{EntryID: "e1", VisitorID: "v1", EventID: "5b1f2c9e-0000-4000-8000-000000000001", Gen: 1}).
 		Return(dto.ClaimResponse{AdmissionToken: "adm", BookingURL: "u"}, nil)
 
 	h := queuehttp.NewClaimHandler(uc, fakeAuth{id: "v1", ok: true})
 	mux := http.NewServeMux()
 	h.Register(mux)
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/queue-entries/e1/claim?eventId=ev1", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/queue-entries/e1/claim?eventId=5b1f2c9e-0000-4000-8000-000000000001", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	assert.Equal(t, http.StatusOK, rec.Code)
@@ -221,7 +221,7 @@ func TestClaimHandler_TurnMissedGone(t *testing.T) {
 	h := queuehttp.NewClaimHandler(uc, fakeAuth{id: "v1", ok: true})
 	mux := http.NewServeMux()
 	h.Register(mux)
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/queue-entries/e1/claim?eventId=ev1", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/queue-entries/e1/claim?eventId=5b1f2c9e-0000-4000-8000-000000000001", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	assert.Equal(t, http.StatusGone, rec.Code)
@@ -231,12 +231,12 @@ func TestClaimHandler_TurnMissedGone(t *testing.T) {
 func TestLeaveHandler_NoContent(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	uc := mock_inbound.NewMockILeaveUsecase(ctrl)
-	uc.EXPECT().Leave(gomock.Any(), inbound.LeaveInput{EntryID: "e1", VisitorID: "v1", EventID: "ev1", Gen: 1}).Return(nil)
+	uc.EXPECT().Leave(gomock.Any(), inbound.LeaveInput{EntryID: "e1", VisitorID: "v1", EventID: "5b1f2c9e-0000-4000-8000-000000000001", Gen: 1}).Return(nil)
 
 	h := queuehttp.NewLeaveHandler(uc, fakeAuth{id: "v1", ok: true})
 	mux := http.NewServeMux()
 	h.Register(mux)
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/queue-entries/e1?eventId=ev1", nil)
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/queue-entries/e1?eventId=5b1f2c9e-0000-4000-8000-000000000001", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	require.Equal(t, http.StatusNoContent, rec.Code)
@@ -250,7 +250,7 @@ func TestLeaveHandler_ClaimedEntryIsConflict(t *testing.T) {
 	mux := http.NewServeMux()
 	queuehttp.NewLeaveHandler(uc, fakeAuth{id: "v1", ok: true}).Register(mux)
 	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodDelete, "/api/v1/queue-entries/e1?eventId=ev1", nil))
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodDelete, "/api/v1/queue-entries/e1?eventId=5b1f2c9e-0000-4000-8000-000000000001", nil))
 	require.Equal(t, http.StatusConflict, rec.Code)
 	assert.Contains(t, rec.Body.String(), `"meta":{"code":409,"message":"ENTRY_CLAIMED:`)
 	assert.Contains(t, rec.Body.String(), `"data":null`)
@@ -262,7 +262,7 @@ func TestLeaveHandler_Unauthorized(t *testing.T) {
 	h := queuehttp.NewLeaveHandler(uc, fakeAuth{ok: false})
 	mux := http.NewServeMux()
 	h.Register(mux)
-	req := httptest.NewRequest(http.MethodDelete, "/api/v1/queue-entries/e1?eventId=ev1", nil)
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/queue-entries/e1?eventId=5b1f2c9e-0000-4000-8000-000000000001", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	assert.Equal(t, http.StatusUnauthorized, rec.Code, "REQ-QVT-02: invalid token -> 401 VISITOR_TOKEN_INVALID")
@@ -292,7 +292,7 @@ func TestClaimHandler_ErrorMapping(t *testing.T) {
 			mux := http.NewServeMux()
 			h.Register(mux)
 			rec := httptest.NewRecorder()
-			mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/queue-entries/e1/claim?eventId=ev1", nil))
+			mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/queue-entries/e1/claim?eventId=5b1f2c9e-0000-4000-8000-000000000001", nil))
 			assert.Equal(t, tt.wantCode, rec.Code)
 			assert.Contains(t, rec.Body.String(), tt.wantBody)
 			assert.NotContains(t, rec.Body.String(), "valkey")
@@ -309,7 +309,7 @@ func TestClaimHandler_ErrorMapping(t *testing.T) {
 	mux := http.NewServeMux()
 	h.Register(mux)
 	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/queue-entries/e1/claim?eventId=ev1", nil))
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/queue-entries/e1/claim?eventId=5b1f2c9e-0000-4000-8000-000000000001", nil))
 	assert.Equal(t, http.StatusUnauthorized, rec.Code)
 	assert.Contains(t, rec.Body.String(), "VISITOR_TOKEN_INVALID")
 	assert.Contains(t, notFoundBody, "NOT_FOUND")
@@ -359,11 +359,15 @@ func TestClaimAndLeaveHandlers_InvalidTokenIs401BeforeAnyLookup(t *testing.T) {
 		path   func(id string) string
 		mount  func(ctrl *gomock.Controller, mux *http.ServeMux) // strict mocks: any usecase call fails the test
 	}{
-		{"claim", http.MethodPost, func(id string) string { return "/api/v1/queue-entries/" + id + "/claim?eventId=ev1" },
+		{"claim", http.MethodPost, func(id string) string {
+			return "/api/v1/queue-entries/" + id + "/claim?eventId=5b1f2c9e-0000-4000-8000-000000000001"
+		},
 			func(ctrl *gomock.Controller, mux *http.ServeMux) {
 				queuehttp.NewClaimHandler(mock_inbound.NewMockIClaimUsecase(ctrl), fakeAuth{ok: false}).Register(mux)
 			}},
-		{"leave", http.MethodDelete, func(id string) string { return "/api/v1/queue-entries/" + id + "?eventId=ev1" },
+		{"leave", http.MethodDelete, func(id string) string {
+			return "/api/v1/queue-entries/" + id + "?eventId=5b1f2c9e-0000-4000-8000-000000000001"
+		},
 			func(ctrl *gomock.Controller, mux *http.ServeMux) {
 				queuehttp.NewLeaveHandler(mock_inbound.NewMockILeaveUsecase(ctrl), fakeAuth{ok: false}).Register(mux)
 			}},
@@ -388,4 +392,45 @@ func TestClaimAndLeaveHandlers_InvalidTokenIs401BeforeAnyLookup(t *testing.T) {
 
 func stripRequestID(body string) string {
 	return regexp.MustCompile(`"requestId":"[^"]*"`).ReplaceAllString(body, `"requestId":""`)
+}
+
+// D-C6.7: claim, leave and me answer 400 VALIDATION_ERROR for a missing, empty or non-UUID eventId. The check runs after
+// the visitor token check and before the usecase: the strict mocks fail the test if any usecase is reached.
+func TestVisitorRoutes_MissingEventIDIs400(t *testing.T) {
+	routes := []struct {
+		name   string
+		method string
+		path   string // without the query
+		mount  func(ctrl *gomock.Controller, mux *http.ServeMux)
+	}{
+		{"claim", http.MethodPost, "/api/v1/queue-entries/e1/claim", func(ctrl *gomock.Controller, mux *http.ServeMux) {
+			queuehttp.NewClaimHandler(mock_inbound.NewMockIClaimUsecase(ctrl), fakeAuth{id: "v1", ok: true}).Register(mux)
+		}},
+		{"leave", http.MethodDelete, "/api/v1/queue-entries/e1", func(ctrl *gomock.Controller, mux *http.ServeMux) {
+			queuehttp.NewLeaveHandler(mock_inbound.NewMockILeaveUsecase(ctrl), fakeAuth{id: "v1", ok: true}).Register(mux)
+		}},
+		{"me", http.MethodGet, "/api/v1/queue-entries/me", func(ctrl *gomock.Controller, mux *http.ServeMux) {
+			queuehttp.NewMyEntryHandler(mock_inbound.NewMockIMyEntryUsecase(ctrl), fakeAuth{id: "v1", ok: true}).Register(mux)
+		}},
+	}
+	queries := []struct{ name, query string }{
+		{"missing", ""},
+		{"empty", "?eventId="},
+		{"non-uuid", "?eventId=bukan-uuid"},
+	}
+	for _, rt := range routes {
+		for _, q := range queries {
+			t.Run(rt.name+"/"+q.name, func(t *testing.T) {
+				ctrl := gomock.NewController(t)
+				mux := http.NewServeMux()
+				rt.mount(ctrl, mux)
+				rec := httptest.NewRecorder()
+				mux.ServeHTTP(rec, httptest.NewRequest(rt.method, rt.path+q.query, nil))
+				require.Equal(t, http.StatusBadRequest, rec.Code)
+				assert.Contains(t, rec.Body.String(), `"meta":{"code":400,"message":"VALIDATION_ERROR:`)
+				assert.Contains(t, rec.Body.String(), "eventId")
+				assert.Contains(t, rec.Body.String(), `"data":null`)
+			})
+		}
+	}
 }

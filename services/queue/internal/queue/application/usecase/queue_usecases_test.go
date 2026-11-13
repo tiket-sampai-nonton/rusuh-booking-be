@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/apperror"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/clock"
 
 	mock_outbound "github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/_mock/queue/port/outbound"
@@ -75,6 +76,53 @@ func TestClaim_StoreErrorsAreReturned(t *testing.T) {
 			resp, err := uc.Claim(ctx, inbound.ClaimInput{EntryID: "e1", VisitorID: "v1", EventID: "ev1", Gen: 1})
 			assert.ErrorIs(t, err, storeErr)
 			assert.Equal(t, dto.ClaimResponse{}, resp, "no token and no URL on failure")
+		})
+	}
+}
+
+// D-C6.7: claim shares the `me` per-visitor budget (kind "claim"). Beyond the cap the store is never touched and the
+// answer is 429 RATE_LIMITED; a limiter error is fail-closed; a rotated token is refused before the limiter is asked.
+func TestClaim_RateLimited(t *testing.T) {
+	window := time.Minute
+	tests := []struct {
+		name      string
+		gen       int64
+		tokenGen  outbound.TokenGenCheck
+		allow     bool
+		allowErr  error
+		wantErr   error
+		wantLimit bool // the limiter must be consulted
+		wantCode  int
+	}{
+		{name: "over the budget is 429", gen: 1, tokenGen: outbound.TokenGenOK, allow: false, wantLimit: true, wantCode: 429},
+		{name: "limiter error fails closed", gen: 1, tokenGen: outbound.TokenGenOK, allowErr: errors.New("valkey: down"), wantLimit: true},
+		{name: "rotated token is refused before the limiter", gen: 1, tokenGen: outbound.TokenGenInvalid, wantErr: entity.ErrVisitorTokenInvalid},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			store := mock_outbound.NewMockIQueueStore(ctrl) // Claim must never be called
+			tokens := mock_outbound.NewMockITokenIssuer(ctrl)
+			limiter := mock_outbound.NewMockIRateLimiter(ctrl)
+			ctx := context.Background()
+			store.EXPECT().CheckTokenGen(ctx, "ev1", "v1", tt.gen).Return(tt.tokenGen, nil)
+			if tt.wantLimit {
+				limiter.EXPECT().Allow(ctx, "claim:v:ev1:v1", 120, window).Return(tt.allow, tt.allowErr)
+			}
+			uc := usecase.NewClaimTurn(store, tokens, fixedNow, "https://app/book", 7200*time.Second).WithLimiter(limiter, 120, window)
+			_, err := uc.Claim(ctx, inbound.ClaimInput{EntryID: "e1", VisitorID: "v1", EventID: "ev1", Gen: tt.gen})
+			require.Error(t, err)
+			switch {
+			case tt.wantErr != nil:
+				assert.ErrorIs(t, err, tt.wantErr)
+			case tt.allowErr != nil:
+				assert.ErrorIs(t, err, tt.allowErr)
+			default:
+				var ae *apperror.Error
+				require.ErrorAs(t, err, &ae)
+				assert.Equal(t, tt.wantCode, ae.HTTPStatus)
+				assert.Equal(t, apperror.CodeRateLimited, ae.Code)
+			}
 		})
 	}
 }

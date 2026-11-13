@@ -123,7 +123,7 @@ type deviceRoute struct {
 
 func deviceRoutes() []deviceRoute {
 	return []deviceRoute{
-		{"me", stdhttp.MethodGet, "/api/v1/queue-entries/me?eventId=ev1", func(c *gomock.Controller, a *security.VisitorAuthenticator, m *stdhttp.ServeMux) {
+		{"me", stdhttp.MethodGet, "/api/v1/queue-entries/me?eventId=5b1f2c9e-0000-4000-8000-000000000001", func(c *gomock.Controller, a *security.VisitorAuthenticator, m *stdhttp.ServeMux) {
 			uc := mock_inbound.NewMockIMyEntryUsecase(c)
 			uc.EXPECT().GetMyEntry(gomock.Any(), gomock.Any()).Return(dto.EntryStatus{EntryID: "e1"}, nil).AnyTimes()
 			queuehttp.NewMyEntryHandler(uc, a).Register(m)
@@ -133,12 +133,12 @@ func deviceRoutes() []deviceRoute {
 			uc.EXPECT().Heartbeat(gomock.Any(), gomock.Any()).Return(dto.HeartbeatStatus{}, nil).AnyTimes()
 			queuehttp.NewHeartbeatHandler(uc, a).Register(m)
 		}, stdhttp.StatusOK},
-		{"claim", stdhttp.MethodPost, "/api/v1/queue-entries/e1/claim?eventId=ev1", func(c *gomock.Controller, a *security.VisitorAuthenticator, m *stdhttp.ServeMux) {
+		{"claim", stdhttp.MethodPost, "/api/v1/queue-entries/e1/claim?eventId=5b1f2c9e-0000-4000-8000-000000000001", func(c *gomock.Controller, a *security.VisitorAuthenticator, m *stdhttp.ServeMux) {
 			uc := mock_inbound.NewMockIClaimUsecase(c)
 			uc.EXPECT().Claim(gomock.Any(), gomock.Any()).Return(dto.ClaimResponse{AdmissionToken: "adm"}, nil).AnyTimes()
 			queuehttp.NewClaimHandler(uc, a).Register(m)
 		}, stdhttp.StatusOK},
-		{"leave", stdhttp.MethodDelete, "/api/v1/queue-entries/e1?eventId=ev1", func(c *gomock.Controller, a *security.VisitorAuthenticator, m *stdhttp.ServeMux) {
+		{"leave", stdhttp.MethodDelete, "/api/v1/queue-entries/e1?eventId=5b1f2c9e-0000-4000-8000-000000000001", func(c *gomock.Controller, a *security.VisitorAuthenticator, m *stdhttp.ServeMux) {
 			uc := mock_inbound.NewMockILeaveUsecase(c)
 			uc.EXPECT().Leave(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 			queuehttp.NewLeaveHandler(uc, a).Register(m)

@@ -22,6 +22,7 @@ type ClaimTurn struct {
 	clock          clock.IClock
 	bookingPageURL string        // public booking page base (BOOKING_PAGE_BASE_URL), e.g. "https://app/book"
 	claimMax       time.Duration // upper bound of a CLAIMED slot (QUEUE_CLAIMED_SLOT_MAX_SECONDS, C6.5)
+	limit          visitorLimit  // per-visitor cap on claim calls (D-C6.7: shares the `me` budget)
 }
 
 // NewClaimTurn accepts interfaces and returns the concrete usecase. bookingPageBase is the public booking page base
@@ -31,11 +32,20 @@ func NewClaimTurn(store outbound.IQueueStore, tokens outbound.ITokenIssuer, clk 
 	return &ClaimTurn{store: store, tokens: tokens, clock: clk, bookingPageURL: strings.TrimRight(bookingPageBase, "/"), claimMax: claimMax}
 }
 
+// WithLimiter caps claim calls per visitor (D-C6.7). The budget is the `me` one; the counter is kept apart by kind "claim".
+func (u *ClaimTurn) WithLimiter(l outbound.IRateLimiter, limit int, window time.Duration) *ClaimTurn {
+	u.limit = visitorLimit{limiter: l, limit: limit, window: window}
+	return u
+}
+
 // Claim validates the turn via claim.lua then issues an EdDSA admission token (TTL 60s). The allocation id comes
 // from claim.lua's own reply (design §5.3), never from a second GetEntry: a second read would race a concurrent
 // change and could sign a token for a stale allocation.
 func (u *ClaimTurn) Claim(ctx context.Context, in inbound.ClaimInput) (dto.ClaimResponse, error) {
 	if err := checkTokenGen(ctx, u.store, in.EventID, in.VisitorID, in.Gen); err != nil {
+		return dto.ClaimResponse{}, err
+	}
+	if err := u.limit.allow(ctx, "claim", in.EventID, in.VisitorID); err != nil {
 		return dto.ClaimResponse{}, err
 	}
 	now := u.clock.Now()

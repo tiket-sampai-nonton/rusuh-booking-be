@@ -8,8 +8,10 @@ import (
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/apperror"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/httpx"
 
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/domain/valueobject"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/port/inbound"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/port/outbound"
+	shared "github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/shared/entity"
 )
 
 // cookieVisitor is the HttpOnly cookie that carries the visitor token set by join. It is only ever WRITTEN here: the
@@ -25,6 +27,21 @@ func writeDomainError(w stdhttp.ResponseWriter, r *stdhttp.Request, err error) {
 		}
 	}
 	httpx.WriteError(w, r, ae)
+}
+
+// queryEventID returns the eventId query value of a visitor route (claim, leave, me). A missing, empty or non-UUID value
+// is answered 400 VALIDATION_ERROR before the usecase runs (D-C6.7); the caller has already passed the token check.
+func queryEventID(w stdhttp.ResponseWriter, r *stdhttp.Request) (string, bool) {
+	raw := r.URL.Query().Get("eventId")
+	if _, err := valueobject.NewEventID(raw); err != nil {
+		msg := "harus berupa UUID"
+		if raw == "" {
+			msg = "wajib diisi"
+		}
+		writeDomainError(w, r, shared.ValidationErrors{{Field: "eventId", Message: msg}})
+		return "", false
+	}
+	return raw, true
 }
 
 // VisitorAuthenticator resolves and verifies the visitor identity for authenticated endpoints
