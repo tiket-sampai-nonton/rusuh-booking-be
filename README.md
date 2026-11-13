@@ -113,26 +113,11 @@ Penjelasan per kapabilitas (nilai, cara kerja, status, bukti): [docs/product/CAP
 
 Topologi yang **benar-benar berjalan** di AWS `ap-southeast-2` (dibangun Terraform, `deployments/terraform`):
 
-```mermaid
-flowchart LR
-  FE[Web / Android / iOS] --> CF[Cloudflare<br/>TLS, cache queue-status 1 dtk, CORS per host]
-  CF --> ALB[ALB publik<br/>HTTPS, hanya IP Cloudflare]
-  subgraph AWS[VPC 2 AZ]
-    ALB --> QA[ASG queue<br/>t4g.small, 1..3]
-    ALB --> CA[ASG core<br/>booking, payment, user<br/>t4g.small, 1..2]
-    QA & CA --> IALB[ALB internal] --> CA
-    subgraph DH[Data host t4g.small, EBS 50 GB, snapshot harian]
-      PG[(PostgreSQL 16)]
-      VK[(Valkey 8.1)]
-      MQ[[RabbitMQ]]
-      NS[notification]
-    end
-    QA & CA --- PG & VK & MQ
-    ALB --> NS
-  end
-  CA <--> MT[Midtrans Snap]
-  NS --> RS[Resend]
-```
+![Topologi produksi PoC di AWS ap-southeast-2: Klien, Cloudflare, ALB, ASG queue dan core, host data, Midtrans, Resend](docs/product/img/hld-poc-aws.png)
+
+Komponen pendukung yang tidak digambar: SSM Parameter Store (env per service), ECR (image), CloudWatch (log, alarm, budget), dan S3 (backup dan gambar event). ALB juga meneruskan `/api/v1/push-subscriptions*` ke Notification di host data.
+
+Arsitektur target (rekomendasi, belum dibangun): [`docs/product/img/hld-target-aws.png`](docs/product/img/hld-target-aws.png).
 
 | Lapisan | Saat ini (PoC, berjalan) | Target produksi (rekomendasi, belum dibangun) |
 |---|---|---|
