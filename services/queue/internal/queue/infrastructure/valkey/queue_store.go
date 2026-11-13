@@ -423,6 +423,30 @@ func (s *QueueStore) GetEntry(ctx context.Context, eventID, entryID string) (ent
 	return hashToEntry(entryID, m), true, nil
 }
 
+// GetEntries reads the entry hashes of ids in one pipelined round trip (C8.8, PF-P2-2). Every key carries the event's
+// hash tag, so the batch stays in the event's slot. An id without a hash is omitted from the result.
+func (s *QueueStore) GetEntries(ctx context.Context, eventID string, ids []string) (map[string]entity.Entry, error) {
+	out := make(map[string]entity.Entry, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+	cmds := make(vk.Commands, 0, len(ids))
+	for _, id := range ids {
+		cmds = append(cmds, s.c.B().Hgetall().Key(s.kEntry(eventID, id)).Build())
+	}
+	for i, res := range s.c.DoMulti(ctx, cmds...) {
+		m, err := res.AsStrMap()
+		if err != nil {
+			return nil, fmt.Errorf("valkey: hgetall entry %s: %w", ids[i], err)
+		}
+		if len(m) == 0 {
+			continue
+		}
+		out[ids[i]] = hashToEntry(ids[i], m)
+	}
+	return out, nil
+}
+
 // FindByVisitor returns the active entry for a visitor, if the constraint key points to one.
 func (s *QueueStore) FindByVisitor(ctx context.Context, eventID, visitorID string) (entity.Entry, bool, error) {
 	id, err := s.c.Do(ctx, s.c.B().Get().Key(s.kVisitor(eventID, visitorID)).Build()).ToString()

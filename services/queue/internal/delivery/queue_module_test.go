@@ -95,7 +95,7 @@ func TestPromoterWiredMetricsShowLapsedReplayAndDeadHead(t *testing.T) {
 		settings.EXPECT().Get(gomock.Any(), "ev1").Return(entity.EventSettings{ActiveSlotCapacity: 1}, true, nil)
 		store.EXPECT().ActiveCount(gomock.Any(), "ev1").Return(0, nil)
 		store.EXPECT().TopWaiting(gomock.Any(), "ev1", 1).Return([]string{"E1"}, nil)
-		store.EXPECT().GetEntry(gomock.Any(), "ev1", "E1").Return(entity.Entry{ID: "E1"}, true, nil)
+		store.EXPECT().GetEntries(gomock.Any(), "ev1", []string{"E1"}).Return(map[string]entity.Entry{"E1": {ID: "E1"}}, nil)
 		booking.EXPECT().ReserveBatch(gomock.Any(), gomock.Any()).Return(outbound.AllocationBatchResponse{Allocations: []outbound.AllocationResult{reply}}, nil)
 		if expectEnd {
 			store.EXPECT().EndEntry(gomock.Any(), "ev1", "E1", outbound.EndAlreadyActive, gomock.Any()).Return(outbound.EndResult{Tag: "OK"}, nil)
@@ -133,7 +133,7 @@ func TestPromoterUsesConfiguredNoSupplySuspectTicks(t *testing.T) {
 		store.EXPECT().ReleasePromoterLease(gomock.Any(), "ev1", "tok").Return(nil).Times(5)
 		store.EXPECT().ActiveCount(gomock.Any(), "ev1").Return(0, nil).Times(5)
 		store.EXPECT().TopWaiting(gomock.Any(), "ev1", 2).Return([]string{"P", "E2"}, nil).Times(5)
-		store.EXPECT().GetEntry(gomock.Any(), "ev1", gomock.Any()).Return(entity.Entry{VisitorID: "v"}, true, nil).Times(10)
+		store.EXPECT().GetEntries(gomock.Any(), "ev1", []string{"P", "E2"}).Return(map[string]entity.Entry{"P": {VisitorID: "v"}, "E2": {VisitorID: "v"}}, nil).Times(5)
 		booking.EXPECT().ReserveBatch(gomock.Any(), gomock.Any()).Return(outbound.AllocationBatchResponse{Allocations: []outbound.AllocationResult{
 			{QueueEntryID: "P", Status: "NO_SUPPLY_NOW"},
 			{QueueEntryID: "E2", AllocationID: "a2", Status: "GRANTED", ClaimDeadline: "2099-01-01T00:00:00Z"},

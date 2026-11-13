@@ -22,7 +22,7 @@ func expectGrantedFlow(m workerMocks, token string, promoteFn func(context.Conte
 	m.settings.EXPECT().Get(gomock.Any(), "ev1").Return(entity.EventSettings{ActiveSlotCapacity: 10}, true, nil)
 	m.store.EXPECT().ActiveCount(gomock.Any(), "ev1").Return(0, nil)
 	m.store.EXPECT().TopWaiting(gomock.Any(), "ev1", 10).Return([]string{"e1"}, nil)
-	m.store.EXPECT().GetEntry(gomock.Any(), "ev1", "e1").Return(entity.Entry{ID: "e1", VisitorID: "v1"}, true, nil)
+	m.store.EXPECT().GetEntries(gomock.Any(), "ev1", []string{"e1"}).Return(map[string]entity.Entry{"e1": {ID: "e1", VisitorID: "v1"}}, nil)
 	m.booking.EXPECT().ReserveBatch(gomock.Any(), gomock.Any()).Return(outbound.AllocationBatchResponse{
 		Allocations: []outbound.AllocationResult{{QueueEntryID: "e1", AllocationID: "a1", Status: "GRANTED", ClaimDeadline: "2026-10-20T10:01:00Z"}},
 	}, nil)

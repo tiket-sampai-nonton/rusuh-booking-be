@@ -237,3 +237,26 @@ func TestWaitingBetween_SeqWindowFIFO(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, got, "nothing above the watermark")
 }
+
+// TC-C8.8: GetEntries reads the candidate hashes in one pipelined call; ids without a hash are omitted from the map.
+func TestGetEntries_MissingIdsOmitted(t *testing.T) {
+	s := mustStore(t)
+	ctx := context.Background()
+	ev := evID(t)
+	now := time.Now().UnixMilli()
+	a, visA, _ := joinOne(t, s, ev, 1, now)
+	b, visB, _ := joinOne(t, s, ev, 2, now)
+
+	got, err := s.GetEntries(ctx, ev, []string{a, "no-such-entry", b})
+	require.NoError(t, err)
+	require.Len(t, got, 2, "the id without a hash is omitted")
+	assert.NotContains(t, got, "no-such-entry")
+	assert.Equal(t, a, got[a].ID)
+	assert.Equal(t, visA, got[a].VisitorID)
+	assert.Equal(t, b, got[b].ID)
+	assert.Equal(t, visB, got[b].VisitorID)
+
+	empty, err := s.GetEntries(ctx, ev, nil)
+	require.NoError(t, err)
+	assert.Empty(t, empty, "no ids, no call result")
+}

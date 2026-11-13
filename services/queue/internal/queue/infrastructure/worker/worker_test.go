@@ -58,9 +58,9 @@ func TestPromoter_PromotesReservedAndPublishes(t *testing.T) {
 	m.settings.EXPECT().Get(gomock.Any(), "ev1").Return(entity.EventSettings{ActiveSlotCapacity: 10}, true, nil)
 	m.store.EXPECT().ActiveCount(gomock.Any(), "ev1").Return(0, nil)
 	m.store.EXPECT().TopWaiting(gomock.Any(), "ev1", 10).Return([]string{"e1"}, nil)
-	m.store.EXPECT().GetEntry(gomock.Any(), "ev1", "e1").Return(entity.Entry{
+	m.store.EXPECT().GetEntries(gomock.Any(), "ev1", []string{"e1"}).Return(map[string]entity.Entry{"e1": {
 		ID: "e1", VisitorID: "v1", AccountID: "acc-1",
-	}, true, nil)
+	}}, nil)
 	// ADR-030: the admission is anonymous. Booking receives the account (identity only) and no buyer fields; the
 	// buyer NIK, masked NIK and e-ticket email are bound at hold.
 	m.booking.EXPECT().ReserveBatch(gomock.Any(), gomock.Any()).DoAndReturn(
@@ -112,7 +112,7 @@ func TestPromoter_AnonymousThreeUnitRequestAndStaleQuotaOutcomeIsInert(t *testin
 	m.settings.EXPECT().Get(gomock.Any(), "ev1").Return(entity.EventSettings{ActiveSlotCapacity: 10}, true, nil)
 	m.store.EXPECT().ActiveCount(gomock.Any(), "ev1").Return(0, nil)
 	m.store.EXPECT().TopWaiting(gomock.Any(), "ev1", 10).Return([]string{"e1"}, nil)
-	m.store.EXPECT().GetEntry(gomock.Any(), "ev1", "e1").Return(entity.Entry{ID: "e1", VisitorID: "v1", AccountID: "acc-1", Seq: 7}, true, nil)
+	m.store.EXPECT().GetEntries(gomock.Any(), "ev1", []string{"e1"}).Return(map[string]entity.Entry{"e1": {ID: "e1", VisitorID: "v1", AccountID: "acc-1", Seq: 7}}, nil)
 	m.booking.EXPECT().ReserveBatch(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(_ context.Context, req outbound.AllocationBatchRequest) (outbound.AllocationBatchResponse, error) {
 			require.Len(t, req.Entries, 1)
@@ -137,9 +137,9 @@ func TestPromoter_AdoptsAGrantThatFollowsNoSupplyAndNeverReleasesIt(t *testing.T
 	m.settings.EXPECT().Get(gomock.Any(), "ev1").Return(entity.EventSettings{ActiveSlotCapacity: 10}, true, nil)
 	m.store.EXPECT().ActiveCount(gomock.Any(), "ev1").Return(0, nil)
 	m.store.EXPECT().TopWaiting(gomock.Any(), "ev1", 10).Return([]string{"e1", "e2", "e3"}, nil)
-	for _, id := range []string{"e1", "e2", "e3"} {
-		m.store.EXPECT().GetEntry(gomock.Any(), "ev1", id).Return(entity.Entry{ID: id, VisitorID: "v-" + id}, true, nil)
-	}
+	m.store.EXPECT().GetEntries(gomock.Any(), "ev1", []string{"e1", "e2", "e3"}).Return(map[string]entity.Entry{
+		"e1": {ID: "e1", VisitorID: "v-e1"}, "e2": {ID: "e2", VisitorID: "v-e2"}, "e3": {ID: "e3", VisitorID: "v-e3"},
+	}, nil)
 	m.booking.EXPECT().ReserveBatch(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(_ context.Context, req outbound.AllocationBatchRequest) (outbound.AllocationBatchResponse, error) {
 			for _, e := range req.Entries {
@@ -177,7 +177,7 @@ func TestPromoter_NothingGrantedPromotesNothing(t *testing.T) {
 	m.settings.EXPECT().Get(gomock.Any(), "ev1").Return(entity.EventSettings{ActiveSlotCapacity: 10}, true, nil)
 	m.store.EXPECT().ActiveCount(gomock.Any(), "ev1").Return(0, nil)
 	m.store.EXPECT().TopWaiting(gomock.Any(), "ev1", 10).Return([]string{"e1"}, nil)
-	m.store.EXPECT().GetEntry(gomock.Any(), "ev1", "e1").Return(entity.Entry{ID: "e1", VisitorID: "v1"}, true, nil)
+	m.store.EXPECT().GetEntries(gomock.Any(), "ev1", []string{"e1"}).Return(map[string]entity.Entry{"e1": {ID: "e1", VisitorID: "v1"}}, nil)
 	m.booking.EXPECT().ReserveBatch(gomock.Any(), gomock.Any()).Return(outbound.AllocationBatchResponse{
 		Allocations: []outbound.AllocationResult{{QueueEntryID: "e1", Status: "NO_SUPPLY_NOW"}},
 	}, nil)
@@ -195,7 +195,7 @@ func TestPromoter_AlreadyActiveEndsEntry(t *testing.T) {
 	m.settings.EXPECT().Get(gomock.Any(), "ev1").Return(entity.EventSettings{ActiveSlotCapacity: 10}, true, nil)
 	m.store.EXPECT().ActiveCount(gomock.Any(), "ev1").Return(0, nil)
 	m.store.EXPECT().TopWaiting(gomock.Any(), "ev1", 10).Return([]string{"e1"}, nil)
-	m.store.EXPECT().GetEntry(gomock.Any(), "ev1", "e1").Return(entity.Entry{ID: "e1", VisitorID: "v1"}, true, nil)
+	m.store.EXPECT().GetEntries(gomock.Any(), "ev1", []string{"e1"}).Return(map[string]entity.Entry{"e1": {ID: "e1", VisitorID: "v1"}}, nil)
 	m.booking.EXPECT().ReserveBatch(gomock.Any(), gomock.Any()).Return(outbound.AllocationBatchResponse{
 		Allocations: []outbound.AllocationResult{{QueueEntryID: "e1", Status: "ALREADY_ACTIVE"}},
 	}, nil)

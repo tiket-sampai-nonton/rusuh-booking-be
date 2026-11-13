@@ -40,6 +40,10 @@ type fakeStore struct {
 
 	retired []retireCall // RetireEvent calls, in order (D-C8.2)
 
+	entryReads int   // single GetEntry calls (C8.8 round-trip checks)
+	batchErr   error // injected GetEntries failure (C8.8)
+	batchReads int   // GetEntries calls (C8.8)
+
 	notifyWM map[string]int64 // per-event pre-turn notify watermark (C8.3)
 	order    []string         // ordered log of lease releases and turn.soon publishes (C8.3 ordering checks)
 }
@@ -308,11 +312,29 @@ func (s *fakeStore) EndEntry(_ context.Context, _, entryID, outcome string, nowM
 func (s *fakeStore) GetEntry(_ context.Context, _, entryID string) (entity.Entry, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.entryReads++
 	e, ok := s.entries[entryID]
 	if !ok {
 		return entity.Entry{}, false, nil
 	}
 	return *e, true, nil
+}
+
+// GetEntries mirrors the valkey batch read: ids without an entry are omitted. It counts as one batch read.
+func (s *fakeStore) GetEntries(_ context.Context, _ string, ids []string) (map[string]entity.Entry, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.batchReads++
+	if s.batchErr != nil {
+		return nil, s.batchErr
+	}
+	out := make(map[string]entity.Entry, len(ids))
+	for _, id := range ids {
+		if e, ok := s.entries[id]; ok {
+			out[id] = *e
+		}
+	}
+	return out, nil
 }
 
 func (s *fakeStore) FindByVisitor(context.Context, string, string) (entity.Entry, bool, error) {

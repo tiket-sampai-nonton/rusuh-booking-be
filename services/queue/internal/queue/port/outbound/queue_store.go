@@ -21,6 +21,8 @@ type IQueueStore interface {
 	// ADMITTED/CLAIMED are never touched. Idempotent; Scanned == batch means more may remain.
 	EndWaitingSoldOut(ctx context.Context, eventID string, nowMs int64, batch int) (SoldOutBatch, error)
 	GetEntry(ctx context.Context, eventID, entryID string) (entity.Entry, bool, error)
+	// GetEntries reads the entry hashes of ids in one round trip (C8.8, PF-P2-2). An id without a hash is omitted.
+	GetEntries(ctx context.Context, eventID string, ids []string) (map[string]entity.Entry, error)
 	FindByVisitor(ctx context.Context, eventID, visitorID string) (entity.Entry, bool, error)
 	ActiveCount(ctx context.Context, eventID string) (int, error)
 	TopWaiting(ctx context.Context, eventID string, n int) ([]string, error)

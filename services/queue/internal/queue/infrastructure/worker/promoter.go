@@ -84,7 +84,8 @@ func (p *Promoter) WithMetrics(m outbound.IPromoterMetrics) *Promoter {
 }
 
 // Run promotes one batch for every configured event. A failing event never stops the others: the errors are joined.
-// The pre-turn notify of an event runs after its lease is released (C8.3, PF-P1-5), never inside the lease.
+// The turn.arrived announcements and the pre-turn notify of an event run after its lease is released (C8.3, PF-P1-5;
+// C8.8, PF-P2-2), never inside the lease.
 func (p *Promoter) Run(ctx context.Context) error {
 	ids, err := p.settings.ListEventIDs(ctx)
 	if err != nil {
@@ -92,27 +93,36 @@ func (p *Promoter) Run(ctx context.Context) error {
 	}
 	var errs []error
 	for _, eventID := range ids {
-		notifyPosition, err := p.runEvent(ctx, eventID)
+		notifyPosition, arrivals, err := p.runEvent(ctx, eventID)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("promoter event %s: %w", eventID, err))
+		}
+		for _, a := range arrivals {
+			_ = p.pub.PublishTurnArrived(ctx, eventID, a.entryID, a.visitorID, a.deadline)
 		}
 		p.notifyPreTurn(ctx, eventID, notifyPosition)
 	}
 	return errors.Join(errs...)
 }
 
+// arrival is one entry this tick promoted; Run announces it with queue.turn.arrived once the lease is released.
+type arrival struct {
+	entryID, visitorID string
+	deadline           time.Time
+}
+
 func (p *Promoter) inc(name string, labels ...string) { p.metrics.Inc(name, labels...) }
 
 // runEvent runs one promoter tick for an event under the per-event lease (design §5.4a, ADR-029). It returns the pre-turn
-// notify position (0 when notify is off, the lease is held elsewhere, or the settings are unknown); Run notifies with it
-// once the lease is released.
-func (p *Promoter) runEvent(ctx context.Context, eventID string) (int, error) {
+// notify position (0 when notify is off, the lease is held elsewhere, or the settings are unknown) and the entries it
+// promoted. Run announces the arrivals and notifies once the lease is released, which is when runEvent returns.
+func (p *Promoter) runEvent(ctx context.Context, eventID string) (int, []arrival, error) {
 	token, acquired, err := p.store.AcquirePromoterLease(ctx, eventID, p.tuning.LeaseTTL)
 	if err != nil {
-		return 0, err
+		return 0, nil, err
 	}
 	if !acquired {
-		return 0, nil // another instance is promoting this event this tick
+		return 0, nil, nil // another instance is promoting this event this tick
 	}
 	// The release is compare-and-delete by token and must run even when ctx was cancelled mid-tick.
 	defer func() {
@@ -133,7 +143,7 @@ func (p *Promoter) runEvent(ctx context.Context, eventID string) (int, error) {
 
 	settings, ok, err := p.settings.Get(runCtx, eventID)
 	if err != nil || !ok {
-		return 0, err
+		return 0, nil, err
 	}
 	// Pre-turn notifications are attempted on every return path after this point (TC-QUE-31); a failure never changes the
 	// result of the tick (INV-6).
@@ -144,66 +154,67 @@ func (p *Promoter) runEvent(ctx context.Context, eventID string) (int, error) {
 	// free and the candidate list are read under the lease, and the same capacity is passed to Promote (L1).
 	active, err := p.store.ActiveCount(runCtx, eventID)
 	if err != nil {
-		return notifyPosition, err
+		return notifyPosition, nil, err
 	}
 	free := settings.ActiveSlotCapacity - active
 	if free <= 0 {
-		return notifyPosition, nil
+		return notifyPosition, nil, nil
 	}
 	if free > p.tuning.BatchMax {
 		free = p.tuning.BatchMax
 	}
 	candidates, err := p.store.TopWaiting(runCtx, eventID, free)
 	if err != nil {
-		return notifyPosition, err
+		return notifyPosition, nil, err
 	}
 	if len(candidates) == 0 {
 		p.dropRec(eventID) // C8 row 0
-		return notifyPosition, nil
+		return notifyPosition, nil, nil
 	}
 	headID := candidates[0]
 	now := p.clock.Now()
 
 	entries, visitorByEntry := p.buildEntries(runCtx, eventID, candidates, now)
 	if len(entries) == 0 {
-		return notifyPosition, nil
+		return notifyPosition, nil, nil
 	}
 	resp, err := p.booking.ReserveBatch(runCtx, outbound.AllocationBatchRequest{EventID: eventID, Entries: entries})
 	if err != nil {
-		return notifyPosition, err // Booking down: entries stay waiting, retry next tick (record untouched, C8 row 2)
+		return notifyPosition, nil, err // Booking down: entries stay waiting, retry next tick (record untouched, C8 row 2)
 	}
 
 	out := p.classify(runCtx, eventID, resp, now)
 
 	if len(out.promoteCands) == 0 {
 		p.observeHead(eventID, headID, out, nil)
-		return notifyPosition, nil
+		return notifyPosition, nil, nil
 	}
 	res, err := p.store.Promote(runCtx, eventID, out.promoteCands, settings.ActiveSlotCapacity, now.UnixMilli(), outbound.PromoteOpts{LeaseToken: token})
 	if err != nil {
 		// Possibly committed (ambiguous timeout) or not: never release. The RESERVED rows are replayed next tick.
-		return notifyPosition, err
+		return notifyPosition, nil, err
 	}
 	if res.LeaseLost {
 		p.inc(MetricLeaseLost)
 		p.logger.Warn("lease promoter hilang sebelum Promote; tidak ada yang dipromosikan", "eventId", eventID)
-		return notifyPosition, nil
+		return notifyPosition, nil, nil
 	}
 	if res.Full {
 		// L1 says this is unreachable under a valid lease: a defect signal. Keep the rows (never release).
 		p.inc(MetricFullAfterGrant)
 		p.logger.Error("Promote FULL setelah alokasi diberikan; baris RESERVED dipertahankan untuk replay", "eventId", eventID)
-		return notifyPosition, nil
+		return notifyPosition, nil, nil
 	}
 	outbound.ReleaseTerminal(runCtx, p.booking, p.logger, res.Skipped, out.grantedAlloc)
 
 	promoted := map[string]bool{}
+	arrivals := make([]arrival, 0, len(res.Promoted))
 	for _, entryID := range res.Promoted {
 		promoted[entryID] = true
-		_ = p.pub.PublishTurnArrived(runCtx, eventID, entryID, visitorByEntry[entryID], time.UnixMilli(out.deadlineByEntry[entryID]).UTC())
+		arrivals = append(arrivals, arrival{entryID: entryID, visitorID: visitorByEntry[entryID], deadline: time.UnixMilli(out.deadlineByEntry[entryID]).UTC()})
 	}
 	p.observeHead(eventID, headID, out, promoted)
-	return notifyPosition, nil
+	return notifyPosition, arrivals, nil
 }
 
 // batchOutcome is the promoter's reading of one ReserveBatch answer.
@@ -268,17 +279,19 @@ func (p *Promoter) classify(ctx context.Context, eventID string, resp outbound.A
 	return out
 }
 
-// buildEntries reads each candidate and prepares the anonymous Booking request. Orphans are ended at once (C5).
+// buildEntries reads all candidates in one GetEntries call (C8.8, PF-P2-2) and prepares the anonymous Booking request.
+// Orphans are ended at once (C5). A failed read skips the whole tick: a transient failure is never an orphan.
 func (p *Promoter) buildEntries(ctx context.Context, eventID string, candidates []string, now time.Time) ([]outbound.AllocationEntryRequest, map[string]string) {
 	entries := make([]outbound.AllocationEntryRequest, 0, len(candidates))
 	visitorByEntry := map[string]string{}
+	found, gerr := p.store.GetEntries(ctx, eventID, candidates)
+	if gerr != nil {
+		p.logger.Warn("GetEntries gagal; kandidat dilewati tick ini", "eventId", eventID, "error", gerr)
+		return entries, visitorByEntry // transient Valkey failure: skipped, never ended
+	}
 	for _, entryID := range candidates {
-		ent, found, gerr := p.store.GetEntry(ctx, eventID, entryID)
-		if gerr != nil {
-			p.logger.Warn("GetEntry gagal; entry dilewati tick ini", "eventId", eventID, "entryId", entryID, "error", gerr)
-			continue // transient Valkey failure: skipped, never ended
-		}
-		if !found {
+		ent, ok := found[entryID]
+		if !ok {
 			// C5: an id in waiting without a hash can never be admitted; end it so it stops being the head.
 			if _, err := p.store.EndEntry(ctx, eventID, entryID, outbound.EndPromoterOrphan, now.UnixMilli()); err != nil {
 				p.logger.Warn("gagal membersihkan id yatim di waiting", "eventId", eventID, "entryId", entryID, "error", err)

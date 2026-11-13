@@ -196,6 +196,21 @@ func (mr *MockIQueueStoreMockRecorder) FindLastByVisitor(ctx, eventID, visitorID
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FindLastByVisitor", reflect.TypeOf((*MockIQueueStore)(nil).FindLastByVisitor), ctx, eventID, visitorID)
 }
 
+// GetEntries mocks base method.
+func (m *MockIQueueStore) GetEntries(ctx context.Context, eventID string, ids []string) (map[string]entity.Entry, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetEntries", ctx, eventID, ids)
+	ret0, _ := ret[0].(map[string]entity.Entry)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetEntries indicates an expected call of GetEntries.
+func (mr *MockIQueueStoreMockRecorder) GetEntries(ctx, eventID, ids any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetEntries", reflect.TypeOf((*MockIQueueStore)(nil).GetEntries), ctx, eventID, ids)
+}
+
 // GetEntry mocks base method.
 func (m *MockIQueueStore) GetEntry(ctx context.Context, eventID, entryID string) (entity.Entry, bool, error) {
 	m.ctrl.T.Helper()
