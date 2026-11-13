@@ -16,14 +16,28 @@ import (
 
 // countingDrift counts the reads of the drift query, so a test can see how many queries a run of scrapes made.
 type countingDrift struct {
-	rows  []outbound.StockDrift
-	err   error
-	reads int
+	rows   []outbound.StockDrift
+	err    error
+	reads  int
+	budget time.Duration // time left on the context of the most recent read
 }
 
-func (f *countingDrift) StockDrift(context.Context) ([]outbound.StockDrift, error) {
+func (f *countingDrift) StockDrift(ctx context.Context) ([]outbound.StockDrift, error) {
 	f.reads++
+	if dl, ok := ctx.Deadline(); ok {
+		f.budget = time.Until(dl)
+	}
 	return f.rows, f.err
+}
+
+// The drift query scans booking_items and admissions in full, so it gets a 15 s budget of its own, not the 2 s funnel
+// budget that keeps the other scrapes short.
+func TestDriftCollector_ReadHasFullScanBudget(t *testing.T) {
+	src := &countingDrift{}
+	c := telemetry.NewDriftCollector(src, time.Now)
+	require.Positive(t, testutil.CollectAndCount(c))
+	require.Equal(t, 1, src.reads)
+	require.InDelta(t, 15.0, src.budget.Seconds(), 1.0, "the drift read must get 15 s, not the 2 s funnel budget")
 }
 
 // The metric sums the absolute deltas per kind over all events, and every kind is exported even at 0, so an alert on

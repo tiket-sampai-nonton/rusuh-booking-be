@@ -15,6 +15,10 @@ import (
 // to this long, and a scrape costs at most one drift query per TTL per instance.
 const driftCacheTTL = 60 * time.Second
 
+// driftScrapeTimeout bounds one drift read. The recount scans booking_items and admissions in full, so it needs far more
+// than the 2 s funnel budget (scrapeTimeout); it runs at most once per driftCacheTTL, so the longer budget is cheap.
+const driftScrapeTimeout = 15 * time.Second
+
 // driftKinds are the kinds of stock_drift.sql, always exported so that a zero is measured rather than absent.
 var driftKinds = []string{"allocated", "held", "sold", "category_held", "category_sold", "quota_held"}
 
@@ -65,7 +69,7 @@ func (c *DriftCollector) load() driftRead {
 	if c.last != nil && now.Sub(c.lastAt) < driftCacheTTL {
 		return *c.last
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), scrapeTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), driftScrapeTimeout)
 	defer cancel()
 	rows, err := c.src.StockDrift(ctx)
 	if err != nil {
