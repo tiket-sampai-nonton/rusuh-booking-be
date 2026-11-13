@@ -11,6 +11,8 @@ import (
 )
 
 // Sweeper marks expired ADMITTED entries as MISSED and frees their slot (design §7.3).
+// It also ends CLAIMED slots past their claim bound (claimExpiresMs, QUEUE_CLAIMED_SLOT_MAX_SECONDS) as
+// ENDED/CLAIM_TIMEOUT through end_entry.lua; Booking is not called for those.
 // It does NOT publish booking.* events — Booking's own session sweeper releases the allocation
 // and publishes booking.journey.ended when the claim window expires (spec 11.R2, K7).
 type Sweeper struct {

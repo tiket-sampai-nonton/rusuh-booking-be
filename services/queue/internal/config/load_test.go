@@ -88,8 +88,8 @@ func TestLoad_QueueHardeningDefaults(t *testing.T) {
 	assert.Equal(t, 50, cfg.WorkerTuning.NoSupplySuspectTicks)
 	// REQ-5: status-doc TTL multiplier defaults to 4 (within the 3..5 bound).
 	assert.Equal(t, 4, cfg.WorkerTuning.StatusTTLMultiplier)
-	// C6.5 (P2-15): default 5700 s = Booking selection TTL 1800 s + payment TTL 3600 s + 300 s margin.
-	assert.Equal(t, 5700*time.Second, cfg.WorkerTuning.ClaimedSlotMax)
+	// C6.5 (P2-15, R17): default 7200 s >= Booking maxima 1800 + 30 + 3600 + 600 + VERIFY_GRACE 600 (= 6630 s).
+	assert.Equal(t, 7200*time.Second, cfg.WorkerTuning.ClaimedSlotMax)
 }
 
 // REQ-5 AC7: StatusTTL returns the configured multiple of the effective publish cadence (Worker.Interval),

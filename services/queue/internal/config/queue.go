@@ -110,8 +110,9 @@ type WorkerTuning struct {
 	// NoSupplySuspectTicks labels a head that answers NO_SUPPLY_NOW this many consecutive ticks as suspect.
 	NoSupplySuspectTicks int
 	// ClaimedSlotMax bounds how long a CLAIMED slot may hold capacity without a journey outcome
-	// (QUEUE_CLAIMED_SLOT_MAX_SECONDS). It must cover Booking's selection TTL plus payment TTL, so no live buyer loses
-	// the slot (P2-15, D-C6.5). Validate keeps it at or above minClaimedSlotMax.
+	// (QUEUE_CLAIMED_SLOT_MAX_SECONDS, default 7200 s). Invariant (P2-15, D-C6.5, R17): the value must be >= Booking's
+	// max selection TTL + submit grace + payment TTL + 600 s deadline extension + VERIFY_GRACE_SECONDS
+	// (≈ 6630 s at Booking's maxima), so a live buyer is never ended. Validate enforces only the 600 s floor.
 	ClaimedSlotMax time.Duration
 }
 

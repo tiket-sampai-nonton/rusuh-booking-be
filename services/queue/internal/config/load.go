@@ -107,7 +107,7 @@ func Load() (Config, error) {
 		PromoterLeaseTTL:     r.Duration("QUEUE_PROMOTER_LEASE_TTL_MS", 10*time.Second),
 		SweepBatchMax:        r.Int("QUEUE_SWEEP_BATCH_MAX", 500),
 		NoSupplySuspectTicks: r.Int("QUEUE_NO_SUPPLY_SUSPECT_TICKS", 50),
-		ClaimedSlotMax:       time.Duration(r.Int("QUEUE_CLAIMED_SLOT_MAX_SECONDS", 5700)) * time.Second,
+		ClaimedSlotMax:       time.Duration(r.Int("QUEUE_CLAIMED_SLOT_MAX_SECONDS", 7200)) * time.Second,
 	}
 
 	sec := func(name string, def int) time.Duration { return time.Duration(r.Int(name, def)) * time.Second }

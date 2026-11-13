@@ -45,7 +45,7 @@ func TestTokenGenCheck_ThreeWay(t *testing.T) {
 	}
 	runners := []runner{
 		{"claim", func(t *testing.T, store *mock_outbound.MockIQueueStore, ctrl *gomock.Controller, ev string, gen int64) error {
-			_, err := usecase.NewClaimTurn(store, mock_outbound.NewMockITokenIssuer(ctrl), fixedNow, "https://app/book", 5700*time.Second).
+			_, err := usecase.NewClaimTurn(store, mock_outbound.NewMockITokenIssuer(ctrl), fixedNow, "https://app/book", 7200*time.Second).
 				Claim(context.Background(), inbound.ClaimInput{EntryID: "e1", VisitorID: "v1", EventID: ev, Gen: gen})
 			return err
 		}},
@@ -108,7 +108,7 @@ func TestClaimAndLeave_RotatedTokenIsIdenticalForOwnForeignAndAbsentEntries(t *t
 			store.EXPECT().Leave(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
 			booking.EXPECT().ReleaseAllocation(gomock.Any(), gomock.Any(), gomock.Any()).Times(0)
 
-			_, cerr := usecase.NewClaimTurn(store, tokens, fixedNow, "https://app/book", 5700*time.Second).
+			_, cerr := usecase.NewClaimTurn(store, tokens, fixedNow, "https://app/book", 7200*time.Second).
 				Claim(context.Background(), inbound.ClaimInput{EntryID: entryID, VisitorID: "v1", EventID: "ev1", Gen: 2})
 			lerr := usecase.NewLeaveQueue(store, booking, fixedNow).
 				Leave(context.Background(), inbound.LeaveInput{EntryID: entryID, VisitorID: "v1", EventID: "ev1", Gen: 2})
@@ -129,7 +129,7 @@ func TestClaimAndLeave_ForeignAndAbsentEntryAreIndistinguishable(t *testing.T) {
 	store.EXPECT().Leave(gomock.Any(), "ev1", gomock.Any(), "v1", gomock.Any()).Return(outbound.LeaveResult{}, entity.ErrNotFound).Times(2)
 	tokens := mock_outbound.NewMockITokenIssuer(ctrl)
 	booking := mock_outbound.NewMockIBookingClient(ctrl)
-	claim := usecase.NewClaimTurn(store, tokens, fixedNow, "https://app/book", 5700*time.Second)
+	claim := usecase.NewClaimTurn(store, tokens, fixedNow, "https://app/book", 7200*time.Second)
 	leave := usecase.NewLeaveQueue(store, booking, fixedNow)
 
 	var got []string

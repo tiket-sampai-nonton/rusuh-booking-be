@@ -17,8 +17,8 @@ import (
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/port/outbound"
 )
 
-// testClaimMaxMs is the production default claim bound (QUEUE_CLAIMED_SLOT_MAX_SECONDS=5700) in milliseconds.
-const testClaimMaxMs int64 = 5_700_000
+// testClaimMaxMs is the production default claim bound (QUEUE_CLAIMED_SLOT_MAX_SECONDS=7200) in milliseconds.
+const testClaimMaxMs int64 = 7_200_000
 
 // osEnv fetches TEST_VALKEY_SERVER, failing (never skipping) when unset (plan R9-2 no-silent-skip).
 func osEnv(t *testing.T) string {
