@@ -339,3 +339,11 @@ func TestLoad_PromoteBatchMaxCappedAt100(t *testing.T) {
 		})
 	}
 }
+
+// C8.9 (D-C8.9): the `me` limit default is 60/min (the fastest legal poll is pollNearMs >= 1000 ms).
+func TestLoad_MeLimitDefault60(t *testing.T) {
+	setBase(t)
+	cfg, err := Load()
+	require.NoError(t, err)
+	assert.Equal(t, 60, cfg.RateLimit.MePerVisitor)
+}

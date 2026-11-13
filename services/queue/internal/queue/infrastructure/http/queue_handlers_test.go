@@ -1,6 +1,7 @@
 package http_test
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -141,7 +142,7 @@ func TestJoinHandler_SaleGateErrors(t *testing.T) {
 func TestStatusHandler_OK(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	uc := mock_inbound.NewMockIStatusUsecase(ctrl)
-	uc.EXPECT().GetStatus(gomock.Any(), "ev1").Return(dto.StatusDocument{EventID: "ev1", SaleState: "OPEN"}, nil)
+	uc.EXPECT().GetStatus(gomock.Any(), "ev1").Return(json.RawMessage(`{"eventId":"ev1","saleState":"OPEN"}`), nil)
 
 	h := queuehttp.NewStatusHandler(uc)
 	mux := http.NewServeMux()
@@ -158,7 +159,7 @@ func TestStatusHandler_OK(t *testing.T) {
 func TestStatusHandler_NotFound(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	uc := mock_inbound.NewMockIStatusUsecase(ctrl)
-	uc.EXPECT().GetStatus(gomock.Any(), "ev1").Return(dto.StatusDocument{}, entity.ErrNotFound)
+	uc.EXPECT().GetStatus(gomock.Any(), "ev1").Return(nil, entity.ErrNotFound)
 
 	h := queuehttp.NewStatusHandler(uc)
 	mux := http.NewServeMux()

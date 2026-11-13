@@ -2,6 +2,7 @@ package inbound
 
 import (
 	"context"
+	"encoding/json"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/domain/dto"
 )
@@ -31,9 +32,9 @@ type IJoinUsecase interface {
 	Join(ctx context.Context, in JoinInput) (dto.QueueEntry, error)
 }
 
-// IStatusUsecase returns the public Status Document (design §2.2).
+// IStatusUsecase returns the public Status Document (design §2.2) as the stored JSON, served unchanged (D-C8.9).
 type IStatusUsecase interface {
-	GetStatus(ctx context.Context, eventID string) (dto.StatusDocument, error)
+	GetStatus(ctx context.Context, eventID string) (json.RawMessage, error)
 }
 
 // MyEntryInput identifies the visitor's entry for an event.

@@ -16,6 +16,7 @@ import (
 // STALE entry at its rank, and answers 401 for a rotated-out token and 404 for an ended entry.
 type Heartbeat struct {
 	store  outbound.IQueueStore
+	docs   outbound.IStatusDocReader
 	clock  clock.IClock
 	policy HeartbeatPolicy
 	limit  visitorLimit
@@ -29,6 +30,12 @@ func NewHeartbeat(store outbound.IQueueStore, clk clock.IClock, policy Heartbeat
 // WithLimiter caps heartbeats per visitor (ADR-030 R03: low frequency; a client that pings faster gets 429).
 func (u *Heartbeat) WithLimiter(l outbound.IRateLimiter, limit int, window time.Duration) *Heartbeat {
 	u.limit = visitorLimit{limiter: l, limit: limit, window: window}
+	return u
+}
+
+// WithStatusDocs reads the Status Document for the next interval through docs (the process cache, D-C8.9).
+func (u *Heartbeat) WithStatusDocs(docs outbound.IStatusDocReader) *Heartbeat {
+	u.docs = docs
 	return u
 }
 
@@ -52,7 +59,7 @@ func (u *Heartbeat) Heartbeat(ctx context.Context, in inbound.HeartbeatInput) (d
 		r := res.Seq
 		out.Rank = &r
 	}
-	doc, _ := readDoc(ctx, u.store, in.EventID)
+	doc, _ := readDoc(ctx, u.docs, in.EventID)
 	seq := int64(0)
 	if out.Rank != nil {
 		seq = *out.Rank

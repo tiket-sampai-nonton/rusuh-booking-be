@@ -121,11 +121,12 @@ func newQueueModule(cfg config.Config, clients *Clients, logger *slog.Logger) (*
 		Store: store, Settings: settingsRepo, Booking: booking, Limiter: limiter,
 		Tokens: tokens, UserVerifier: userVerifier, Audit: auditRepo, Clock: clk,
 	}, joinSettings(cfg)).WithMetrics(promoterMetrics).WithLogger(logger)
-	statusUC := usecase.NewGetStatus(store)
+	statusDocs := queuevalkey.NewStatusDocCache(store, queuevalkey.StatusDocRefresh, clk.Now) // D-C8.9: one GET per event per 250 ms
+	statusUC := usecase.NewGetStatus(statusDocs)
 	hbPolicy := heartbeatPolicy(cfg)
-	myEntryUC := usecase.NewGetMyEntry(store).WithHeartbeat(hbPolicy).
+	myEntryUC := usecase.NewGetMyEntry(store).WithHeartbeat(hbPolicy).WithStatusDocs(statusDocs).
 		WithLimiter(limiter, cfg.RateLimit.MePerVisitor, cfg.RateLimit.MePerVisitorWindow)
-	heartbeatUC := usecase.NewHeartbeat(store, clk, hbPolicy).
+	heartbeatUC := usecase.NewHeartbeat(store, clk, hbPolicy).WithStatusDocs(statusDocs).
 		WithLimiter(limiter, cfg.RateLimit.HeartbeatPerVisitor, cfg.RateLimit.MePerVisitorWindow)
 	claimUC := usecase.NewClaimTurn(store, tokens, clk, cfg.Booking.PageBaseURL, cfg.WorkerTuning.ClaimedSlotMax).
 		WithLimiter(limiter, cfg.RateLimit.MePerVisitor, cfg.RateLimit.MePerVisitorWindow)

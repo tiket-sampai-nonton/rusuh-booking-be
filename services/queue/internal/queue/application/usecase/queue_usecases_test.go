@@ -211,38 +211,39 @@ func TestLeave_IgnoredStatusesReleaseNothing(t *testing.T) {
 	}
 }
 
+// The status usecase passes the stored JSON through unchanged (D-C8.9): the response shape is the document's.
 func TestGetStatus_Found(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	store := mock_outbound.NewMockIQueueStore(ctrl)
+	docs := mock_outbound.NewMockIStatusDocReader(ctrl)
 	ctx := context.Background()
 	doc := dto.StatusDocument{EventID: "ev1", SaleState: "OPEN", SoldOut: false}
 	raw, _ := json.Marshal(doc)
-	store.EXPECT().GetStatusDoc(ctx, "ev1").Return(raw, true, nil)
+	docs.EXPECT().Get(ctx, "ev1").Return(raw, doc, true, nil)
 
-	uc := usecase.NewGetStatus(store)
+	uc := usecase.NewGetStatus(docs)
 	got, err := uc.GetStatus(ctx, "ev1")
 	require.NoError(t, err)
-	assert.Equal(t, doc, got)
+	assert.Equal(t, json.RawMessage(raw), got)
 }
 
 func TestGetStatus_NotFound(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	store := mock_outbound.NewMockIQueueStore(ctrl)
+	docs := mock_outbound.NewMockIStatusDocReader(ctrl)
 	ctx := context.Background()
-	store.EXPECT().GetStatusDoc(ctx, "ev1").Return(nil, false, nil)
+	docs.EXPECT().Get(ctx, "ev1").Return(nil, dto.StatusDocument{}, false, nil)
 
-	uc := usecase.NewGetStatus(store)
+	uc := usecase.NewGetStatus(docs)
 	_, err := uc.GetStatus(ctx, "ev1")
 	assert.ErrorIs(t, err, entity.ErrNotFound)
 }
 
 func TestGetStatus_StorageError(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	store := mock_outbound.NewMockIQueueStore(ctrl)
+	docs := mock_outbound.NewMockIStatusDocReader(ctrl)
 	ctx := context.Background()
-	store.EXPECT().GetStatusDoc(ctx, "ev1").Return(nil, false, errors.New("boom"))
+	docs.EXPECT().Get(ctx, "ev1").Return(nil, dto.StatusDocument{}, false, errors.New("boom"))
 
-	uc := usecase.NewGetStatus(store)
+	uc := usecase.NewGetStatus(docs)
 	_, err := uc.GetStatus(ctx, "ev1")
 	assert.Error(t, err)
 }

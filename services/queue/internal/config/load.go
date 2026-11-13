@@ -93,7 +93,7 @@ func Load() (Config, error) {
 		JoinPerIPWindow:     r.Duration("RATE_LIMIT_JOIN_PER_IP_WINDOW", time.Minute),
 		MePerVisitorWindow:  r.Duration("RATE_LIMIT_ME_PER_VISITOR_WINDOW", time.Minute),
 		JoinPerIP:           r.Int("RATE_LIMIT_JOIN_PER_IP", 200),
-		MePerVisitor:        r.Int("RATE_LIMIT_ME_PER_VISITOR", 120),
+		MePerVisitor:        r.Int("RATE_LIMIT_ME_PER_VISITOR", 60), // D-C8.9: the fastest legal poll is 1 s
 		HeartbeatPerVisitor: r.Int("RATE_LIMIT_HEARTBEAT_PER_VISITOR", 20),
 	}
 	cfg.WorkerTuning = WorkerTuning{

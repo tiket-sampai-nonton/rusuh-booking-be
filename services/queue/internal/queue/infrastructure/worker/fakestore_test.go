@@ -483,6 +483,10 @@ func (s *fakeStore) RetireEvent(_ context.Context, ev string, ttl time.Duration)
 
 func (s *fakeStore) LivePosition(context.Context, string, int64) (int64, error) { return 1, nil }
 
+func (s *fakeStore) MyEntry(context.Context, string, string, int64) (outbound.MyEntryResult, error) {
+	return outbound.MyEntryResult{}, errors.New("fakeStore: MyEntry is not used by the worker")
+}
+
 // EndWaitingSoldOut mirrors end_sold_out.lua: WAITING/STALE become SOLD_OUT, ADMITTED/CLAIMED are untouched.
 func (s *fakeStore) EndWaitingSoldOut(_ context.Context, _ string, _ int64, batch int) (outbound.SoldOutBatch, error) {
 	s.mu.Lock()

@@ -14,6 +14,7 @@ import (
 	reflect "reflect"
 	time "time"
 
+	dto "github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/domain/dto"
 	entity "github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/domain/entity"
 	outbound "github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/port/outbound"
 	gomock "go.uber.org/mock/gomock"
@@ -318,6 +319,21 @@ func (mr *MockIQueueStoreMockRecorder) LivePosition(ctx, eventID, seq any) *gomo
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "LivePosition", reflect.TypeOf((*MockIQueueStore)(nil).LivePosition), ctx, eventID, seq)
 }
 
+// MyEntry mocks base method.
+func (m *MockIQueueStore) MyEntry(ctx context.Context, eventID, visitorID string, gen int64) (outbound.MyEntryResult, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "MyEntry", ctx, eventID, visitorID, gen)
+	ret0, _ := ret[0].(outbound.MyEntryResult)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// MyEntry indicates an expected call of MyEntry.
+func (mr *MockIQueueStoreMockRecorder) MyEntry(ctx, eventID, visitorID, gen any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MyEntry", reflect.TypeOf((*MockIQueueStore)(nil).MyEntry), ctx, eventID, visitorID, gen)
+}
+
 // Promote mocks base method.
 func (m *MockIQueueStore) Promote(ctx context.Context, eventID string, cands []outbound.PromoteCandidate, capacity int, nowMs int64, opts outbound.PromoteOpts) (outbound.PromoteResult, error) {
 	m.ctrl.T.Helper()
@@ -494,4 +510,45 @@ func (m *MockIQueueStore) WaitingSeqAt(ctx context.Context, eventID string, idx 
 func (mr *MockIQueueStoreMockRecorder) WaitingSeqAt(ctx, eventID, idx any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "WaitingSeqAt", reflect.TypeOf((*MockIQueueStore)(nil).WaitingSeqAt), ctx, eventID, idx)
+}
+
+// MockIStatusDocReader is a mock of IStatusDocReader interface.
+type MockIStatusDocReader struct {
+	ctrl     *gomock.Controller
+	recorder *MockIStatusDocReaderMockRecorder
+	isgomock struct{}
+}
+
+// MockIStatusDocReaderMockRecorder is the mock recorder for MockIStatusDocReader.
+type MockIStatusDocReaderMockRecorder struct {
+	mock *MockIStatusDocReader
+}
+
+// NewMockIStatusDocReader creates a new mock instance.
+func NewMockIStatusDocReader(ctrl *gomock.Controller) *MockIStatusDocReader {
+	mock := &MockIStatusDocReader{ctrl: ctrl}
+	mock.recorder = &MockIStatusDocReaderMockRecorder{mock}
+	return mock
+}
+
+// EXPECT returns an object that allows the caller to indicate expected use.
+func (m *MockIStatusDocReader) EXPECT() *MockIStatusDocReaderMockRecorder {
+	return m.recorder
+}
+
+// Get mocks base method.
+func (m *MockIStatusDocReader) Get(ctx context.Context, eventID string) ([]byte, dto.StatusDocument, bool, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Get", ctx, eventID)
+	ret0, _ := ret[0].([]byte)
+	ret1, _ := ret[1].(dto.StatusDocument)
+	ret2, _ := ret[2].(bool)
+	ret3, _ := ret[3].(error)
+	return ret0, ret1, ret2, ret3
+}
+
+// Get indicates an expected call of Get.
+func (mr *MockIStatusDocReaderMockRecorder) Get(ctx, eventID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Get", reflect.TypeOf((*MockIStatusDocReader)(nil).Get), ctx, eventID)
 }

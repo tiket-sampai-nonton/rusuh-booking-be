@@ -1,6 +1,10 @@
 package outbound
 
-import "time"
+import (
+	"time"
+
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/domain/entity"
+)
 
 // JoinParams carries everything join.lua needs. There is no NIK, email or consent: the join ranks an anonymous
 // principal (ADR-030). The bearer account id identifies the principal only.
@@ -61,6 +65,25 @@ type HeartbeatResult struct {
 	Status  string // WAITING (also after a revive) | ADMITTED | CLAIMED
 	Seq     int64
 	Revived bool
+}
+
+// MyEntryTag is the me.lua outcome.
+type MyEntryTag string
+
+// `me` outcomes.
+const (
+	MyEntryAbsent   MyEntryTag = "ABSENT"    // no generation record for the event: never joined -> 404
+	MyEntryInvalid  MyEntryTag = "INVALID"   // rotated-out or non-positive generation -> 401
+	MyEntryNotFound MyEntryTag = "NOT_FOUND" // valid token, no entry in any state -> 404
+	MyEntryOK       MyEntryTag = "OK"
+)
+
+// MyEntryResult is the mapped me.lua reply. Position is the 1-based live position of a WAITING or STALE entry and 0
+// otherwise; Entry is set only for MyEntryOK.
+type MyEntryResult struct {
+	Tag      MyEntryTag
+	Entry    entity.Entry
+	Position int64
 }
 
 // LivenessResult is the mapped liveness.lua reply.

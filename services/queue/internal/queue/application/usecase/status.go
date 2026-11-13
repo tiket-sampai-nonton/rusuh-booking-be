@@ -3,36 +3,31 @@ package usecase
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 
-	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/domain/dto"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/domain/entity"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/port/outbound"
 )
 
-// GetStatus implements inbound.IStatusUsecase: returns the cached public Status Document (design §2.2).
-// The document is produced by the Status Publisher worker; this usecase only reads it.
+// GetStatus implements inbound.IStatusUsecase: returns the public Status Document (design §2.2) as the stored JSON.
+// The document is produced by the Status Publisher worker; this usecase only reads it, through the process cache
+// (D-C8.9), and passes the bytes on unchanged.
 type GetStatus struct {
-	store outbound.IQueueStore
+	docs outbound.IStatusDocReader
 }
 
 // NewGetStatus accepts interfaces and returns the concrete usecase.
-func NewGetStatus(store outbound.IQueueStore) *GetStatus {
-	return &GetStatus{store: store}
+func NewGetStatus(docs outbound.IStatusDocReader) *GetStatus {
+	return &GetStatus{docs: docs}
 }
 
-// GetStatus reads q:{e}:status. A missing document means the event is unknown → ErrNotFound.
-func (u *GetStatus) GetStatus(ctx context.Context, eventID string) (dto.StatusDocument, error) {
-	raw, ok, err := u.store.GetStatusDoc(ctx, eventID)
+// GetStatus returns the event's document. A missing document means the event is unknown → ErrNotFound.
+func (u *GetStatus) GetStatus(ctx context.Context, eventID string) (json.RawMessage, error) {
+	raw, _, ok, err := u.docs.Get(ctx, eventID)
 	if err != nil {
-		return dto.StatusDocument{}, err
+		return nil, err
 	}
 	if !ok {
-		return dto.StatusDocument{}, entity.ErrNotFound
+		return nil, entity.ErrNotFound
 	}
-	var doc dto.StatusDocument
-	if err := json.Unmarshal(raw, &doc); err != nil {
-		return dto.StatusDocument{}, fmt.Errorf("status: unmarshal document: %w", err)
-	}
-	return doc, nil
+	return raw, nil
 }

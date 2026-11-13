@@ -34,4 +34,6 @@ var (
 	RetireEvent string
 	//go:embed notify_window.lua
 	NotifyWindow string
+	//go:embed me.lua
+	Me string
 )

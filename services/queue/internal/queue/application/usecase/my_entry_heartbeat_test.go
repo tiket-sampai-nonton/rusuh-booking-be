@@ -33,20 +33,22 @@ func docRaw(t *testing.T, d dto.StatusDocument) []byte {
 	return raw
 }
 
-func meSetup(t *testing.T) (*mock_outbound.MockIQueueStore, *usecase.GetMyEntry) {
+func meSetup(t *testing.T) (*mock_outbound.MockIQueueStore, *mock_outbound.MockIStatusDocReader, *usecase.GetMyEntry) {
 	ctrl := gomock.NewController(t)
 	store := mock_outbound.NewMockIQueueStore(ctrl)
-	return store, usecase.NewGetMyEntry(store).WithHeartbeat(hbPolicy)
+	docs := mock_outbound.NewMockIStatusDocReader(ctrl)
+	return store, docs, usecase.NewGetMyEntry(store).WithHeartbeat(hbPolicy).WithStatusDocs(docs)
 }
 
 // R05.1: zone is computed on SEQ (ADR-030 Amendment: the draw was dropped, seq is the order).
 func TestGetMyEntry_SeqAndServerZone(t *testing.T) {
-	store, uc := meSetup(t)
+	store, docs, uc := meSetup(t)
 	ctx := context.Background()
-	store.EXPECT().CheckTokenGen(ctx, "ev1", "v1", gomock.Any()).Return(outbound.TokenGenOK, nil)
-	store.EXPECT().FindByVisitor(ctx, "ev1", "v1").Return(entity.Entry{ID: "e", Seq: 480, Status: valueobject.StatusWaiting}, true, nil)
-	store.EXPECT().GetStatusDoc(ctx, "ev1").Return(docRaw(t, dto.StatusDocument{HeadSeq: i64(1), GuaranteedUntilSeq: i64(3), PossibleUntilSeq: i64(4), PreTurnNotifyPosition: 100}), true, nil)
-	store.EXPECT().LivePosition(ctx, "ev1", int64(480)).Return(int64(37), nil)
+	store.EXPECT().MyEntry(ctx, "ev1", "v1", int64(2)).Return(outbound.MyEntryResult{
+		Tag: outbound.MyEntryOK, Entry: entity.Entry{ID: "e", Seq: 480, Status: valueobject.StatusWaiting}, Position: 37,
+	}, nil)
+	d := dto.StatusDocument{HeadSeq: i64(1), GuaranteedUntilSeq: i64(3), PossibleUntilSeq: i64(4), PreTurnNotifyPosition: 100}
+	docs.EXPECT().Get(ctx, "ev1").Return(docRaw(t, d), d, true, nil)
 
 	got, err := uc.GetMyEntry(ctx, inbound.MyEntryInput{EventID: "ev1", VisitorID: "v1", Gen: 2})
 	require.NoError(t, err)
@@ -78,11 +80,11 @@ func TestGetMyEntry_EndedReasons(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.endReason, func(t *testing.T) {
-			store, uc := meSetup(t)
+			store, _, uc := meSetup(t)
 			ctx := context.Background()
-			store.EXPECT().CheckTokenGen(ctx, "ev1", "v1", gomock.Any()).Return(outbound.TokenGenOK, nil)
-			store.EXPECT().FindByVisitor(ctx, "ev1", "v1").Return(entity.Entry{}, false, nil)
-			store.EXPECT().FindLastByVisitor(ctx, "ev1", "v1").Return(entity.Entry{ID: "e", Seq: 9, Status: tt.status, EndReason: tt.endReason}, true, nil)
+			store.EXPECT().MyEntry(ctx, "ev1", "v1", gomock.Any()).Return(outbound.MyEntryResult{
+				Tag: outbound.MyEntryOK, Entry: entity.Entry{ID: "e", Seq: 9, Status: tt.status, EndReason: tt.endReason},
+			}, nil)
 			got, err := uc.GetMyEntry(ctx, inbound.MyEntryInput{EventID: "ev1", VisitorID: "v1", Gen: 1})
 			require.NoError(t, err)
 			assert.Equal(t, "ENDED", got.State)
@@ -94,31 +96,29 @@ func TestGetMyEntry_EndedReasons(t *testing.T) {
 
 func TestGetMyEntry_TokenStates(t *testing.T) {
 	t.Run("rotated-out token is 401", func(t *testing.T) {
-		store, uc := meSetup(t)
-		store.EXPECT().CheckTokenGen(gomock.Any(), "ev1", "v1", gomock.Any()).Return(outbound.TokenGenInvalid, nil)
+		store, _, uc := meSetup(t)
+		store.EXPECT().MyEntry(gomock.Any(), "ev1", "v1", gomock.Any()).Return(outbound.MyEntryResult{Tag: outbound.MyEntryInvalid}, nil)
 		_, err := uc.GetMyEntry(context.Background(), inbound.MyEntryInput{EventID: "ev1", VisitorID: "v1", Gen: 2})
 		assert.ErrorIs(t, err, entity.ErrVisitorTokenInvalid)
 		assert.Equal(t, 401, inbound.MapError(err).HTTPStatus)
 		assert.Equal(t, "VISITOR_TOKEN_INVALID", string(inbound.MapError(err).Code))
 	})
 	t.Run("visitor never joined this event is 404 (REQ-QVT-03)", func(t *testing.T) {
-		store, uc := meSetup(t)
-		store.EXPECT().CheckTokenGen(gomock.Any(), "ev1", "v1", gomock.Any()).Return(outbound.TokenGenAbsent, nil)
+		store, _, uc := meSetup(t)
+		store.EXPECT().MyEntry(gomock.Any(), "ev1", "v1", gomock.Any()).Return(outbound.MyEntryResult{Tag: outbound.MyEntryAbsent}, nil)
 		_, err := uc.GetMyEntry(context.Background(), inbound.MyEntryInput{EventID: "ev1", VisitorID: "v1", Gen: 1})
 		assert.ErrorIs(t, err, entity.ErrNotFound)
 		assert.Equal(t, 404, inbound.MapError(err).HTTPStatus)
 	})
 	t.Run("cross-event: record exists for A only, event B is 404 and reads no entry", func(t *testing.T) {
-		store, uc := meSetup(t)
-		store.EXPECT().CheckTokenGen(gomock.Any(), "evB", "v1", gomock.Any()).Return(outbound.TokenGenAbsent, nil)
+		store, _, uc := meSetup(t)
+		store.EXPECT().MyEntry(gomock.Any(), "evB", "v1", gomock.Any()).Return(outbound.MyEntryResult{Tag: outbound.MyEntryAbsent}, nil)
 		_, err := uc.GetMyEntry(context.Background(), inbound.MyEntryInput{EventID: "evB", VisitorID: "v1", Gen: 1})
 		assert.ErrorIs(t, err, entity.ErrNotFound)
 	})
 	t.Run("valid token, no entry ever: 404", func(t *testing.T) {
-		store, uc := meSetup(t)
-		store.EXPECT().CheckTokenGen(gomock.Any(), "ev1", "v1", gomock.Any()).Return(outbound.TokenGenOK, nil)
-		store.EXPECT().FindByVisitor(gomock.Any(), "ev1", "v1").Return(entity.Entry{}, false, nil)
-		store.EXPECT().FindLastByVisitor(gomock.Any(), "ev1", "v1").Return(entity.Entry{}, false, nil)
+		store, _, uc := meSetup(t)
+		store.EXPECT().MyEntry(gomock.Any(), "ev1", "v1", gomock.Any()).Return(outbound.MyEntryResult{Tag: outbound.MyEntryNotFound}, nil)
 		_, err := uc.GetMyEntry(context.Background(), inbound.MyEntryInput{EventID: "ev1", VisitorID: "v1", Gen: 1})
 		assert.ErrorIs(t, err, entity.ErrNotFound)
 	})
@@ -126,15 +126,17 @@ func TestGetMyEntry_TokenStates(t *testing.T) {
 
 func TestHeartbeat_Outcomes(t *testing.T) {
 	ctx := context.Background()
-	newUC := func(t *testing.T) (*mock_outbound.MockIQueueStore, *usecase.Heartbeat) {
+	newUC := func(t *testing.T) (*mock_outbound.MockIQueueStore, *mock_outbound.MockIStatusDocReader, *usecase.Heartbeat) {
 		ctrl := gomock.NewController(t)
 		store := mock_outbound.NewMockIQueueStore(ctrl)
-		return store, usecase.NewHeartbeat(store, fixedNow, hbPolicy)
+		docs := mock_outbound.NewMockIStatusDocReader(ctrl)
+		return store, docs, usecase.NewHeartbeat(store, fixedNow, hbPolicy).WithStatusDocs(docs)
 	}
 	t.Run("ok near the head gets the short interval", func(t *testing.T) {
-		store, uc := newUC(t)
+		store, docs, uc := newUC(t)
 		store.EXPECT().Heartbeat(ctx, "ev1", "v1", int64(2), gomock.Any()).Return(outbound.HeartbeatResult{Tag: outbound.HeartbeatOK, Status: "WAITING", Seq: 120}, nil)
-		store.EXPECT().GetStatusDoc(ctx, "ev1").Return(docRaw(t, dto.StatusDocument{HeadSeq: i64(100), PreTurnNotifyPosition: 50}), true, nil)
+		d := dto.StatusDocument{HeadSeq: i64(100), PreTurnNotifyPosition: 50}
+		docs.EXPECT().Get(ctx, "ev1").Return(docRaw(t, d), d, true, nil)
 		got, err := uc.Heartbeat(ctx, inbound.HeartbeatInput{EventID: "ev1", VisitorID: "v1", Gen: 2})
 		require.NoError(t, err)
 		assert.Equal(t, "WAITING", got.State)
@@ -143,13 +145,13 @@ func TestHeartbeat_Outcomes(t *testing.T) {
 		assert.EqualValues(t, 120, *got.Rank)
 	})
 	t.Run("invalid token", func(t *testing.T) {
-		store, uc := newUC(t)
+		store, _, uc := newUC(t)
 		store.EXPECT().Heartbeat(ctx, "ev1", "v1", int64(1), gomock.Any()).Return(outbound.HeartbeatResult{Tag: outbound.HeartbeatInvalid}, nil)
 		_, err := uc.Heartbeat(ctx, inbound.HeartbeatInput{EventID: "ev1", VisitorID: "v1", Gen: 1})
 		assert.ErrorIs(t, err, entity.ErrVisitorTokenInvalid)
 	})
 	t.Run("ended entry", func(t *testing.T) {
-		store, uc := newUC(t)
+		store, _, uc := newUC(t)
 		store.EXPECT().Heartbeat(ctx, "ev1", "v1", int64(1), gomock.Any()).Return(outbound.HeartbeatResult{Tag: outbound.HeartbeatNotFound}, nil)
 		_, err := uc.Heartbeat(ctx, inbound.HeartbeatInput{EventID: "ev1", VisitorID: "v1", Gen: 1})
 		assert.ErrorIs(t, err, entity.ErrEntryNotFound)
@@ -162,7 +164,7 @@ func TestHeartbeat_Outcomes(t *testing.T) {
 // is a 429 RATE_LIMITED with a Retry-After hint. A limiter error is fail-closed.
 func TestHeartbeatAndMe_PerVisitorLimit(t *testing.T) {
 	ctrl := gomock.NewController(t)
-	store := mock_outbound.NewMockIQueueStore(ctrl) // only TokenGen (me) may be read; Heartbeat/Find* must not be called
+	store := mock_outbound.NewMockIQueueStore(ctrl) // only MyEntry (me) may be read; Heartbeat must not be called
 	limiter := mock_outbound.NewMockIRateLimiter(ctrl)
 	ctx := context.Background()
 	window := time.Minute
@@ -174,7 +176,7 @@ func TestHeartbeatAndMe_PerVisitorLimit(t *testing.T) {
 	require.ErrorAs(t, err, &ae)
 	assert.Equal(t, 429, ae.HTTPStatus)
 
-	store.EXPECT().CheckTokenGen(ctx, "ev1", "v1", gomock.Any()).Return(outbound.TokenGenOK, nil)
+	store.EXPECT().MyEntry(ctx, "ev1", "v1", gomock.Any()).Return(outbound.MyEntryResult{Tag: outbound.MyEntryOK}, nil)
 	limiter.EXPECT().Allow(ctx, "me:v:ev1:v1", 120, window).Return(false, nil)
 	_, err = usecase.NewGetMyEntry(store).WithLimiter(limiter, 120, window).
 		GetMyEntry(ctx, inbound.MyEntryInput{EventID: "ev1", VisitorID: "v1", Gen: 1})
@@ -185,4 +187,24 @@ func TestHeartbeatAndMe_PerVisitorLimit(t *testing.T) {
 	_, err = usecase.NewHeartbeat(store, fixedNow, hbPolicy).WithLimiter(limiter, 20, window).
 		Heartbeat(ctx, inbound.HeartbeatInput{EventID: "ev1", VisitorID: "v1", Gen: 1})
 	require.Error(t, err)
+}
+
+// C8.9: `me` costs one store call (me.lua) and reads the document through the process cache; the rate limit is
+// checked on the same call's result. Any further store read fails the strict mock.
+func TestGetMyEntry_OneStoreCall(t *testing.T) {
+	store, docs, uc := meSetup(t)
+	limiter := mock_outbound.NewMockIRateLimiter(gomock.NewController(t))
+	ctx := context.Background()
+
+	store.EXPECT().MyEntry(ctx, "ev1", "v1", int64(3)).Return(outbound.MyEntryResult{
+		Tag: outbound.MyEntryOK, Entry: entity.Entry{ID: "e", Seq: 5, Status: valueobject.StatusWaiting}, Position: 3,
+	}, nil)
+	limiter.EXPECT().Allow(ctx, "me:v:ev1:v1", 60, time.Minute).Return(true, nil)
+	d := dto.StatusDocument{PreTurnNotifyPosition: 50}
+	docs.EXPECT().Get(ctx, "ev1").Return(docRaw(t, d), d, true, nil)
+
+	got, err := uc.WithLimiter(limiter, 60, time.Minute).GetMyEntry(ctx, inbound.MyEntryInput{EventID: "ev1", VisitorID: "v1", Gen: 3})
+	require.NoError(t, err)
+	assert.EqualValues(t, 3, got.ExactPosition)
+	assert.Equal(t, "WAITING", got.State)
 }

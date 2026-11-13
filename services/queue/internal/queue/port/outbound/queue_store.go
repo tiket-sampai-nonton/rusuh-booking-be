@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/domain/dto"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/domain/entity"
 )
 
@@ -76,6 +77,16 @@ type IQueueStore interface {
 	RetireEvent(ctx context.Context, eventID string, ttl time.Duration) (bool, error)
 	// LivePosition returns 1 + the number of live entries with a smaller seq.
 	LivePosition(ctx context.Context, eventID string, seq int64) (int64, error)
+	// MyEntry answers `me` in one script (me.lua, C8.9): the generation check and ratchet of CheckTokenGen, the visitor's
+	// entry (active, else most recent) and its live position. Same outcomes as the multi-call path, one round-trip.
+	MyEntry(ctx context.Context, eventID, visitorID string, gen int64) (MyEntryResult, error)
+}
+
+// IStatusDocReader serves the public Status Document from the process (D-C8.9). raw is the stored JSON the status
+// endpoint writes as is; doc is its parsed form for the rank and zone logic of heartbeat and `me`. ok is false when the
+// event has no document in Valkey.
+type IStatusDocReader interface {
+	Get(ctx context.Context, eventID string) (raw []byte, doc dto.StatusDocument, ok bool, err error)
 }
 
 // TokenGenCheck is the token_gen.lua outcome. The zero value is deliberately not an outcome.

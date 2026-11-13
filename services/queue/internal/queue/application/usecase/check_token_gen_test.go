@@ -64,19 +64,27 @@ func TestTokenGenCheck_ThreeWay(t *testing.T) {
 				ctrl := gomock.NewController(t)
 				// Strict mock: anything not expected below (Claim, Leave, FindByVisitor, ReleaseAllocation...) fails the test.
 				store := mock_outbound.NewMockIQueueStore(ctrl)
+				sentinel := errors.New("past-the-check")
+				passes := tt.wantErr == nil // the check passed: the usecase moves on to its own store call
 				if !tt.noStore {
-					store.EXPECT().CheckTokenGen(gomock.Any(), tt.eventID, "v1", tt.gen).Return(tt.res, tt.stErr)
+					if r.name == "me" {
+						// me runs the check inside MyEntry (me.lua): the outcome is in the reply; a passing check is
+						// stopped by the sentinel the same call returns.
+						res, rerr := myEntryFor(tt.res), tt.stErr
+						if passes {
+							res, rerr = outbound.MyEntryResult{}, sentinel
+						}
+						store.EXPECT().MyEntry(gomock.Any(), tt.eventID, "v1", tt.gen).Return(res, rerr)
+					} else {
+						store.EXPECT().CheckTokenGen(gomock.Any(), tt.eventID, "v1", tt.gen).Return(tt.res, tt.stErr)
+					}
 				}
-				if tt.wantErr == nil {
-					// The check passed: the usecase moves on to its own store call; stop it with a sentinel.
-					sentinel := errors.New("past-the-check")
+				if passes {
 					switch r.name {
 					case "claim":
 						store.EXPECT().Claim(gomock.Any(), tt.eventID, "e1", "v1", gomock.Any(), gomock.Any()).Return(outbound.ClaimResult{}, sentinel)
 					case "leave":
 						store.EXPECT().Leave(gomock.Any(), tt.eventID, "e1", "v1", gomock.Any()).Return(outbound.LeaveResult{}, sentinel)
-					case "me":
-						store.EXPECT().FindByVisitor(gomock.Any(), tt.eventID, "v1").Return(entity.Entry{}, false, sentinel)
 					}
 					err := r.run(t, store, ctrl, tt.eventID, tt.gen)
 					assert.EqualError(t, err, sentinel.Error())
@@ -92,6 +100,17 @@ func TestTokenGenCheck_ThreeWay(t *testing.T) {
 			})
 		}
 	}
+}
+
+// myEntryFor is the me.lua reply for a token generation outcome (the token check runs inside the script).
+func myEntryFor(c outbound.TokenGenCheck) outbound.MyEntryResult {
+	switch c {
+	case outbound.TokenGenAbsent:
+		return outbound.MyEntryResult{Tag: outbound.MyEntryAbsent}
+	case outbound.TokenGenInvalid:
+		return outbound.MyEntryResult{Tag: outbound.MyEntryInvalid}
+	}
+	return outbound.MyEntryResult{Tag: outbound.MyEntryNotFound}
 }
 
 // D4 (P4, NFR-07): a rotated token is refused with 401 for an own, a foreign and a nonexistent entry id alike, and
@@ -146,7 +165,7 @@ func TestClaimAndLeave_ForeignAndAbsentEntryAreIndistinguishable(t *testing.T) {
 	assert.Equal(t, got[1], got[3])
 }
 
-// D-C6.1 (AC-C6.1 P0-8): `me` maps the store outcome directly: an absent record is 404, an invalid generation is 401,
+// D-C6.1 (AC-C6.1 P0-8): `me` maps the me.lua outcome directly: an absent record is 404, an invalid generation is 401,
 // and a valid one reads the entry (the usecase's own store call, stopped here by a sentinel).
 func TestGetMyEntry_TokenGenOutcomes(t *testing.T) {
 	sentinel := errors.New("past-the-check")
@@ -163,9 +182,10 @@ func TestGetMyEntry_TokenGenOutcomes(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			ctrl := gomock.NewController(t)
 			store := mock_outbound.NewMockIQueueStore(ctrl)
-			store.EXPECT().CheckTokenGen(gomock.Any(), "ev1", "v1", int64(2)).Return(tt.res, nil)
 			if tt.res == outbound.TokenGenOK {
-				store.EXPECT().FindByVisitor(gomock.Any(), "ev1", "v1").Return(entity.Entry{}, false, sentinel)
+				store.EXPECT().MyEntry(gomock.Any(), "ev1", "v1", int64(2)).Return(outbound.MyEntryResult{}, sentinel)
+			} else {
+				store.EXPECT().MyEntry(gomock.Any(), "ev1", "v1", int64(2)).Return(myEntryFor(tt.res), nil)
 			}
 			_, err := usecase.NewGetMyEntry(store).GetMyEntry(context.Background(), inbound.MyEntryInput{EventID: "ev1", VisitorID: "v1", Gen: 2})
 			require.ErrorIs(t, err, tt.wantErr)

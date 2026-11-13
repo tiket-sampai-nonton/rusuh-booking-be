@@ -50,6 +50,7 @@ type QueueStore struct {
 	livenessTick *vk.Lua
 
 	tokenGen *vk.Lua
+	me       *vk.Lua
 
 	retireEvent  *vk.Lua
 	notifyWindow *vk.Lua
@@ -77,6 +78,7 @@ func NewQueueStore(c vk.Client, keyer Keyer, clk clock.IClock, shards int) *Queu
 		livenessTick: vk.NewLuaScript(lua.LivenessTick),
 
 		tokenGen: vk.NewLuaScript(lua.TokenGen),
+		me:       vk.NewLuaScript(lua.Me),
 
 		retireEvent:  vk.NewLuaScript(lua.RetireEvent),
 		notifyWindow: vk.NewLuaScript(lua.NotifyWindow),
@@ -781,6 +783,33 @@ func (s *QueueStore) RetireEvent(ctx context.Context, eventID string, ttl time.D
 		return false, fmt.Errorf("valkey: retire_event.lua: %w", err)
 	}
 	return n == 1, nil
+}
+
+// MyEntry runs me.lua (C8.9): the generation check and ratchet, the entry lookup and the live position in one EVAL. The
+// keys are the event's waiting zset, the visitor's token, visitor and vlast records; the script builds entry:<id> from
+// the event prefix, as heartbeat.lua does.
+func (s *QueueStore) MyEntry(ctx context.Context, eventID, visitorID string, gen int64) (outbound.MyEntryResult, error) {
+	arr, err := s.me.Exec(ctx, s.c,
+		[]string{s.kWaiting(eventID), s.k(eventID, "vtok:"+visitorID), s.kVisitor(eventID, visitorID), s.k(eventID, "vlast:"+visitorID)},
+		[]string{s.prefix(eventID), strconv.FormatInt(gen, 10)}).ToArray()
+	if err != nil {
+		return outbound.MyEntryResult{}, fmt.Errorf("valkey: me.lua: %w", err)
+	}
+	tag, _ := arr[0].ToString()
+	res := outbound.MyEntryResult{Tag: outbound.MyEntryTag(tag)}
+	if res.Tag != outbound.MyEntryOK {
+		return res, nil
+	}
+	id, _ := arr[1].ToString()
+	res.Position, _ = arr[2].AsInt64()
+	fields := make(map[string]string, (len(arr)-3)/2)
+	for i := 3; i+1 < len(arr); i += 2 {
+		k, _ := arr[i].ToString()
+		v, _ := arr[i+1].ToString()
+		fields[k] = v
+	}
+	res.Entry = hashToEntry(id, fields)
+	return res, nil
 }
 
 // LivePosition returns 1 + ZCOUNT waiting -inf (seq.
