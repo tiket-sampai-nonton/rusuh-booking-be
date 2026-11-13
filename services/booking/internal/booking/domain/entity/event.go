@@ -101,6 +101,8 @@ func (i Inventory) Available() int {
 // CategoryDetail pairs a category with its live availability for the event-detail DTO.
 type CategoryDetail struct {
 	Category  Category
+	Capacity  int // category_inventories.capacity
+	Sold      int // category_inventories.sold_quantity (paid only)
 	Available int
 }
 
@@ -136,5 +138,6 @@ func (s Supply) Free() int {
 	return f
 }
 
-// SoldOut reports whether no free units remain.
-func (s Supply) SoldOut() bool { return s.Free() == 0 }
+// SoldOut reports whether every unit is sold (free + allocated + held = 0). Allocated and held units can still
+// return to sale, so zero free units alone does not make the event sold out.
+func (s Supply) SoldOut() bool { return s.TotalCapacity-s.SoldUnits <= 0 }

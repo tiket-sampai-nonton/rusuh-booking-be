@@ -226,7 +226,7 @@ func (r *EventRepo) GetDetail(ctx context.Context, eventID string) (entity.Event
 		return entity.EventDetail{}, err
 	}
 	rows, err := r.pool.Query(ctx, `
-		SELECT c.id::text, c.code, c.name, c.price_minor,
+		SELECT c.id::text, c.code, c.name, c.price_minor, ci.capacity, ci.sold_quantity,
 		       LEAST(GREATEST(ci.capacity - ci.held_quantity - ci.sold_quantity, 0),
 		             GREATEST(s.total_capacity - s.allocated_units - s.held_units - s.sold_units, 0)) AS available
 		  FROM booking.ticket_categories c
@@ -241,15 +241,15 @@ func (r *EventRepo) GetDetail(ctx context.Context, eventID string) (entity.Event
 	var cats []entity.CategoryDetail
 	for rows.Next() {
 		var c entity.Category
-		var available int
-		if err := rows.Scan(&c.ID, &c.Code, &c.Name, &c.PriceMinor, &available); err != nil {
+		var capacity, sold, available int
+		if err := rows.Scan(&c.ID, &c.Code, &c.Name, &c.PriceMinor, &capacity, &sold, &available); err != nil {
 			return entity.EventDetail{}, fmt.Errorf("events: detail scan: %w", err)
 		}
 		c.EventID = eventID
 		if available < 0 {
 			available = 0
 		}
-		cats = append(cats, entity.CategoryDetail{Category: c, Available: available})
+		cats = append(cats, entity.CategoryDetail{Category: c, Capacity: capacity, Sold: sold, Available: available})
 	}
 	if err := rows.Err(); err != nil {
 		return entity.EventDetail{}, err

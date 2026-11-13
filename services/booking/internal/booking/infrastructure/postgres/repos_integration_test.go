@@ -789,6 +789,23 @@ func TestEventRepo_DetailAvailabilityIsCappedByEventFree(t *testing.T) {
 	assert.Equal(t, 1, d.Categories[0].Available, "min(kategori 10, event 10-8-1)")
 }
 
+// D-C5.2: the detail carries the category's capacity and paid sold count (the supply snapshot's total and sold).
+func TestEventRepo_DetailCarriesCapacityAndSold(t *testing.T) {
+	f := seed(t)
+	ctx := context.Background()
+	repo := NewEventRepo(f.pool)
+
+	_, err := f.pool.Exec(ctx, `UPDATE booking.category_inventories SET sold_quantity = 3 WHERE event_id=$1::uuid`, f.eventID)
+	require.NoError(t, err)
+	_, err = f.pool.Exec(ctx, `UPDATE booking.event_supply SET sold_units = 3 WHERE event_id=$1::uuid`, f.eventID)
+	require.NoError(t, err)
+	d, err := repo.GetDetail(ctx, f.eventID)
+	require.NoError(t, err)
+	require.Len(t, d.Categories, 1)
+	assert.Equal(t, 10, d.Categories[0].Capacity, "kapasitas kategori dari seed")
+	assert.Equal(t, 3, d.Categories[0].Sold, "terjual berbayar")
+}
+
 func TestEventWriteRepo_SetImageURL(t *testing.T) {
 	f := seed(t)
 	ctx := context.Background()
