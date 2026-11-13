@@ -615,3 +615,34 @@ func outboxRows(t *testing.T, f acctFixture) int {
 		`SELECT count(*) FROM booking.outbox_events WHERE aggregate_id=$1::uuid`, f.eventID).Scan(&n))
 	return n
 }
+
+// Fix round 1 (R14): an entry that already holds a reservation is replayed with the same grant even after sales_ends_at.
+// Queue retries the batch when its promotion failed; a SOLD_OUT answer here would close the sale for a buyer who
+// already holds an admission (invariant 2). Only a new grant is refused after the end.
+func TestReserveBatch_ReplayAfterSalesEndReturnsSameGrant(t *testing.T) {
+	ctx := context.Background()
+	f := newAcctFixture(t, suffixFor(t), 5)
+	repo := NewAdmissionRepo(f.pool)
+	entry := anonEntry(1, 2)
+
+	first, err := repo.ReserveBatch(ctx, f.eventID, []outbound.ReserveEntry{entry}, time.Now())
+	require.NoError(t, err)
+	require.Equal(t, "GRANTED", first[0].Outcome)
+	require.NotEmpty(t, first[0].AllocationID)
+
+	_, err = f.pool.Exec(ctx, `UPDATE booking.events SET sales_ends_at = now() - interval '1 minute' WHERE id=$1::uuid`, f.eventID)
+	require.NoError(t, err)
+
+	again, err := repo.ReserveBatch(ctx, f.eventID, []outbound.ReserveEntry{entry}, time.Now())
+	require.NoError(t, err)
+	require.Len(t, again, 1)
+	assert.Equal(t, "GRANTED", again[0].Outcome, "replay after the sales end returns the same grant")
+	assert.Equal(t, first[0].AllocationID, again[0].AllocationID, "same allocation id")
+	assert.Equal(t, 2, f.ledger(t).alloc, "replay takes no extra stock")
+	assert.Equal(t, 1, admissionRows(t, f))
+
+	fresh, err := repo.ReserveBatch(ctx, f.eventID, []outbound.ReserveEntry{anonEntry(2, 1)}, time.Now())
+	require.NoError(t, err)
+	assert.Equal(t, "SOLD_OUT", fresh[0].Outcome, "a new grant after the sales end is refused")
+	assert.Equal(t, 0, soldOutRows(t, f), "the refusal after the end writes no booking.sold_out row")
+}
