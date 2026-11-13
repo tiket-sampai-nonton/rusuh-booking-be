@@ -149,6 +149,42 @@ func (mr *MockIEntryAuditRepoMockRecorder) Append(ctx, e any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Append", reflect.TypeOf((*MockIEntryAuditRepo)(nil).Append), ctx, e)
 }
 
+// MockIEntryAuditMetrics is a mock of IEntryAuditMetrics interface.
+type MockIEntryAuditMetrics struct {
+	ctrl     *gomock.Controller
+	recorder *MockIEntryAuditMetricsMockRecorder
+	isgomock struct{}
+}
+
+// MockIEntryAuditMetricsMockRecorder is the mock recorder for MockIEntryAuditMetrics.
+type MockIEntryAuditMetricsMockRecorder struct {
+	mock *MockIEntryAuditMetrics
+}
+
+// NewMockIEntryAuditMetrics creates a new mock instance.
+func NewMockIEntryAuditMetrics(ctrl *gomock.Controller) *MockIEntryAuditMetrics {
+	mock := &MockIEntryAuditMetrics{ctrl: ctrl}
+	mock.recorder = &MockIEntryAuditMetricsMockRecorder{mock}
+	return mock
+}
+
+// EXPECT returns an object that allows the caller to indicate expected use.
+func (m *MockIEntryAuditMetrics) EXPECT() *MockIEntryAuditMetricsMockRecorder {
+	return m.recorder
+}
+
+// Dropped mocks base method.
+func (m *MockIEntryAuditMetrics) Dropped(reason string, rows int) {
+	m.ctrl.T.Helper()
+	m.ctrl.Call(m, "Dropped", reason, rows)
+}
+
+// Dropped indicates an expected call of Dropped.
+func (mr *MockIEntryAuditMetricsMockRecorder) Dropped(reason, rows any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Dropped", reflect.TypeOf((*MockIEntryAuditMetrics)(nil).Dropped), reason, rows)
+}
+
 // MockIEventSettingsAdminRepo is a mock of IEventSettingsAdminRepo interface.
 type MockIEventSettingsAdminRepo struct {
 	ctrl     *gomock.Controller

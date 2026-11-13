@@ -26,6 +26,18 @@ type IEntryAuditRepo interface {
 	Append(ctx context.Context, e AuditRecord) error
 }
 
+// Why an audit row was not written (label reason of rbt_queue_entry_audit_dropped_total, D-C8.5).
+const (
+	AuditDropBufferFull  = "buffer_full"  // the writer's buffer was full when the row arrived
+	AuditDropWriteFailed = "write_failed" // the batch insert failed
+	AuditDropClosed      = "closed"       // the row arrived after shutdown began, or was still buffered at the deadline
+)
+
+// IEntryAuditMetrics counts the audit rows the best-effort writer did not store.
+type IEntryAuditMetrics interface {
+	Dropped(reason string, rows int)
+}
+
 // ApplySettingsParams is the input of IEventSettingsAdminRepo.Apply. Decide is the pure rule function
 // (entity.Decide) re-run inside the transaction on the freshly locked row; Now stamps updated_at and the audit rows.
 type ApplySettingsParams struct {

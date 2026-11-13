@@ -11,6 +11,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/clock"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/crypto"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/rabbitmq"
@@ -91,7 +93,7 @@ func newQueueModule(cfg config.Config, clients *Clients, logger *slog.Logger) (*
 	limiter := queuevalkey.NewRateLimiter(clients.VK.VK(), clients.VK, clk.Now)
 	settingsRepo := queuevalkey.NewEventSettingsCache(clients.VK.VK(), clients.VK, queuepg.NewEventSettings(clients.PG.Pool()))
 	settingsAdminRepo := queuepg.NewEventSettingsAdmin(clients.PG.Pool())
-	auditRepo := queuepg.NewEntryAudit(clients.PG.Pool())
+	auditRepo := clients.audit // one best-effort writer per process, owned by Clients (D-C8.5)
 
 	breaker, err := resilience.NewBreaker(resilience.BreakerConfig{
 		Name: "booking", FailureThreshold: 5, Cooldown: 10 * time.Second, HalfOpenProbes: 2, Timeout: cfg.Booking.Timeout,
@@ -179,6 +181,35 @@ func buildJobs(cfg config.Config, promoter, sweeper, statusPub, liveness func(co
 		{Name: "status-publisher", Every: every["status-publisher"], Run: statusPub},
 		{Name: "liveness", Every: every["liveness"], Run: liveness},
 	}
+}
+
+// Entry audit writer (D-C8.5): a 10 000-row buffer, flushed every 200 ms or as soon as 500 rows wait, one COPY per
+// batch. Rows that do not fit are dropped and counted; the request path never waits for them.
+const (
+	entryAuditBuffer       = 10000
+	entryAuditBatch        = 500
+	entryAuditEvery        = 200 * time.Millisecond
+	entryAuditDrainTimeout = 5 * time.Second // bounds the flush on shutdown
+)
+
+// startEntryAudit starts the entry_audit writer on ctx. Clients.Close stops it and flushes what is buffered.
+func startEntryAudit(ctx context.Context, pool *pgxpool.Pool) *queuepg.AsyncEntryAudit {
+	a := queuepg.NewAsyncEntryAudit(pool, entryAuditBuffer, entryAuditBatch, entryAuditEvery).WithMetrics(sharedEntryAuditMetrics())
+	go a.Run(ctx)
+	return a
+}
+
+var (
+	entryAuditMetricsOnce sync.Once
+	entryAuditMetricsInst *queuetelemetry.EntryAuditMetrics
+)
+
+// sharedEntryAuditMetrics registers rbt_queue_entry_audit_dropped_total on the process-wide registry exactly once.
+func sharedEntryAuditMetrics() *queuetelemetry.EntryAuditMetrics {
+	entryAuditMetricsOnce.Do(func() {
+		entryAuditMetricsInst = queuetelemetry.NewEntryAuditMetrics(telemetry.Default)
+	})
+	return entryAuditMetricsInst
 }
 
 var (
