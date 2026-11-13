@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -290,6 +291,60 @@ type fakeExpiryUC struct{ ids []string }
 func (f *fakeExpiryUC) ExpireBooking(_ context.Context, id string) error {
 	f.ids = append(f.ids, id)
 	return nil
+}
+
+// batchedAdmissionRepo serves ClaimDueSessions from scripted batches and counts the claims.
+type batchedAdmissionRepo struct {
+	*fakeAdmissionRepo
+	batches [][]entity.Admission
+	claims  int
+	always  int // when > 0, every claim returns this many admissions (a backlog that never drains)
+}
+
+func (b *batchedAdmissionRepo) ClaimDueSessions(context.Context, time.Time, int) ([]entity.Admission, error) {
+	b.claims++
+	if b.always > 0 {
+		out := make([]entity.Admission, b.always)
+		for i := range out {
+			out[i].ID = "x"
+		}
+		return out, nil
+	}
+	if len(b.batches) == 0 {
+		return nil, nil
+	}
+	out := b.batches[0]
+	b.batches = b.batches[1:]
+	return out, nil
+}
+
+func admissionBatch(n, from int) []entity.Admission {
+	out := make([]entity.Admission, n)
+	for i := range out {
+		out[i].ID = fmt.Sprintf("a%d", from+i)
+	}
+	return out
+}
+
+// D-C7.3: a full batch means more may be due, so the sweeper claims again until a short batch ends the round.
+func TestSweepSessions_RepeatsWhileBatchFull(t *testing.T) {
+	adm := &batchedAdmissionRepo{
+		fakeAdmissionRepo: &fakeAdmissionRepo{},
+		batches:           [][]entity.Admission{admissionBatch(100, 0), admissionBatch(100, 100), admissionBatch(3, 200)},
+	}
+	uc := usecase.NewSweepSessions(adm, fixedClock{t: time.Now()})
+	require.NoError(t, uc.SweepSessions(context.Background()))
+	assert.Equal(t, 3, adm.claims)
+	assert.Len(t, adm.expired, 203)
+}
+
+// D-C7.3: one call never claims more than maxSweepRounds (20) batches, even when the backlog never drains.
+func TestSweepSessions_StopsAfterMaxRounds(t *testing.T) {
+	adm := &batchedAdmissionRepo{fakeAdmissionRepo: &fakeAdmissionRepo{}, always: 100}
+	uc := usecase.NewSweepSessions(adm, fixedClock{t: time.Now()})
+	require.NoError(t, uc.SweepSessions(context.Background()))
+	assert.Equal(t, 20, adm.claims)
+	assert.Len(t, adm.expired, 2000)
 }
 
 func TestSweepExpiries_DelegatesEach(t *testing.T) {

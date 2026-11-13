@@ -301,18 +301,24 @@ func TestActivate_DeadlineIsActivationPlusSelectionTTL(t *testing.T) {
 		g, err := repo.GetByID(context.Background(), id)
 		require.NoError(t, err)
 		assert.True(t, stored.Equal(g.ExpiresAt), "no recompute")
-		due, err := repo.DueSessions(context.Background(), stored.Add(4*time.Second), 10)
-		require.NoError(t, err)
-		for _, d := range due {
-			assert.NotEqual(t, id, d.ID, "not due before expires_at + grace (5 s)")
-		}
-		due, err = repo.DueSessions(context.Background(), stored.Add(6*time.Second), 10)
+		// Inside the grace window the sweeper still claims the row (D-C7.3), but ExpireSession leaves it ACTIVE.
+		due, err := repo.ClaimDueSessions(context.Background(), stored.Add(4*time.Second), 10)
 		require.NoError(t, err)
 		var found bool
 		for _, d := range due {
 			found = found || d.ID == id
 		}
-		assert.True(t, found, "due after expires_at + grace")
+		assert.True(t, found, "claimed inside the grace window")
+		require.NoError(t, repo.ExpireSession(context.Background(), id, stored.Add(4*time.Second)))
+		st, _, _ := admState(t, f, id)
+		assert.Equal(t, "ACTIVE", st, "not expired before expires_at + grace (5 s)")
+		due, err = repo.ClaimDueSessions(context.Background(), stored.Add(6*time.Second), 10)
+		require.NoError(t, err)
+		found = false
+		for _, d := range due {
+			found = found || d.ID == id
+		}
+		assert.True(t, found, "due again after expires_at + grace")
 	})
 }
 

@@ -63,8 +63,9 @@ type IAdmissionRepo interface {
 	// (UNCLAIMED or LEFT_WITHOUT_BUYING). Terminal admissions return (false, nil); an EDITABLE admission (a hold
 	// exists) returns ErrBookingLocked and changes nothing.
 	Release(ctx context.Context, allocationID string, reason vo.EndReason) (bool, error)
-	// DueSessions scans admissions whose expiry has lapsed (session sweeper).
-	DueSessions(ctx context.Context, now time.Time, limit int) ([]entity.Admission, error)
+	// ClaimDueSessions leases up to limit admissions whose expiry has lapsed (session sweeper, D-C7.3). A claimed row is
+	// hidden from other sweepers for 15 s, or until its submit grace ends when it is still inside it.
+	ClaimDueSessions(ctx context.Context, now time.Time, limit int) ([]entity.Admission, error)
 	// ExpireSession releases one admission's allocation/held stock in its own transaction.
 	ExpireSession(ctx context.Context, admissionID string, now time.Time) error
 }
@@ -99,9 +100,10 @@ type IBookingRepo interface {
 	DeferVerification(ctx context.Context, bookingID string, until time.Time) error
 }
 
-// IBookingDueScanner finds bookings whose payment window has lapsed (expiry sweeper).
+// IBookingDueScanner finds bookings whose payment window has lapsed (expiry sweeper). ClaimDueBookings leases the
+// returned rows for 15 s so that concurrent sweepers do not take the same booking (D-C7.3).
 type IBookingDueScanner interface {
-	DueBookingIDs(ctx context.Context, now time.Time, limit int) ([]string, error)
+	ClaimDueBookings(ctx context.Context, now time.Time, limit int) ([]string, error)
 }
 
 // ITicketRepo reads issued tickets (writes go through IUnitOfWork during settlement).

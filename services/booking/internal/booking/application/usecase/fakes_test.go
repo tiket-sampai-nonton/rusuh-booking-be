@@ -160,7 +160,7 @@ func (f *fakeAdmissionRepo) Release(_ context.Context, id string, reason vo.EndR
 	}
 	return true, nil
 }
-func (f *fakeAdmissionRepo) DueSessions(context.Context, time.Time, int) ([]entity.Admission, error) {
+func (f *fakeAdmissionRepo) ClaimDueSessions(context.Context, time.Time, int) ([]entity.Admission, error) {
 	return f.due, nil
 }
 func (f *fakeAdmissionRepo) ExpireSession(_ context.Context, id string, _ time.Time) error {
@@ -278,7 +278,7 @@ func (f *fakeBookingRepo) GetByID(context.Context, string) (entity.Booking, erro
 func (f *fakeBookingRepo) ListByAccount(context.Context, string, string, int) ([]dto.MyBookingItem, string, error) {
 	return f.list, f.next, f.listErr
 }
-func (f *fakeBookingRepo) DueBookingIDs(context.Context, time.Time, int) ([]string, error) {
+func (f *fakeBookingRepo) ClaimDueBookings(context.Context, time.Time, int) ([]string, error) {
 	return f.due, nil
 }
 func (f *fakeBookingRepo) DeferVerification(_ context.Context, bookingID string, until time.Time) error {

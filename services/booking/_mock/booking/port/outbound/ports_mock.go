@@ -317,19 +317,19 @@ func (mr *MockIAdmissionRepoMockRecorder) Activate(ctx, jti, at any) *gomock.Cal
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Activate", reflect.TypeOf((*MockIAdmissionRepo)(nil).Activate), ctx, jti, at)
 }
 
-// DueSessions mocks base method.
-func (m *MockIAdmissionRepo) DueSessions(ctx context.Context, now time.Time, limit int) ([]entity.Admission, error) {
+// ClaimDueSessions mocks base method.
+func (m *MockIAdmissionRepo) ClaimDueSessions(ctx context.Context, now time.Time, limit int) ([]entity.Admission, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "DueSessions", ctx, now, limit)
+	ret := m.ctrl.Call(m, "ClaimDueSessions", ctx, now, limit)
 	ret0, _ := ret[0].([]entity.Admission)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
-// DueSessions indicates an expected call of DueSessions.
-func (mr *MockIAdmissionRepoMockRecorder) DueSessions(ctx, now, limit any) *gomock.Call {
+// ClaimDueSessions indicates an expected call of ClaimDueSessions.
+func (mr *MockIAdmissionRepoMockRecorder) ClaimDueSessions(ctx, now, limit any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DueSessions", reflect.TypeOf((*MockIAdmissionRepo)(nil).DueSessions), ctx, now, limit)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ClaimDueSessions", reflect.TypeOf((*MockIAdmissionRepo)(nil).ClaimDueSessions), ctx, now, limit)
 }
 
 // ExpireSession mocks base method.
@@ -514,19 +514,19 @@ func (m *MockIBookingDueScanner) EXPECT() *MockIBookingDueScannerMockRecorder {
 	return m.recorder
 }
 
-// DueBookingIDs mocks base method.
-func (m *MockIBookingDueScanner) DueBookingIDs(ctx context.Context, now time.Time, limit int) ([]string, error) {
+// ClaimDueBookings mocks base method.
+func (m *MockIBookingDueScanner) ClaimDueBookings(ctx context.Context, now time.Time, limit int) ([]string, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "DueBookingIDs", ctx, now, limit)
+	ret := m.ctrl.Call(m, "ClaimDueBookings", ctx, now, limit)
 	ret0, _ := ret[0].([]string)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
-// DueBookingIDs indicates an expected call of DueBookingIDs.
-func (mr *MockIBookingDueScannerMockRecorder) DueBookingIDs(ctx, now, limit any) *gomock.Call {
+// ClaimDueBookings indicates an expected call of ClaimDueBookings.
+func (mr *MockIBookingDueScannerMockRecorder) ClaimDueBookings(ctx, now, limit any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DueBookingIDs", reflect.TypeOf((*MockIBookingDueScanner)(nil).DueBookingIDs), ctx, now, limit)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ClaimDueBookings", reflect.TypeOf((*MockIBookingDueScanner)(nil).ClaimDueBookings), ctx, now, limit)
 }
 
 // MockITicketRepo is a mock of ITicketRepo interface.

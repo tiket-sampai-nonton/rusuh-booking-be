@@ -719,18 +719,31 @@ func (r *AdmissionRepo) Release(ctx context.Context, allocationID string, reason
 	return released, nil
 }
 
-// DueSessions scans admissions whose expiry lapsed, applying grace for ACTIVE/EDITABLE (design §7.1).
-func (r *AdmissionRepo) DueSessions(ctx context.Context, now time.Time, limit int) ([]entity.Admission, error) {
-	rows, err := r.pool.Query(ctx, `SELECT `+admissionCols+`
-		FROM booking.admissions
-		WHERE status IN ('RESERVED','ACTIVE','EDITABLE')
-		  AND expires_at + CASE
-		        WHEN status = 'RESERVED' THEN interval '0'
-		        ELSE (cfg_submit_grace_seconds || ' seconds')::interval
-		      END < $1
-		ORDER BY expires_at LIMIT $2`, now, limit)
+// sweepLease is how long a claimed row stays hidden from the other sweepers (D-C7.3).
+const sweepLease = "15 seconds"
+
+// admissionGraceEnd is expires_at plus the submit grace; a RESERVED row has no grace (design §7.1).
+const admissionGraceEnd = `expires_at + CASE WHEN status = 'RESERVED' THEN interval '0' ELSE (cfg_submit_grace_seconds || ' seconds')::interval END`
+
+// ClaimDueSessions leases up to limit admissions whose expiry lapsed (AC-C7.3, D-C7.3). The predicate is sargable on
+// idx_admissions_due. A row still inside its submit grace is returned as well, with its lease set to the grace end, so
+// it comes back exactly when it is due; ExpireSession leaves it alone until then (B8).
+func (r *AdmissionRepo) ClaimDueSessions(ctx context.Context, now time.Time, limit int) ([]entity.Admission, error) {
+	rows, err := r.pool.Query(ctx, `
+		UPDATE booking.admissions
+		   SET sweep_lease_until = CASE WHEN `+admissionGraceEnd+` > $1::timestamptz
+		                                THEN `+admissionGraceEnd+`
+		                                ELSE $1::timestamptz + $3::interval END
+		 WHERE id IN (
+		       SELECT id FROM booking.admissions
+		        WHERE status IN ('RESERVED','ACTIVE','EDITABLE')
+		          AND expires_at < $1::timestamptz
+		          AND (sweep_lease_until IS NULL OR sweep_lease_until <= $1::timestamptz)
+		        ORDER BY expires_at LIMIT $2
+		        FOR UPDATE SKIP LOCKED)
+		RETURNING `+admissionCols, now, limit, sweepLease)
 	if err != nil {
-		return nil, fmt.Errorf("admissions: due: %w", err)
+		return nil, fmt.Errorf("admissions: claim due: %w", err)
 	}
 	defer rows.Close()
 	var out []entity.Admission
@@ -750,10 +763,12 @@ func (r *AdmissionRepo) ExpireSession(ctx context.Context, admissionID string, n
 	return pkgpg.WithTx(ctx, r.pool, pgx.TxOptions{IsoLevel: pgx.ReadCommitted}, func(tx pgx.Tx) error {
 		var status vo.AdmissionStatus
 		var eventID, queueEntryID string
-		var outstanding int
-		if err := tx.QueryRow(ctx, `SELECT status, event_id::text, queue_entry_id::text, outstanding_units
+		var outstanding, graceSeconds int
+		var expiresAt time.Time
+		if err := tx.QueryRow(ctx, `SELECT status, event_id::text, queue_entry_id::text, outstanding_units,
+			expires_at, cfg_submit_grace_seconds
 			FROM booking.admissions WHERE id=$1::uuid FOR UPDATE`, admissionID).
-			Scan(&status, &eventID, &queueEntryID, &outstanding); err != nil {
+			Scan(&status, &eventID, &queueEntryID, &outstanding, &expiresAt, &graceSeconds); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return nil
 			}
@@ -761,6 +776,15 @@ func (r *AdmissionRepo) ExpireSession(ctx context.Context, admissionID string, n
 		}
 		if !status.IsActive() {
 			return nil // already terminal, idempotent
+		}
+		// D-C7.3 / B8: inside the submit grace (expires_at <= now < expires_at + grace) the session is not expired here;
+		// ClaimDueSessions returns it again at grace end. A RESERVED row has no grace.
+		grace := time.Duration(graceSeconds) * time.Second
+		if status == vo.AdmissionReserved {
+			grace = 0
+		}
+		if !now.Before(expiresAt) && now.Before(expiresAt.Add(grace)) {
+			return nil
 		}
 
 		endReason := "SESSION_EXPIRED"

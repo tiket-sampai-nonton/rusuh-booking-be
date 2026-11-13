@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/domain/dto"
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/domain/entity"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/domain/mapper"
 	vo "github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/domain/valueobject"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/port/inbound"
@@ -125,12 +126,12 @@ func TestBookingRepo_GetListAndDue(t *testing.T) {
 	_, err = repo.GetByID(ctx, "bukan-uuid")
 	assert.ErrorIs(t, err, inbound.ErrNotFound)
 
-	due, err := repo.DueBookingIDs(ctx, time.Now(), 10)
+	due, err := repo.ClaimDueBookings(ctx, time.Now(), 10)
 	require.NoError(t, err)
 	assert.Empty(t, due, "belum lewat batas bayar")
 	_, err = f.pool.Exec(ctx, `UPDATE booking.bookings SET created_at = now() - interval '2 hours', payment_expires_at = now() - interval '1 minute' WHERE id=$1::uuid`, id)
 	require.NoError(t, err)
-	due, err = repo.DueBookingIDs(ctx, time.Now(), 10)
+	due, err = repo.ClaimDueBookings(ctx, time.Now(), 10)
 	require.NoError(t, err)
 	assert.Equal(t, []string{id}, due)
 
@@ -223,7 +224,7 @@ func TestBookingRepo_DueSkipsVerifyingInGrace(t *testing.T) {
 	}
 	pending := f.insertBooking(t, "PENDING_PAYMENT", now.Add(-time.Second), nil)
 
-	due, err := repo.DueBookingIDs(ctx, now, 2)
+	due, err := repo.ClaimDueBookings(ctx, now, 2)
 	require.NoError(t, err)
 	assert.Equal(t, []string{pending}, due, "limit 2 tidak boleh habis oleh VERIFYING yang masih dalam grace")
 
@@ -231,10 +232,11 @@ func TestBookingRepo_DueSkipsVerifyingInGrace(t *testing.T) {
 	_, err = f.pool.Exec(ctx, `UPDATE booking.bookings SET verification_until = now() - interval '1 second' WHERE status='VERIFYING' AND id IN (
 		SELECT id FROM booking.bookings WHERE status='VERIFYING' LIMIT 1)`)
 	require.NoError(t, err)
-	due, err = repo.DueBookingIDs(ctx, time.Now(), 10)
+	// The first claim leased the PENDING row for 15 s, so only the VERIFYING row whose grace has passed is claimable now.
+	due, err = repo.ClaimDueBookings(ctx, time.Now(), 10)
 	require.NoError(t, err)
-	assert.Len(t, due, 2, "PENDING yang lewat batas bayar dan satu VERIFYING yang grace-nya sudah lewat")
-	assert.Contains(t, due, pending)
+	assert.Len(t, due, 1, "satu VERIFYING yang grace-nya sudah lewat; PENDING masih di-lease")
+	assert.NotContains(t, due, pending)
 }
 
 func ptrTime(t time.Time) *time.Time { return &t }
@@ -257,7 +259,7 @@ func TestBookingRepo_DeferVerificationOnlyMovesVerifying(t *testing.T) {
 	assert.WithinDuration(t, until, got, time.Millisecond)
 	assert.Equal(t, 1, f.n(t, `SELECT count(*) FROM booking.bookings WHERE id=$1::uuid AND verification_until IS NULL`, pending))
 
-	due, err := repo.DueBookingIDs(ctx, now, 10)
+	due, err := repo.ClaimDueBookings(ctx, now, 10)
 	require.NoError(t, err)
 	assert.Equal(t, []string{pending}, due, "VERIFYING yang ditunda belum jatuh tempo")
 }
@@ -314,7 +316,7 @@ func TestAdmissionRepo_FindActivateReserveReleaseAndDue(t *testing.T) {
 	// Sessions past their time are due; ending an ACTIVE one frees its stock.
 	_, err = f.pool.Exec(ctx, `UPDATE booking.admissions SET reserved_at = now() - interval '3 hours', claimed_at = now() - interval '2 hours', expires_at = now() - interval '1 hour' WHERE id=$1::uuid`, f.admissionID)
 	require.NoError(t, err)
-	due, err := repo.DueSessions(ctx, time.Now(), 10)
+	due, err := repo.ClaimDueSessions(ctx, time.Now(), 10)
 	require.NoError(t, err)
 	require.Len(t, due, 1)
 	require.NoError(t, repo.ExpireSession(ctx, f.admissionID, time.Now()))
@@ -970,4 +972,109 @@ func TestEventRepo_StoredSoldOutIsDerivedFromStock(t *testing.T) {
 	detail, err = repo.GetDetail(ctx, f.eventID)
 	require.NoError(t, err)
 	assert.Equal(t, "SOLD_OUT", mapper.ToEventDetail(detail, time.Now()).Event.Status)
+}
+
+// D-C7.3: two sweepers claiming at once never get the same admission; together they get every due row once.
+func TestClaimDueSessions_TwoSweepersNeverShareRows(t *testing.T) {
+	ctx := context.Background()
+	f := newAcctFixture(t, suffixFor(t), 30)
+	for i := range 20 {
+		f.reserve(t, i, 1, false)
+	}
+	_, err := f.pool.Exec(ctx, `UPDATE booking.admissions SET reserved_at=now()-interval '3 hours', claimed_at=now()-interval '2 hours', expires_at=now()-interval '1 hour' WHERE event_id=$1::uuid`, f.eventID)
+	require.NoError(t, err)
+	repo := NewAdmissionRepo(f.pool)
+	now := time.Now()
+
+	start := make(chan struct{})
+	got := make([][]string, 2)
+	var wg sync.WaitGroup
+	for i := range got {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			due, err := repo.ClaimDueSessions(ctx, now, 20)
+			assert.NoError(t, err)
+			for _, d := range due {
+				got[i] = append(got[i], d.ID)
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+
+	union := map[string]int{}
+	for _, ids := range got {
+		for _, id := range ids {
+			union[id]++
+		}
+	}
+	shared := 0
+	for _, n := range union {
+		if n > 1 {
+			shared++
+		}
+	}
+	assert.Len(t, union, 20, "union of both claims is the 20 due rows")
+	assert.Zero(t, shared, "no admission was claimed by both sweepers")
+}
+
+// D-C7.3: a row inside its submit grace is claimed, ExpireSession leaves it alone, and it comes back at grace end.
+func TestClaimDueSessions_InGraceComesBackAtGraceEnd(t *testing.T) {
+	ctx := context.Background()
+	f := newAcctFixture(t, suffixFor(t), 5)
+	id, _ := f.reserve(t, 1, 1, false) // ACTIVE, submit grace 5 s
+	repo := NewAdmissionRepo(f.pool)
+	t0 := time.Now()
+	_, err := f.pool.Exec(ctx, `UPDATE booking.admissions SET reserved_at=$2, claimed_at=$3, expires_at=$4 WHERE id=$1::uuid`,
+		id, t0.Add(-3*time.Hour), t0.Add(-2*time.Hour), t0.Add(-time.Second))
+	require.NoError(t, err)
+	has := func(due []entity.Admission) bool {
+		for _, d := range due {
+			if d.ID == id {
+				return true
+			}
+		}
+		return false
+	}
+
+	due, err := repo.ClaimDueSessions(ctx, t0, 10)
+	require.NoError(t, err)
+	require.True(t, has(due), "in grace: claimed")
+	require.NoError(t, repo.ExpireSession(ctx, id, t0))
+	st, _, _ := admState(t, f, id)
+	assert.Equal(t, "ACTIVE", st, "ExpireSession is a no-op inside the submit grace")
+
+	due, err = repo.ClaimDueSessions(ctx, t0, 10)
+	require.NoError(t, err)
+	assert.False(t, has(due), "leased until grace end: not claimable again at now")
+	due, err = repo.ClaimDueSessions(ctx, t0.Add(3*time.Second), 10)
+	require.NoError(t, err)
+	assert.False(t, has(due), "still leased at now+3 s")
+	due, err = repo.ClaimDueSessions(ctx, t0.Add(5*time.Second), 10)
+	require.NoError(t, err)
+	assert.True(t, has(due), "returned at grace end (expires_at + 5 s = t0+4 s)")
+	require.NoError(t, repo.ExpireSession(ctx, id, t0.Add(5*time.Second)))
+	st, _, _ = admState(t, f, id)
+	assert.Equal(t, "EXPIRED", st, "expired once grace has ended")
+}
+
+// D-C7.3: a claimed booking is hidden for the 15 s lease and comes back when it lapses.
+func TestClaimDueBookings_LeaseHidesClaimedRows(t *testing.T) {
+	f := seed(t)
+	ctx := context.Background()
+	repo := NewBookingRepo(f.pool)
+	now := time.Now()
+	id := f.insertBooking(t, "PENDING_PAYMENT", now.Add(-time.Second), nil)
+
+	due, err := repo.ClaimDueBookings(ctx, now, 10)
+	require.NoError(t, err)
+	assert.Equal(t, []string{id}, due)
+	due, err = repo.ClaimDueBookings(ctx, now, 10)
+	require.NoError(t, err)
+	assert.Empty(t, due, "leased: a second sweeper skips it")
+	due, err = repo.ClaimDueBookings(ctx, now.Add(16*time.Second), 10)
+	require.NoError(t, err)
+	assert.Equal(t, []string{id}, due, "lease lapsed")
 }
