@@ -194,6 +194,12 @@ paths:
                 required:
                 - meta
                 - data
+        '400':
+          description: 'eventId (query) tidak ada, kosong, atau bukan UUID — errorCode: `VALIDATION_ERROR`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
         '401':
           description: 'Token tidak valid, kedaluwarsa, sudah dirotasi, atau perangkat tidak cocok — errorCode: `VISITOR_TOKEN_INVALID`'
           content:
@@ -312,6 +318,12 @@ paths:
                 required:
                 - meta
                 - data
+        '400':
+          description: 'eventId (query) tidak ada, kosong, atau bukan UUID — errorCode: `VALIDATION_ERROR`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
         '401':
           description: 'Token visitor tidak ada, tidak valid, kedaluwarsa, dirotasi (generasi lama), atau perangkat tidak cocok; dijawab sebelum entri dicari sehingga sama untuk entri milik sendiri, milik orang lain, atau tidak ada — errorCode: `VISITOR_TOKEN_INVALID`'
           content:
@@ -369,6 +381,12 @@ paths:
       responses:
         '204':
           description: Keluar; slot tidak dipakai lagi
+        '400':
+          description: 'eventId (query) tidak ada, kosong, atau bukan UUID — errorCode: `VALIDATION_ERROR`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
         '401':
           description: 'Token visitor tidak ada, tidak valid, kedaluwarsa, dirotasi (generasi lama), atau perangkat tidak cocok; dijawab sebelum entri dicari sehingga sama untuk entri milik sendiri, milik orang lain, atau tidak ada — errorCode: `VISITOR_TOKEN_INVALID`'
           content:

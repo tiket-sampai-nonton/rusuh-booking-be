@@ -1,6 +1,6 @@
 {
   "eventId": "22222222-2222-2222-2222-222222222222",
-  "remainingTickets": 12,
+  "remainingTickets": 2,
   "soldOut": false,
   "categories": [
     {"code": "VIP", "name": "VIP", "sold": 0, "total": 7},

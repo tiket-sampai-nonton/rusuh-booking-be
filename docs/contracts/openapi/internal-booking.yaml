@@ -53,6 +53,12 @@ paths:
                 required:
                 - meta
                 - data
+        '400':
+          description: 'entries kosong atau lebih dari 100, atau field tidak valid — errorCode: `VALIDATION_ERROR`'
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ErrorEnvelope"
         '401':
           description: 'Token tidak ada, tidak valid, atau scope salah (service token
             untuk /internal, token pembeli admin untuk /admin) — errorCode: `UNAUTHORIZED`'
@@ -357,7 +363,7 @@ paths:
         '401':
           description: Missing or invalid user bearer token
         '409':
-          description: Rules locked after sale started
+          description: 'Rules locked after sale started — errorCode: `EVENT_RULES_LOCKED`; or the event is cancelled — errorCode: `EVENT_CANCELLED`'
   "/internal/v1/admin/events/{eventId}/publish":
     post:
       tags:
@@ -382,6 +388,8 @@ paths:
           description: Missing or invalid user bearer token
         '404':
           description: Event tidak ada
+        '409':
+          description: 'Event sudah dibatalkan — errorCode: `EVENT_CANCELLED`'
   "/internal/v1/admin/events/{eventId}/unpublish":
     post:
       tags:
@@ -407,7 +415,7 @@ paths:
         '404':
           description: Event tidak ada
         '409':
-          description: 'Penjualan sudah dibuka — errorCode: `EVENT_RULES_LOCKED`'
+          description: 'Penjualan sudah dibuka — errorCode: `EVENT_RULES_LOCKED`; atau event sudah dibatalkan — errorCode: `EVENT_CANCELLED`'
   "/internal/v1/admin/events/{eventId}/cancel":
     post:
       tags:
@@ -506,6 +514,12 @@ paths:
                 "$ref": "#/components/schemas/ErrorEnvelope"
         '404':
           description: Event tidak ada — errorCode `NOT_FOUND`
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ErrorEnvelope"
+        '409':
+          description: 'Event sudah dibatalkan — errorCode: `EVENT_CANCELLED`'
           content:
             application/json:
               schema:
@@ -623,6 +637,8 @@ components:
           format: uuid
         entries:
           type: array
+          minItems: 1
+          maxItems: 100
           items:
             type: object
             properties:
@@ -863,6 +879,10 @@ components:
       - extended
     AdminEventCreateRequest:
       type: object
+      description: |
+        Pengaturan berikut tidak diatur lewat API admin dan memakai nilai tetap dari migrasi `0001_init`:
+        `timezone = Asia/Jakarta`, `selection_warning_seconds = 60`, `ticket_categories.currency = IDR`,
+        `claim_window_seconds = 180`, `selection_submit_grace_seconds = 5`, `max_attendee_checks_per_session = 10`.
       properties:
         name:
           type: string
