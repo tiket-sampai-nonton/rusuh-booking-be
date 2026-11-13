@@ -20,6 +20,11 @@ const StatusDocRefresh = 250 * time.Millisecond
 // statusDocIdle is how long a snapshot may go unrefreshed before the cache drops it (memory bound over many events).
 const statusDocIdle = time.Minute
 
+// statusDocReadTimeout bounds the one shared Valkey read of a flight. The read runs under context.WithoutCancel, so only
+// this timeout stops a stalled GET. No shared Valkey read timeout exists in this service (the lease releases use inline
+// 2 s bounds), so 1 s is set here: a status read is answered from memory on the next 250 ms window anyway.
+const statusDocReadTimeout = time.Second
+
 // StatusDocCache implements outbound.IStatusDocReader (D-C8.9). A document read from Valkey is reused for ttl, so a
 // burst of status and `me` reads for one event costs one GET. The refresh is lazy: the first read after the TTL goes to
 // Valkey, so the cache starts no goroutine and has nothing to stop on shutdown. Concurrent misses for one event share one
@@ -54,7 +59,10 @@ func (c *StatusDocCache) Get(ctx context.Context, eventID string) ([]byte, dto.S
 		return snap.raw, snap.doc, true, nil
 	}
 	v, err, _ := c.group.Do(eventID, func() (any, error) {
-		return c.refresh(ctx, eventID, slot)
+		// The read is shared by every caller that joined this flight, so it must not die with the leader's request.
+		rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), statusDocReadTimeout)
+		defer cancel()
+		return c.refresh(rctx, eventID, slot)
 	})
 	if err != nil {
 		return nil, dto.StatusDocument{}, false, err
@@ -66,24 +74,34 @@ func (c *StatusDocCache) Get(ctx context.Context, eventID string) ([]byte, dto.S
 	return snap.raw, snap.doc, true, nil
 }
 
-// refresh reads the document from Valkey and stores the snapshot in the event's slot (nil when there is none).
+// refresh reads the document from Valkey and stores the snapshot in the event's slot (nil when there is none). An absent
+// document or a failed read drops the slot instead, so it keeps no memory behind.
 func (c *StatusDocCache) refresh(ctx context.Context, eventID string, slot *atomic.Pointer[statusDocSnapshot]) (*statusDocSnapshot, error) {
 	raw, ok, err := c.store.GetStatusDoc(ctx, eventID)
 	if err != nil {
+		c.drop(eventID, slot)
 		return nil, err
 	}
 	if !ok {
-		slot.Store(nil)
+		c.drop(eventID, slot)
 		return nil, nil
 	}
 	var doc dto.StatusDocument
 	if err := json.Unmarshal(raw, &doc); err != nil {
+		c.drop(eventID, slot)
 		return nil, fmt.Errorf("status: unmarshal document: %w", err)
 	}
 	snap := &statusDocSnapshot{raw: raw, doc: doc, at: c.now()}
 	slot.Store(snap)
 	c.sweep(snap.at)
 	return snap, nil
+}
+
+// drop removes the event's slot if it still holds this slot (a later slot for the event is left alone), then runs the
+// idle sweep, so reads of events with no document leave no slot behind.
+func (c *StatusDocCache) drop(eventID string, slot *atomic.Pointer[statusDocSnapshot]) {
+	c.slots.CompareAndDelete(eventID, slot)
+	c.sweep(c.now())
 }
 
 // slot returns the event's snapshot holder, creating it on first use.

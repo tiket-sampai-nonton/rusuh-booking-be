@@ -795,21 +795,62 @@ func (s *QueueStore) MyEntry(ctx context.Context, eventID, visitorID string, gen
 	if err != nil {
 		return outbound.MyEntryResult{}, fmt.Errorf("valkey: me.lua: %w", err)
 	}
-	tag, _ := arr[0].ToString()
-	res := outbound.MyEntryResult{Tag: outbound.MyEntryTag(tag)}
-	if res.Tag != outbound.MyEntryOK {
-		return res, nil
+	replies := make([]meReply, len(arr))
+	for i := range arr {
+		replies[i] = &arr[i]
 	}
-	id, _ := arr[1].ToString()
-	res.Position, _ = arr[2].AsInt64()
+	return decodeMyEntry(replies)
+}
+
+// meReply is the part of a Valkey reply that decodeMyEntry reads. *vk.ValkeyMessage satisfies it; the unit tests pass
+// fakes, because a real me.lua reply never has the malformed shapes they cover.
+type meReply interface {
+	ToString() (string, error)
+	AsInt64() (int64, error)
+}
+
+// decodeMyEntry reads the me.lua reply: {ABSENT} | {INVALID} | {NOT_FOUND} | {OK, entryId, position, field1, value1, ...}.
+// An unknown tag, a short or odd-shaped OK reply, and any element that cannot be read are errors, not silent zero values.
+func decodeMyEntry(arr []meReply) (outbound.MyEntryResult, error) {
+	if len(arr) == 0 {
+		return outbound.MyEntryResult{}, errors.New("valkey: me.lua: empty reply")
+	}
+	tagStr, err := arr[0].ToString()
+	if err != nil {
+		return outbound.MyEntryResult{}, fmt.Errorf("valkey: me.lua: tag: %w", err)
+	}
+	tag := outbound.MyEntryTag(tagStr)
+	switch tag {
+	case outbound.MyEntryAbsent, outbound.MyEntryInvalid, outbound.MyEntryNotFound:
+		return outbound.MyEntryResult{Tag: tag}, nil
+	case outbound.MyEntryOK:
+	default:
+		return outbound.MyEntryResult{}, fmt.Errorf("valkey: me.lua: unexpected reply %q", tagStr)
+	}
+	if len(arr) < 3 || (len(arr)-3)%2 != 0 {
+		return outbound.MyEntryResult{}, fmt.Errorf("valkey: me.lua: OK reply has %d elements", len(arr))
+	}
+	id, err := arr[1].ToString()
+	if err != nil {
+		return outbound.MyEntryResult{}, fmt.Errorf("valkey: me.lua: entry id: %w", err)
+	}
+	pos, err := arr[2].AsInt64()
+	if err != nil {
+		return outbound.MyEntryResult{}, fmt.Errorf("valkey: me.lua: position: %w", err)
+	}
 	fields := make(map[string]string, (len(arr)-3)/2)
-	for i := 3; i+1 < len(arr); i += 2 {
-		k, _ := arr[i].ToString()
-		v, _ := arr[i+1].ToString()
+	for i := 3; i < len(arr); i += 2 {
+		k, err := arr[i].ToString()
+		if err != nil {
+			return outbound.MyEntryResult{}, fmt.Errorf("valkey: me.lua: field name: %w", err)
+		}
+		v, err := arr[i+1].ToString()
+		if err != nil {
+			return outbound.MyEntryResult{}, fmt.Errorf("valkey: me.lua: field %s: %w", k, err)
+		}
 		fields[k] = v
 	}
-	res.Entry = hashToEntry(id, fields)
-	return res, nil
+	return outbound.MyEntryResult{Tag: tag, Position: pos, Entry: hashToEntry(id, fields)}, nil
 }
 
 // LivePosition returns 1 + ZCOUNT waiting -inf (seq.

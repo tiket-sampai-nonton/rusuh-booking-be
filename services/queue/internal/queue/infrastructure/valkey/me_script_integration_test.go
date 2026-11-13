@@ -90,3 +90,66 @@ func TestMyEntryScript_MatchesMultiCallResult(t *testing.T) {
 		assert.EqualValues(t, 2, got.Position, "e-wait is live and ahead of e-ahead: position 1 + 1")
 	})
 }
+
+// storedGen reads the generation stored under a vtok key.
+func storedGen(t *testing.T, s *QueueStore, key string) string {
+	t.Helper()
+	v, err := s.c.Do(context.Background(), s.c.B().Get().Key(key).Build()).ToString()
+	require.NoError(t, err)
+	return v
+}
+
+// C8.9 (D-C6.1): a generation higher than the stored one is valid, and me.lua ratchets the stored generation up in the same
+// EVAL. The token's TTL is kept (KEEPTTL): only the time that passed is lost.
+func TestMyEntryScript_HigherGenerationRatchetsKeepingTTL(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	ev := evID(t)
+	j := vjoin(t, s, ev, outbound.JoinParams{EntryID: "e-ratchet", NewVisitorID: "vis-ratchet", NowMs: time.Now().UnixMilli()})
+	require.EqualValues(t, 1, j.Gen)
+	key := vtokKey(s, ev, j.VisitorID)
+	before := pttl(t, s, key)
+	require.Greater(t, before, int64(0))
+
+	got, err := s.MyEntry(ctx, ev, j.VisitorID, j.Gen+1)
+	require.NoError(t, err)
+	assert.Equal(t, outbound.MyEntryOK, got.Tag)
+	assert.Equal(t, "2", storedGen(t, s, key), "the higher generation is stored")
+	after := pttl(t, s, key)
+	assert.Greater(t, after, int64(0), "the token keeps a TTL")
+	assert.InDelta(t, before, after, 5_000, "KEEPTTL: the TTL is not reset")
+}
+
+// C8.9 (D-C6.1): a generation lower than the stored one is INVALID (401), and it changes nothing.
+func TestMyEntryScript_LowerGenerationIsInvalid(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	ev := evID(t)
+	j := vjoin(t, s, ev, outbound.JoinParams{EntryID: "e-lower", NewVisitorID: "vis-lower", NowMs: time.Now().UnixMilli()})
+	key := vtokKey(s, ev, j.VisitorID)
+
+	ratchet, err := s.MyEntry(ctx, ev, j.VisitorID, 2)
+	require.NoError(t, err)
+	require.Equal(t, outbound.MyEntryOK, ratchet.Tag)
+
+	got, err := s.MyEntry(ctx, ev, j.VisitorID, 1)
+	require.NoError(t, err)
+	assert.Equal(t, outbound.MyEntryInvalid, got.Tag)
+	assert.Equal(t, "2", storedGen(t, s, key), "a lower generation does not lower the stored one")
+}
+
+// C8.9: a visitor who never joined is ABSENT (404) and me.lua creates no vtok key for it.
+func TestMyEntryScript_AbsentVisitorCreatesNoKey(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	ev := evID(t)
+	const vis = "vis-never-joined"
+	key := vtokKey(s, ev, vis)
+
+	got, err := s.MyEntry(ctx, ev, vis, 3)
+	require.NoError(t, err)
+	assert.Equal(t, outbound.MyEntryAbsent, got.Tag)
+	n, err := s.c.Do(ctx, s.c.B().Exists().Key(key).Build()).AsInt64()
+	require.NoError(t, err)
+	assert.EqualValues(t, 0, n, "no vtok key is created for an absent visitor")
+}
