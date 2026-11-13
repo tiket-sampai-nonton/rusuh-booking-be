@@ -36,3 +36,23 @@ updates:
     directory: "/services/booking/deployments"
     schedule:
       interval: weekly
+  - package-ecosystem: gomod
+    directory: "/services/user"
+    schedule:
+      interval: weekly
+  - package-ecosystem: docker
+    directory: "/services/queue/deployments"
+    schedule:
+      interval: weekly
+  - package-ecosystem: docker
+    directory: "/services/payment/deployments"
+    schedule:
+      interval: weekly
+  - package-ecosystem: docker
+    directory: "/services/notification/deployments"
+    schedule:
+      interval: weekly
+  - package-ecosystem: docker
+    directory: "/services/user/deployments"
+    schedule:
+      interval: weekly
