@@ -239,7 +239,7 @@ func TestSweeper_DrainsSoldOutWaiting(t *testing.T) {
 	ctx := context.Background()
 	m.settings.EXPECT().ListEventIDs(gomock.Any()).Return([]string{"ev1"}, nil)
 	m.store.EXPECT().ExpiredActive(gomock.Any(), "ev1", gomock.Any(), 500).Return(nil, nil)
-	m.store.EXPECT().GetSale(gomock.Any(), "ev1").Return(outbound.SaleState{SaleState: "CLOSED", SoldOut: true}, nil)
+	m.store.EXPECT().GetSale(gomock.Any(), "ev1").Return(outbound.SaleState{SaleState: "CLOSED", SoldOut: true}, nil).Times(4) // re-read before each batch
 	gomock.InOrder(
 		m.store.EXPECT().EndWaitingSoldOut(gomock.Any(), "ev1", gomock.Any(), outbound.SoldOutBatchSize).
 			Return(outbound.SoldOutBatch{Scanned: outbound.SoldOutBatchSize, Ended: outbound.SoldOutBatchSize}, nil).Times(3),
@@ -258,7 +258,7 @@ func TestSweeper_DrainsSoldOutWithinTickBudget(t *testing.T) {
 	ctx := context.Background()
 	m.settings.EXPECT().ListEventIDs(gomock.Any()).Return([]string{"ev1"}, nil)
 	m.store.EXPECT().ExpiredActive(gomock.Any(), "ev1", gomock.Any(), 500).Return(nil, nil)
-	m.store.EXPECT().GetSale(gomock.Any(), "ev1").Return(outbound.SaleState{SaleState: "CLOSED", SoldOut: true}, nil)
+	m.store.EXPECT().GetSale(gomock.Any(), "ev1").Return(outbound.SaleState{SaleState: "CLOSED", SoldOut: true}, nil).Times(worker.SoldOutMaxBatches)
 	m.store.EXPECT().EndWaitingSoldOut(gomock.Any(), "ev1", gomock.Any(), outbound.SoldOutBatchSize).
 		Return(outbound.SoldOutBatch{Scanned: outbound.SoldOutBatchSize, Ended: outbound.SoldOutBatchSize}, nil).
 		Times(worker.SoldOutMaxBatches)
@@ -285,6 +285,25 @@ func TestSweeper_SoldOutFalseDoesNotDrain(t *testing.T) {
 		s := worker.NewSweeper(m.store, m.settings, wnow, 500)
 		require.NoError(t, s.Run(ctx), sale.SaleState)
 	}
+}
+
+// D-C5.3 / R28: the sale is re-read before every batch. When it reopens after the first batch, the drain stops at once:
+// no second EndWaitingSoldOut, so the WAITING entries behind the first batch are never ended with SOLD_OUT.
+func TestSweeper_StopsDrainWhenSaleReopens(t *testing.T) {
+	m := newWorkerMocks(t)
+	ctx := context.Background()
+	m.settings.EXPECT().ListEventIDs(gomock.Any()).Return([]string{"ev1"}, nil)
+	m.store.EXPECT().ExpiredActive(gomock.Any(), "ev1", gomock.Any(), 500).Return(nil, nil)
+	gomock.InOrder(
+		m.store.EXPECT().GetSale(gomock.Any(), "ev1").Return(outbound.SaleState{SaleState: "CLOSED", SoldOut: true}, nil),
+		m.store.EXPECT().EndWaitingSoldOut(gomock.Any(), "ev1", gomock.Any(), outbound.SoldOutBatchSize).
+			Return(outbound.SoldOutBatch{Scanned: outbound.SoldOutBatchSize, Ended: outbound.SoldOutBatchSize}, nil),
+		m.store.EXPECT().GetSale(gomock.Any(), "ev1").Return(outbound.SaleState{SaleState: "OPEN", SoldOut: false}, nil),
+	)
+	// No further EndWaitingSoldOut: a strict mock fails on it.
+
+	s := worker.NewSweeper(m.store, m.settings, wnow, 500)
+	require.NoError(t, s.Run(ctx))
 }
 
 // A failing drain batch is returned (the tick reports it) and does not retry inside the tick.

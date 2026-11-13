@@ -75,17 +75,18 @@ func (s *Sweeper) runEvent(ctx context.Context, eventID string) error {
 }
 
 // drainSoldOut ends the WAITING/STALE entries of a sold-out event (D-C8.4). It stores no cursor: each batch removes what
-// it scanned from waiting/stale, so the head of the set is the next batch. A short batch means the set is empty. A
-// reopened sale (D-C5.3) is seen on the next tick, which then stops the drain.
+// it scanned from waiting/stale, so the head of the set is the next batch. A short batch means the set is empty.
+// The sale is re-read before every batch (R28): a sale that reopens (D-C5.3) stops the drain at once, so no further
+// WAITING entry is ended with SOLD_OUT. The window that remains is the one batch already in flight.
 func (s *Sweeper) drainSoldOut(ctx context.Context, eventID string, nowMs int64) error {
-	sale, err := s.store.GetSale(ctx, eventID)
-	if err != nil {
-		return fmt.Errorf("sweeper get sale: %w", err)
-	}
-	if !sale.SoldOut {
-		return nil
-	}
 	for i := 0; i < SoldOutMaxBatches; i++ {
+		sale, err := s.store.GetSale(ctx, eventID)
+		if err != nil {
+			return fmt.Errorf("sweeper get sale: %w", err)
+		}
+		if !sale.SoldOut {
+			return nil
+		}
 		res, err := s.store.EndWaitingSoldOut(ctx, eventID, nowMs, outbound.SoldOutBatchSize)
 		if err != nil {
 			return fmt.Errorf("sweeper end waiting sold out: %w", err)
