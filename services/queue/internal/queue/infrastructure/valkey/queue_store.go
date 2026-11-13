@@ -583,13 +583,14 @@ func newLeaseToken() (string, error) {
 
 // --- ADR-030: liveness, token generation and FIFO-by-seq positions ---
 
-// Heartbeat runs heartbeat.lua, passing the visitor's entry shard keys. The entry id is unknown here (the script
-// resolves it from vlast), so the caller cannot precompute the shard; instead the script addresses hb/hbstale
-// from the keys Go passes for the resolved entry. To avoid a round-trip, Go resolves the entry first.
+// Heartbeat runs heartbeat.lua. The script resolves the entry from vlast and addresses hb/hbstale by the shard stored
+// on that entry, so a shard-count change never strands a live entry. Go still reads vlast to derive the legacy
+// fallback keys (ARGV[5]/[6]) for an entry joined before the shard field existed; the script ignores them otherwise.
 func (s *QueueStore) Heartbeat(ctx context.Context, eventID, visitorID string, gen, nowMs int64) (outbound.HeartbeatResult, error) {
-	// Resolve the entry id so the shard keys are addressed to the shard the entry lives in. The script re-reads and
-	// re-validates everything atomically; this read only picks the shard keys (the shard is a pure function of id).
-	entryID, _ := s.c.Do(ctx, s.c.B().Get().Key(s.k(eventID, "vlast:"+visitorID)).Build()).ToString()
+	entryID, err := s.c.Do(ctx, s.c.B().Get().Key(s.k(eventID, "vlast:"+visitorID)).Build()).ToString()
+	if err != nil && !vk.IsValkeyNil(err) {
+		return outbound.HeartbeatResult{}, fmt.Errorf("valkey: get vlast: %w", err)
+	}
 	shard := s.shardOf(entryID)
 	arr, err := s.heartbeat.Exec(ctx, s.c, []string{s.kSeq(eventID)},
 		[]string{
