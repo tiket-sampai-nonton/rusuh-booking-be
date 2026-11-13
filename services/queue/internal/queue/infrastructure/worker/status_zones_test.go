@@ -24,6 +24,9 @@ type seqStore struct {
 	prev []byte
 	sale outbound.SaleState // zero value reads as OPEN (the publisher's default)
 	sets []saleSet          // SetSale calls, in order
+	// countErr makes WaitingCount fail (the ranks step); docWrites counts SetStatusDoc calls.
+	countErr  error
+	docWrites int
 }
 
 // saleSet records one SetSale invocation.
@@ -41,6 +44,9 @@ func (s *seqStore) SetSale(_ context.Context, _ string, state string, soldOut bo
 }
 func (s *seqStore) SetSaleWindow(context.Context, string, int64, int64) error { return nil }
 func (s *seqStore) WaitingCount(context.Context, string) (int64, error) {
+	if s.countErr != nil {
+		return 0, s.countErr
+	}
 	return int64(len(s.seqs)), nil
 }
 func (s *seqStore) WaitingSeqAt(_ context.Context, _ string, i int64) (int64, bool, error) {
@@ -54,6 +60,7 @@ func (s *seqStore) GetStatusDoc(context.Context, string) ([]byte, bool, error) {
 }
 func (s *seqStore) SetStatusDoc(_ context.Context, _ string, d []byte, _ time.Duration) error {
 	s.doc = d
+	s.docWrites++
 	return nil
 }
 
@@ -152,6 +159,23 @@ func TestStatusPublisher_SupplyDownKeepsPreviousBoundaries(t *testing.T) {
 	assert.EqualValues(t, 12, val(doc.GuaranteedUntilSeq))
 	assert.EqualValues(t, 20, val(doc.PossibleUntilSeq))
 	assert.EqualValues(t, 1, val(doc.HeadSeq))
+}
+
+// A ranks failure still publishes the document: the previous zone boundaries are kept and the error is returned.
+func TestStatusPublisher_RanksErrorStillPublishes(t *testing.T) {
+	h, g, p := int64(7), int64(12), int64(20)
+	prev, _ := json.Marshal(dto.StatusDocument{HeadSeq: &h, GuaranteedUntilSeq: &g, PossibleUntilSeq: &p})
+	st := &seqStore{seqs: seqRange(1, 5), prev: prev, countErr: assert.AnError}
+	sp := worker.NewStatusPublisher(st, oneSettings{s: entity.EventSettings{ActiveSlotCapacity: 10, NearFrontMultiplier: 2}},
+		supplyStub{snap: outbound.SupplySnapshot{FreeUnits: 3, RemainingTickets: 3}}, wnow, time.Second)
+	err := sp.Run(context.Background())
+	require.ErrorIs(t, err, assert.AnError)
+	require.Equal(t, 1, st.docWrites)
+	var doc dto.StatusDocument
+	require.NoError(t, json.Unmarshal(st.doc, &doc))
+	assert.EqualValues(t, 7, val(doc.HeadSeq))
+	assert.EqualValues(t, 12, val(doc.GuaranteedUntilSeq))
+	assert.EqualValues(t, 20, val(doc.PossibleUntilSeq))
 }
 
 // A sold-out sale reopens only when Booking has free stock again and the sale window is still open (D-C5.3).

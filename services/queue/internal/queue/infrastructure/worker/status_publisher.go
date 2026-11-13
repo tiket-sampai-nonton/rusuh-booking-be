@@ -70,14 +70,20 @@ func (p *StatusPublisher) runEvent(ctx context.Context, eventID string) error {
 	}
 
 	doc := p.build(eventID, settings, sale, supply, serr == nil)
-	if err := p.ranks(ctx, eventID, settings, supply, serr == nil, &doc); err != nil {
-		return err
+	rankErr := p.ranks(ctx, eventID, settings, supply, serr == nil, &doc)
+	if rankErr != nil {
+		// The zone fields could not be read: publish the last known ones instead of an empty zone (P3-15), then
+		// report the failure.
+		p.keepPrevious(ctx, eventID, &doc)
 	}
 	raw, err := json.Marshal(doc)
 	if err != nil {
-		return fmt.Errorf("status publisher: marshal: %w", err)
+		return errors.Join(rankErr, fmt.Errorf("status publisher: marshal: %w", err))
 	}
-	return p.store.SetStatusDoc(ctx, eventID, raw, p.ttl)
+	if err := p.store.SetStatusDoc(ctx, eventID, raw, p.ttl); err != nil {
+		return errors.Join(rankErr, err)
+	}
+	return rankErr
 }
 
 // cacheSaleWindow stores Booking's sale window for the join gate. Best-effort: a failed write is logged and the
@@ -150,12 +156,7 @@ func (p *StatusPublisher) ranks(ctx context.Context, eventID string, s entity.Ev
 	}
 	if !haveSupply {
 		// Booking unavailable: keep the last published boundaries instead of telling everyone "not enough".
-		if raw, ok, gerr := p.store.GetStatusDoc(ctx, eventID); gerr == nil && ok {
-			var prev dto.StatusDocument
-			if json.Unmarshal(raw, &prev) == nil {
-				doc.GuaranteedUntilSeq, doc.PossibleUntilSeq = prev.GuaranteedUntilSeq, prev.PossibleUntilSeq
-			}
-		}
+		p.keepPrevious(ctx, eventID, doc)
 		return nil
 	}
 	g, pp := valueobject.ZoneCounts(supply.FreeUnits, supply.AllocatedUnits, supply.HeldUnits, supply.MaxTicketsPerOrder)
@@ -164,6 +165,29 @@ func (p *StatusPublisher) ranks(ctx context.Context, eventID string, s entity.Ev
 	}
 	doc.PossibleUntilSeq, err = seqOfNth(pp)
 	return err
+}
+
+// keepPrevious fills each zone field the publisher could not compute from the last published document (best-effort:
+// without a readable previous document the fields stay unset). HeadSeq is read fresh whenever the queue is readable,
+// so it is taken from the previous document only when its own read failed.
+func (p *StatusPublisher) keepPrevious(ctx context.Context, eventID string, doc *dto.StatusDocument) {
+	raw, ok, err := p.store.GetStatusDoc(ctx, eventID)
+	if err != nil || !ok {
+		return
+	}
+	var prev dto.StatusDocument
+	if json.Unmarshal(raw, &prev) != nil {
+		return
+	}
+	if doc.HeadSeq == nil {
+		doc.HeadSeq = prev.HeadSeq
+	}
+	if doc.GuaranteedUntilSeq == nil {
+		doc.GuaranteedUntilSeq = prev.GuaranteedUntilSeq
+	}
+	if doc.PossibleUntilSeq == nil {
+		doc.PossibleUntilSeq = prev.PossibleUntilSeq
+	}
 }
 
 func categoriesFrom(supply outbound.SupplySnapshot, limitedPct int, haveSupply bool) []dto.CategoryState {
