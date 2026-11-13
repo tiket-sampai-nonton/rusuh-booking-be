@@ -1,5 +1,5 @@
 # Docker Compose DEV (VPS): image dari GHCR, Caddy sebagai satu-satunya pintu masuk (80/443), observability ikut.
-# Dijalankan oleh deploy.sh di server: IMAGE_PREFIX, IMAGE_TAG, RUSUH_UID, RUSUH_GID diisi skrip itu.
+# Dijalankan oleh deploy.sh di server: IMAGE_PREFIX, IMAGE_TAG (bawaan semua service), TAG_<SERVICE> (opsional, menimpa per service), RUSUH_UID, RUSUH_GID diisi skrip itu.
 # Rahasia dan konfigurasi ada di ${RUSUH_DIR:-/opt/rusuh}/env/*.env (dibuat gen-secrets.sh), tidak di repo.
 # Tidak ada port selain 80/443 yang dipublikasikan: semua service saling bicara lewat jaringan Docker.
 name: rusuh-dev
@@ -89,7 +89,7 @@ services:
   # ------------------------------------------------------------------ queue
   queue-migrate:
     <<: *service
-    image: ${IMAGE_PREFIX}/queue:${IMAGE_TAG}
+    image: ${IMAGE_PREFIX}/queue:${TAG_QUEUE:-${IMAGE_TAG}}
     command: ["migrate", "up"]
     env_file: ["${RUSUH_DIR:-/opt/rusuh}/env/queue.env"]
     depends_on: { postgres: { condition: service_healthy } }
@@ -98,7 +98,7 @@ services:
 
   queue-api:
     <<: *service
-    image: ${IMAGE_PREFIX}/queue:${IMAGE_TAG}
+    image: ${IMAGE_PREFIX}/queue:${TAG_QUEUE:-${IMAGE_TAG}}
     command: ["api"]
     env_file: ["${RUSUH_DIR:-/opt/rusuh}/env/queue.env"]
     expose: ["8081"]
@@ -109,7 +109,7 @@ services:
 
   queue-worker:
     <<: *service
-    image: ${IMAGE_PREFIX}/queue:${IMAGE_TAG}
+    image: ${IMAGE_PREFIX}/queue:${TAG_QUEUE:-${IMAGE_TAG}}
     command: ["worker"]
     env_file: ["${RUSUH_DIR:-/opt/rusuh}/env/queue.env"]
     depends_on:
@@ -120,7 +120,7 @@ services:
   # ------------------------------------------------------------------ booking
   booking-migrate:
     <<: *service
-    image: ${IMAGE_PREFIX}/booking:${IMAGE_TAG}
+    image: ${IMAGE_PREFIX}/booking:${TAG_BOOKING:-${IMAGE_TAG}}
     command: ["migrate", "up"]
     env_file: ["${RUSUH_DIR:-/opt/rusuh}/env/booking.env"]
     depends_on: { postgres: { condition: service_healthy } }
@@ -129,7 +129,7 @@ services:
 
   booking-api:
     <<: *service
-    image: ${IMAGE_PREFIX}/booking:${IMAGE_TAG}
+    image: ${IMAGE_PREFIX}/booking:${TAG_BOOKING:-${IMAGE_TAG}}
     command: ["api"]
     env_file: ["${RUSUH_DIR:-/opt/rusuh}/env/booking.env"]
     expose: ["8082"]
@@ -144,7 +144,7 @@ services:
 
   booking-worker:
     <<: *service
-    image: ${IMAGE_PREFIX}/booking:${IMAGE_TAG}
+    image: ${IMAGE_PREFIX}/booking:${TAG_BOOKING:-${IMAGE_TAG}}
     command: ["worker"]
     env_file: ["${RUSUH_DIR:-/opt/rusuh}/env/booking.env"]
     volumes:
@@ -158,7 +158,7 @@ services:
   # ------------------------------------------------------------------ payment
   payment-migrate:
     <<: *service
-    image: ${IMAGE_PREFIX}/payment:${IMAGE_TAG}
+    image: ${IMAGE_PREFIX}/payment:${TAG_PAYMENT:-${IMAGE_TAG}}
     command: ["migrate", "up"]
     env_file: ["${RUSUH_DIR:-/opt/rusuh}/env/payment.env"]
     depends_on: { postgres: { condition: service_healthy } }
@@ -167,7 +167,7 @@ services:
 
   payment-api:
     <<: *service
-    image: ${IMAGE_PREFIX}/payment:${IMAGE_TAG}
+    image: ${IMAGE_PREFIX}/payment:${TAG_PAYMENT:-${IMAGE_TAG}}
     command: ["api"]
     env_file: ["${RUSUH_DIR:-/opt/rusuh}/env/payment.env"]
     expose: ["8083"]
@@ -178,7 +178,7 @@ services:
 
   payment-worker:
     <<: *service
-    image: ${IMAGE_PREFIX}/payment:${IMAGE_TAG}
+    image: ${IMAGE_PREFIX}/payment:${TAG_PAYMENT:-${IMAGE_TAG}}
     command: ["worker"]
     env_file: ["${RUSUH_DIR:-/opt/rusuh}/env/payment.env"]
     depends_on:
@@ -189,7 +189,7 @@ services:
   # ------------------------------------------------------------------ notification
   notification-migrate:
     <<: *service
-    image: ${IMAGE_PREFIX}/notification:${IMAGE_TAG}
+    image: ${IMAGE_PREFIX}/notification:${TAG_NOTIFICATION:-${IMAGE_TAG}}
     command: ["migrate", "up"]
     env_file: ["${RUSUH_DIR:-/opt/rusuh}/env/notification.env"]
     depends_on: { postgres: { condition: service_healthy } }
@@ -198,7 +198,7 @@ services:
 
   notification-api:
     <<: *service
-    image: ${IMAGE_PREFIX}/notification:${IMAGE_TAG}
+    image: ${IMAGE_PREFIX}/notification:${TAG_NOTIFICATION:-${IMAGE_TAG}}
     command: ["api"]
     env_file: ["${RUSUH_DIR:-/opt/rusuh}/env/notification.env"]
     expose: ["8084"]
@@ -209,7 +209,7 @@ services:
 
   notification-worker:
     <<: *service
-    image: ${IMAGE_PREFIX}/notification:${IMAGE_TAG}
+    image: ${IMAGE_PREFIX}/notification:${TAG_NOTIFICATION:-${IMAGE_TAG}}
     command: ["worker"]
     env_file: ["${RUSUH_DIR:-/opt/rusuh}/env/notification.env"]
     depends_on:
@@ -220,7 +220,7 @@ services:
   # ------------------------------------------------------------------ user
   user-migrate:
     <<: *service
-    image: ${IMAGE_PREFIX}/user:${IMAGE_TAG}
+    image: ${IMAGE_PREFIX}/user:${TAG_USER:-${IMAGE_TAG}}
     command: ["migrate", "up"]
     env_file: ["${RUSUH_DIR:-/opt/rusuh}/env/user.env"]
     depends_on: { postgres: { condition: service_healthy } }
@@ -229,7 +229,7 @@ services:
 
   user-api:
     <<: *service
-    image: ${IMAGE_PREFIX}/user:${IMAGE_TAG}
+    image: ${IMAGE_PREFIX}/user:${TAG_USER:-${IMAGE_TAG}}
     command: ["api"]
     env_file: ["${RUSUH_DIR:-/opt/rusuh}/env/user.env"]
     expose: ["8085"]

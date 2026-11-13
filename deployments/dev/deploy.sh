@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
 # Deploy dev di server (dipanggil job deployment-dev lewat SSH, atau manual oleh user deploy).
 #   IMAGE_PREFIX=ghcr.io/tiket-sampai-nonton/rusuh-booking-be IMAGE_TAG=<sha> bash deploy.sh
+# Opsional TAG_QUEUE|TAG_BOOKING|TAG_PAYMENT|TAG_NOTIFICATION|TAG_USER=<sha> menimpa IMAGE_TAG untuk satu service
+# (CI: service yang berubah memakai sha PR, sisanya IMAGE_TAG=main).
 # Migrasi database selalu jalan (idempoten, dikunci advisory lock) karena service bergantung padanya di Compose.
 set -euo pipefail
 
 : "${IMAGE_PREFIX:?IMAGE_PREFIX wajib, mis. ghcr.io/<owner>/<repo>}"
 : "${IMAGE_TAG:?IMAGE_TAG wajib (sha commit)}"
 export IMAGE_PREFIX IMAGE_TAG
+export TAG_QUEUE="${TAG_QUEUE:-}" TAG_BOOKING="${TAG_BOOKING:-}" TAG_PAYMENT="${TAG_PAYMENT:-}" TAG_NOTIFICATION="${TAG_NOTIFICATION:-}" TAG_USER="${TAG_USER:-}"
 export RUSUH_DIR="${RUSUH_DIR:-/opt/rusuh}"
 RUSUH_UID="$(id -u)"
 RUSUH_GID="$(id -g)"
@@ -61,7 +64,8 @@ for i in $(seq 1 36); do
 done
 
 # simpan versi yang sedang berjalan agar compose.sh memakainya
-printf 'IMAGE_PREFIX=%s\nIMAGE_TAG=%s\n' "$IMAGE_PREFIX" "$IMAGE_TAG" > "$RUSUH_DIR/.deploy-state"
+printf 'IMAGE_PREFIX=%s\nIMAGE_TAG=%s\nTAG_QUEUE=%s\nTAG_BOOKING=%s\nTAG_PAYMENT=%s\nTAG_NOTIFICATION=%s\nTAG_USER=%s\n' \
+  "$IMAGE_PREFIX" "$IMAGE_TAG" "$TAG_QUEUE" "$TAG_BOOKING" "$TAG_PAYMENT" "$TAG_NOTIFICATION" "$TAG_USER" > "$RUSUH_DIR/.deploy-state"
 
 dc ps --format 'table {{.Service}}\t{{.Status}}'
 echo "deploy selesai: $IMAGE_PREFIX:*:$IMAGE_TAG"
