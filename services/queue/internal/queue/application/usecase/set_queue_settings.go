@@ -2,6 +2,7 @@ package usecase
 
 import (
 	"context"
+	"log/slog"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/clock"
 
@@ -17,12 +18,14 @@ import (
 //
 // Order: static validation -> dry-run of the merged rules against the stored row -> one Booking.Supply (event exists,
 // sale window) -> Apply, which re-runs the same entity.Decide inside the transaction under a per-event lock. The dry
-// run only keeps invalid bodies away from Booking; the in-transaction run is authoritative.
+// run only keeps invalid bodies away from Booking; the in-transaction run is authoritative. After a successful Apply
+// the cached row is dropped (WithCache) so readers do not serve the old settings for up to the cache TTL.
 type SetQueueSettings struct {
 	settings outbound.IEventSettingsRepo
 	booking  outbound.IBookingClient
 	admin    outbound.IEventSettingsAdminRepo
 	clock    clock.IClock
+	cache    outbound.ISettingsCacheInvalidator // nil = no cache to drop
 }
 
 // NewSetQueueSettings accepts interfaces and returns the concrete usecase.
@@ -33,6 +36,12 @@ func NewSetQueueSettings(
 	clk clock.IClock,
 ) *SetQueueSettings {
 	return &SetQueueSettings{settings: settings, booking: booking, admin: admin, clock: clk}
+}
+
+// WithCache sets the settings cache dropped after each successful Apply.
+func (u *SetQueueSettings) WithCache(inv outbound.ISettingsCacheInvalidator) *SetQueueSettings {
+	u.cache = inv
+	return u
 }
 
 // Set creates or updates the settings. The bool is true when this call created the row.
@@ -70,6 +79,12 @@ func (u *SetQueueSettings) Set(ctx context.Context, in inbound.SetSettingsInput)
 	})
 	if err != nil {
 		return dto.QueueSettings{}, false, err
+	}
+	if u.cache != nil {
+		if ierr := u.cache.Invalidate(ctx, in.EventID); ierr != nil {
+			slog.WarnContext(ctx, "queue settings: gagal menghapus cache; TTL 30 detik membatasi staleness",
+				"eventId", in.EventID, "error", ierr)
+		}
 	}
 	return mapper.ToQueueSettings(res.Settings), res.Created, nil
 }

@@ -48,6 +48,11 @@ func (r *EventSettingsCache) Get(ctx context.Context, eventID string) (entity.Ev
 	return s, true, nil
 }
 
+// Invalidate deletes the cached row of eventID; the next Get reads Postgres. DEL of a missing key is not an error.
+func (r *EventSettingsCache) Invalidate(ctx context.Context, eventID string) error {
+	return r.c.Do(ctx, r.c.B().Del().Key(r.cacheKey(eventID)).Build()).Error()
+}
+
 // ListEventIDs delegates to Postgres; this method is only used by workers to iterate events, not on the hot path.
 func (r *EventSettingsCache) ListEventIDs(ctx context.Context) ([]string, error) {
 	return r.source.ListEventIDs(ctx)

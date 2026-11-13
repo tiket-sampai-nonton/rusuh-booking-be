@@ -58,7 +58,7 @@ func TestEventSettingsCache(t *testing.T) {
 		}
 		c := newCache(src)
 
-		_, _, _ = c.Get(ctx, "ev-c2") // populate cache
+		_, _, _ = c.Get(ctx, "ev-c2")        // populate cache
 		s, found, err := c.Get(ctx, "ev-c2") // should hit cache
 		require.NoError(t, err)
 		assert.True(t, found)
@@ -104,3 +104,32 @@ var errStubFail = stubError("stub postgres failure")
 type stubError string
 
 func (e stubError) Error() string { return string(e) }
+
+// TestEventSettingsCache_InvalidateDropsKey proves that Invalidate removes the cached row, so the next Get goes back
+// to Postgres and sees a change committed by a PUT (F-qcache).
+func TestEventSettingsCache_InvalidateDropsKey(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	src := &stubSettingsSource{
+		result: entity.EventSettings{EventID: "ev-inv", ActiveSlotCapacity: 200},
+		found:  true,
+	}
+	c := NewEventSettingsCache(store.c, store.keyer, src)
+
+	_, _, err := c.Get(ctx, "ev-inv") // populate cache
+	require.NoError(t, err)
+	require.Equal(t, 1, src.calls)
+
+	require.NoError(t, c.Invalidate(ctx, "ev-inv"))
+
+	exists, err := store.c.Do(ctx, store.c.B().Exists().Key(c.cacheKey("ev-inv")).Build()).AsInt64()
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), exists, "key cache harus terhapus setelah Invalidate")
+
+	src.result.ActiveSlotCapacity = 350 // the PUT committed a new value
+	s, found, err := c.Get(ctx, "ev-inv")
+	require.NoError(t, err)
+	assert.True(t, found)
+	assert.Equal(t, 2, src.calls, "pembacaan berikutnya harus ke source")
+	assert.Equal(t, 350, s.ActiveSlotCapacity)
+}

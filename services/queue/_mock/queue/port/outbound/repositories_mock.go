@@ -73,6 +73,44 @@ func (mr *MockIEventSettingsRepoMockRecorder) ListEventIDs(ctx any) *gomock.Call
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListEventIDs", reflect.TypeOf((*MockIEventSettingsRepo)(nil).ListEventIDs), ctx)
 }
 
+// MockISettingsCacheInvalidator is a mock of ISettingsCacheInvalidator interface.
+type MockISettingsCacheInvalidator struct {
+	ctrl     *gomock.Controller
+	recorder *MockISettingsCacheInvalidatorMockRecorder
+	isgomock struct{}
+}
+
+// MockISettingsCacheInvalidatorMockRecorder is the mock recorder for MockISettingsCacheInvalidator.
+type MockISettingsCacheInvalidatorMockRecorder struct {
+	mock *MockISettingsCacheInvalidator
+}
+
+// NewMockISettingsCacheInvalidator creates a new mock instance.
+func NewMockISettingsCacheInvalidator(ctrl *gomock.Controller) *MockISettingsCacheInvalidator {
+	mock := &MockISettingsCacheInvalidator{ctrl: ctrl}
+	mock.recorder = &MockISettingsCacheInvalidatorMockRecorder{mock}
+	return mock
+}
+
+// EXPECT returns an object that allows the caller to indicate expected use.
+func (m *MockISettingsCacheInvalidator) EXPECT() *MockISettingsCacheInvalidatorMockRecorder {
+	return m.recorder
+}
+
+// Invalidate mocks base method.
+func (m *MockISettingsCacheInvalidator) Invalidate(ctx context.Context, eventID string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Invalidate", ctx, eventID)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// Invalidate indicates an expected call of Invalidate.
+func (mr *MockISettingsCacheInvalidatorMockRecorder) Invalidate(ctx, eventID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Invalidate", reflect.TypeOf((*MockISettingsCacheInvalidator)(nil).Invalidate), ctx, eventID)
+}
+
 // MockIEntryAuditRepo is a mock of IEntryAuditRepo interface.
 type MockIEntryAuditRepo struct {
 	ctrl     *gomock.Controller

@@ -15,6 +15,12 @@ type IEventSettingsRepo interface {
 	ListEventIDs(ctx context.Context) ([]string, error)
 }
 
+// ISettingsCacheInvalidator drops the cached settings of one event so the next read sees a committed change. A failed
+// drop is not fatal: the cache TTL (30 s) bounds the staleness.
+type ISettingsCacheInvalidator interface {
+	Invalidate(ctx context.Context, eventID string) error
+}
+
 // IEntryAuditRepo appends to the append-only entry_audit table.
 type IEntryAuditRepo interface {
 	Append(ctx context.Context, e AuditRecord) error

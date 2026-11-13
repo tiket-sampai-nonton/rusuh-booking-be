@@ -241,3 +241,58 @@ func TestSetQueueSettings_ApplyErrorPropagates(t *testing.T) {
 		EventID: setEv, Actor: "a", Patch: dto.QueueSettingsRequest{ActiveSlotCapacity: ptrInt(5)}})
 	assert.ErrorIs(t, err, boom)
 }
+
+// F-qcache: a successful settings PUT drops the cached row exactly once after Apply; a failed Apply never drops it,
+// and a failed drop does not fail the PUT (the 30 s TTL bounds the staleness).
+func TestSetQueueSettings_InvalidatesCacheAfterApply(t *testing.T) {
+	now := time.Date(2026, 11, 6, 10, 0, 0, 0, time.UTC)
+	patch := dto.QueueSettingsRequest{ActiveSlotCapacity: ptrInt(5)}
+	stored := entity.DefaultSettings(setEv)
+	stored.ActiveSlotCapacity = 5
+
+	t.Run("called once after a successful Apply", func(t *testing.T) {
+		f := newSetFixture(t, now)
+		inv := mock_outbound.NewMockISettingsCacheInvalidator(gomock.NewController(t))
+		f.repo.EXPECT().Get(gomock.Any(), setEv).Return(entity.EventSettings{}, false, nil)
+		f.book.EXPECT().Supply(gomock.Any(), setEv).Return(outbound.SupplySnapshot{SalesStartsAt: now.Add(time.Hour)}, nil)
+		applyCall := f.admin.EXPECT().Apply(gomock.Any(), gomock.Any()).Return(
+			outbound.ApplySettingsResult{Settings: stored, Created: true, Changed: true}, nil)
+		invCall := inv.EXPECT().Invalidate(gomock.Any(), setEv).Return(nil).Times(1)
+		gomock.InOrder(applyCall, invCall)
+
+		got, created, err := f.uc.WithCache(inv).Set(context.Background(), inbound.SetSettingsInput{
+			EventID: setEv, Actor: "a", Patch: patch})
+		require.NoError(t, err)
+		assert.True(t, created)
+		assert.Equal(t, 5, got.ActiveSlotCapacity)
+	})
+
+	t.Run("not called when Apply fails", func(t *testing.T) {
+		f := newSetFixture(t, now)
+		inv := mock_outbound.NewMockISettingsCacheInvalidator(gomock.NewController(t))
+		f.repo.EXPECT().Get(gomock.Any(), setEv).Return(entity.EventSettings{}, false, nil)
+		f.book.EXPECT().Supply(gomock.Any(), setEv).Return(outbound.SupplySnapshot{SalesStartsAt: now.Add(time.Hour)}, nil)
+		f.admin.EXPECT().Apply(gomock.Any(), gomock.Any()).Return(outbound.ApplySettingsResult{}, entity.ErrRulesLocked)
+		inv.EXPECT().Invalidate(gomock.Any(), gomock.Any()).Times(0)
+
+		_, _, err := f.uc.WithCache(inv).Set(context.Background(), inbound.SetSettingsInput{
+			EventID: setEv, Actor: "a", Patch: patch})
+		assert.ErrorIs(t, err, entity.ErrRulesLocked)
+	})
+
+	t.Run("invalidate failure does not fail the PUT", func(t *testing.T) {
+		f := newSetFixture(t, now)
+		inv := mock_outbound.NewMockISettingsCacheInvalidator(gomock.NewController(t))
+		f.repo.EXPECT().Get(gomock.Any(), setEv).Return(entity.EventSettings{}, false, nil)
+		f.book.EXPECT().Supply(gomock.Any(), setEv).Return(outbound.SupplySnapshot{SalesStartsAt: now.Add(time.Hour)}, nil)
+		f.admin.EXPECT().Apply(gomock.Any(), gomock.Any()).Return(
+			outbound.ApplySettingsResult{Settings: stored, Created: true, Changed: true}, nil)
+		inv.EXPECT().Invalidate(gomock.Any(), setEv).Return(errors.New("valkey down")).Times(1)
+
+		got, created, err := f.uc.WithCache(inv).Set(context.Background(), inbound.SetSettingsInput{
+			EventID: setEv, Actor: "a", Patch: patch})
+		require.NoError(t, err)
+		assert.True(t, created)
+		assert.Equal(t, 5, got.ActiveSlotCapacity)
+	})
+}

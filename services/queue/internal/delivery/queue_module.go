@@ -129,7 +129,7 @@ func newQueueModule(cfg config.Config, clients *Clients, logger *slog.Logger) (*
 		WithLimiter(limiter, cfg.RateLimit.MePerVisitor, cfg.RateLimit.MePerVisitorWindow)
 	leaveUC := usecase.NewLeaveQueue(store, booking, clk)
 	getSettingsUC := usecase.NewGetQueueSettings(settingsRepo)
-	setSettingsUC := usecase.NewSetQueueSettings(settingsRepo, booking, settingsAdminRepo, clk)
+	setSettingsUC := usecase.NewSetQueueSettings(settingsRepo, booking, settingsAdminRepo, clk).WithCache(settingsRepo)
 
 	trustProxy := cfg.App.Env != "local"
 	handlers := []registrar{
