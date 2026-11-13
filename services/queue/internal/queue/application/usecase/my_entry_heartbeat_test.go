@@ -208,3 +208,43 @@ func TestGetMyEntry_OneStoreCall(t *testing.T) {
 	assert.EqualValues(t, 3, got.ExactPosition)
 	assert.Equal(t, "WAITING", got.State)
 }
+
+// `me` returns the poll interval tiered on exactPosition by the published poll policy, the default policy when no
+// document is published, and nothing once the entry has ENDED.
+func TestGetMyEntry_NextPollAfterMs(t *testing.T) {
+	poll := dto.Poll{FarMs: 20_000, MidMs: 8_000, NearMs: 2_000, FarAbove: 1000, MidAbove: 50}
+	tests := []struct {
+		name   string
+		status valueobject.Status
+		pos    int64
+		doc    *dto.StatusDocument
+		want   int64
+	}{
+		{"far", valueobject.StatusWaiting, 1001, &dto.StatusDocument{Poll: poll}, 20_000},
+		{"mid", valueobject.StatusWaiting, 51, &dto.StatusDocument{Poll: poll}, 8_000},
+		{"near", valueobject.StatusWaiting, 50, &dto.StatusDocument{Poll: poll}, 2_000},
+		{"stale is tiered too", valueobject.StatusStale, 2000, &dto.StatusDocument{Poll: poll}, 20_000},
+		{"admitted polls near", valueobject.StatusAdmitted, 0, &dto.StatusDocument{Poll: poll}, 2_000},
+		{"no document uses defaults", valueobject.StatusWaiting, 501, nil, 30_000},
+		{"ended stops polling", valueobject.StatusLeft, 0, nil, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store, docs, uc := meSetup(t)
+			ctx := context.Background()
+			store.EXPECT().MyEntry(ctx, "ev1", "v1", int64(1)).Return(outbound.MyEntryResult{
+				Tag: outbound.MyEntryOK, Entry: entity.Entry{ID: "e", Seq: 9, Status: tt.status}, Position: tt.pos,
+			}, nil)
+			switch {
+			case tt.status.IsTerminal():
+			case tt.doc == nil:
+				docs.EXPECT().Get(ctx, "ev1").Return(nil, dto.StatusDocument{}, false, nil)
+			default:
+				docs.EXPECT().Get(ctx, "ev1").Return(docRaw(t, *tt.doc), *tt.doc, true, nil)
+			}
+			got, err := uc.GetMyEntry(ctx, inbound.MyEntryInput{EventID: "ev1", VisitorID: "v1", Gen: 1})
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got.NextPollAfterMs)
+		})
+	}
+}

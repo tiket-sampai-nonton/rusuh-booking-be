@@ -178,6 +178,10 @@ type SaleState struct {
 	// WindowAtMs is when the window was cached (epoch ms). A window Booking reported without bounds stays known
 	// for 30 s from this instant, so an event without a window does not cost a Booking read on every join.
 	WindowAtMs int64
+	// Capacity is the active slot capacity the status publisher last saw and CapacitySinceMs when it took effect
+	// (epoch ms). The admission rate ignores the minutes before a capacity change has settled. 0 = never recorded.
+	Capacity        int
+	CapacitySinceMs int64
 }
 
 // AuditRecord is one entry_audit row.

@@ -106,7 +106,19 @@ func (u *GetMyEntry) GetMyEntry(ctx context.Context, in inbound.MyEntryInput) (d
 		}
 		out.NextHeartbeatMs = u.policy.next(ent.Seq.Int64(), doc)
 	}
+	out.NextPollAfterMs = nextPollMs(out.ExactPosition, doc.Poll)
 	return out, nil
+}
+
+// nextPollMs tiers the poll interval on the live position by the event's poll policy from the Status Document. A
+// document without a policy (none published yet, or unreadable) falls back to the default settings. ADMITTED and
+// CLAIMED entries have position 0, so they poll at the near interval.
+func nextPollMs(position int64, p dto.Poll) int64 {
+	if p.FarMs <= 0 || p.MidMs <= 0 || p.NearMs <= 0 {
+		d := entity.DefaultSettings("")
+		p = dto.Poll{FarMs: d.PollFarMs, MidMs: d.PollMidMs, NearMs: d.PollNearMs, FarAbove: d.PollFarAbove, MidAbove: d.PollMidAbove}
+	}
+	return valueobject.NextPollMs(position, int64(p.FarMs), int64(p.MidMs), int64(p.NearMs), p.FarAbove, p.MidAbove)
 }
 
 // checkTokenGen is the generation check of claim and leave (R01.4/R01.6); `me` runs the same check inside me.lua. It

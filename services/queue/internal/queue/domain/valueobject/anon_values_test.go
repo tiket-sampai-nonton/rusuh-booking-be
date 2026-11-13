@@ -53,3 +53,20 @@ func TestNextHeartbeatMs(t *testing.T) {
 	assert.Equal(t, near, vo.NextHeartbeatMs(base, near, 500, 150, 100, 0.5), "within near seqs of the head")
 	assert.Equal(t, base, vo.NextHeartbeatMs(base, near, 500, 0, 0, 0.5), "unknown seq: base interval (no near load spike)")
 }
+
+// Poll policy tiers on the live position: far > farAbove, mid > midAbove, else near (boundaries are inclusive of near).
+func TestNextPollMs(t *testing.T) {
+	tests := []struct {
+		pos, want int64
+	}{
+		{5000, 30_000}, {501, 30_000}, // far
+		{500, 10_000}, {101, 10_000}, // mid
+		{100, 3_000}, {1, 3_000}, // near
+		{0, 3_000}, // admitted / unknown
+	}
+	for _, tt := range tests {
+		t.Run(fmt.Sprintf("pos%d", tt.pos), func(t *testing.T) {
+			assert.Equal(t, tt.want, vo.NextPollMs(tt.pos, 30_000, 10_000, 3_000, 500, 100))
+		})
+	}
+}

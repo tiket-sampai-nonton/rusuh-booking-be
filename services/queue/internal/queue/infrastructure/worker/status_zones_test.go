@@ -27,6 +27,27 @@ type seqStore struct {
 	// countErr makes WaitingCount fail (the ranks step); docWrites counts SetStatusDoc calls.
 	countErr  error
 	docWrites int
+	// admission rate inputs: admitted per epoch minute, active count, SetSaleCapacity calls, injected read failure.
+	adm     map[int64]int64
+	active  int
+	capSets [][2]int64
+	admErr  error
+}
+
+func (s *seqStore) SetSaleCapacity(_ context.Context, _ string, capacity int, sinceMs int64) error {
+	s.capSets = append(s.capSets, [2]int64{int64(capacity), sinceMs})
+	return nil
+}
+func (s *seqStore) ActiveCount(context.Context, string) (int, error) { return s.active, nil }
+func (s *seqStore) AdmissionsPerMinute(_ context.Context, _ string, fromMin, toMin int64) ([]int64, error) {
+	if s.admErr != nil {
+		return nil, s.admErr
+	}
+	var out []int64
+	for m := fromMin; m <= toMin; m++ {
+		out = append(out, s.adm[m])
+	}
+	return out, nil
 }
 
 // saleSet records one SetSale invocation.

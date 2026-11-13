@@ -138,6 +138,7 @@ Semua respons sukses dibungkus `{ meta, data }`; semua error `{ meta, data: null
 | `guaranteedUntilSeq` | int | batas atas zona **Dijamin** |
 | `possibleUntilSeq` | int | batas atas zona **Peluang** |
 | `soldOut` | bool | required |
+| `admissionRatePerMin` | int | laju admisi terukur (dibulatkan); `0` = ETA disembunyikan (§7.2) |
 | `removedBuckets` | obj | kompensasi posisi untuk entry yang keluar di depan |
 | `poll.farAbove/midAbove` | int | ambang posisi untuk memilih tier polling |
 | `preTurnNotifyPosition` | int | posisi memicu banner/push `turn.soon` |
@@ -259,7 +260,8 @@ Semua key per-event memakai **hash tag** `{e:<eventId>}` agar operasi Lua atomik
 | `q:{e:<eventId>}:email:<emailHash>` | String | entryId aktif (constraint email) | Persistent | idem |
 | `q:{e:<eventId>}:quota_exhausted` | Set | buyerNikHash kuota habis | Persistent | `SADD`, `SISMEMBER` |
 | `q:{e:<eventId>}:status` | String | Status Document JSON | **1s** | `SET ... EX 1` (Status Publisher) |
-| `q:{e:<eventId>}:sale` | Hash | `saleState`, `soldOut` | Persistent | `HSET`/`HGETALL` |
+| `q:{e:<eventId>}:sale` | Hash | `saleState`, `soldOut`, jendela jual, `capacity`, `capacitySinceMs` | Persistent | `HSET`/`HGETALL` |
+| `q:{e:<eventId>}:adm:<epochMinute>` | String (int) | jumlah admisi pada menit itu | **1200s** | `INCRBY`+`EXPIRE` (hanya di `promote.lua`), `MGET` (Status Publisher) |
 | `rl:join:email:<emailHash>` | String (int) | rate-limit counter | window (mis. 60s) | `INCR`+`EXPIRE` |
 | `rl:join:ip:<ip>` | String (int) | rate-limit counter | window | `INCR`+`EXPIRE` |
 
@@ -601,8 +603,18 @@ berdasarkan supply snapshot saja (invarian #2).
 | TTL key | `SET q:{e}:status ... EX 1` (1 detik) |
 
 **Algoritma per event (tiap tick):**
-1. Hitung `headSeq` (seq entri hidup terdepan, null/0 bila kosong), `remainingTickets`/`admissionRatePerMin` dari supply (cache 1s), `guaranteedUntilSeq`/`possibleUntilSeq` dari stok + `near_front_multiplier`, `categories[].state` dari `category_limited_threshold_pct`, `poll{...}` dari `event_settings.poll_*`, `preTurnNotifyPosition`.
+1. Hitung `headSeq` (seq entri hidup terdepan, null/0 bila kosong), `remainingTickets` dari supply (cache 1s), `admissionRatePerMin` (di bawah), `guaranteedUntilSeq`/`possibleUntilSeq` dari stok + `near_front_multiplier`, `categories[].state` dari `category_limited_threshold_pct`, `poll{...}` dari `event_settings.poll_*`, `preTurnNotifyPosition`.
 2. Serialize `StatusDocument` JSON; `SET q:{e}:status EX 1`.
+
+**`admissionRatePerMin` (FR-09, SRS-F-05-10).** Diukur, bukan dihitung dari TTL: slot dipegang dari admisi sampai journey
+berakhir, jadi laju = kapasitas / lama journey nyata, dan TTL claim/seleksi/pembayaran yang dapat dikonfigurasi sudah
+tercermin di hasil ukur. `promote.lua` (promotor dan admisi langsung saat join) menambah `q:{e}:adm:<menit>`. Publisher
+merata-rata menit penuh terbaru sampai terkumpul ≥ 10 admisi, mundur paling jauh 15 menit, lalu membulatkan ke bilangan
+bulat. Nilai `0` (klien menyembunyikan ETA) bila: supply Booking tak terbaca, sold out, `freeUnits = 0` (admisi menunggu
+stok ditahan), penjualan belum buka, `ZCARD active > active_slot_capacity` (sedang surut setelah kapasitas diturunkan),
+atau < 10 admisi dalam jendela. Menit sebelum pembukaan penjualan atau perubahan `active_slot_capacity` + 1 menit penuh
+tidak dihitung, agar lonjakan pengisian slot sekaligus tidak masuk. Perubahan kapasitas dicatat di `q:{e}:sale`
+(`capacity`, `capacitySinceMs`). ETA dihitung klien tiap polling: `posisi / admissionRatePerMin`.
 3. Endpoint `GET /api/v1/queue-status/{eventId}` membaca key ini; CloudFront cache 1s → origin ≤ 1 hit/detik/event (TC-PERF-01).
 
 ### 7.3 Claim Sweeper

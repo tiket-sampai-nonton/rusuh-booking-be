@@ -1,5 +1,6 @@
 -- promote.lua — atomic batch promotion waiting → active, fenced by the promoter lease (design §5.4, ADR-028)
--- KEYS[1]=waiting  KEYS[2]=active  KEYS[3]=<tag>:promoter:lock  KEYS[4..]=entry:<id> untuk tiap kandidat
+-- KEYS[1]=waiting  KEYS[2]=active  KEYS[3]=<tag>:promoter:lock  KEYS[4]=<tag>:adm:<nowMs/60000> (counter admisi per menit)
+-- KEYS[5..]=entry:<id> untuk tiap kandidat
 -- ARGV: 1=capacity 2=nowMs 3=requireHead("1"/"0") 4=leaseToken ; lalu quadruplet per entry dari ARGV[5]:
 --       entryId, allocationId, claimDeadlineMs, hbShardKey
 -- ADR-030: hanya status WAITING yang dipromosikan; STALE dilewati (masuk 'skipped', tidak pernah dirilis).
@@ -24,7 +25,7 @@ end
 local promoted = {}
 local skipped = {}
 local i = 5                     -- index ARGV quadruplet pertama
-local k = 4                     -- index KEYS entry pertama
+local k = 5                     -- index KEYS entry pertama
 while ARGV[i] do
   local entryId   = ARGV[i]
   local allocId   = ARGV[i+1]
@@ -58,5 +59,11 @@ while ARGV[i] do
   -- kandidat yang tak terjangkau karena free sudah 0 TIDAK dilaporkan (tetap WAITING, tak disentuh)
   i = i + 4
   k = k + 1
+end
+-- Laju admisi (admissionRatePerMin di Status Document): hitung admisi per menit; TTL 1200 s menutup jendela publisher
+-- (maks 15 menit penuh + menit berjalan).
+if #promoted > 0 then
+  redis.call('INCRBY', KEYS[4], #promoted)
+  redis.call('EXPIRE', KEYS[4], 1200)
 end
 return {'OK', promoted, skipped}
