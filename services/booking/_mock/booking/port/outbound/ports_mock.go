@@ -490,6 +490,45 @@ func (mr *MockIBookingRepoMockRecorder) ListByAccount(ctx, accountID, cursor, li
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListByAccount", reflect.TypeOf((*MockIBookingRepo)(nil).ListByAccount), ctx, accountID, cursor, limit)
 }
 
+// MockIStockDrift is a mock of IStockDrift interface.
+type MockIStockDrift struct {
+	ctrl     *gomock.Controller
+	recorder *MockIStockDriftMockRecorder
+	isgomock struct{}
+}
+
+// MockIStockDriftMockRecorder is the mock recorder for MockIStockDrift.
+type MockIStockDriftMockRecorder struct {
+	mock *MockIStockDrift
+}
+
+// NewMockIStockDrift creates a new mock instance.
+func NewMockIStockDrift(ctrl *gomock.Controller) *MockIStockDrift {
+	mock := &MockIStockDrift{ctrl: ctrl}
+	mock.recorder = &MockIStockDriftMockRecorder{mock}
+	return mock
+}
+
+// EXPECT returns an object that allows the caller to indicate expected use.
+func (m *MockIStockDrift) EXPECT() *MockIStockDriftMockRecorder {
+	return m.recorder
+}
+
+// StockDrift mocks base method.
+func (m *MockIStockDrift) StockDrift(ctx context.Context) ([]outbound.StockDrift, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "StockDrift", ctx)
+	ret0, _ := ret[0].([]outbound.StockDrift)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// StockDrift indicates an expected call of StockDrift.
+func (mr *MockIStockDriftMockRecorder) StockDrift(ctx any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "StockDrift", reflect.TypeOf((*MockIStockDrift)(nil).StockDrift), ctx)
+}
+
 // MockIBookingDueScanner is a mock of IBookingDueScanner interface.
 type MockIBookingDueScanner struct {
 	ctrl     *gomock.Controller

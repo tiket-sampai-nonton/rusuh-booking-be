@@ -62,9 +62,9 @@ func NewHandler(cfg config.Config, clients *Clients, logger *slog.Logger) (http.
 
 var funnelOnce sync.Once
 
-// registerFunnelMetrics exposes the conversion funnel (NFR-09) on the API's /metrics only: the API is what Prometheus
-// and CloudWatch scrape, and one reader per process is enough because the numbers come from PostgreSQL. Once guards
-// the process-wide registry against a second NewHandler (tests).
+// registerFunnelMetrics exposes the conversion funnel (NFR-09) and the stock drift (C9.1) on /metrics: the API is what
+// Prometheus and CloudWatch scrape, and one reader per process is enough because the numbers come from PostgreSQL. Once
+// guards the process-wide registry against a second NewHandler (tests).
 func registerFunnelMetrics(clients *Clients) {
 	if clients.PG == nil {
 		return
@@ -72,5 +72,6 @@ func registerFunnelMetrics(clients *Clients) {
 	pool := clients.PG.Pool()
 	funnelOnce.Do(func() {
 		telemetry.MustRegister(bookingtelemetry.NewFunnelCollector(bookingpg.NewFunnelStats(pool), time.Now))
+		telemetry.MustRegister(bookingtelemetry.NewDriftCollector(bookingpg.NewDriftStats(pool), time.Now))
 	})
 }

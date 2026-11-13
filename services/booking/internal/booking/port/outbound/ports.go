@@ -104,6 +104,19 @@ type IBookingRepo interface {
 	DeferVerification(ctx context.Context, bookingID string, until time.Time) error
 }
 
+// StockDrift is one stock counter that disagrees with a recount from the live rows (see stock_drift.sql). Delta is
+// stored minus recounted for event-level kinds; for category and quota kinds it is the sum of the absolute differences.
+type StockDrift struct {
+	EventID string
+	Kind    string
+	Delta   int
+}
+
+// IStockDrift returns every drifted counter. An empty result means the stock is consistent.
+type IStockDrift interface {
+	StockDrift(ctx context.Context) ([]StockDrift, error)
+}
+
 // IBookingDueScanner finds bookings whose payment window has lapsed (expiry sweeper). ClaimDueBookings leases the
 // returned rows for 15 s so that concurrent sweepers do not take the same booking (D-C7.3).
 type IBookingDueScanner interface {
