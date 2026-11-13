@@ -2,6 +2,7 @@ package cache
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -22,6 +23,7 @@ type fakeSource struct {
 	detailCalls atomic.Int32
 	listCalls   atomic.Int32
 	gate        chan struct{} // when set, GetDetail blocks until it is closed (keeps the calls in flight together)
+	listRows    int           // events returned per list query (0 means one)
 }
 
 func (f *fakeSource) GetDetail(_ context.Context, id string) (entity.EventDetail, error) {
@@ -34,7 +36,21 @@ func (f *fakeSource) GetDetail(_ context.Context, id string) (entity.EventDetail
 
 func (f *fakeSource) ListEvents(_ context.Context, _ dto.EventListQuery) ([]entity.Event, error) {
 	f.listCalls.Add(1)
-	return []entity.Event{{ID: "a"}}, nil
+	n := f.listRows
+	if n == 0 {
+		n = 1
+	}
+	out := make([]entity.Event, n)
+	for i := range out {
+		out[i] = entity.Event{ID: "a"}
+	}
+	return out, nil
+}
+
+// listedEvents is the number of events the cache holds for list queries (the budget counts events, not keys).
+func listedEvents(c *EventReadCache) int {
+	_, weight := c.lists.size()
+	return weight
 }
 
 // fakeClock is a settable clock shared by the cache under test.
@@ -159,4 +175,68 @@ func TestEventReadCache_ListKeyIsTheQuery(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, int32(1), src.listCalls.Load())
 	})
+}
+
+func TestEventReadCache_ListBudgetCountsEvents(t *testing.T) {
+	clk := &fakeClock{t: time.Date(2026, 11, 13, 9, 0, 0, 0, time.UTC)}
+	src := &fakeSource{listRows: 300} // 300 events per query: 66 queries fill the 20,000-event budget
+	c := NewEventReadCache(src, 2*time.Second, clk.now)
+	ctx := context.Background()
+	query := func(i int) dto.EventListQuery { return dto.EventListQuery{City: fmt.Sprintf("city-%d", i)} }
+
+	// 70 distinct queries: the budget must hold, and the oldest entries go first.
+	for i := 0; i < 70; i++ {
+		_, err := c.ListEvents(ctx, query(i))
+		require.NoError(t, err)
+	}
+	assert.LessOrEqual(t, listedEvents(c), maxCachedListEvents, "cached events must stay within the budget")
+	assert.Equal(t, int32(70), src.listCalls.Load())
+
+	// The newest query is still in memory; the oldest was evicted and must reload.
+	_, err := c.ListEvents(ctx, query(69))
+	require.NoError(t, err)
+	assert.Equal(t, int32(70), src.listCalls.Load(), "the newest query is served from memory")
+	_, err = c.ListEvents(ctx, query(0))
+	require.NoError(t, err)
+	assert.Equal(t, int32(71), src.listCalls.Load(), "the oldest query was evicted and reloads")
+}
+
+func TestEventReadCache_ListBudgetEvictsExpiredFirst(t *testing.T) {
+	clk := &fakeClock{t: time.Date(2026, 11, 13, 9, 0, 0, 0, time.UTC)}
+	src := &fakeSource{listRows: 300}
+	c := NewEventReadCache(src, 2*time.Second, clk.now)
+	ctx := context.Background()
+
+	// One query stored at t0 expires at t0+2s; by t0+3s it is dead weight.
+	_, err := c.ListEvents(ctx, dto.EventListQuery{City: "old"})
+	require.NoError(t, err)
+	clk.advance(3 * time.Second)
+
+	// 66 live queries (19,800 events) fit once the expired one is gone, so none of them may be evicted.
+	for i := 0; i < 66; i++ {
+		_, err := c.ListEvents(ctx, dto.EventListQuery{City: fmt.Sprintf("fresh-%d", i)})
+		require.NoError(t, err)
+	}
+	calls := src.listCalls.Load()
+	for i := 0; i < 66; i++ {
+		_, err := c.ListEvents(ctx, dto.EventListQuery{City: fmt.Sprintf("fresh-%d", i)})
+		require.NoError(t, err)
+	}
+	assert.Equal(t, calls, src.listCalls.Load(), "live entries must survive while an expired one exists")
+	assert.LessOrEqual(t, listedEvents(c), maxCachedListEvents)
+}
+
+func TestEventReadCache_OversizedListIsNotStored(t *testing.T) {
+	clk := &fakeClock{t: time.Date(2026, 11, 13, 9, 0, 0, 0, time.UTC)}
+	src := &fakeSource{listRows: maxCachedListEvents + 1}
+	c := NewEventReadCache(src, 2*time.Second, clk.now)
+	ctx := context.Background()
+	q := dto.EventListQuery{City: "huge"}
+
+	_, err := c.ListEvents(ctx, q)
+	require.NoError(t, err)
+	_, err = c.ListEvents(ctx, q)
+	require.NoError(t, err)
+	assert.Equal(t, int32(2), src.listCalls.Load(), "a result larger than the whole budget is served but never stored")
+	assert.Equal(t, 0, listedEvents(c))
 }

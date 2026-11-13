@@ -25,6 +25,7 @@ import (
 	bookingpg "github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/infrastructure/postgres"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/infrastructure/security"
 	bookingvalkey "github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/infrastructure/valkey"
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/port/outbound"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/config"
 )
 
@@ -57,8 +58,7 @@ func newBookingModule(cfg config.Config, clients *Clients, logger *slog.Logger) 
 
 	// Outbound adapters.
 	eventRepo := bookingpg.NewEventRepo(pool)
-	// Catalog and detail reads (and the hold's price/rule read) share one 2 s in-process cache; stock never does.
-	eventReads := bookingcache.NewEventReadCache(eventRepo, 2*time.Second, clk.Now)
+	eventReads, adminEventReads := newEventReads(eventRepo, clk)
 	eventWriteRepo := bookingpg.NewEventWriteRepo(pool)
 	admissionRepo := bookingpg.NewAdmissionRepo(pool)
 	bookingRepo := bookingpg.NewBookingRepo(pool)
@@ -87,6 +87,7 @@ func newBookingModule(cfg config.Config, clients *Clients, logger *slog.Logger) 
 	// Usecases.
 	listEvents := usecase.NewListEvents(eventReads, clk)
 	getDetail := usecase.NewGetEventDetail(eventReads, clk)
+	adminDetail := usecase.NewGetEventDetail(adminEventReads, clk)
 	listFacets := usecase.NewListFacets(eventRepo)
 	createEvent := usecase.NewCreateEvent(eventWriteRepo, idGen)
 	updateConfig := usecase.NewUpdateEventConfig(eventWriteRepo)
@@ -128,7 +129,7 @@ func newBookingModule(cfg config.Config, clients *Clients, logger *slog.Logger) 
 		return nil, err
 	}
 	adminHandler := bookinghttp.NewAdminHandler(createEvent, updateConfig, tv.admin).WithImages(usecase.NewUploadEventImage(eventWriteRepo, store)).
-		WithPublication(usecase.NewPublishEvent(eventRepo, eventWriteRepo, clk), getDetail)
+		WithPublication(usecase.NewPublishEvent(eventRepo, eventWriteRepo, clk), adminDetail)
 	regs := []registrar{
 		bookinghttp.NewCatalogHandler(listEvents, getDetail, listFacets),
 		bookinghttp.NewSessionHandler(sessions, attendee, cancelSess),
@@ -161,6 +162,16 @@ func newBookingModule(cfg config.Config, clients *Clients, logger *slog.Logger) 
 		settle:     usecase.NewSettle(uow, links.Token),
 		outbox:     outboxWriter,
 	}, nil
+}
+
+// catalogCacheTTL is the staleness budget of public catalog, detail and hold reads (D-C7.7).
+const catalogCacheTTL = 2 * time.Second
+
+// newEventReads returns the cached reader for the public catalog, the public detail and the hold (its price and rule
+// read), and the uncached reader for the admin detail: an admin PATCH, publish, unpublish or cancel must show at once
+// (R35), so the admin path never goes through the cache.
+func newEventReads(repo outbound.IEventRepo, clk clock.IClock) (catalog, admin outbound.IEventRepo) {
+	return bookingcache.NewEventReadCache(repo, catalogCacheTTL, clk.Now), repo
 }
 
 // WrapVisitor puts visitor-token verification in front of the routes.

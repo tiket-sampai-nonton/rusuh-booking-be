@@ -17,9 +17,13 @@ import (
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/port/outbound"
 )
 
-// maxCachedKeys bounds each map. List keys come from public query strings, so without a cap the number of entries
-// would grow with every distinct city or date a visitor types.
+// maxCachedKeys bounds the number of keys in each map. List keys come from public query strings, so without a cap the
+// number of entries would grow with every distinct city or date a visitor types.
 const maxCachedKeys = 1024
+
+// maxCachedListEvents bounds the list cache by rows, not keys: a key cap alone would let 1024 queries each hold the
+// largest result (500 rows) and that is still a lot of memory per instance.
+const maxCachedListEvents = 20000
 
 // catalogLoadTimeout bounds one shared load. The load runs detached from the caller that started it (see
 // EventReadCache.GetDetail), so this timeout is what stops a hung query from blocking later callers forever.
@@ -41,8 +45,13 @@ type EventReadCache struct {
 
 // NewEventReadCache wraps src. A zero or negative ttl makes every read a miss that still shares in-flight loads.
 func NewEventReadCache(src outbound.IEventRepo, ttl time.Duration, now func() time.Time) *EventReadCache {
-	return &EventReadCache{IEventRepo: src, ttl: ttl, now: now}
+	c := &EventReadCache{IEventRepo: src, ttl: ttl, now: now}
+	c.lists.maxKeys, c.lists.maxWeight, c.lists.weigh = maxCachedKeys, maxCachedListEvents, lenEvents
+	c.details.maxKeys = maxCachedKeys
+	return c
 }
+
+func lenEvents(events []entity.Event) int { return len(events) }
 
 // ListEvents returns the catalog for q, reusing a load of the same normalised query for ttl.
 func (c *EventReadCache) ListEvents(ctx context.Context, q dto.EventListQuery) ([]entity.Event, error) {
@@ -141,29 +150,34 @@ func formatInstant(t *time.Time) string {
 type ttlEntry[V any] struct {
 	val V
 	exp time.Time
+	seq uint64 // insertion order: the oldest entry has the smallest seq, even when expiries tie
 }
 
-// ttlStore is a mutex-guarded map with expiry. Expired entries are dropped on access, and when the map is full the
-// expired ones are purged; if it is still full it is reset, which keeps memory bounded without an LRU.
+// ttlStore is a mutex-guarded map with expiry and two bounds: a key count, and optionally a total weight (the list
+// cache weighs an entry by its number of events, so the budget is about rows held, not keys). Expired entries go
+// first, then the oldest by insertion.
 type ttlStore[V any] struct {
-	mu sync.Mutex
-	m  map[string]ttlEntry[V]
+	mu        sync.Mutex
+	m         map[string]ttlEntry[V]
+	next      uint64 // sequence of the last insert
+	maxKeys   int
+	maxWeight int         // 0 means no weight bound
+	weigh     func(V) int // nil means every entry weighs 0
+	weight    int         // sum of weigh over the entries held
 }
 
 func (s *ttlStore[V]) get(key string, now time.Time) (V, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	e, ok := s.m[key]
-	if !ok {
-		var zero V
-		return zero, false
+	if ok && now.Before(e.exp) {
+		return e.val, true
 	}
-	if !now.Before(e.exp) {
-		delete(s.m, key)
-		var zero V
-		return zero, false
+	if ok {
+		s.remove(key)
 	}
-	return e.val, true
+	var zero V
+	return zero, false
 }
 
 func (s *ttlStore[V]) put(key string, val V, exp, now time.Time) {
@@ -172,15 +186,68 @@ func (s *ttlStore[V]) put(key string, val V, exp, now time.Time) {
 	if s.m == nil {
 		s.m = make(map[string]ttlEntry[V])
 	}
-	if _, exists := s.m[key]; !exists && len(s.m) >= maxCachedKeys {
-		for k, e := range s.m {
-			if !now.Before(e.exp) {
-				delete(s.m, k)
-			}
-		}
-		if len(s.m) >= maxCachedKeys {
-			clear(s.m)
+	if _, ok := s.m[key]; ok {
+		s.remove(key)
+	}
+	w := s.weightOf(val)
+	if s.maxWeight > 0 && w > s.maxWeight {
+		return // larger than the whole budget: serve it, never hold it
+	}
+	s.makeRoom(w, now)
+	s.next++
+	s.m[key] = ttlEntry[V]{val: val, exp: exp, seq: s.next}
+	s.weight += w
+}
+
+// size reports the number of keys and the total weight currently held.
+func (s *ttlStore[V]) size() (keys, weight int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.m), s.weight
+}
+
+// makeRoom evicts until one more entry of weight w fits: expired entries first, then the oldest.
+func (s *ttlStore[V]) makeRoom(w int, now time.Time) {
+	if s.fits(w) {
+		return
+	}
+	for k, e := range s.m {
+		if !now.Before(e.exp) {
+			s.remove(k)
 		}
 	}
-	s.m[key] = ttlEntry[V]{val: val, exp: exp}
+	if s.fits(w) {
+		return
+	}
+	order := make([]string, 0, len(s.m))
+	for k := range s.m {
+		order = append(order, k)
+	}
+	sort.Slice(order, func(i, j int) bool { return s.m[order[i]].seq < s.m[order[j]].seq })
+	for _, k := range order {
+		if s.fits(w) {
+			return
+		}
+		s.remove(k)
+	}
+}
+
+func (s *ttlStore[V]) fits(w int) bool {
+	return (s.maxKeys <= 0 || len(s.m) < s.maxKeys) && (s.maxWeight == 0 || s.weight+w <= s.maxWeight)
+}
+
+func (s *ttlStore[V]) remove(key string) {
+	e, ok := s.m[key]
+	if !ok {
+		return
+	}
+	s.weight -= s.weightOf(e.val)
+	delete(s.m, key)
+}
+
+func (s *ttlStore[V]) weightOf(v V) int {
+	if s.weigh == nil {
+		return 0
+	}
+	return s.weigh(v)
 }
