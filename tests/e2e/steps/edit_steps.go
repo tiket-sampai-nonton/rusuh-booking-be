@@ -191,10 +191,14 @@ func (e *editCtx) nthEditStatus(nth, expected int) error {
 }
 
 func (e *editCtx) applyPaymentLock() error {
+	tok, terr := helpers.MintServiceToken()
+	if terr != nil {
+		return terr
+	}
 	resp, err := helpers.PostJSON(context.Background(),
 		helpers.Booking(e.env, "/internal/v1/bookings/"+e.bookingID+"/payment-lock"),
 		map[string]any{"attemptKey": fmt.Sprintf("lock-%d", time.Now().UnixNano())},
-		map[string]string{"Authorization": "Bearer " + e.env.ServiceToken})
+		map[string]string{"Authorization": "Bearer " + tok})
 	if err != nil {
 		return err
 	}

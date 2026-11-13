@@ -10,6 +10,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -67,6 +68,7 @@ func TestAdminImageUpload(t *testing.T) {
 	assert.Equal(t, png, body, "file yang disajikan sama dengan yang diunggah")
 	assert.Equal(t, "image/png", got.Header.Get("Content-Type"))
 
+	time.Sleep(2500 * time.Millisecond) // cache baca katalog 2 dtk (D-C7.7)
 	// The FE catalog and detail now carry the URL (contract: bannerUrl / thumbnailUrl / imageUrl on EventSummary).
 	d := call(t, "GET", bookingURL+"/api/v1/events/"+eventID, nil, nil)
 	mustStatus(t, 200, d, "detail")

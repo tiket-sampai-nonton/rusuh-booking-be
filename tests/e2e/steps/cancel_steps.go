@@ -83,10 +83,14 @@ func (c *cancelCtx) holdOne(_ int) error {
 }
 
 func (c *cancelCtx) applyLock() error {
+	tok, terr := helpers.MintServiceToken()
+	if terr != nil {
+		return terr
+	}
 	resp, err := helpers.PostJSON(context.Background(),
 		helpers.Booking(c.env, "/internal/v1/bookings/"+c.bookingID+"/payment-lock"),
 		map[string]any{"attemptKey": fmt.Sprintf("lock-%d", time.Now().UnixNano())},
-		map[string]string{"Authorization": "Bearer " + c.env.ServiceToken})
+		map[string]string{"Authorization": "Bearer " + tok})
 	if err != nil {
 		return err
 	}
