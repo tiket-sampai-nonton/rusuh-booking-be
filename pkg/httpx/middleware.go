@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -77,15 +78,10 @@ func Recover(logger *slog.Logger) Middleware {
 
 // CORS answers cross-origin browser calls. CORS_ALLOWED_ORIGINS (comma separated, exact match) is an allowlist: a
 // matching Origin is echoed back with credentials enabled (cookie rb_visitor needs it), any other Origin gets no CORS
-// headers. shortcut: empty list keeps the old wildcard (no credentials) so local dev works unconfigured; set the list on
-// every deployed environment, and never put localhost in prod.
+// headers. shortcut: empty list keeps the old wildcard (no credentials) so local dev works unconfigured; CheckCORS makes
+// a deployed service (APP_ENV not local) refuse to start without the list. Never put localhost in prod.
 func CORS() Middleware {
-	var allowed []string
-	for _, o := range strings.Split(os.Getenv("CORS_ALLOWED_ORIGINS"), ",") {
-		if o = strings.TrimSpace(o); o != "" {
-			allowed = append(allowed, o)
-		}
-	}
+	allowed := corsOrigins()
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			h := w.Header()
@@ -105,6 +101,49 @@ func CORS() Middleware {
 			if r.Method == http.MethodOptions {
 				w.WriteHeader(http.StatusNoContent)
 				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// isLocalEnv reports whether APP_ENV marks unconfigured local development (the services default to local).
+func isLocalEnv() bool {
+	e := strings.ToLower(strings.TrimSpace(os.Getenv("APP_ENV")))
+	return e == "" || e == "local"
+}
+
+// corsOrigins is the CORS_ALLOWED_ORIGINS allowlist with blanks dropped.
+func corsOrigins() []string {
+	var out []string
+	for _, o := range strings.Split(os.Getenv("CORS_ALLOWED_ORIGINS"), ",") {
+		if o = strings.TrimSpace(o); o != "" {
+			out = append(out, o)
+		}
+	}
+	return out
+}
+
+// CheckCORS makes a deployed service refuse to start without a CORS allowlist (SEC-004): outside local an empty
+// CORS_ALLOWED_ORIGINS would silently fall back to the wildcard. Call it where the HTTP handler is built.
+func CheckCORS() error {
+	if isLocalEnv() || len(corsOrigins()) > 0 {
+		return nil
+	}
+	return errors.New("httpx: CORS_ALLOWED_ORIGINS wajib diisi bila APP_ENV bukan local (kosong berarti wildcard)")
+}
+
+// SecurityHeaders adds the standard response security headers (SEC-003): nosniff, no Referer, and HSTS outside local
+// (plain-HTTP local development must not pin HTTPS). Put it outermost so every answer, preflights included, carries them.
+func SecurityHeaders() Middleware {
+	hsts := !isLocalEnv()
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			h := w.Header()
+			h.Set("X-Content-Type-Options", "nosniff")
+			h.Set("Referrer-Policy", "no-referrer")
+			if hsts {
+				h.Set("Strict-Transport-Security", "max-age=31536000")
 			}
 			next.ServeHTTP(w, r)
 		})

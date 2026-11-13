@@ -59,7 +59,10 @@ func NewHandler(cfg config.Config, mod *queueModule, logger *slog.Logger) (http.
 	}
 
 	// AccessLog dan telemetry.HTTP membaca r.Pattern, jadi harus di dalam RequestID dan langsung membungkus mux.
-	return httpx.Chain(mux, httpx.CORS(), httpx.RequestID(), httpx.AccessLog(logger), telemetry.HTTP(config.ServiceName), httpx.Recover(logger)), nil
+	if err := httpx.CheckCORS(); err != nil {
+		return nil, err
+	}
+	return httpx.Chain(mux, httpx.SecurityHeaders(), httpx.CORS(), httpx.RequestID(), httpx.AccessLog(logger), telemetry.HTTP(config.ServiceName), httpx.Recover(logger)), nil
 }
 
 // depthOnce guards the process-wide registry against a second NewHandler (tests); the API's /metrics is what

@@ -57,7 +57,10 @@ func NewHandler(cfg config.Config, clients *Clients, logger *slog.Logger) (http.
 	// AccessLog dan telemetry.HTTP membaca r.Pattern, jadi harus di dalam RequestID dan langsung membungkus mux.
 	trustProxy := cfg.App.Env != "local"
 	limit := httpx.RateLimit(cfg.HTTP.RateLimitPerIP, cfg.HTTP.RateLimitWindow, httpx.IPKey(trustProxy, "/health", "/metrics"), time.Now)
-	return httpx.Chain(routes, httpx.CORS(), httpx.RequestID(), httpx.AccessLog(logger), telemetry.HTTP(config.ServiceName), httpx.Recover(logger), limit), nil
+	if err := httpx.CheckCORS(); err != nil {
+		return nil, err
+	}
+	return httpx.Chain(routes, httpx.SecurityHeaders(), httpx.CORS(), httpx.RequestID(), httpx.AccessLog(logger), telemetry.HTTP(config.ServiceName), httpx.Recover(logger), limit), nil
 }
 
 var funnelOnce sync.Once
