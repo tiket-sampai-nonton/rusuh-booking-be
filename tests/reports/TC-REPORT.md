@@ -1,20 +1,20 @@
 # Laporan TC (test case): Rusuh Booking Tiket
 
-Dibuat otomatis oleh `tests/reports/gen-tc-report.mjs` dari hasil eksekusi nyata. Commit dasar: `99fd2b2` (working tree dapat memuat perubahan yang belum di-commit). Setiap angka di bawah berasal dari berkas hasil di `tests/reports/`; yang tidak dijalankan ditandai **BELUM DIJALANKAN**.
+Dibuat otomatis oleh `tests/reports/gen-tc-report.mjs` dari hasil eksekusi nyata. Commit dasar: `031b6c4` (working tree dapat memuat perubahan yang belum di-commit). Setiap angka di bawah berasal dari berkas hasil di `tests/reports/`; yang tidak dijalankan ditandai **BELUM DIJALANKAN**.
 
 ## 1. Ringkasan
 
 | Jenis | Alat | Lingkungan | Dijalankan | PASS | FAIL | Dilewati | Waktu |
 |---|---|---|---:|---:|---:|---:|---|
-| API BDD | godog (Cucumber Go), `tests/features` | stack Docker lokal | 31 skenario | 27 | 4 | 0 | 2026-11-13 10:23 WIB |
-| API E2E Go | `go test -tags e2e` (tes lain di `tests/e2e`) | stack Docker lokal | 10 tes | 10 | 0 | 0 | 2026-11-13 10:23 WIB |
+| API BDD | godog (Cucumber Go), `tests/features` | stack Docker lokal | 31 skenario | 29 | 2 | 0 | 2026-11-13 19:31 WIB |
+| API E2E Go | `go test -tags e2e` (tes lain di `tests/e2e`) | stack Docker lokal | 10 tes | 10 | 0 | 0 | 2026-11-13 19:31 WIB |
 | UI desktop, prod | Cucumber-js + Playwright (Chromium) | prod: rusuhbooking.my.id | 9 skenario | 9 | 0 | 0 | 2026-11-13 08:04 WIB |
 | UI mobile (Pixel 7), prod | Cucumber-js + Playwright (Chromium) | prod: rusuhbooking.my.id | 10 skenario | 10 | 0 | 0 | 2026-11-13 08:06 WIB |
-| UI desktop, dev | Cucumber-js + Playwright (Chromium) | dev: rusuh-booking.pages.dev | 9 skenario | 9 | 0 | 0 | 2026-11-13 10:44 WIB |
-| UI mobile (Pixel 7), dev | Cucumber-js + Playwright (Chromium) | dev: rusuh-booking.pages.dev | 10 skenario | 10 | 0 | 0 | 2026-11-13 10:42 WIB |
+| UI desktop, dev | Cucumber-js + Playwright (Chromium) | dev: rusuh-booking.pages.dev | 9 skenario | 9 | 0 | 0 | 2026-11-13 19:33 WIB |
+| UI mobile (Pixel 7), dev | Cucumber-js + Playwright (Chromium) | dev: rusuh-booking.pages.dev | 10 skenario | 10 | 0 | 0 | 2026-11-13 19:34 WIB |
 | Appium (Android) | WebdriverIO + Appium UiAutomator2 | perangkat Android | **BELUM DIJALANKAN** (4 skenario ditulis; hanya dry-run struktur) | - | - | - | - |
 
-Eksekusi API: `exit=1 durasi=422s selesai=2026-11-13 10:23 WIB commit=99fd2b2 E2E_SLOW=1`.
+Eksekusi API: `exit=1 durasi=449s selesai=2026-11-13 19:31 WIB commit=031b6c4 E2E_SLOW=1 token-service=diterbitkan-per-panggilan`.
 
 ## 2. API: skenario BDD (godog) dan tes Go e2e
 
@@ -26,9 +26,9 @@ Sumber skenario: `tests/features/*.feature` (tidak diubah). Dijalankan lewat **j
 |---|---|---|---:|---|---|
 | TC-ADM-01 | admission always reserves stock | PASS | 0.0 | - |  |
 | TC-ADM-03 | unused units return to supply after hold | PASS | 0.0 | - |  |
-| TC-BKG-01 | buyer can hold up to 3 tickets with different attendee NIKs | PASS | 0.1 | BR-02, FR-14, BR-01 |  |
+| TC-BKG-01 | buyer can hold up to 3 tickets with different attendee NIKs | PASS | 0.0 | BR-02, FR-14, BR-01 |  |
 | TC-BKG-02 | attendee NIK must be unique per event | PASS | 0.0 | - |  |
-| TC-BKG-03 | duplicate attendee NIK in same order is rejected | PASS | 0.1 | - |  |
+| TC-BKG-03 | duplicate attendee NIK in same order is rejected | PASS | 0.0 | - |  |
 | TC-BKG-06 | hold is idempotent with same Idempotency-Key | PASS | 0.0 | FR-16 |  |
 | TC-BKG-08 | hold with invalid NIK structure is rejected | PASS | 0.0 | FR-15 |  |
 | TC-BKG-09 | attendee check does not leak NIK | PASS | 0.0 | FR-13 |  |
@@ -37,21 +37,21 @@ Sumber skenario: `tests/features/*.feature` (tidak diubah). Dijalankan lewat **j
 | TC-CAT-06 | sort by price ascending returns 200 | PASS | 0.0 | - |  |
 | TC-EDT-01 | change items before paying | PASS | 0.0 | FR-21, BR-05, FR-16 |  |
 | TC-EDT-03 | edit limit reached | PASS | 0.0 | - |  |
-| TC-EDT-04 | edit locked after payment-lock | FAIL | 0.0 | - | (a) Sama dengan TC-PAY-09b: `E2E_SERVICE_TOKEN` kosong, payment-lock menjawab 401. Belum dipastikan terhadap token valid. |
+| TC-EDT-04 | edit locked after payment-lock | PASS | 0.0 | - |  |
 | TC-EDT-06 | concurrent edits with same version — exactly one wins | PASS | 0.0 | - |  |
 | TC-EVT-01 | list events returns an events array | PASS | 0.0 | FR-01, FR-03 |  |
 | TC-EVT-04 | event detail returns categories | PASS | 0.0 | FR-11 |  |
 | TC-EVT-05 | category availability is live | PASS | 0.0 | FR-12 |  |
 | TC-GST-01 | anonymous join returns a visitor token | PASS | 0.0 | FR-13 |  |
 | TC-GST-02 | legacy buyer fields in the join body are ignored | PASS | 0.0 | FR-13, FR-15 |  |
-| TC-GST-04 | same visitor joining again gets the same entry | PASS | 0.1 | - |  |
+| TC-GST-04 | same visitor joining again gets the same entry | PASS | 0.0 | - |  |
 | TC-PAY-04 | booking expires when TTL lapses | FAIL | 30.1 | BR-06, FR-23 | (b) Perubahan perilaku disengaja, ADR-007 (amandemen 2026-11-12): booking masuk VERIFYING dan baru EXPIRED setelah `VERIFY_GRACE_SECONDS` (default 180 s, `services/booking/internal/booking/application/usecase/expire.go:95-103`). Skenario masih meminta EXPIRED dalam 30 s; pada run ini status tertinggal di VERIFYING. Bukti perilaku akhir: `TestExpiredPayment_LateSettlementGoesToReviewWithoutTickets` lulus pada run yang sama (EXPIRED tercapai setelah sekitar 310 s). Keputusan pemilik: ubah asersi di `tests/features/cancel.feature` ke batas tenggang, atau tetap. |
 | TC-PAY-07 | late payment on expired booking becomes REVIEW | FAIL | 30.1 | - | (b) Sama dengan TC-PAY-04: langkah "expire by sweeper" menunggu 30 s dan gagal sebelum langkah REVIEW (sisa langkah dilewati). Perilaku REVIEW tanpa tiket setelah pembayaran terlambat tercakup oleh `TestExpiredPayment_LateSettlementGoesToReviewWithoutTickets` (lulus). |
 | TC-PAY-09a | cancel unpaid unlocked booking | PASS | 0.0 | - |  |
-| TC-PAY-09b | cancel locked booking is rejected | FAIL | 0.0 | - | (a) Konfigurasi harness: `E2E_SERVICE_TOKEN` tidak dipasang (`tools/e2e.sh` tidak mengekspornya), sehingga header `Authorization: Bearer ` kosong dan Booking menjawab 401 pada `POST /internal/v1/bookings/{id}/payment-lock` (hanya token Payment yang diterima, `payment_auth_test.go`). Belum dipastikan bahwa token valid meloloskan langkah ini: token harus ditandatangani kunci Payment dan belum dibuat. |
+| TC-PAY-09b | cancel locked booking is rejected | PASS | 0.0 | - |  |
 | TC-QUE-02 | direct admission when slots available | PASS | 0.0 | FR-05 |  |
 | TC-SES-01 | booking response has server-authoritative paymentExpiresAt | PASS | 0.0 | BR-03, FR-17, FR-19 |  |
-| TC-USR-01 | buy without login works | PASS | 0.0 | - |  |
+| TC-USR-01 | buy without login works | PASS | 0.1 | - |  |
 | TC-USR-02 | OTP is sent for any email | PASS | 0.5 | - |  |
 | TC-USR-03 | wrong OTP is rejected | PASS | 0.0 | - |  |
 | TC-USR-05 | correct OTP issues tokens | PASS | 0.5 | - |  |
@@ -60,16 +60,16 @@ Sumber skenario: `tests/features/*.feature` (tidak diubah). Dijalankan lewat **j
 
 | TC ID | Judul | Hasil | Durasi (dtk) |
 |---|---|---|---:|
-| TestPayment_PendingThenFailedNeverPaysOrIssuesTickets | Payment PendingThenFailedNeverPaysOrIssuesTickets | PASS | 6.7 |
-| TestHold_DuplicateRequestsAndUnauthorizedAccess | Hold DuplicateRequestsAndUnauthorizedAccess | PASS | 0.0 |
-| TestExpiredPayment_LateSettlementGoesToReviewWithoutTickets | ExpiredPayment LateSettlementGoesToReviewWithoutTickets | PASS | 310.5 |
-| TestConcurrentBuyers_NeverOversell | ConcurrentBuyers NeverOversell | PASS | 10.1 |
-| TestAdminImageUpload | AdminImageUpload | PASS | 0.0 |
-| TestJourney_LoginToPaidTicketAndEmail | Journey LoginToPaidTicketAndEmail | PASS | 8.8 |
-| TestAdmin_OnlyAllowListedAccountsCanCreateEvents | Admin OnlyAllowListedAccountsCanCreateEvents | PASS | 0.6 |
+| TestPayment_PendingThenFailedNeverPaysOrIssuesTickets | Payment PendingThenFailedNeverPaysOrIssuesTickets | PASS | 9.1 |
+| TestHold_DuplicateRequestsAndUnauthorizedAccess | Hold DuplicateRequestsAndUnauthorizedAccess | PASS | 2.5 |
+| TestExpiredPayment_LateSettlementGoesToReviewWithoutTickets | ExpiredPayment LateSettlementGoesToReviewWithoutTickets | PASS | 315.5 |
+| TestConcurrentBuyers_NeverOversell | ConcurrentBuyers NeverOversell | PASS | 12.6 |
+| TestAdminImageUpload | AdminImageUpload | PASS | 5.0 |
+| TestJourney_LoginToPaidTicketAndEmail | Journey LoginToPaidTicketAndEmail | PASS | 11.3 |
+| TestAdmin_OnlyAllowListedAccountsCanCreateEvents | Admin OnlyAllowListedAccountsCanCreateEvents | PASS | 2.5 |
 | TestLogout_RevokesTheAccessTokenAtOnce | Logout RevokesTheAccessTokenAtOnce | PASS | 0.5 |
-| TestCancelledEvent_LeavesTheListButStaysReadable | CancelledEvent LeavesTheListButStaysReadable | PASS | 0.0 |
-| TestQueueSettings_StrictJoinAndAdminEndpoint | QueueSettings StrictJoinAndAdminEndpoint | PASS | 0.5 |
+| TestCancelledEvent_LeavesTheListButStaysReadable | CancelledEvent LeavesTheListButStaysReadable | PASS | 5.0 |
+| TestQueueSettings_StrictJoinAndAdminEndpoint | QueueSettings StrictJoinAndAdminEndpoint | PASS | 3.0 |
 
 ## 3. UI web: Cucumber-js + Playwright (Chromium, headless)
 
@@ -110,30 +110,30 @@ Penanda **(baru)**: ID `TC-UI-*` belum ada di `06-TP-RBT-001.md` (usulan penamba
 
 | TC ID | Judul | Hasil | Durasi (dtk) | FR/NFR/BR terkait |
 |---|---|---|---:|---|
-| TC-UI-QUE-01 (baru) | masuk antrean membawa pengunjung ke halaman checkout | PASS | 8.9 | - |
-| TC-UI-QUE-02 (baru) | keluar dari checkout melepas sesi | PASS | 9.3 | - |
-| TC-UI-QUE-03 (baru) | formulir kosong tidak mengirim booking | PASS | 10.4 | - |
-| TC-EVT-01 | beranda menampilkan event yang terbit | PASS | 2.3 | FR-01, FR-03 |
+| TC-UI-QUE-01 (baru) | masuk antrean membawa pengunjung ke halaman checkout | PASS | 10.8 | - |
+| TC-UI-QUE-02 (baru) | keluar dari checkout melepas sesi | PASS | 9.1 | - |
+| TC-UI-QUE-03 (baru) | formulir kosong tidak mengirim booking | PASS | 10.6 | - |
+| TC-EVT-01 | beranda menampilkan event yang terbit | PASS | 2.2 | FR-01, FR-03 |
 | TC-UI-CAT-01 (baru) | halaman Jelajah menampilkan jumlah event aktif yang sama dengan API | PASS | 4.2 | - |
-| TC-EVT-04 | detail event menampilkan kategori dan harga | PASS | 5.2 | FR-11 |
-| TC-UI-EVT-01 (baru) | gambar event memuat tanpa gambar rusak | PASS | 4.4 | - |
-| TC-UI-EVT-02 (baru) | detail event menampilkan pengisi acara, lokasi, dan galeri | PASS | 6.7 | - |
-| TC-UI-NET-01 (baru) | tidak ada error CORS atau permintaan API gagal di browser | PASS | 4.6 | - |
+| TC-EVT-04 | detail event menampilkan kategori dan harga | PASS | 5.1 | FR-11 |
+| TC-UI-EVT-01 (baru) | gambar event memuat tanpa gambar rusak | PASS | 4.3 | - |
+| TC-UI-EVT-02 (baru) | detail event menampilkan pengisi acara, lokasi, dan galeri | PASS | 6.6 | - |
+| TC-UI-NET-01 (baru) | tidak ada error CORS atau permintaan API gagal di browser | PASS | 4.2 | - |
 
 ### 3.4 UI mobile (Pixel 7), dev (viewport dan user-agent mobile, bukan perangkat nyata)
 
 | TC ID | Judul | Hasil | Durasi (dtk) | FR/NFR/BR terkait |
 |---|---|---|---:|---|
-| TC-UI-QUE-01 (baru) | masuk antrean membawa pengunjung ke halaman checkout | PASS | 8.2 | - |
-| TC-UI-QUE-02 (baru) | keluar dari checkout melepas sesi | PASS | 9.2 | - |
+| TC-UI-QUE-01 (baru) | masuk antrean membawa pengunjung ke halaman checkout | PASS | 8.0 | - |
+| TC-UI-QUE-02 (baru) | keluar dari checkout melepas sesi | PASS | 9.3 | - |
 | TC-UI-QUE-03 (baru) | formulir kosong tidak mengirim booking | PASS | 10.3 | - |
-| TC-EVT-01 | beranda menampilkan event yang terbit | PASS | 2.5 | FR-01, FR-03 |
-| TC-UI-CAT-01 (baru) | halaman Jelajah menampilkan jumlah event aktif yang sama dengan API | PASS | 4.2 | - |
-| TC-EVT-04 | detail event menampilkan kategori dan harga | PASS | 5.3 | FR-11 |
-| TC-UI-EVT-01 (baru) | gambar event memuat tanpa gambar rusak | PASS | 4.2 | - |
-| TC-UI-EVT-02 (baru) | detail event menampilkan pengisi acara, lokasi, dan galeri | PASS | 6.6 | - |
-| TC-UI-NET-01 (baru) | tidak ada error CORS atau permintaan API gagal di browser | PASS | 5.1 | - |
-| TC-UI-MOB-01 (baru) | tampilan mobile tidak memiliki scroll horizontal | PASS | 2.7 | - |
+| TC-EVT-01 | beranda menampilkan event yang terbit | PASS | 2.1 | FR-01, FR-03 |
+| TC-UI-CAT-01 (baru) | halaman Jelajah menampilkan jumlah event aktif yang sama dengan API | PASS | 4.0 | - |
+| TC-EVT-04 | detail event menampilkan kategori dan harga | PASS | 4.8 | FR-11 |
+| TC-UI-EVT-01 (baru) | gambar event memuat tanpa gambar rusak | PASS | 4.1 | - |
+| TC-UI-EVT-02 (baru) | detail event menampilkan pengisi acara, lokasi, dan galeri | PASS | 6.4 | - |
+| TC-UI-NET-01 (baru) | tidak ada error CORS atau permintaan API gagal di browser | PASS | 4.8 | - |
+| TC-UI-MOB-01 (baru) | tampilan mobile tidak memiliki scroll horizontal | PASS | 2.2 | - |
 
 ### 3.5 Bukti tangkapan layar (dipilih, `tests/reports/ui/evidence/`)
 

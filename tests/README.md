@@ -58,6 +58,19 @@ GitHub menampilkan berkas `.html` sebagai kode sumber, bukan halaman. Untuk memb
 
 Yang belum diuji di pentest: prod (tidak discan, perlu persetujuan terpisah), dev aktif (dilarang), rate limit join tanpa override, dan ZAP terautentikasi.
 
+## Alat dan versi
+
+| Kegiatan | Alat | Versi | Catatan |
+|---|---|---|---|
+| Tes unit dan integrasi | Go `testing`, testify | Go 1.26.11, testify 1.12.1 | `go test -race`, integrasi dengan build tag `integration` |
+| TC API (BDD) | godog (Cucumber untuk Go) | v0.16.0 | 31 skenario di `tests/features` |
+| E2E Go | `go test -tags e2e`, libopenapi-validator | libopenapi v0.41.8 | respons divalidasi ke OpenAPI |
+| TC UI web | Cucumber-js, Playwright (Chromium) | Cucumber-js 11.3.0, Playwright 1.65.0, Node 24.22.1 | desktop 1280×900 dan mobile (Pixel 7) |
+| TC UI Android | WebdriverIO, Appium (UiAutomator2) | WebdriverIO 9, Appium 2.11 (rentang di `package.json`) | belum dijalankan di perangkat |
+| Uji beban | k6 | v0.57.0 | profil smoke, e2e, joinrate, load, stress, spike, soak, waiting, readonly |
+| Pentest | ZAP 2.17.0, nuclei v3.11.1, Schemathesis 4.33.4, testssl.sh, Trivy 0.70.0, gitleaks v8.18.4, Semgrep 1.184.0, `bl_tests.py` | lihat tabel di [`pentest/REPORT.md`](pentest/REPORT.md) | lokal dan dev pasif; prod tidak discan |
+| Gerbang CI | golangci-lint, gosec 2.22.0, govulncheck v1.1.4, Trivy 0.58.1 (image), hadolint, gitleaks, SonarCloud | versi di `.github/workflows/ci.yml` | |
+
 ## Menjalankan cepat
 
 ```bash
@@ -77,6 +90,8 @@ Sebelum menjalankan yang memakai stack Docker lokal, pastikan tidak ada tes lain
 
 - **Valkey lokal** dipublikasikan di host port `6380`, bukan `6379`. Skrip `tools/e2e.sh` masih mengharapkan `6379`, jadi jalur resmi perlu override (lihat catatan di `TC-REPORT.md`).
 - **Postgres lokal** dipublikasikan di `5433`. `Makefile` dan `.env.example` masih `5432`.
-- **E2E service token** (`E2E_SERVICE_TOKEN`) belum dipasang di `tools/e2e.sh`, jadi dua skenario payment-lock gagal dengan 401.
+- **Token service E2E** berumur maksimal 5 menit (`ServiceTokenMaxTTL`), jadi harness harus menerbitkannya per panggilan dengan kunci uji lokal; satu `E2E_SERVICE_TOKEN` tetap tidak cukup untuk satu run penuh. Dua skenario payment-lock gagal 401 tanpa itu.
+- **Cache baca katalog 2 detik** (D-C7.7): tes yang membaca detail atau daftar publik sesudah publish, cancel, atau unggah gambar harus menunggu sekitar 2,5 detik.
+- **Ulang E2E berkali-kali**: kosongkan Mailpit (`DELETE /api/v1/messages`) dan reset Valkey lokal antar run, karena OTP lama terbaca dan limiter OTP per IP penuh.
 
 Temuan konfigurasi di luar kode (infra, CORS, rate limit, Cloudflare) dirangkum di README root.
