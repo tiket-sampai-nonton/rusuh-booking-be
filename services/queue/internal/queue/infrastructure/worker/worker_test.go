@@ -213,6 +213,7 @@ func TestSweeper_MarksMissedOnly(t *testing.T) {
 	m.settings.EXPECT().ListEventIDs(gomock.Any()).Return([]string{"ev1"}, nil)
 	m.store.EXPECT().ExpiredActive(gomock.Any(), "ev1", gomock.Any(), 500).Return([]string{"e1"}, nil)
 	m.store.EXPECT().EndEntry(gomock.Any(), "ev1", "e1", outbound.EndSweepMissed, gomock.Any()).Return(outbound.EndResult{Tag: "OK", Status: "MISSED"}, nil)
+	m.store.EXPECT().GetSale(gomock.Any(), "ev1").Return(outbound.SaleState{SaleState: "OPEN"}, nil)
 	// pub must NOT be called — Booking's own sweeper publishes booking.journey.ended (spec 11.R2, K7).
 
 	s := worker.NewSweeper(m.store, m.settings, wnow, 500)
@@ -225,9 +226,79 @@ func TestSweeper_AlreadyMissedNoPublish(t *testing.T) {
 	m.settings.EXPECT().ListEventIDs(gomock.Any()).Return([]string{"ev1"}, nil)
 	m.store.EXPECT().ExpiredActive(gomock.Any(), "ev1", gomock.Any(), 500).Return([]string{"e1"}, nil)
 	m.store.EXPECT().EndEntry(gomock.Any(), "ev1", "e1", outbound.EndSweepMissed, gomock.Any()).Return(outbound.EndResult{Tag: "IGNORED", Status: "CLAIMED"}, nil) // not expired anymore
+	m.store.EXPECT().GetSale(gomock.Any(), "ev1").Return(outbound.SaleState{SaleState: "OPEN"}, nil)
 
 	s := worker.NewSweeper(m.store, m.settings, wnow, 500)
 	require.NoError(t, s.Run(ctx))
+}
+
+// D-C8.4: the sweeper drains a sold-out event's WAITING/STALE entries, one batch after another, until a short batch
+// comes back. Three full batches and a short one end in a single tick.
+func TestSweeper_DrainsSoldOutWaiting(t *testing.T) {
+	m := newWorkerMocks(t)
+	ctx := context.Background()
+	m.settings.EXPECT().ListEventIDs(gomock.Any()).Return([]string{"ev1"}, nil)
+	m.store.EXPECT().ExpiredActive(gomock.Any(), "ev1", gomock.Any(), 500).Return(nil, nil)
+	m.store.EXPECT().GetSale(gomock.Any(), "ev1").Return(outbound.SaleState{SaleState: "CLOSED", SoldOut: true}, nil)
+	gomock.InOrder(
+		m.store.EXPECT().EndWaitingSoldOut(gomock.Any(), "ev1", gomock.Any(), outbound.SoldOutBatchSize).
+			Return(outbound.SoldOutBatch{Scanned: outbound.SoldOutBatchSize, Ended: outbound.SoldOutBatchSize}, nil).Times(3),
+		m.store.EXPECT().EndWaitingSoldOut(gomock.Any(), "ev1", gomock.Any(), outbound.SoldOutBatchSize).
+			Return(outbound.SoldOutBatch{Scanned: 7, Ended: 7}, nil),
+	)
+
+	s := worker.NewSweeper(m.store, m.settings, wnow, 500)
+	require.NoError(t, s.Run(ctx))
+}
+
+// The per-tick budget (SoldOutMaxBatches batches of SoldOutBatchSize, 100k entries) holds even when every batch is full;
+// the rest of the set waits for the next tick.
+func TestSweeper_DrainsSoldOutWithinTickBudget(t *testing.T) {
+	m := newWorkerMocks(t)
+	ctx := context.Background()
+	m.settings.EXPECT().ListEventIDs(gomock.Any()).Return([]string{"ev1"}, nil)
+	m.store.EXPECT().ExpiredActive(gomock.Any(), "ev1", gomock.Any(), 500).Return(nil, nil)
+	m.store.EXPECT().GetSale(gomock.Any(), "ev1").Return(outbound.SaleState{SaleState: "CLOSED", SoldOut: true}, nil)
+	m.store.EXPECT().EndWaitingSoldOut(gomock.Any(), "ev1", gomock.Any(), outbound.SoldOutBatchSize).
+		Return(outbound.SoldOutBatch{Scanned: outbound.SoldOutBatchSize, Ended: outbound.SoldOutBatchSize}, nil).
+		Times(worker.SoldOutMaxBatches)
+
+	s := worker.NewSweeper(m.store, m.settings, wnow, 500)
+	require.NoError(t, s.Run(ctx))
+	assert.Equal(t, 200, worker.SoldOutMaxBatches)
+	assert.Equal(t, 100_000, worker.SoldOutMaxBatches*outbound.SoldOutBatchSize)
+}
+
+// A sale that is not sold out (never closed, or reopened by Booking's stock return, D-C5.3) is never drained.
+func TestSweeper_SoldOutFalseDoesNotDrain(t *testing.T) {
+	for _, sale := range []outbound.SaleState{
+		{SaleState: "OPEN"},
+		{SaleState: "CLOSED"}, // manual close without soldOut
+	} {
+		m := newWorkerMocks(t)
+		ctx := context.Background()
+		m.settings.EXPECT().ListEventIDs(gomock.Any()).Return([]string{"ev1"}, nil)
+		m.store.EXPECT().ExpiredActive(gomock.Any(), "ev1", gomock.Any(), 500).Return(nil, nil)
+		m.store.EXPECT().GetSale(gomock.Any(), "ev1").Return(sale, nil)
+		// EndWaitingSoldOut must NOT be called (a strict mock fails on an unexpected call).
+
+		s := worker.NewSweeper(m.store, m.settings, wnow, 500)
+		require.NoError(t, s.Run(ctx), sale.SaleState)
+	}
+}
+
+// A failing drain batch is returned (the tick reports it) and does not retry inside the tick.
+func TestSweeper_SoldOutDrainErrorIsReturned(t *testing.T) {
+	m := newWorkerMocks(t)
+	ctx := context.Background()
+	m.settings.EXPECT().ListEventIDs(gomock.Any()).Return([]string{"ev1"}, nil)
+	m.store.EXPECT().ExpiredActive(gomock.Any(), "ev1", gomock.Any(), 500).Return(nil, nil)
+	m.store.EXPECT().GetSale(gomock.Any(), "ev1").Return(outbound.SaleState{SaleState: "CLOSED", SoldOut: true}, nil)
+	m.store.EXPECT().EndWaitingSoldOut(gomock.Any(), "ev1", gomock.Any(), outbound.SoldOutBatchSize).
+		Return(outbound.SoldOutBatch{}, errors.New("valkey down")).Times(1)
+
+	s := worker.NewSweeper(m.store, m.settings, wnow, 500)
+	require.Error(t, s.Run(ctx))
 }
 
 func TestStatusPublisher_WritesDocument(t *testing.T) {
@@ -410,6 +481,7 @@ func TestSweeper_OneEntrysEndEntryErrorDoesNotStopTheOthers(t *testing.T) {
 	m.store.EXPECT().ExpiredActive(gomock.Any(), "ev1", gomock.Any(), 500).Return([]string{"e1", "e2"}, nil)
 	m.store.EXPECT().EndEntry(gomock.Any(), "ev1", "e1", outbound.EndSweepMissed, gomock.Any()).Return(outbound.EndResult{}, errors.New("valkey down"))
 	m.store.EXPECT().EndEntry(gomock.Any(), "ev1", "e2", outbound.EndSweepMissed, gomock.Any()).Return(outbound.EndResult{Tag: "OK", Status: "MISSED"}, nil)
+	m.store.EXPECT().GetSale(gomock.Any(), "ev1").Return(outbound.SaleState{SaleState: "OPEN"}, nil)
 
 	s := worker.NewSweeper(m.store, m.settings, wnow, 500)
 	require.Error(t, s.Run(ctx), "galat dikumpulkan dan dikembalikan, bukan diabaikan")
@@ -422,6 +494,7 @@ func TestSweeper_OneEventsFailureDoesNotStopTheOthers(t *testing.T) {
 	m.store.EXPECT().ExpiredActive(gomock.Any(), "ev1", gomock.Any(), 500).Return(nil, errors.New("ev1 down"))
 	m.store.EXPECT().ExpiredActive(gomock.Any(), "ev2", gomock.Any(), 500).Return([]string{"e1"}, nil)
 	m.store.EXPECT().EndEntry(gomock.Any(), "ev2", "e1", outbound.EndSweepMissed, gomock.Any()).Return(outbound.EndResult{Tag: "OK"}, nil)
+	m.store.EXPECT().GetSale(gomock.Any(), "ev2").Return(outbound.SaleState{SaleState: "OPEN"}, nil)
 
 	s := worker.NewSweeper(m.store, m.settings, wnow, 500)
 	require.Error(t, s.Run(ctx))

@@ -19,12 +19,6 @@ const (
 	queueName                  = "queue.booking-events"
 )
 
-// SoldOutBatchSize bounds the entries ended per store call; SoldOutMaxBatches bounds the calls per delivery.
-const (
-	SoldOutBatchSize  = 500
-	SoldOutMaxBatches = 20
-)
-
 // Consumer handles Booking events. Idempotency comes from guard state + SADD + Lua (no inbox table).
 type Consumer struct {
 	store outbound.IQueueStore
@@ -87,7 +81,9 @@ type soldOutIn struct {
 	EventID string `json:"eventId"`
 }
 
-// handleSoldOut closes the sale (idempotent HSET) and ends the waiting set with SOLD_OUT (idempotent, batched).
+// handleSoldOut closes the sale (idempotent HSET) and ends one batch of the waiting set with SOLD_OUT (D-C8.4).
+// The rest of the drain is the sweeper's job: while the sale stays sold out it runs EndWaitingSoldOut every tick within
+// its budget. So one delivery never loops, a huge set never holds the consumer, and a redelivery is a clean ack.
 func (c *Consumer) handleSoldOut(ctx context.Context, raw json.RawMessage) error {
 	var in soldOutIn
 	if err := json.Unmarshal(raw, &in); err != nil {
@@ -99,17 +95,8 @@ func (c *Consumer) handleSoldOut(ctx context.Context, raw json.RawMessage) error
 	if err := c.store.SetSale(ctx, in.EventID, "CLOSED", true); err != nil {
 		return err
 	}
-	// Req 5.5 / SRS-F-10-02: actively end every WAITING/STALE entry with SOLD_OUT so clients stop waiting.
-	// ADMITTED/CLAIMED are untouched (Jangan PHP). Batched and capped so one huge waiting set cannot hold the
-	// consumer; past the cap a retryable error redelivers and the idempotent drain continues.
-	for i := 0; i < SoldOutMaxBatches; i++ {
-		res, err := c.store.EndWaitingSoldOut(ctx, in.EventID, c.clock.Now().UnixMilli(), SoldOutBatchSize)
-		if err != nil {
-			return err
-		}
-		if res.Scanned < SoldOutBatchSize {
-			return nil
-		}
-	}
-	return fmt.Errorf("consumer: sold_out masih menyisakan antrean setelah %d batch, ulangi", SoldOutMaxBatches)
+	// Req 5.5 / SRS-F-10-02: WAITING/STALE entries end with SOLD_OUT so clients stop waiting. ADMITTED/CLAIMED are
+	// untouched (Jangan PHP).
+	_, err := c.store.EndWaitingSoldOut(ctx, in.EventID, c.clock.Now().UnixMilli(), outbound.SoldOutBatchSize)
+	return err
 }

@@ -10,9 +10,14 @@ import (
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/port/outbound"
 )
 
+// SoldOutMaxBatches bounds the sold-out drain per event and tick (D-C8.4): 200 batches of outbound.SoldOutBatchSize.
+const SoldOutMaxBatches = 200
+
 // Sweeper marks expired ADMITTED entries as MISSED and frees their slot (design §7.3).
 // It also ends CLAIMED slots past their claim bound (claimExpiresMs, QUEUE_CLAIMED_SLOT_MAX_SECONDS) as
 // ENDED/CLAIM_TIMEOUT through end_entry.lua; Booking is not called for those.
+// It also drains a sold-out event's WAITING/STALE entries with SOLD_OUT (D-C8.4): one batch after another while the
+// batch comes back full, within SoldOutMaxBatches per event and tick. The next tick continues where this one stopped.
 // It does NOT publish booking.* events — Booking's own session sweeper releases the allocation
 // and publishes booking.journey.ended when the claim window expires (spec 11.R2, K7).
 type Sweeper struct {
@@ -63,5 +68,31 @@ func (s *Sweeper) runEvent(ctx context.Context, eventID string) error {
 		// Booking's session sweeper will release the allocation and publish
 		// booking.journey.ended(UNCLAIMED) when its own claim window expires (K7).
 	}
+	if err := s.drainSoldOut(ctx, eventID, nowMs); err != nil {
+		errs = append(errs, err)
+	}
 	return errors.Join(errs...)
+}
+
+// drainSoldOut ends the WAITING/STALE entries of a sold-out event (D-C8.4). It stores no cursor: each batch removes what
+// it scanned from waiting/stale, so the head of the set is the next batch. A short batch means the set is empty. A
+// reopened sale (D-C5.3) is seen on the next tick, which then stops the drain.
+func (s *Sweeper) drainSoldOut(ctx context.Context, eventID string, nowMs int64) error {
+	sale, err := s.store.GetSale(ctx, eventID)
+	if err != nil {
+		return fmt.Errorf("sweeper get sale: %w", err)
+	}
+	if !sale.SoldOut {
+		return nil
+	}
+	for i := 0; i < SoldOutMaxBatches; i++ {
+		res, err := s.store.EndWaitingSoldOut(ctx, eventID, nowMs, outbound.SoldOutBatchSize)
+		if err != nil {
+			return fmt.Errorf("sweeper end waiting sold out: %w", err)
+		}
+		if res.Scanned < outbound.SoldOutBatchSize {
+			return nil
+		}
+	}
+	return nil // budget spent; the remainder waits for the next tick
 }

@@ -66,7 +66,7 @@ func TestConsumer_SoldOut(t *testing.T) {
 	c, store := newConsumer(t)
 	gomock.InOrder(
 		store.EXPECT().SetSale(gomock.Any(), "ev1", "CLOSED", true).Return(nil),
-		store.EXPECT().EndWaitingSoldOut(gomock.Any(), "ev1", gomock.Any(), queuerabbitmq.SoldOutBatchSize).
+		store.EXPECT().EndWaitingSoldOut(gomock.Any(), "ev1", gomock.Any(), outbound.SoldOutBatchSize).
 			Return(outbound.SoldOutBatch{Scanned: 3, Ended: 3}, nil),
 	)
 	err := c.Subscription().Handler(context.Background(), delivery(t, "booking.sold_out",
@@ -74,28 +74,14 @@ func TestConsumer_SoldOut(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-// A waiting set larger than one batch is drained batch by batch until a short batch comes back.
-func TestConsumer_SoldOut_DrainsInBatches(t *testing.T) {
-	c, store := newConsumer(t)
-	store.EXPECT().SetSale(gomock.Any(), "ev1", "CLOSED", true).Return(nil)
-	gomock.InOrder(
-		store.EXPECT().EndWaitingSoldOut(gomock.Any(), "ev1", gomock.Any(), queuerabbitmq.SoldOutBatchSize).
-			Return(outbound.SoldOutBatch{Scanned: queuerabbitmq.SoldOutBatchSize, Ended: queuerabbitmq.SoldOutBatchSize}, nil),
-		store.EXPECT().EndWaitingSoldOut(gomock.Any(), "ev1", gomock.Any(), queuerabbitmq.SoldOutBatchSize).
-			Return(outbound.SoldOutBatch{Scanned: 7, Ended: 7}, nil),
-	)
-	require.NoError(t, c.Subscription().Handler(context.Background(), delivery(t, "booking.sold_out",
-		map[string]string{"eventId": "ev1"})))
-}
-
-// Duplicate delivery: the second run finds nothing left; it is a clean ack (idempotent).
+// Duplicate delivery: the first delivery ends the scanned batch, the second finds nothing left (idempotent).
 func TestConsumer_SoldOut_DoubleDeliveryIdempotent(t *testing.T) {
 	c, store := newConsumer(t)
 	store.EXPECT().SetSale(gomock.Any(), "ev1", "CLOSED", true).Return(nil).Times(2)
 	gomock.InOrder(
-		store.EXPECT().EndWaitingSoldOut(gomock.Any(), "ev1", gomock.Any(), queuerabbitmq.SoldOutBatchSize).
+		store.EXPECT().EndWaitingSoldOut(gomock.Any(), "ev1", gomock.Any(), outbound.SoldOutBatchSize).
 			Return(outbound.SoldOutBatch{Scanned: 5, Ended: 5}, nil),
-		store.EXPECT().EndWaitingSoldOut(gomock.Any(), "ev1", gomock.Any(), queuerabbitmq.SoldOutBatchSize).
+		store.EXPECT().EndWaitingSoldOut(gomock.Any(), "ev1", gomock.Any(), outbound.SoldOutBatchSize).
 			Return(outbound.SoldOutBatch{}, nil),
 	)
 	d := delivery(t, "booking.sold_out", map[string]string{"eventId": "ev1"})
@@ -103,18 +89,18 @@ func TestConsumer_SoldOut_DoubleDeliveryIdempotent(t *testing.T) {
 	require.NoError(t, c.Subscription().Handler(context.Background(), d))
 }
 
-// A very large set must not hold the consumer: after the per-delivery cap it returns a RETRYABLE error (redelivery
-// continues the drain; the work is idempotent), never a Permanent one.
-func TestConsumer_SoldOut_CapReturnsRetryable(t *testing.T) {
+// D-C8.4: the handler closes the sale and ends ONE batch, then acks. A full batch is left to the sweeper (no retry
+// loop inside the delivery), so a huge waiting set never holds the consumer and never produces an error.
+func TestHandleSoldOut_ClosesSaleWithoutRetryLoop(t *testing.T) {
 	c, store := newConsumer(t)
-	store.EXPECT().SetSale(gomock.Any(), "ev1", "CLOSED", true).Return(nil)
-	store.EXPECT().EndWaitingSoldOut(gomock.Any(), "ev1", gomock.Any(), queuerabbitmq.SoldOutBatchSize).
-		Return(outbound.SoldOutBatch{Scanned: queuerabbitmq.SoldOutBatchSize, Ended: queuerabbitmq.SoldOutBatchSize}, nil).
-		Times(queuerabbitmq.SoldOutMaxBatches)
+	gomock.InOrder(
+		store.EXPECT().SetSale(gomock.Any(), "ev1", "CLOSED", true).Return(nil),
+		store.EXPECT().EndWaitingSoldOut(gomock.Any(), "ev1", gomock.Any(), outbound.SoldOutBatchSize).
+			Return(outbound.SoldOutBatch{Scanned: outbound.SoldOutBatchSize, Ended: outbound.SoldOutBatchSize}, nil).Times(1),
+	)
 	err := c.Subscription().Handler(context.Background(), delivery(t, "booking.sold_out",
 		map[string]string{"eventId": "ev1"}))
-	require.Error(t, err)
-	assert.False(t, pkgrabbitmq.IsPermanent(err))
+	assert.NoError(t, err)
 }
 
 func TestConsumer_SoldOut_StoreErrorIsRetryable(t *testing.T) {

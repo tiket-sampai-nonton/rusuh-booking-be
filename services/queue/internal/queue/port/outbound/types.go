@@ -107,6 +107,9 @@ type EndResult struct {
 // Changed reports whether the script mutated the entry.
 func (r EndResult) Changed() bool { return r.Tag == "OK" || r.Tag == "OK_CLEANUP" }
 
+// SoldOutBatchSize bounds the entries ended per EndWaitingSoldOut call (D-C8.4).
+const SoldOutBatchSize = 500
+
 // SoldOutBatch is the result of one EndWaitingSoldOut batch.
 type SoldOutBatch struct {
 	Scanned int // ids examined in this batch

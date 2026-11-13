@@ -64,6 +64,7 @@ func TestSweeperUsesConfiguredBatch(t *testing.T) {
 	settings := mock_outbound.NewMockIEventSettingsRepo(ctrl)
 	settings.EXPECT().ListEventIDs(gomock.Any()).Return([]string{"ev1"}, nil)
 	store.EXPECT().ExpiredActive(gomock.Any(), "ev1", gomock.Any(), 42).Return(nil, nil)
+	store.EXPECT().GetSale(gomock.Any(), "ev1").Return(outbound.SaleState{SaleState: "OPEN"}, nil)
 
 	s := worker.NewSweeper(store, settings, clock.System{}, sweepBatch(cfg))
 	require.NoError(t, s.Run(context.Background()))
