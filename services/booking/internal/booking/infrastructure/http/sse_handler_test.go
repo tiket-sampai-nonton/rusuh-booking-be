@@ -144,7 +144,9 @@ func TestSSEHandler_ClearsWriteDeadline(t *testing.T) {
 	require.NoError(t, err)
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
 	start := time.Now()
 	late := 0
