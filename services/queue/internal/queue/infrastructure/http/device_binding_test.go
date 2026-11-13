@@ -83,7 +83,7 @@ func TestJoinHandler_GuestScopeFromDeviceOrIP(t *testing.T) {
 			return dto.QueueEntry{EntryID: "e1"}, nil
 		})
 		mux := stdhttp.NewServeMux()
-		queuehttp.NewJoinHandler(uc, false).WithAuth(g.auth).Register(mux)
+		queuehttp.NewJoinHandler(uc, false, 1).WithAuth(g.auth).Register(mux)
 		req := httptest.NewRequest(stdhttp.MethodPost, "/api/v1/events/ev1/queue-entries", strings.NewReader("{}"))
 		req.RemoteAddr = remoteIP + ":4321"
 		if device != "" {
@@ -218,7 +218,7 @@ func TestDeviceBinding_JoinDegradesToNewVisitor(t *testing.T) {
 				return dto.QueueEntry{EntryID: "e1"}, nil
 			})
 			mux := stdhttp.NewServeMux()
-			queuehttp.NewJoinHandler(uc, false).WithAuth(g.auth).Register(mux)
+			queuehttp.NewJoinHandler(uc, false, 1).WithAuth(g.auth).Register(mux)
 			req := httptest.NewRequest(stdhttp.MethodPost, "/api/v1/events/ev1/queue-entries", strings.NewReader("{}"))
 			req.Header.Set("X-Visitor-Token", g.bound)
 			if tc.device != "" {

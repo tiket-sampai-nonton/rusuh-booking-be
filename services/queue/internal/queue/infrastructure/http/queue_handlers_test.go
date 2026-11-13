@@ -48,7 +48,7 @@ func TestJoinHandler_Created(t *testing.T) {
 	uc := mock_inbound.NewMockIJoinUsecase(ctrl)
 	uc.EXPECT().Join(gomock.Any(), gomock.Any()).Return(dto.QueueEntry{EntryID: "e1", Seq: 5, Status: "WAITING", VisitorToken: "vt"}, nil)
 
-	h := queuehttp.NewJoinHandler(uc, false)
+	h := queuehttp.NewJoinHandler(uc, false, 1)
 	mux := http.NewServeMux()
 	h.Register(mux)
 
@@ -70,7 +70,7 @@ func TestJoinHandler_MobileReturnsTokenInBody(t *testing.T) {
 	uc := mock_inbound.NewMockIJoinUsecase(ctrl)
 	uc.EXPECT().Join(gomock.Any(), gomock.Any()).Return(dto.QueueEntry{EntryID: "e1", VisitorToken: "vt"}, nil)
 
-	h := queuehttp.NewJoinHandler(uc, false)
+	h := queuehttp.NewJoinHandler(uc, false, 1)
 	mux := http.NewServeMux()
 	h.Register(mux)
 
@@ -91,7 +91,7 @@ func TestJoinHandler_DomainError(t *testing.T) {
 	uc := mock_inbound.NewMockIJoinUsecase(ctrl)
 	uc.EXPECT().Join(gomock.Any(), gomock.Any()).Return(dto.QueueEntry{}, entity.ErrAccountInQueue)
 
-	h := queuehttp.NewJoinHandler(uc, false)
+	h := queuehttp.NewJoinHandler(uc, false, 1)
 	mux := http.NewServeMux()
 	h.Register(mux)
 
@@ -124,7 +124,7 @@ func TestJoinHandler_SaleGateErrors(t *testing.T) {
 			uc := mock_inbound.NewMockIJoinUsecase(ctrl)
 			uc.EXPECT().Join(gomock.Any(), gomock.Any()).Return(dto.QueueEntry{}, tt.err)
 			mux := http.NewServeMux()
-			queuehttp.NewJoinHandler(uc, false).Register(mux)
+			queuehttp.NewJoinHandler(uc, false, 1).Register(mux)
 			req := httptest.NewRequest(http.MethodPost, "/api/v1/events/ev1/queue-entries", strings.NewReader(`{}`))
 			req.Header.Set("Content-Type", "application/json")
 			rec := httptest.NewRecorder()

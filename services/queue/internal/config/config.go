@@ -23,6 +23,9 @@ type App struct {
 	Env  string // local | dev | staging | prod
 	Name string
 	Port int
+	// TrustedProxyHops is the number of trusted proxies that each append one X-Forwarded-For entry
+	// (APP_TRUSTED_PROXY_HOPS: 1 = ALB only, 2 = CloudFront then ALB). The client IP is the entry this many from the right.
+	TrustedProxyHops int
 }
 
 // HTTP holds server tuning.
@@ -65,6 +68,9 @@ func (c Config) Validate() error {
 	}
 	if c.App.Port <= 0 || c.App.Port > 65535 {
 		errs = append(errs, fmt.Errorf("APP_PORT %d di luar rentang", c.App.Port))
+	}
+	if c.App.TrustedProxyHops < 1 || c.App.TrustedProxyHops > 5 {
+		errs = append(errs, fmt.Errorf("APP_TRUSTED_PROXY_HOPS %d di luar rentang 1–5", c.App.TrustedProxyHops))
 	}
 	if c.HTTP.ShutdownTimeout <= 0 {
 		errs = append(errs, errors.New("HTTP_SHUTDOWN_TIMEOUT harus > 0"))

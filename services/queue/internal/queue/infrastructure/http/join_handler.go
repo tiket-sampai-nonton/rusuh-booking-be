@@ -16,12 +16,15 @@ type JoinHandler struct {
 	uc         inbound.IJoinUsecase
 	auth       VisitorTokenAuthenticator // verifies the visitor token (id, generation, device claim)
 	trustProxy bool
+	hops       int // trusted proxies that append X-Forwarded-For entries (APP_TRUSTED_PROXY_HOPS)
 }
 
-// NewJoinHandler creates the handler. trustProxy=true behind the ALB (X-Forwarded-For). The visitor cookie is always
-// Secure (https; browsers also accept it on localhost); plain-http clients send X-Client-Type: mobile and keep the token.
-func NewJoinHandler(uc inbound.IJoinUsecase, trustProxy bool) *JoinHandler {
-	return &JoinHandler{uc: uc, trustProxy: trustProxy}
+// NewJoinHandler creates the handler. trustProxy=true behind the load balancer (X-Forwarded-For); hops is the number of
+// trusted proxies that each append one entry (the client IP is the entry hops from the right). The visitor cookie is
+// always Secure (https; browsers also accept it on localhost); plain-http clients send X-Client-Type: mobile and keep
+// the token.
+func NewJoinHandler(uc inbound.IJoinUsecase, trustProxy bool, hops int) *JoinHandler {
+	return &JoinHandler{uc: uc, trustProxy: trustProxy, hops: hops}
 }
 
 // WithAuth sets the visitor authenticator (call this to enable JWT decoding on join).
@@ -49,7 +52,7 @@ func (h *JoinHandler) join(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	// or an entry keyed to the victim's visitor id). No credential at all simply means a fresh visitor id is minted.
 	vid, gen, device, guest := "", int64(0), "", ""
 	cookieAuthed := false
-	clientIP := httpx.ClientIP(r, h.trustProxy)
+	clientIP := httpx.ClientIPHops(r, h.trustProxy, h.hops)
 	if h.auth != nil {
 		if c, ok := h.auth.ResolveToken(r); ok {
 			vid, gen = c.VisitorID, c.Gen

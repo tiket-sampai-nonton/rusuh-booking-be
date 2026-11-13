@@ -22,6 +22,8 @@ func Load() (Config, error) {
 			Env:  r.String("APP_ENV", "local"),
 			Name: r.String("APP_NAME", ServiceName),
 			Port: r.Int("APP_PORT", 8081),
+			// 1 = rightmost X-Forwarded-For entry (ALB only); production CloudFront -> ALB uses 2 (deployment change).
+			TrustedProxyHops: r.Int("APP_TRUSTED_PROXY_HOPS", 1),
 		},
 		Log: logger.Config{Level: r.String("LOG_LEVEL", "info"), Format: r.String("LOG_FORMAT", "json")},
 		HTTP: HTTP{

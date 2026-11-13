@@ -132,7 +132,7 @@ func newQueueModule(cfg config.Config, clients *Clients, logger *slog.Logger) (*
 
 	trustProxy := cfg.App.Env != "local"
 	handlers := []registrar{
-		queuehttp.NewJoinHandler(joinUC, trustProxy).WithAuth(visitorAuth),
+		queuehttp.NewJoinHandler(joinUC, trustProxy, cfg.App.TrustedProxyHops).WithAuth(visitorAuth),
 		queuehttp.NewStatusHandler(statusUC),
 		queuehttp.NewMyEntryHandler(myEntryUC, visitorAuth),
 		queuehttp.NewHeartbeatHandler(heartbeatUC, visitorAuth),

@@ -164,7 +164,8 @@ func (w WorkerTuning) Validate(bookingTimeout time.Duration) error {
 	return errors.Join(errs...)
 }
 
-// Validate checks that every window is at least 1ms: a smaller window divides by zero in the limiter.
+// Validate checks that every window is at least 1ms (a smaller window divides by zero in the limiter) and that every
+// limit allows at least one request (P2-18: a zero limit would reject all traffic on that endpoint).
 func (r RateLimit) Validate() error {
 	var errs []error
 	for name, w := range map[string]time.Duration{
@@ -173,6 +174,18 @@ func (r RateLimit) Validate() error {
 	} {
 		if w < minRateLimitWindow {
 			errs = append(errs, fmt.Errorf("%s %s harus >= %s", name, w, minRateLimitWindow))
+		}
+	}
+	for _, lim := range []struct {
+		name string
+		n    int
+	}{
+		{"RATE_LIMIT_JOIN_PER_IP", r.JoinPerIP},
+		{"RATE_LIMIT_ME_PER_VISITOR", r.MePerVisitor},
+		{"RATE_LIMIT_HEARTBEAT_PER_VISITOR", r.HeartbeatPerVisitor},
+	} {
+		if lim.n < 1 {
+			errs = append(errs, fmt.Errorf("%s %d harus > 0", lim.name, lim.n))
 		}
 	}
 	return errors.Join(errs...)

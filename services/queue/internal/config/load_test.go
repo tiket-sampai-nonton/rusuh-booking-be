@@ -265,3 +265,48 @@ func TestLoad_AdminEmails(t *testing.T) {
 }
 
 func strPtr(s string) *string { return &s }
+
+// P2-18 (AC-C6.7): every rate-limit count must be at least 1; a zero or negative limit is rejected at start and the
+// error names the variable.
+func TestLoad_RateLimitsMustBePositive(t *testing.T) {
+	for _, v := range []string{"RATE_LIMIT_JOIN_PER_IP", "RATE_LIMIT_ME_PER_VISITOR", "RATE_LIMIT_HEARTBEAT_PER_VISITOR"} {
+		t.Run(v, func(t *testing.T) {
+			setBase(t)
+			t.Setenv(v, "0")
+			_, err := Load()
+			require.Error(t, err)
+			assert.ErrorContains(t, err, v)
+		})
+	}
+}
+
+// P1-2 (AC-C6.3): APP_TRUSTED_PROXY_HOPS defaults to 1 (the rightmost X-Forwarded-For entry) and must be 1..5.
+func TestLoad_TrustedProxyHops(t *testing.T) {
+	tests := []struct {
+		name, val string
+		want      string // "" = valid
+		wantHops  int
+	}{
+		{"default is 1", "", "", 1},
+		{"2 (CloudFront then ALB)", "2", "", 2},
+		{"5 (upper bound)", "5", "", 5},
+		{"6 rejected", "6", "APP_TRUSTED_PROXY_HOPS", 0},
+		{"0 rejected", "0", "APP_TRUSTED_PROXY_HOPS", 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setBase(t)
+			if tt.val != "" {
+				t.Setenv("APP_TRUSTED_PROXY_HOPS", tt.val)
+			}
+			cfg, err := Load()
+			if tt.want == "" {
+				require.NoError(t, err)
+				assert.Equal(t, tt.wantHops, cfg.App.TrustedProxyHops)
+				return
+			}
+			require.Error(t, err)
+			assert.ErrorContains(t, err, tt.want)
+		})
+	}
+}
