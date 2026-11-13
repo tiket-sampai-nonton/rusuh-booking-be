@@ -5,6 +5,7 @@ package postgres
 import (
 	"context"
 	"encoding/json"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -189,6 +190,50 @@ func TestBookingRepo_ListByAccountSameCreatedAtIsNotSkipped(t *testing.T) {
 	junk, _, err := repo.ListByAccount(ctx, acct, created.Format(time.RFC3339Nano)+"_bukan-uuid", 10)
 	require.NoError(t, err, "cursor dengan id rusak tidak boleh menjadi error database")
 	assert.Len(t, junk, 3)
+}
+
+// The next cursor travels in a URL. A zone offset written as "+07:00" turns into a space when a query string is decoded,
+// and then the cursor silently falls back to page 1. The cursor is built in UTC, so it has no "+" and pages chain even
+// when the process runs in a non-UTC local zone.
+func TestBookingRepo_ListByAccountCursorSurvivesURLInLocalZone(t *testing.T) {
+	f := seed(t)
+	ctx := context.Background()
+	repo := NewBookingRepo(f.pool)
+	acct := "33333333-3333-3333-3333-333333333333"
+	prevLocal := time.Local
+	time.Local = time.FixedZone("WIB", 7*60*60)
+	t.Cleanup(func() { time.Local = prevLocal })
+
+	base := time.Date(2026, 11, 12, 10, 0, 0, 0, time.UTC)
+	for i := 0; i < 3; i++ {
+		id := f.insertBooking(t, "EXPIRED", time.Now().Add(time.Hour), nil)
+		_, err := f.pool.Exec(ctx, `UPDATE booking.bookings SET account_id=$2::uuid, created_at=$3, payment_expires_at=$4 WHERE id=$1::uuid`,
+			id, acct, base.Add(time.Duration(i)*time.Minute), base.Add(time.Hour))
+		require.NoError(t, err)
+	}
+
+	page1, next, err := repo.ListByAccount(ctx, acct, "", 2)
+	require.NoError(t, err)
+	require.Len(t, page1, 2)
+	require.NotEmpty(t, next)
+	assert.NotContains(t, next, "+", "cursor tidak boleh memuat '+' (berubah menjadi spasi di URL)")
+
+	// Embed the cursor raw in a query string, as a client does, and decode it the way the server does.
+	query, err := url.ParseQuery("cursor=" + next)
+	require.NoError(t, err)
+	page2, next2, err := repo.ListByAccount(ctx, acct, query.Get("cursor"), 2)
+	require.NoError(t, err)
+	require.Len(t, page2, 1, "cursor dari URL harus melanjutkan halaman, bukan kembali ke halaman 1")
+	assert.Empty(t, next2)
+	assert.Equal(t, page1[0].CreatedAt.Add(-2*time.Minute).UTC(), page2[0].CreatedAt.UTC(), "halaman 2 berisi booking paling lama")
+
+	// A cursor already issued in the old local-offset form, mangled the same way, still pages from its timestamp.
+	legacy := strings.ReplaceAll(page1[1].CreatedAt.In(time.Local).Format(time.RFC3339Nano)+"_"+page1[1].BookingID, "+", " ")
+	legacyQuery, err := url.ParseQuery("cursor=" + legacy)
+	require.NoError(t, err)
+	old, _, err := repo.ListByAccount(ctx, acct, legacyQuery.Get("cursor"), 10)
+	require.NoError(t, err)
+	assert.Len(t, old, 1, "cursor lama yang rusak di URL tetap dibaca dari stempel waktunya")
 }
 
 // insertBooking adds a booking in the given status without the hold path. admission_id is unique and an active

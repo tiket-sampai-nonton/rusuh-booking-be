@@ -96,8 +96,9 @@ func (r *BookingRepo) ListByAccount(ctx context.Context, accountID, cursor strin
 				afterID = maxBookingID
 			}
 		}
-		if t, err := time.Parse(time.RFC3339Nano, ts); err == nil {
-			before = t
+		// A "+" in a zone offset arrives as a space when the cursor was not URL-escaped; restore it so older cursors still parse.
+		if t, err := time.Parse(time.RFC3339Nano, strings.ReplaceAll(ts, " ", "+")); err == nil {
+			before = t.UTC()
 		}
 	}
 	rows, err := r.pool.Query(ctx, `
@@ -123,7 +124,8 @@ func (r *BookingRepo) ListByAccount(ctx context.Context, accountID, cursor strin
 	next := ""
 	if len(items) > limit {
 		last := items[limit-1]
-		next = last.CreatedAt.Format(time.RFC3339Nano) + "_" + last.BookingID
+		// UTC keeps the cursor free of "+" offsets, so it survives a URL unescaped.
+		next = last.CreatedAt.UTC().Format(time.RFC3339Nano) + "_" + last.BookingID
 		items = items[:limit]
 	}
 	return items, next, nil
