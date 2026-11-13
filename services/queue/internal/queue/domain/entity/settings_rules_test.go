@@ -112,10 +112,26 @@ func TestDecide_MergedCrossRuleWithOmittedField(t *testing.T) {
 	assert.Equal(t, []string{"pollNearMs"}, fieldsOf(err))
 }
 
+func TestValidateSettings_OneActivePerVisitorMustBeTrue(t *testing.T) {
+	s := DefaultSettings("e")
+	assert.Empty(t, ValidateSettings(s))
+
+	s.OneActivePerVisitor = false
+	errs := ValidateSettings(s)
+	require.Len(t, errs, 1)
+	assert.Equal(t, shared.ValidationError{Field: "oneActivePerVisitor", Message: "harus true"}, errs[0])
+
+	for _, saleOpen := range []bool{false, true} {
+		_, err := Decide(SettingsPatch{OneActivePerVisitor: bp(false)}, saleOpen)(DefaultSettings("e"), true)
+		assert.Equal(t, []string{"oneActivePerVisitor"}, fieldsOf(err), "saleOpen=%v", saleOpen)
+		assert.NotErrorIs(t, err, ErrRulesLocked, "saleOpen=%v", saleOpen)
+	}
+}
+
 func TestDecide_LockMatrix(t *testing.T) {
 	def := DefaultSettings("e")
 	locked := def
-	locked.OneActivePerVisitor = false
+	locked.OneActivePerEmail = false
 	cases := []struct {
 		name     string
 		patch    SettingsPatch
@@ -124,8 +140,7 @@ func TestDecide_LockMatrix(t *testing.T) {
 		saleOpen bool
 		wantErr  error
 	}{
-		{"closed change locked", SettingsPatch{ActiveSlotCapacity: ip(1), OneActivePerVisitor: bp(false)}, def, true, false, nil},
-		{"open change visitor", SettingsPatch{ActiveSlotCapacity: ip(1), OneActivePerVisitor: bp(false)}, def, true, true, ErrRulesLocked},
+		{"closed change locked", SettingsPatch{ActiveSlotCapacity: ip(1), OneActivePerEmail: bp(false)}, def, true, false, nil},
 		{"open change email", SettingsPatch{ActiveSlotCapacity: ip(1), OneActivePerEmail: bp(false)}, def, true, true, ErrRulesLocked},
 		{"open same locked value", SettingsPatch{ActiveSlotCapacity: ip(1), OneActivePerVisitor: bp(true)}, def, true, true, nil},
 		{"open omitted locked", patchCap(7), locked, true, true, nil},
@@ -149,7 +164,7 @@ func TestDecide_LockMatrix(t *testing.T) {
 
 func TestDecide_ValidationBeforeLock(t *testing.T) {
 	cur := DefaultSettings("e")
-	p := SettingsPatch{ActiveSlotCapacity: ip(0), OneActivePerVisitor: bp(false)}
+	p := SettingsPatch{ActiveSlotCapacity: ip(0), OneActivePerEmail: bp(false)}
 	_, err := Decide(p, true)(cur, true)
 	assert.NotErrorIs(t, err, ErrRulesLocked)
 	assert.Equal(t, []string{"activeSlotCapacity"}, fieldsOf(err))

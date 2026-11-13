@@ -131,7 +131,7 @@ func TestEventSettingsAdmin_DecideErrorWritesNothing(t *testing.T) {
 	_, err = apply(t, repo, entity.SettingsPatch{ActiveSlotCapacity: intp(5)}, true, "a", t0)
 	require.NoError(t, err, "create saat sale terbuka dengan nilai terkunci bawaan diizinkan")
 	before := auditCount(t, pool)
-	_, err = apply(t, repo, entity.SettingsPatch{ActiveSlotCapacity: intp(6), OneActivePerVisitor: boolp(false)}, true, "a", t0)
+	_, err = apply(t, repo, entity.SettingsPatch{ActiveSlotCapacity: intp(6), OneActivePerEmail: boolp(false)}, true, "a", t0)
 	assert.ErrorIs(t, err, entity.ErrRulesLocked)
 	assert.Equal(t, before, auditCount(t, pool))
 	var capacity int

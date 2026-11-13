@@ -189,6 +189,9 @@ func ValidateSettings(s EventSettings) shared.ValidationErrors {
 	if s.PollMidAbove >= s.PollFarAbove {
 		errs = append(errs, shared.ValidationError{Field: "pollMidAbove", Message: "tidak boleh lebih besar dari atau sama dengan pollFarAbove"})
 	}
+	if !s.OneActivePerVisitor {
+		errs = append(errs, shared.ValidationError{Field: "oneActivePerVisitor", Message: "harus true"})
+	}
 	return errs
 }
 

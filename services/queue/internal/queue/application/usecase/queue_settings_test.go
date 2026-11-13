@@ -90,6 +90,8 @@ func TestSetQueueSettings_InvalidInputNeverCallsBookingOrApply(t *testing.T) {
 		{"poll near above max", dto.QueueSettingsRequest{ActiveSlotCapacity: ptrInt(1), PollNearMs: ptrInt(5001)}, nil, "pollNearMs"},
 		{"merged cross-rule vs stored mid", dto.QueueSettingsRequest{ActiveSlotCapacity: ptrInt(1), PollNearMs: ptrInt(3000)},
 			func() *entity.EventSettings { s := entity.DefaultSettings(setEv); s.PollMidMs = 2000; return &s }(), "pollNearMs"},
+		{"visitor false rejected", dto.QueueSettingsRequest{ActiveSlotCapacity: ptrInt(1), OneActivePerVisitor: ptrBool(false)},
+			func() *entity.EventSettings { s := entity.DefaultSettings(setEv); return &s }(), "oneActivePerVisitor"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
