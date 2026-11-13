@@ -741,3 +741,93 @@ func TestReserveBatch_ActivatedThenExpiredIsNotGrantedAgain(t *testing.T) {
 	require.NoError(t, f.pool.QueryRow(ctx, `SELECT COALESCE(end_reason,'') FROM booking.admissions WHERE id=$1::uuid`, first[0].AllocationID).Scan(&endReason))
 	assert.Equal(t, "SESSION_EXPIRED", endReason)
 }
+
+// Fix round 1 (R18): a batch locks its existing admission rows before any supply lock, the same order Release and
+// ExpireSession use (admission, then event_supply). The holder below repeats Release's statements in that order while a
+// batch waits on the same admission. Before R18 the batch already held supply and then waited on the admission: a
+// deadlock (40P01). After R18 the batch waits before it takes supply, so the holder finishes and the batch goes on.
+func TestReserveBatch_DoesNotDeadlockWithReleaseOnSameAdmission(t *testing.T) {
+	ctx := context.Background()
+	f := newAcctFixture(t, suffixFor(t), 10)
+	repo := NewAdmissionRepo(f.pool)
+	entry2 := anonEntry(2, 2)
+	first, err := repo.ReserveBatch(ctx, f.eventID, []outbound.ReserveEntry{entry2}, time.Now())
+	require.NoError(t, err)
+	require.Equal(t, "GRANTED", first[0].Outcome)
+	adm2 := first[0].AllocationID
+
+	holder, err := f.pool.Begin(ctx)
+	require.NoError(t, err)
+	defer func() { _ = holder.Rollback(ctx) }()
+	_, err = holder.Exec(ctx, `SELECT id FROM booking.admissions WHERE id=$1::uuid FOR UPDATE`, adm2)
+	require.NoError(t, err)
+
+	var out []outbound.ReserveOutcome
+	var batchErr error
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		out, batchErr = repo.ReserveBatch(ctx, f.eventID,
+			[]outbound.ReserveEntry{anonEntry(1, 1), entry2}, time.Now())
+	}()
+	// The batch must reach its wait on adm2 before the holder continues (before R18 it already holds event_supply here).
+	time.Sleep(300 * time.Millisecond)
+
+	_, err = holder.Exec(ctx, `UPDATE booking.admissions SET status='RELEASED', outstanding_units=0, ended_at=now(), end_reason='UNCLAIMED'
+		WHERE id=$1::uuid`, adm2)
+	require.NoError(t, err, "Release's admission step must not be blocked by the batch")
+	_, err = holder.Exec(ctx, `UPDATE booking.event_supply SET allocated_units = allocated_units - 2, version = version + 1, updated_at = now()
+		WHERE event_id=$1::uuid`, f.eventID)
+	require.NoError(t, err, "Release's supply step must not deadlock with the batch")
+	require.NoError(t, holder.Commit(ctx))
+	<-done
+
+	require.NoError(t, batchErr, "the batch must not fail with 40P01")
+	require.Len(t, out, 2)
+	assert.Equal(t, "GRANTED", out[0].Outcome)
+	assert.Equal(t, "ALREADY_ACTIVE", out[1].Outcome, "entry 2 was released by the holder")
+	assert.Equal(t, 1, f.ledger(t).alloc, "only the new entry's 1 unit is allocated")
+}
+
+// Fix round 1 (R18): Release and reservation batches run concurrently on the same admissions, repeatedly. No batch may
+// fail (40P01 or otherwise), and allocated_units stays equal to the outstanding units of the RESERVED admissions.
+func TestReserveBatch_ConcurrentReleaseKeepsStockAndLockOrder(t *testing.T) {
+	ctx := context.Background()
+	f := newAcctFixture(t, suffixFor(t), 200)
+	repo := NewAdmissionRepo(f.pool)
+	for i := 0; i < 20; i++ {
+		entry2 := anonEntry(2*i+2, 2)
+		first, err := repo.ReserveBatch(ctx, f.eventID, []outbound.ReserveEntry{entry2}, time.Now())
+		require.NoError(t, err)
+		require.Equal(t, "GRANTED", first[0].Outcome)
+		allocID := first[0].AllocationID
+
+		var wg sync.WaitGroup
+		start := make(chan struct{})
+		var out []outbound.ReserveOutcome
+		var batchErr, releaseErr error
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			<-start
+			out, batchErr = repo.ReserveBatch(ctx, f.eventID, []outbound.ReserveEntry{anonEntry(2*i+1, 1), entry2}, time.Now())
+		}()
+		go func() {
+			defer wg.Done()
+			<-start
+			_, releaseErr = repo.Release(ctx, allocID, vo.EndUnclaimed)
+		}()
+		close(start)
+		wg.Wait()
+
+		require.NoError(t, batchErr, "iteration %d: batch", i)
+		require.NoError(t, releaseErr, "iteration %d: release", i)
+		require.Len(t, out, 2)
+		assert.Contains(t, []string{"GRANTED", "ALREADY_ACTIVE"}, out[1].Outcome, "iteration %d", i)
+		var sum int
+		require.NoError(t, f.pool.QueryRow(ctx,
+			`SELECT COALESCE(sum(outstanding_units),0) FROM booking.admissions WHERE event_id=$1::uuid AND status='RESERVED'`,
+			f.eventID).Scan(&sum))
+		assert.Equal(t, sum, f.ledger(t).alloc, "iteration %d: allocated_units = sum of RESERVED outstanding units", i)
+	}
+}

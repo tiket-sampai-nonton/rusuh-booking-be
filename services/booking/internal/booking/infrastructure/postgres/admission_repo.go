@@ -96,6 +96,12 @@ func (r *AdmissionRepo) ReserveBatch(ctx context.Context, eventID string, entrie
 			}
 			return nil
 		}
+		// R18: the existing admissions of the batch are locked once, in id order, before any supply lock. Release and
+		// ExpireSession lock admission then supply; a batch that took supply first could wait for an admission while it
+		// held supply (the reverse order, 40P01).
+		if err := lockBatchAdmissions(ctx, tx, entries); err != nil {
+			return err
+		}
 		// Per batch: the booking.sold_out row is written once, by the first entry that finds nothing left.
 		soldOutAnnounced := false
 		for _, e := range entries {
@@ -119,14 +125,13 @@ func (r *AdmissionRepo) reserveOne(ctx context.Context, tx pgx.Tx, eventID strin
 
 	// Idempotent replay: an entry that already holds a reservation gets that same grant back, even when the
 	// stock it holds is the reason nothing is free now (the Promotor may have failed to promote it last tick).
-	// The row is locked (admission before supply, the §9.0 order) so a concurrent batch for the same entry waits
-	// and then sees the committed state.
+	// The row is already locked by lockBatchAdmissions (R18), so this read takes no lock.
 	var prevID, prevStatus, prevEndReason string
 	var prevUnits int
 	var prevExpires time.Time
 	var regrantID string
 	if err := tx.QueryRow(ctx, `SELECT id::text, status, COALESCE(end_reason, ''), units, expires_at FROM booking.admissions
-		WHERE queue_entry_id = $1::uuid FOR UPDATE`, e.QueueEntryID).
+		WHERE queue_entry_id = $1::uuid`, e.QueueEntryID).
 		Scan(&prevID, &prevStatus, &prevEndReason, &prevUnits, &prevExpires); err == nil {
 		// D-C6.6: a RESERVED row that lapsed as UNCLAIMED was never admitted by Queue, so it is granted again below as a
 		// new grant (same row, fresh stock). Every other terminal row is replayed as ALREADY_ACTIVE.
@@ -325,6 +330,22 @@ func saleGate(ctx context.Context, tx pgx.Tx, eventID string, at time.Time) (gat
 		return "NO_SUPPLY_NOW", false, nil
 	}
 	return "", !at.Before(endsAt), nil
+}
+
+// lockBatchAdmissions locks the existing admission rows of the batch's entries, once, in id order (R18). It runs after
+// saleGate and before any event_supply lock, so the batch follows the admission-then-supply order that Release and
+// ExpireSession use. Locking by queue_entry_id matches the replay lookup in reserveOne.
+func lockBatchAdmissions(ctx context.Context, tx pgx.Tx, entries []outbound.ReserveEntry) error {
+	ids := make([]string, 0, len(entries))
+	for _, e := range entries {
+		ids = append(ids, e.QueueEntryID)
+	}
+	_, err := tx.Exec(ctx, `SELECT id FROM booking.admissions
+		WHERE queue_entry_id = ANY($1::uuid[]) ORDER BY id FOR UPDATE`, ids)
+	if err != nil {
+		return fmt.Errorf("admissions: lock batch: %w", err)
+	}
+	return nil
 }
 
 // announceSoldOutTx writes the booking.sold_out outbox row. The row is written only while *announced is false, so a
