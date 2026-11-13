@@ -34,12 +34,14 @@ func (r *Retention) PurgePublishedOutbox(ctx context.Context, before time.Time, 
 }
 
 // PurgeExpiredIdempotency deletes idempotency records past expires_at (idx_booking_idem_expiry). The predicate is re-checked
-// after the row lock, so a record that Begin takes over in the meantime is not deleted.
+// after the row lock, so a record that Begin takes over in the meantime is not deleted. An IN_PROGRESS record created
+// within the 60 s lease (B9) is kept even when expired: its request may still be running.
 func (r *Retention) PurgeExpiredIdempotency(ctx context.Context, now time.Time, limit int) (int, error) {
 	tag, err := r.pool.Exec(ctx, `
 		DELETE FROM booking.idempotency_records
 		 WHERE ctid IN (SELECT ctid FROM booking.idempotency_records
 		                 WHERE expires_at < $1
+		                   AND NOT (state = 'IN_PROGRESS' AND created_at > $1 - interval '60 seconds')
 		                 LIMIT $2 FOR UPDATE SKIP LOCKED)`, now, limit)
 	if err != nil {
 		return 0, fmt.Errorf("retention: idempotency: %w", err)

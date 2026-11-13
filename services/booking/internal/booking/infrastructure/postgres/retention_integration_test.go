@@ -60,17 +60,20 @@ func TestRetention_PurgesOnlyWhatIsDue(t *testing.T) {
 		VALUES ('t.pending', gen_random_uuid(), '{}', $1, $1) RETURNING id::text`, now.Add(-30*day))
 
 	// Idempotency: expired rows are due in either state; rows that expire later are kept in either state.
-	insertIdem := func(key, state string, expiresAt time.Time) {
+	insertIdem := func(key, state string, createdAt, expiresAt time.Time) {
 		_, err := f.pool.Exec(ctx, `
-			INSERT INTO booking.idempotency_records (scope, owner_id, idempotency_key, request_hash, state, expires_at)
-			VALUES ('retention-test', '33333333-3333-3333-3333-333333333333', $1, $2, $3, $4)`,
-			key, []byte(key), state, expiresAt)
+			INSERT INTO booking.idempotency_records (scope, owner_id, idempotency_key, request_hash, state, created_at, expires_at)
+			VALUES ('retention-test', '33333333-3333-3333-3333-333333333333', $1, $2, $3, $4, $5)`,
+			key, []byte(key), state, createdAt, expiresAt)
 		require.NoError(t, err)
 	}
-	insertIdem("expired-completed", "COMPLETED", now.Add(-time.Minute))
-	insertIdem("expired-in-progress", "IN_PROGRESS", now.Add(-time.Minute))
-	insertIdem("live-completed", "COMPLETED", now.Add(time.Hour))
-	insertIdem("live-in-progress", "IN_PROGRESS", now.Add(time.Hour))
+	// An IN_PROGRESS record created more than 60 s ago has lost its lease (B9) and is due.
+	insertIdem("expired-completed", "COMPLETED", now, now.Add(-time.Minute))
+	insertIdem("expired-in-progress", "IN_PROGRESS", now.Add(-2*time.Minute), now.Add(-time.Minute))
+	// Past expires_at but created inside the 60 s lease: the request may still be running, so it is kept (B9 guard).
+	insertIdem("expired-in-lease", "IN_PROGRESS", now, now.Add(-time.Minute))
+	insertIdem("live-completed", "COMPLETED", now, now.Add(time.Hour))
+	insertIdem("live-in-progress", "IN_PROGRESS", now, now.Add(time.Hour))
 
 	// Attendee checks: an admission that ended 25 h ago is due; one that ended 23 h ago is kept; an admission that is
 	// still ACTIVE or EDITABLE keeps its checks however old it is.
@@ -100,8 +103,10 @@ func TestRetention_PurgesOnlyWhatIsDue(t *testing.T) {
 	n, err = repo.PurgeExpiredIdempotency(ctx, now, 1000)
 	require.NoError(t, err)
 	assert.Equal(t, 1, n, "the second expired record goes on the next call")
-	assert.Equal(t, 2, f.n(t, `SELECT count(*) FROM booking.idempotency_records WHERE scope='retention-test'`),
-		"both live records stay")
+	assert.Equal(t, 3, f.n(t, `SELECT count(*) FROM booking.idempotency_records WHERE scope='retention-test'`),
+		"both live records and the in-lease IN_PROGRESS record stay")
+	assert.Equal(t, 1, f.n(t, `SELECT count(*) FROM booking.idempotency_records WHERE idempotency_key='expired-in-lease'`),
+		"expired but inside the lease: kept")
 	n, err = repo.PurgeExpiredIdempotency(ctx, now, 1000)
 	require.NoError(t, err)
 	assert.Equal(t, 0, n, "nothing else is expired")
