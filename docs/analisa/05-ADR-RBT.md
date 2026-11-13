@@ -205,6 +205,15 @@
 
 **Confirmation.** TC-PAY-04, TC-PAY-06..08.
 
+**Amandemen (2026-11-12): deviasi dari FR-23 dan BR-06 diterima, masa tenggang 180 detik.** Tender menyatakan booking dibatalkan dan stok dilepas tepat setelah 10 menit. Implementasi: pada menit ke-10 booking masuk `VERIFYING` dengan stok tetap ditahan, lalu dibatalkan setelah `VERIFY_GRACE_SECONDS` (default 180 detik; rentang valid 60–600, `services/booking/internal/config/config.go:86-87`). Alasan: pembayaran yang sudah dimulai sebelum batas tetapi konfirmasinya (webhook atau resolve ke gateway) datang setelah batas tidak langsung dibatalkan.
+
+Batasan yang berlaku, dari kode:
+- Pembayaran dengan `settlement_time` **sebelum** batas 10 menit diproses PAID, termasuk bila webhook baru datang saat masa tenggang (`resolve_payment.go`, `expire.go:79-96`).
+- Pembayaran dengan `settlement_time` **setelah** batas 10 menit tetap masuk `REVIEW` dengan stok dilepas dan refund manual (`unit_of_work.go:478-507`). Masa tenggang tidak memperpanjang jendela bayar.
+- Attempt pembayaran baru setelah batas ditolak (`isPayable`, `payment/.../usecase/common.go:56-58`), sehingga masa tenggang tidak membuka jendela bayar baru.
+- Dampak: pada kasus tidak dibayar, stok dilepas sekitar menit ke-13. Frontend perlu menampilkan status "memverifikasi" pada rentang itu agar pembeli tidak bingung.
+- Syarat: deviasi ini diterima assessor dan tercatat di `docs/evidence/2026-11-12-grace-verifikasi-adr-007.md`. Bila kebijakan berubah, nilai grace dapat diturunkan sampai 60 detik tanpa mengubah invarian.
+
 ---
 
 ## ADR-008: PostgreSQL sebagai otoritas stok dan uang; Valkey hanya antrean, rate limit, cache
