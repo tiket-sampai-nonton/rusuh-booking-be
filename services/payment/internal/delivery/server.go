@@ -64,5 +64,8 @@ func newHandler(cfg config.Config, clients *Clients, logger *slog.Logger, regs [
 	const webhookPath = "/api/v1/webhooks/midtrans"
 	limit := httpx.RateLimit(cfg.HTTP.RateLimitPerIP, cfg.HTTP.RateLimitWindow, httpx.IPKey(trustProxy, "/health", "/metrics", webhookPath), time.Now)
 	limitHook := httpx.RateLimit(cfg.HTTP.RateLimitWebhookPerIP, cfg.HTTP.RateLimitWindow, httpx.OnlyPathKey(webhookPath, trustProxy), time.Now)
-	return httpx.Chain(mux, httpx.CORS(), httpx.RequestID(), httpx.AccessLog(logger), telemetry.HTTP(config.ServiceName), httpx.Recover(logger), limit, limitHook), nil
+	if err := httpx.CheckCORS(); err != nil {
+		return nil, err
+	}
+	return httpx.Chain(mux, httpx.SecurityHeaders(), httpx.CORS(), httpx.RequestID(), httpx.AccessLog(logger), telemetry.HTTP(config.ServiceName), httpx.Recover(logger), limit, limitHook), nil
 }
