@@ -161,8 +161,8 @@ func (s *QueueStore) Join(ctx context.Context, p outbound.JoinParams) (outbound.
 		idem, strconv.FormatInt(p.NowMs, 10), bstr(p.OneActivePerVisitor), strconv.Itoa(idemTTL), strconv.Itoa(tokTTL),
 		shard, s.kHbShard(p.EventID, shard),
 	}
-	// The declared key keeps the script routed to the event's slot; the script builds the rest from the prefix.
-	arr, err := s.join.Exec(ctx, s.c, []string{s.kSeq(p.EventID)}, args).ToArray()
+	// The declared keys keep the script routed to the event's slot (seq, sale); the script builds the rest from the prefix.
+	arr, err := s.join.Exec(ctx, s.c, []string{s.kSeq(p.EventID), s.kSale(p.EventID)}, args).ToArray()
 	if err != nil {
 		return outbound.JoinResult{}, fmt.Errorf("valkey: join.lua: %w", err)
 	}

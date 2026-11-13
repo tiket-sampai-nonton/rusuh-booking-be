@@ -2,6 +2,8 @@
 -- Identity is a visitor id (from a verified visitor token or freshly minted) and, optionally, the account id
 -- of a verified User bearer. The bearer identifies the principal only; it never binds a NIK.
 -- Every key shares the event hash tag (one slot); keys are built from the prefix P in ARGV[1].
+-- KEYS[1] is the event's seq key and KEYS[2] its sale hash (both only route the script to the slot and name the keys
+-- the create path persists; the rest is built from P).
 --
 -- All joins are strict FIFO by seq (ADR-030 Amendment: the opening-window draw was dropped). There is no rank
 -- field: seq is the admission order. The liveness index hb is sharded (ADR-030 Amendment): Go passes the entry's
@@ -135,6 +137,9 @@ local seq = redis.call('INCR', P .. 'seq')
 redis.call('PERSIST', P .. 'seq')
 -- The same for the pre-turn notify watermark: left under its TTL it would expire under this live entry and re-notify it.
 redis.call('PERSIST', P .. 'notify_seq')
+-- The same for the sale hash: an operator who extends a retired event's window must not leave saleState, soldOut and
+-- the window under the retirement TTL, or a lost soldOut flag could let joins into a sold-out event.
+redis.call('PERSIST', KEYS[2])
 local id = ARGV[2]
 redis.call('HSET', ekey(id), 'seq', seq, 'visitorId', vid, 'accountId', acct, 'status', 'WAITING',
   'joinedAtMs', now, 'lastSignalMs', now, 'shard', shardIdx)

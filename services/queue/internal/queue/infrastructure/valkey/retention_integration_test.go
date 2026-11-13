@@ -242,6 +242,35 @@ func TestRetireEvent_JoinAfterRetireLeavesSeqPersistent(t *testing.T) {
 	assert.Equal(t, int64(-1), pttl(t, s, s.kEntry(ev, live)), "the live entry must not expire")
 }
 
+// The sale hash of a retired event carries the retirement TTL. An operator who extends the sale window of a retired event
+// and a join that admits a new entry must leave the sale hash without a TTL: otherwise saleState, soldOut and the window
+// expire 24 h after retirement under a live entry, and a lost soldOut flag could let joins into a sold-out event.
+func TestRetireEvent_JoinAfterRetireLeavesSalePersistent(t *testing.T) {
+	s := mustStore(t)
+	ctx := context.Background()
+	ev := evID(t)
+	now := time.Now().UnixMilli()
+
+	done, _, _ := joinAdmit(t, s, ev, 1, now+60_000, now)
+	_, err := s.EndEntry(ctx, ev, done, "PAID", now)
+	require.NoError(t, err)
+	require.NoError(t, s.SetSale(ctx, ev, "CLOSED", true))
+	ok, err := s.RetireEvent(ctx, ev, time.Hour)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Greater(t, pttl(t, s, s.kSale(ev)), int64(0), "retired event: the sale hash carries the TTL")
+
+	require.NoError(t, s.SetSaleWindow(ctx, ev, now, now+3_600_000)) // operator extends the window after retirement
+	_, _, _ = joinOne(t, s, ev, 2, now+1)
+
+	assert.Equal(t, int64(-1), pttl(t, s, s.kSale(ev)), "a live join must persist the sale hash")
+	sale, err := s.GetSale(ctx, ev)
+	require.NoError(t, err)
+	assert.True(t, sale.SoldOut, "the soldOut flag survives the join")
+	assert.Equal(t, "CLOSED", sale.SaleState)
+	assert.Equal(t, now+3_600_000, sale.SalesEndsMs, "the extended window is kept")
+}
+
 // TC-C8.3 fix round 1 (I-3): advancing the notify watermark keeps the TTL that RetireEvent gave it. A plain SET would clear
 // the TTL, so a retired event's watermark would never expire. The value still moves forward as before.
 func TestNotifyWatermark_AdvanceKeepsRetirementTTL(t *testing.T) {
