@@ -646,3 +646,98 @@ func TestReserveBatch_ReplayAfterSalesEndReturnsSameGrant(t *testing.T) {
 	assert.Equal(t, "SOLD_OUT", fresh[0].Outcome, "a new grant after the sales end is refused")
 	assert.Equal(t, 0, soldOutRows(t, f), "the refusal after the end writes no booking.sold_out row")
 }
+
+// D-C6.6 (P2-16): a RESERVED admission that lapsed unclaimed (EXPIRED/UNCLAIMED) was never activated, so Queue never
+// admitted its entry. Its entry is granted again with the same allocation id and the units it had, instead of being
+// told ALREADY_ACTIVE (the promoter would then end a live buyer). The lapse already wrote its journey.ended row; the
+// re-grant writes no new one.
+func TestReserveBatch_LapsedUnclaimedReservationIsGrantedAgain(t *testing.T) {
+	ctx := context.Background()
+	f := newAcctFixture(t, suffixFor(t), 5)
+	repo := NewAdmissionRepo(f.pool)
+	entry := anonEntry(1, 2)
+
+	first, err := repo.ReserveBatch(ctx, f.eventID, []outbound.ReserveEntry{entry}, time.Now())
+	require.NoError(t, err)
+	require.Equal(t, "GRANTED", first[0].Outcome)
+	require.Equal(t, 2, f.ledger(t).alloc)
+
+	require.NoError(t, repo.ExpireSession(ctx, first[0].AllocationID, time.Now()))
+	var status, endReason string
+	require.NoError(t, f.pool.QueryRow(ctx, `SELECT status, COALESCE(end_reason,'') FROM booking.admissions WHERE id=$1::uuid`,
+		first[0].AllocationID).Scan(&status, &endReason))
+	require.Equal(t, "EXPIRED", status)
+	require.Equal(t, "UNCLAIMED", endReason)
+	require.Equal(t, 0, f.ledger(t).alloc, "the lapse gave the units back")
+
+	again, err := repo.ReserveBatch(ctx, f.eventID, []outbound.ReserveEntry{entry}, time.Now())
+	require.NoError(t, err)
+	require.Len(t, again, 1)
+	assert.Equal(t, "GRANTED", again[0].Outcome, "a lapsed unclaimed reservation is granted again")
+	assert.Equal(t, first[0].AllocationID, again[0].AllocationID, "same allocation id")
+	assert.Equal(t, 2, again[0].Units, "the granted units come back")
+	assert.Equal(t, 2, f.ledger(t).alloc, "allocated_units back to the granted units")
+
+	var units, outstanding int
+	var endedAtNull bool
+	require.NoError(t, f.pool.QueryRow(ctx, `SELECT status, COALESCE(end_reason,''), ended_at IS NULL, units, outstanding_units
+		FROM booking.admissions WHERE id=$1::uuid`, first[0].AllocationID).Scan(&status, &endReason, &endedAtNull, &units, &outstanding))
+	assert.Equal(t, "RESERVED", status)
+	assert.Empty(t, endReason, "end_reason cleared")
+	assert.True(t, endedAtNull, "ended_at cleared")
+	assert.Equal(t, 2, units)
+	assert.Equal(t, 2, outstanding)
+	assert.Equal(t, 1, admissionRows(t, f), "the row is reused, not inserted again")
+	assert.Len(t, journeyEnded(t, f, first[0].AllocationID), 1, "the re-grant writes no journey.ended")
+}
+
+// D-C6.6: a RELEASED admission (Queue said the entry is gone) is never granted again, even though its end_reason is
+// UNCLAIMED too.
+func TestReserveBatch_ReleasedReservationIsNotGrantedAgain(t *testing.T) {
+	ctx := context.Background()
+	f := newAcctFixture(t, suffixFor(t), 5)
+	repo := NewAdmissionRepo(f.pool)
+	entry := anonEntry(1, 2)
+
+	first, err := repo.ReserveBatch(ctx, f.eventID, []outbound.ReserveEntry{entry}, time.Now())
+	require.NoError(t, err)
+	require.Equal(t, "GRANTED", first[0].Outcome)
+	ok, err := repo.Release(ctx, first[0].AllocationID, vo.EndUnclaimed)
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	again, err := repo.ReserveBatch(ctx, f.eventID, []outbound.ReserveEntry{entry}, time.Now())
+	require.NoError(t, err)
+	require.Len(t, again, 1)
+	assert.Equal(t, "ALREADY_ACTIVE", again[0].Outcome, "a released reservation is not granted again")
+	assert.Equal(t, first[0].AllocationID, again[0].AllocationID)
+	assert.Equal(t, 0, f.ledger(t).alloc, "no stock is taken again")
+	var status string
+	require.NoError(t, f.pool.QueryRow(ctx, `SELECT status FROM booking.admissions WHERE id=$1::uuid`, first[0].AllocationID).Scan(&status))
+	assert.Equal(t, "RELEASED", status)
+}
+
+// D-C6.6: an admission that was activated and then expired by its session (EXPIRED/SESSION_EXPIRED) belongs to a buyer
+// who was in the detail flow; it is never granted again.
+func TestReserveBatch_ActivatedThenExpiredIsNotGrantedAgain(t *testing.T) {
+	ctx := context.Background()
+	f := newAcctFixture(t, suffixFor(t), 5)
+	repo := NewAdmissionRepo(f.pool)
+	entry := anonEntry(1, 2)
+
+	first, err := repo.ReserveBatch(ctx, f.eventID, []outbound.ReserveEntry{entry}, time.Now())
+	require.NoError(t, err)
+	require.Equal(t, "GRANTED", first[0].Outcome)
+	_, err = repo.Activate(ctx, first[0].AllocationID, time.Now())
+	require.NoError(t, err)
+	require.NoError(t, repo.ExpireSession(ctx, first[0].AllocationID, time.Now()))
+
+	again, err := repo.ReserveBatch(ctx, f.eventID, []outbound.ReserveEntry{entry}, time.Now())
+	require.NoError(t, err)
+	require.Len(t, again, 1)
+	assert.Equal(t, "ALREADY_ACTIVE", again[0].Outcome, "an expired session is not granted again")
+	assert.Equal(t, 0, f.ledger(t).alloc)
+	var endReason string
+	require.NoError(t, f.pool.QueryRow(ctx, `SELECT COALESCE(end_reason,'') FROM booking.admissions WHERE id=$1::uuid`, first[0].AllocationID).Scan(&endReason))
+	assert.Equal(t, "SESSION_EXPIRED", endReason)
+}

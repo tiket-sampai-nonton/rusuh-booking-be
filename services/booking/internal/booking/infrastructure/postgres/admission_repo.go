@@ -119,23 +119,33 @@ func (r *AdmissionRepo) reserveOne(ctx context.Context, tx pgx.Tx, eventID strin
 
 	// Idempotent replay: an entry that already holds a reservation gets that same grant back, even when the
 	// stock it holds is the reason nothing is free now (the Promotor may have failed to promote it last tick).
-	var prevID, prevStatus string
+	// The row is locked (admission before supply, the §9.0 order) so a concurrent batch for the same entry waits
+	// and then sees the committed state.
+	var prevID, prevStatus, prevEndReason string
 	var prevUnits int
 	var prevExpires time.Time
-	if err := tx.QueryRow(ctx, `SELECT id::text, status, units, expires_at FROM booking.admissions WHERE queue_entry_id = $1::uuid`, e.QueueEntryID).
-		Scan(&prevID, &prevStatus, &prevUnits, &prevExpires); err == nil {
-		_, _ = tx.Exec(ctx, "RELEASE SAVEPOINT entry")
-		res.AllocationID = prevID
-		if prevStatus == "RESERVED" {
-			res.Outcome, res.Units = "GRANTED", prevUnits
-			res.ClaimDeadline = &prevExpires
-		} else {
-			res.Outcome = "ALREADY_ACTIVE"
+	var regrantID string
+	if err := tx.QueryRow(ctx, `SELECT id::text, status, COALESCE(end_reason, ''), units, expires_at FROM booking.admissions
+		WHERE queue_entry_id = $1::uuid FOR UPDATE`, e.QueueEntryID).
+		Scan(&prevID, &prevStatus, &prevEndReason, &prevUnits, &prevExpires); err == nil {
+		// D-C6.6: a RESERVED row that lapsed as UNCLAIMED was never admitted by Queue, so it is granted again below as a
+		// new grant (same row, fresh stock). Every other terminal row is replayed as ALREADY_ACTIVE.
+		if prevStatus != "EXPIRED" || prevEndReason != "UNCLAIMED" {
+			_, _ = tx.Exec(ctx, "RELEASE SAVEPOINT entry")
+			res.AllocationID = prevID
+			if prevStatus == "RESERVED" {
+				res.Outcome, res.Units = "GRANTED", prevUnits
+				res.ClaimDeadline = &prevExpires
+			} else {
+				res.Outcome = "ALREADY_ACTIVE"
+			}
+			return res
 		}
-		return res
+		regrantID = prevID
 	}
 
 	// Only a new grant is refused after sales_ends_at (D-C4.4a); a replay above has already returned its own grant.
+	// A re-grant of a lapsed row is a new grant of stock, so it is refused here too.
 	if ended {
 		_, _ = tx.Exec(ctx, "ROLLBACK TO SAVEPOINT entry")
 		res.Outcome = "SOLD_OUT"
@@ -235,26 +245,40 @@ func (r *AdmissionRepo) reserveOne(ctx context.Context, tx pgx.Tx, eventID strin
 	// unclaimed, expiry), so free + allocated + held > 0 after this step; only step 4 or the settle path, when that
 	// sum is 0, may announce the sell-out.
 
-	// Step 8: insert admission row.
+	// Step 8: insert the admission row, or (D-C6.6) reuse the lapsed UNCLAIMED row of this entry in place.
 	var allocationID string
 	var expiresAt time.Time
-	err := tx.QueryRow(ctx, `
-		INSERT INTO booking.admissions (
-			event_id, queue_entry_id, queue_seq, visitor_id, buyer_nik_hash, buyer_email_enc, buyer_nik_masked,
-			units, outstanding_units, status, admission_jti, attendee_checks, edit_count,
-			cfg_selection_ttl_seconds, cfg_payment_ttl_seconds, cfg_submit_grace_seconds,
-			cfg_edit_enabled, cfg_max_edits, cfg_allow_mixed_categories,
-			reserved_at, expires_at, account_id)
-		SELECT $1::uuid, $2::uuid, $3, $4::uuid, $5, NULLIF($6,''), NULLIF($7,''),
-			$8, $8, 'RESERVED', $9::uuid, 0, 0,
-			ev.selection_ttl_seconds, ev.payment_ttl_seconds, ev.selection_submit_grace_seconds,
-			ev.selection_edit_enabled, ev.max_selection_edits, ev.allow_mixed_categories,
-			$10::timestamptz, $10::timestamptz + make_interval(secs => ev.claim_window_seconds),
-			NULLIF($11,'')::uuid
-		  FROM booking.events ev WHERE ev.id = $1::uuid
-		RETURNING id::text, expires_at`,
-		eventID, e.QueueEntryID, e.Seq, e.VisitorID, e.BuyerNIKHash, e.BuyerEmailEnc, e.BuyerNIKMasked,
-		units, e.AdmissionJTI, at, e.AccountID).Scan(&allocationID, &expiresAt)
+	var err error
+	if regrantID != "" {
+		err = tx.QueryRow(ctx, `
+			UPDATE booking.admissions a
+			   SET status = 'RESERVED', units = $2, outstanding_units = $2,
+			       reserved_at = $3::timestamptz,
+			       expires_at = $3::timestamptz + make_interval(secs => ev.claim_window_seconds),
+			       ended_at = NULL, end_reason = NULL
+			  FROM booking.events ev
+			 WHERE a.id = $1::uuid AND a.status = 'EXPIRED' AND ev.id = a.event_id
+			RETURNING a.id::text, a.expires_at`,
+			regrantID, units, at).Scan(&allocationID, &expiresAt)
+	} else {
+		err = tx.QueryRow(ctx, `
+			INSERT INTO booking.admissions (
+				event_id, queue_entry_id, queue_seq, visitor_id, buyer_nik_hash, buyer_email_enc, buyer_nik_masked,
+				units, outstanding_units, status, admission_jti, attendee_checks, edit_count,
+				cfg_selection_ttl_seconds, cfg_payment_ttl_seconds, cfg_submit_grace_seconds,
+				cfg_edit_enabled, cfg_max_edits, cfg_allow_mixed_categories,
+				reserved_at, expires_at, account_id)
+			SELECT $1::uuid, $2::uuid, $3, $4::uuid, $5, NULLIF($6,''), NULLIF($7,''),
+				$8, $8, 'RESERVED', $9::uuid, 0, 0,
+				ev.selection_ttl_seconds, ev.payment_ttl_seconds, ev.selection_submit_grace_seconds,
+				ev.selection_edit_enabled, ev.max_selection_edits, ev.allow_mixed_categories,
+				$10::timestamptz, $10::timestamptz + make_interval(secs => ev.claim_window_seconds),
+				NULLIF($11,'')::uuid
+			  FROM booking.events ev WHERE ev.id = $1::uuid
+			RETURNING id::text, expires_at`,
+			eventID, e.QueueEntryID, e.Seq, e.VisitorID, e.BuyerNIKHash, e.BuyerEmailEnc, e.BuyerNIKMasked,
+			units, e.AdmissionJTI, at, e.AccountID).Scan(&allocationID, &expiresAt)
+	}
 	if err != nil {
 		_, _ = tx.Exec(ctx, "ROLLBACK TO SAVEPOINT entry")
 		if pkgpg.IsCode(err, pkgpg.CodeUniqueViolation) {

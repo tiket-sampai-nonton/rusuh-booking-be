@@ -238,6 +238,26 @@ func TestEndEntry_ClaimedPastBoundIsEnded(t *testing.T) {
 	assert.Equal(t, "ENDED", hget(t, s, s.kEntry(ev, id), "status"))
 }
 
+// D-C6.6 (P2-16): a Booking UNCLAIMED for a WAITING entry is ignored. Its reservation lapsed before Queue admitted it, so
+// the entry keeps its place in the queue and Booking can grant it again; it is never ended or MISSED here.
+func TestEndEntry_UnclaimedForWaitingIsIgnored(t *testing.T) {
+	s := mustStore(t)
+	ctx := context.Background()
+	ev := evID(t)
+	now := time.Now().UnixMilli()
+
+	wait, vis, nik := joinOne(t, s, ev, 1, now)
+	r, err := s.EndEntry(ctx, ev, wait, "UNCLAIMED", now)
+	require.NoError(t, err)
+	assert.Equal(t, "IGNORED", r.Tag)
+	assert.Equal(t, "WAITING", r.Status)
+	assert.Equal(t, "WAITING", hget(t, s, s.kEntry(ev, wait), "status"))
+	_, inW := zscore(t, s, s.kWaiting(ev), wait)
+	assert.True(t, inW, "entry WAITING tetap antre")
+	assert.True(t, keyExists(t, s, s.kAccount(ev, nik)), "constraint keys tetap ada")
+	assert.True(t, keyExists(t, s, s.kVisitor(ev, vis)), "constraint keys tetap ada")
+}
+
 // REQ-QSH-11.2: ExpiredActive is bounded, and a limit of zero is a programming error.
 func TestExpiredActive_RespectsLimit(t *testing.T) {
 	s := mustStore(t)
