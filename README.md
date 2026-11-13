@@ -215,7 +215,7 @@ SDD per service: [docs/analisa/04-SDD-INDEX.md](docs/analisa/04-SDD-INDEX.md).
 |---|---|---|
 | Autentikasi pembeli | OTP email (TTL 5 menit, 5 percobaan, cooldown 60 dtk); refresh token dirotasi, pemakaian ulang mencabut semua sesi | `services/user` |
 | Antar service | Token EdDSA (Ed25519) per scope: `visitor`, `admission`, `buyer`, `service`; admin lewat allowlist email | `pkg/token` |
-| Data pribadi | NIK dan email AES-256-GCM + hash HMAC; tidak pernah di log, event, atau label metrik | `pkg/crypto`, ADR-025/026 |
+| Data pribadi | NIK dan email AES-256-GCM + hash HMAC; tidak pernah di log, event, atau label metrik. Satu pengecualian yang diputuskan pemilik: `GET /api/v1/me` mengembalikan email dan NIK asli hanya kepada pemilik akun (`Cache-Control: no-store`) | `pkg/crypto`, ADR-025/026/033 |
 | Webhook pembayaran | Signature SHA-512 + cek nominal; redirect klien bukan bukti bayar | `services/payment/.../midtrans/signature.go` |
 | Rate limiting | Join antrean per IP (bawaan 200/menit, Valkey), per IP untuk booking dan payment, OTP per email dan IP | `pkg/httpx`, `services/queue` |
 | HTTP | CORS allowlist; header keamanan; service di luar lokal menolak start tanpa allowlist CORS (di branch audit) | `pkg/httpx` |
