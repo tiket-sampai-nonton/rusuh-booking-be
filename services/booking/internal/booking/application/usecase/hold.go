@@ -133,6 +133,9 @@ func (uc *Hold) execute(ctx context.Context, cmd inbound.HoldCommand, v validate
 	}
 
 	now := uc.clock.Now()
+	for i := range lines {
+		lines[i].ItemID = uc.ids.NewID() // booking_items.id, inserted by the UoW in one statement
+	}
 	accountID := admission.AccountID // the principal that queued; a bearer on hold only fills the gap
 	if accountID == "" {
 		accountID = cmd.AccountID

@@ -7,6 +7,9 @@ import (
 
 // HoldLine is one requested ticket line, already validated and with PII reduced to hash/mask/enc.
 type HoldLine struct {
+	// ItemID is the booking_items.id of this line. The usecase generates it (ids.NewID), so the hold inserts all
+	// items in one statement without RETURNING.
+	ItemID            string
 	CategoryID        string
 	UnitPriceMinor    int64
 	AttendeeNIKHash   []byte
@@ -51,7 +54,7 @@ type HoldResult struct {
 	// Refused is set when the hold was refused for a reason whose attempt counter must survive (the
 	// transaction committed): currently only "BUYER_NIK_LIMIT_REACHED".
 	Refused string
-	// ItemIDs holds the DB-generated booking_items.id per line, in spec.Lines order; len == len(spec.Lines).
+	// ItemIDs holds the booking_items.id per line, in spec.Lines order (the HoldLine.ItemID values); len == len(spec.Lines).
 	ItemIDs []string
 }
 

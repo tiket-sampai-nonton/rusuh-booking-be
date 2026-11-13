@@ -33,7 +33,7 @@ const (
 
 // setup creates a throw-away database. Booking's SQL names the schema "booking" explicitly (queries and the supply
 // trigger), so unlike the other services it cannot run in a temporary schema of the shared database.
-func setup(t *testing.T) *pgxpool.Pool {
+func setup(t testing.TB) *pgxpool.Pool {
 	t.Helper()
 	dsn := os.Getenv("TEST_POSTGRES_DSN")
 	if dsn == "" {
@@ -141,7 +141,7 @@ func (f fixture) holdSpec(id string) outbound.HoldSpec {
 		BookingID: id, PublicRef: "RB-7F3A9C21", EventID: f.eventID, AdmissionID: f.admissionID, VisitorID: visitor,
 		BuyerNIKHash: []byte(f.nikH), BuyerEmailEnc: sealedEmail, AmountMinor: 150000, CfgEditEnabled: true, PaymentExpiresAt: time.Now().Add(10 * time.Minute),
 		Lines: []outbound.HoldLine{{
-			CategoryID: f.categoryID, UnitPriceMinor: 150000, AttendeeNIKHash: []byte("attendee-1"), AttendeeNIKEnc: []byte("enc"),
+			ItemID: newTestUUID(), CategoryID: f.categoryID, UnitPriceMinor: 150000, AttendeeNIKHash: []byte("attendee-1"), AttendeeNIKEnc: []byte("enc"),
 			AttendeeNIKMasked: "3174********0001", AttendeeName: "Budi Santoso",
 		}},
 		CorrelationID: id,
@@ -184,7 +184,7 @@ func TestHold_LockedAtOnceKeepsReadModelInStepWithTheStream(t *testing.T) {
 		BuyerNIKHash: []byte(f.nikH), BuyerEmailEnc: sealedEmail, AmountMinor: 150000, CfgEditEnabled: false,
 		PaymentExpiresAt: time.Now().Add(10 * time.Minute), CorrelationID: id,
 		Lines: []outbound.HoldLine{{
-			CategoryID: f.categoryID, UnitPriceMinor: 150000, AttendeeNIKHash: []byte("attendee-1"), AttendeeNIKEnc: []byte("enc"),
+			ItemID: newTestUUID(), CategoryID: f.categoryID, UnitPriceMinor: 150000, AttendeeNIKHash: []byte("attendee-1"), AttendeeNIKEnc: []byte("enc"),
 			AttendeeNIKMasked: "3174********0001", AttendeeName: "Budi Santoso",
 		}},
 	})

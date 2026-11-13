@@ -68,7 +68,7 @@ func (f acctFixture) spec(idx, n int, admID, visitorID string, editEnabled bool)
 	for i := 0; i < n; i++ {
 		h := []byte(fmt.Sprintf("holder%04d%04d", idx, i))
 		lines = append(lines, outbound.HoldLine{
-			CategoryID: f.catID, UnitPriceMinor: 10000,
+			ItemID: newTestUUID(), CategoryID: f.catID, UnitPriceMinor: 10000,
 			AttendeeNIKHash: h, AttendeeNIKEnc: h, AttendeeNIKMasked: "****", AttendeeName: "Holder",
 		})
 	}
