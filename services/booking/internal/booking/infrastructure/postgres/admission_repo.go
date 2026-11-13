@@ -719,9 +719,6 @@ func (r *AdmissionRepo) Release(ctx context.Context, allocationID string, reason
 	return released, nil
 }
 
-// sweepLease is how long a claimed row stays hidden from the other sweepers (D-C7.3).
-const sweepLease = "15 seconds"
-
 // admissionGraceEnd is expires_at plus the submit grace; a RESERVED row has no grace (design §7.1).
 const admissionGraceEnd = `expires_at + CASE WHEN status = 'RESERVED' THEN interval '0' ELSE (cfg_submit_grace_seconds || ' seconds')::interval END`
 
@@ -733,7 +730,7 @@ func (r *AdmissionRepo) ClaimDueSessions(ctx context.Context, now time.Time, lim
 		UPDATE booking.admissions
 		   SET sweep_lease_until = CASE WHEN `+admissionGraceEnd+` > $1::timestamptz
 		                                THEN `+admissionGraceEnd+`
-		                                ELSE $1::timestamptz + $3::interval END
+		                                ELSE $1::timestamptz + make_interval(secs => $3) END
 		 WHERE id IN (
 		       SELECT id FROM booking.admissions
 		        WHERE status IN ('RESERVED','ACTIVE','EDITABLE')
@@ -741,7 +738,7 @@ func (r *AdmissionRepo) ClaimDueSessions(ctx context.Context, now time.Time, lim
 		          AND (sweep_lease_until IS NULL OR sweep_lease_until <= $1::timestamptz)
 		        ORDER BY expires_at LIMIT $2
 		        FOR UPDATE SKIP LOCKED)
-		RETURNING `+admissionCols, now, limit, sweepLease)
+		RETURNING `+admissionCols, now, limit, outbound.SweepLease.Seconds())
 	if err != nil {
 		return nil, fmt.Errorf("admissions: claim due: %w", err)
 	}

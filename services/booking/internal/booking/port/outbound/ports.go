@@ -14,6 +14,10 @@ import (
 
 //go:generate go tool mockgen -source=ports.go -destination=../../../../_mock/booking/port/outbound/ports_mock.go -package=mock_outbound
 
+// SweepLease is how long a row claimed by a sweeper stays hidden from the other sweepers (D-C7.3). Usecases derive their
+// per-call time budget from it, so a call stops before its claimed rows can lapse.
+const SweepLease = 15 * time.Second
+
 // IEventRepo reads the event catalog and config (read-only, outside the stock transaction).
 type IEventRepo interface {
 	ListEvents(ctx context.Context, q dto.EventListQuery) ([]entity.Event, error)

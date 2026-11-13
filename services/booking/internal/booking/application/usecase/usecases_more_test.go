@@ -347,6 +347,110 @@ func TestSweepSessions_StopsAfterMaxRounds(t *testing.T) {
 	assert.Len(t, adm.expired, 2000)
 }
 
+// batchedBookingRepo serves ClaimDueBookings from scripted batches (or always returns `always` ids).
+type batchedBookingRepo struct {
+	*fakeBookingRepo
+	batches [][]string
+	claims  int
+	always  int
+}
+
+func (b *batchedBookingRepo) ClaimDueBookings(context.Context, time.Time, int) ([]string, error) {
+	b.claims++
+	if b.always > 0 {
+		out := make([]string, b.always)
+		for i := range out {
+			out[i] = fmt.Sprintf("b%d", i)
+		}
+		return out, nil
+	}
+	if len(b.batches) == 0 {
+		return nil, nil
+	}
+	out := b.batches[0]
+	b.batches = b.batches[1:]
+	return out, nil
+}
+
+func bookingBatch(n, from int) []string {
+	out := make([]string, n)
+	for i := range out {
+		out[i] = fmt.Sprintf("b%d", from+i)
+	}
+	return out
+}
+
+// slowExpiryUC stands in for a slow Payment Resolve: each booking takes delay. After slowCalls calls it returns at once,
+// so a sweeper that ignores its budget finishes quickly and fails on the assertions instead of hanging.
+type slowExpiryUC struct {
+	delay time.Duration
+	calls int
+	ids   []string
+}
+
+func (f *slowExpiryUC) ExpireBooking(_ context.Context, id string) error {
+	f.calls++
+	if f.calls <= slowCalls {
+		time.Sleep(f.delay)
+	}
+	f.ids = append(f.ids, id)
+	return nil
+}
+
+const slowCalls = 3
+
+// D-C7.3 / R32: a sweep call stops once its budget (lease − 3 s = 12 s) is spent and leaves the rest to lapse.
+func TestSweepExpiries_StopsAfterTimeBudget(t *testing.T) {
+	t.Parallel()
+	exp := &slowExpiryUC{delay: 6 * time.Second}
+	bookings := &batchedBookingRepo{fakeBookingRepo: &fakeBookingRepo{}, always: 100}
+	uc := usecase.NewSweepExpiries(bookings, exp, fixedClock{t: time.Now()})
+	require.NoError(t, uc.SweepExpiries(context.Background()))
+	assert.Len(t, exp.ids, 2, "row 1 ends at 6 s, row 2 at 12 s; the call stops before row 3")
+	assert.Equal(t, 1, bookings.claims, "no new claim round once the budget is spent")
+}
+
+// D-C7.3: SweepExpiries repeats while a batch comes back full, like SweepSessions.
+func TestSweepExpiries_RepeatsWhileBatchFull(t *testing.T) {
+	bookings := &batchedBookingRepo{
+		fakeBookingRepo: &fakeBookingRepo{},
+		batches:         [][]string{bookingBatch(100, 0), bookingBatch(100, 100), bookingBatch(3, 200)},
+	}
+	exp := &fakeExpiryUC{}
+	uc := usecase.NewSweepExpiries(bookings, exp, fixedClock{t: time.Now()})
+	require.NoError(t, uc.SweepExpiries(context.Background()))
+	assert.Equal(t, 3, bookings.claims)
+	assert.Len(t, exp.ids, 203)
+}
+
+// slowAdmissionRepo is the session-side slow release: each ExpireSession takes delay (same cap as slowExpiryUC).
+type slowAdmissionRepo struct {
+	*batchedAdmissionRepo
+	delay time.Duration
+	calls int
+}
+
+func (s *slowAdmissionRepo) ExpireSession(ctx context.Context, id string, now time.Time) error {
+	s.calls++
+	if s.calls <= slowCalls {
+		time.Sleep(s.delay)
+	}
+	return s.batchedAdmissionRepo.ExpireSession(ctx, id, now)
+}
+
+// D-C7.3 / R32: the session sweeper also stops at the budget.
+func TestSweepSessions_StopsAfterTimeBudget(t *testing.T) {
+	t.Parallel()
+	adm := &slowAdmissionRepo{
+		batchedAdmissionRepo: &batchedAdmissionRepo{fakeAdmissionRepo: &fakeAdmissionRepo{}, always: 100},
+		delay:                6 * time.Second,
+	}
+	uc := usecase.NewSweepSessions(adm, fixedClock{t: time.Now()})
+	require.NoError(t, uc.SweepSessions(context.Background()))
+	assert.Len(t, adm.expired, 2, "row 1 ends at 6 s, row 2 at 12 s; the call stops before row 3")
+	assert.Equal(t, 1, adm.claims, "no new claim round once the budget is spent")
+}
+
 func TestSweepExpiries_DelegatesEach(t *testing.T) {
 	exp := &fakeExpiryUC{}
 	uc := usecase.NewSweepExpiries(&fakeBookingRepo{due: []string{"b1", "b2"}}, exp, fixedClock{t: time.Now()})

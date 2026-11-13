@@ -16,6 +16,7 @@ import (
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/domain/dto"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/domain/entity"
 	inbound "github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/port/inbound"
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/port/outbound"
 )
 
 // BookingRepo reads booking read models.
@@ -133,7 +134,7 @@ func (r *BookingRepo) ListByAccount(ctx context.Context, accountID, cursor strin
 // grace is not due. A claimed booking is hidden from other sweepers for 15 s (sweep_lease_until).
 func (r *BookingRepo) ClaimDueBookings(ctx context.Context, now time.Time, limit int) ([]string, error) {
 	rows, err := r.pool.Query(ctx, `
-		UPDATE booking.bookings SET sweep_lease_until = $1::timestamptz + $3::interval
+		UPDATE booking.bookings SET sweep_lease_until = $1::timestamptz + make_interval(secs => $3)
 		 WHERE id IN (
 		       SELECT id FROM booking.bookings
 		        WHERE ((status='PENDING_PAYMENT' AND payment_expires_at < $1::timestamptz)
@@ -141,7 +142,7 @@ func (r *BookingRepo) ClaimDueBookings(ctx context.Context, now time.Time, limit
 		          AND (sweep_lease_until IS NULL OR sweep_lease_until <= $1::timestamptz)
 		        ORDER BY COALESCE(verification_until, payment_expires_at) LIMIT $2
 		        FOR UPDATE SKIP LOCKED)
-		RETURNING id::text`, now, limit, sweepLease)
+		RETURNING id::text`, now, limit, outbound.SweepLease.Seconds())
 	if err != nil {
 		return nil, fmt.Errorf("bookings: claim due: %w", err)
 	}

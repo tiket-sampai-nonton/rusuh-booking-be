@@ -1078,3 +1078,61 @@ func TestClaimDueBookings_LeaseHidesClaimedRows(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []string{id}, due, "lease lapsed")
 }
+
+// D-C7.3 / R32: a row another transaction holds is skipped, not waited for. While the lock is held, the claim returns
+// the other due admissions within the context timeout (SKIP LOCKED); without SKIP LOCKED it would block until the timeout.
+func TestClaimDueSessions_SkipsRowsLockedByAnotherTransaction(t *testing.T) {
+	ctx := context.Background()
+	f := newAcctFixture(t, suffixFor(t), 10)
+	ids := make([]string, 0, 4)
+	for i := range 4 {
+		id, _ := f.reserve(t, i, 1, false)
+		ids = append(ids, id)
+	}
+	_, err := f.pool.Exec(ctx, `UPDATE booking.admissions SET reserved_at=now()-interval '3 hours', claimed_at=now()-interval '2 hours', expires_at=now()-interval '1 hour' WHERE event_id=$1::uuid`, f.eventID)
+	require.NoError(t, err)
+
+	tx, err := f.pool.Begin(ctx)
+	require.NoError(t, err)
+	defer func() { _ = tx.Rollback(ctx) }()
+	var locked string
+	require.NoError(t, tx.QueryRow(ctx, `SELECT id::text FROM booking.admissions WHERE id=$1::uuid FOR UPDATE`, ids[0]).Scan(&locked))
+
+	cctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	due, err := NewAdmissionRepo(f.pool).ClaimDueSessions(cctx, time.Now(), 10)
+	require.NoError(t, err, "the locked row is skipped; the claim must not wait for it")
+	got := map[string]bool{}
+	for _, d := range due {
+		got[d.ID] = true
+	}
+	assert.False(t, got[ids[0]], "locked row not claimed")
+	for _, id := range ids[1:] {
+		assert.True(t, got[id], "other due rows claimed while the lock is held")
+	}
+}
+
+// D-C7.3 / R32: the booking claim also skips a row locked by another transaction and returns the rest.
+func TestClaimDueBookings_SkipsRowsLockedByAnotherTransaction(t *testing.T) {
+	f := seed(t)
+	ctx := context.Background()
+	repo := NewBookingRepo(f.pool)
+	now := time.Now()
+	locked := f.insertBooking(t, "PENDING_PAYMENT", now.Add(-time.Second), nil)
+	a := f.insertBooking(t, "PENDING_PAYMENT", now.Add(-time.Second), nil)
+	b := f.insertBooking(t, "VERIFYING", now.Add(-time.Second), ptrTime(now.Add(-time.Second)))
+
+	tx, err := f.pool.Begin(ctx)
+	require.NoError(t, err)
+	defer func() { _ = tx.Rollback(ctx) }()
+	var got string
+	require.NoError(t, tx.QueryRow(ctx, `SELECT id::text FROM booking.bookings WHERE id=$1::uuid FOR UPDATE`, locked).Scan(&got))
+
+	cctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	due, err := repo.ClaimDueBookings(cctx, now, 10)
+	require.NoError(t, err, "the locked booking is skipped; the claim must not wait for it")
+	assert.NotContains(t, due, locked, "locked booking not claimed")
+	assert.Contains(t, due, a)
+	assert.Contains(t, due, b)
+}
