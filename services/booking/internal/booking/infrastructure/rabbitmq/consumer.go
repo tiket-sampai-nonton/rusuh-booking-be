@@ -137,28 +137,30 @@ func NewOutboxRelay(store OutboxStore, pub OutboxPublisher, now func() time.Time
 const maxBatchesPerRun = 50
 
 // RunOnce drains due rows in batches of r.batch for as long as a claim comes back full, at most maxBatchesPerRun
-// batches per call. It stops early when ctx is done. Called by the worker's outbox-relay job.
+// batches per call. It stops early when ctx is done, and after the batch in which a publish failed (the broker is
+// likely down; the rest waits for the next tick). Called by the worker's outbox-relay job.
 func (r *OutboxRelay) RunOnce(ctx context.Context) error {
 	for i := 0; i < maxBatchesPerRun; i++ {
 		if ctx.Err() != nil {
 			return nil
 		}
-		n, err := r.runBatch(ctx)
+		n, publishFailed, err := r.runBatch(ctx)
 		if err != nil {
 			return err
 		}
-		if n < r.batch {
+		if publishFailed || n < r.batch {
 			return nil
 		}
 	}
 	return nil
 }
 
-// runBatch claims one batch of due rows, publishes them and returns how many rows it claimed.
-func (r *OutboxRelay) runBatch(ctx context.Context) (int, error) {
+// runBatch claims one batch of due rows and publishes them. It returns how many rows it claimed and whether any
+// publish in the batch failed.
+func (r *OutboxRelay) runBatch(ctx context.Context) (claimed int, publishFailed bool, err error) {
 	rows, err := r.store.Claim(ctx, r.batch, outboxLease)
 	if err != nil {
-		return 0, err
+		return 0, false, err
 	}
 	for _, row := range rows {
 		env, err := pkgrabbitmq.NewEnvelope(row.RoutingKey, "booking-service", row.AggregateID, row.AggregateID, row.Payload, r.now())
@@ -176,13 +178,14 @@ func (r *OutboxRelay) runBatch(ctx context.Context) (int, error) {
 		if perr := r.pub.Publish(ctx, row.RoutingKey, env); perr != nil {
 			r.logger.Warn("outbox publish gagal", "id", row.ID, "routingKey", row.RoutingKey, "error", perr)
 			_ = r.store.MarkFailed(ctx, row.ID, row.Attempts+1, perr.Error(), backoff(row.Attempts))
+			publishFailed = true
 			continue
 		}
 		if merr := r.store.MarkPublished(ctx, row.ID); merr != nil {
-			return len(rows), merr
+			return len(rows), publishFailed, merr
 		}
 	}
-	return len(rows), nil
+	return len(rows), publishFailed, nil
 }
 
 // parseRFC3339 parses an RFC3339 timestamp string; returns zero time on parse error.

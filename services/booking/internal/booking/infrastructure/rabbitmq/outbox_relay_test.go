@@ -121,6 +121,26 @@ func TestOutboxRelay_StopsWhenContextDone(t *testing.T) {
 	assert.Equal(t, 2, store.claims, "ctx selesai: batch berikutnya tidak diklaim")
 }
 
+// failingOutboxPublisher fails every publish, as a broker that is down would.
+type failingOutboxPublisher struct {
+	calls int
+}
+
+func (f *failingOutboxPublisher) Publish(context.Context, string, pkgrabbitmq.Envelope) error {
+	f.calls++
+	return errors.New("broker down")
+}
+
+func TestOutboxRelay_StopsDrainingWhenPublishFails(t *testing.T) {
+	// A down broker must not make one run wait through every batch: after a failed publish the run stops once the
+	// current batch is done.
+	store := &drainingOutboxStore{batch: func(call int) []bookingrabbitmq.OutboxRow { return outboxRows(call, 100) }}
+	pub := &failingOutboxPublisher{}
+	require.NoError(t, bookingrabbitmq.NewOutboxRelay(store, pub, time.Now, logger()).RunOnce(context.Background()))
+	assert.Equal(t, 1, store.claims)
+	assert.Equal(t, 100, pub.calls, "batch yang sedang berjalan tetap diselesaikan")
+}
+
 func TestOutboxRelay_MessageIDIsRowID(t *testing.T) {
 	// The row id is the message id, so a republish after a crash carries the same id and Notification dedupes it.
 	store := &fakeOutboxStore{rows: []bookingrabbitmq.OutboxRow{
