@@ -5,12 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/domain/entity"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/infrastructure/worker"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/port/outbound"
 )
@@ -292,3 +294,72 @@ func TestPromoter_PublishesAfterLeaseRelease(t *testing.T) {
 }
 
 var _ outbound.IEventPublisher = leaseCheckPub{}
+
+// perEventSettings serves a different capacity per event, for the two-event bound test.
+type perEventSettings map[string]entity.EventSettings
+
+func (s perEventSettings) Get(_ context.Context, ev string) (entity.EventSettings, bool, error) {
+	v, ok := s[ev]
+	return v, ok, nil
+}
+
+func (s perEventSettings) ListEventIDs(context.Context) ([]string, error) {
+	return []string{"ev1", "ev2"}, nil
+}
+
+// blockingPub blocks the announcement of entry "a" until its context is done (a broker stall). The 5 s fallback only keeps a
+// regression from hanging the suite: an unbounded publish reports an error after it.
+type blockingPub struct {
+	mu        sync.Mutex
+	attempted []string
+	delivered []string
+}
+
+func (p *blockingPub) PublishTurnSoon(context.Context, string, string, string) error { return nil }
+func (p *blockingPub) PublishJourneyEnded(context.Context, string, string, string) error {
+	return nil
+}
+
+func (p *blockingPub) PublishTurnArrived(ctx context.Context, _, entryID, _ string, _ time.Time) error {
+	p.mu.Lock()
+	p.attempted = append(p.attempted, entryID)
+	p.mu.Unlock()
+	if entryID == "a" {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(5 * time.Second):
+			return errors.New("publish was not bounded")
+		}
+	}
+	p.mu.Lock()
+	p.delivered = append(p.delivered, entryID)
+	p.mu.Unlock()
+	return nil
+}
+
+// R36: the post-lease turn.arrived publishes of an event are bounded by LeaseTTL-1s. Once the bound passes, the rest of
+// that event's arrivals are not attempted, and later events in the same Run are still processed.
+func TestPromoter_ArrivalPublishIsBoundedAndLaterEventsStillRun(t *testing.T) {
+	h := newHarness(t, 2, 5, worker.PromoterTuning{})
+	for _, id := range []string{"a", "a2", "c"} {
+		h.store.addWaiting(id, 0)
+	}
+	settings := perEventSettings{
+		"ev1": {EventID: "ev1", ActiveSlotCapacity: 2},
+		"ev2": {EventID: "ev2", ActiveSlotCapacity: 3},
+	}
+	pub := &blockingPub{}
+	p := worker.NewPromoter(h.store, settings, h.stub, pub, fakeAudit{}, h.clk, slog.New(slog.NewTextHandler(discard{}, nil)),
+		worker.PromoterTuning{BatchMax: 200, LeaseTTL: 2 * time.Second}) // bound = 1 s
+
+	start := time.Now()
+	require.NoError(t, p.Run(context.Background()))
+	elapsed := time.Since(start)
+
+	assert.Less(t, elapsed, 1500*time.Millisecond, "arrival publishing stops at the 1 s bound, not at the broker's stall")
+	pub.mu.Lock()
+	defer pub.mu.Unlock()
+	assert.Equal(t, []string{"a", "c"}, pub.attempted, "a2 is never attempted after the bound; ev2 is")
+	assert.Equal(t, []string{"c"}, pub.delivered, "ev2 is still processed and announced")
+}

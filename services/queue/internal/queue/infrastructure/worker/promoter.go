@@ -85,7 +85,7 @@ func (p *Promoter) WithMetrics(m outbound.IPromoterMetrics) *Promoter {
 
 // Run promotes one batch for every configured event. A failing event never stops the others: the errors are joined.
 // The turn.arrived announcements and the pre-turn notify of an event run after its lease is released (C8.3, PF-P1-5;
-// C8.8, PF-P2-2), never inside the lease.
+// C8.8, PF-P2-2), never inside the lease. The announcements are bounded (R36, see announce).
 func (p *Promoter) Run(ctx context.Context) error {
 	ids, err := p.settings.ListEventIDs(ctx)
 	if err != nil {
@@ -97,12 +97,40 @@ func (p *Promoter) Run(ctx context.Context) error {
 		if err != nil {
 			errs = append(errs, fmt.Errorf("promoter event %s: %w", eventID, err))
 		}
-		for _, a := range arrivals {
-			_ = p.pub.PublishTurnArrived(ctx, eventID, a.entryID, a.visitorID, a.deadline)
-		}
+		p.announce(ctx, eventID, arrivals)
 		p.notifyPreTurn(ctx, eventID, notifyPosition)
 	}
 	return errors.Join(errs...)
+}
+
+// announce publishes turn.arrived for the entries an event promoted this tick. It runs after the lease is released, but a
+// broker stall must still not hold the job for N x ConfirmWait, so it is bounded like the tick (R36): once the bound
+// passes, the event's remaining arrivals are not attempted. A failed publish is logged and never fails the tick (INV-6).
+func (p *Promoter) announce(ctx context.Context, eventID string, arrivals []arrival) {
+	if len(arrivals) == 0 {
+		return
+	}
+	actx, cancel := context.WithTimeout(ctx, p.leaseBound())
+	defer cancel()
+	for _, a := range arrivals {
+		if err := actx.Err(); errors.Is(err, context.DeadlineExceeded) {
+			p.logger.Warn("batas waktu turn.arrived habis; sisa entry tidak diumumkan tick ini", "eventId", eventID, "entryId", a.entryID, "error", err)
+			return
+		}
+		if err := p.pub.PublishTurnArrived(actx, eventID, a.entryID, a.visitorID, a.deadline); err != nil {
+			p.logger.Warn("gagal mempublish turn.arrived; tidak diulang", "eventId", eventID, "entryId", a.entryID, "error", err)
+		}
+	}
+}
+
+// leaseBound is how long one tick may run, and how long its announcements may take: the lease TTL less a second, so work
+// stops before the lease can lapse (LeaseTTL/2 when the TTL is under a second).
+func (p *Promoter) leaseBound() time.Duration {
+	bound := p.tuning.LeaseTTL - time.Second
+	if bound <= 0 {
+		bound = p.tuning.LeaseTTL / 2
+	}
+	return bound
 }
 
 // arrival is one entry this tick promoted; Run announces it with queue.turn.arrived once the lease is released.
@@ -134,11 +162,7 @@ func (p *Promoter) runEvent(ctx context.Context, eventID string) (int, []arrival
 	}()
 	// Run bound: stop working before the lease can lapse, so a slow Booking cannot outlive the lease (the fence in
 	// promote.lua is the second line of defence).
-	bound := p.tuning.LeaseTTL - time.Second
-	if bound <= 0 {
-		bound = p.tuning.LeaseTTL / 2
-	}
-	runCtx, cancel := context.WithTimeout(ctx, bound)
+	runCtx, cancel := context.WithTimeout(ctx, p.leaseBound())
 	defer cancel()
 
 	settings, ok, err := p.settings.Get(runCtx, eventID)
