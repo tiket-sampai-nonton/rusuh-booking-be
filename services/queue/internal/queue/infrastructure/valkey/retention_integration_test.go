@@ -241,3 +241,34 @@ func TestRetireEvent_JoinAfterRetireLeavesSeqPersistent(t *testing.T) {
 	assert.Equal(t, int64(-1), pttl(t, s, s.kWaiting(ev)), "waiting of the live entry must not expire")
 	assert.Equal(t, int64(-1), pttl(t, s, s.kEntry(ev, live)), "the live entry must not expire")
 }
+
+// TC-C8.3 fix round 1 (I-3): advancing the notify watermark keeps the TTL that RetireEvent gave it. A plain SET would clear
+// the TTL, so a retired event's watermark would never expire. The value still moves forward as before.
+func TestNotifyWatermark_AdvanceKeepsRetirementTTL(t *testing.T) {
+	s := mustStore(t)
+	ctx := context.Background()
+	ev := evID(t)
+	const ttl = time.Hour
+
+	_, err := s.AdvanceNotifyWatermark(ctx, ev, 1) // the watermark exists before the event is retired
+	require.NoError(t, err)
+	ok, err := s.RetireEvent(ctx, ev, ttl) // no entries: the event is drained
+	require.NoError(t, err)
+	require.True(t, ok, "a drained event is retired")
+	require.Greater(t, pttl(t, s, s.kNotifySeq(ev)), int64(0), "retired event: the watermark carries the TTL")
+
+	prev, err := s.AdvanceNotifyWatermark(ctx, ev, 5)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), prev, "the advance still reads the previous watermark")
+	assert.Greater(t, pttl(t, s, s.kNotifySeq(ev)), int64(0), "advancing must keep the retirement TTL, not make the watermark immortal")
+	assert.LessOrEqual(t, pttl(t, s, s.kNotifySeq(ev)), ttl.Milliseconds(), "the watermark still expires within the retention")
+	assert.Equal(t, int64(5), mustWatermark(t, s, ev), "the stored value moved forward to 5")
+}
+
+// mustWatermark reads the stored notify watermark of the event (0 when absent).
+func mustWatermark(t *testing.T, s *QueueStore, ev string) int64 {
+	t.Helper()
+	v, err := s.c.Do(context.Background(), s.c.B().Get().Key(s.kNotifySeq(ev)).Build()).AsInt64()
+	require.NoError(t, err)
+	return v
+}
