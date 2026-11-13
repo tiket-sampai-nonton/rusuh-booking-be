@@ -10,7 +10,7 @@ require (
 	github.com/tiket-sampai-nonton/rusuh-booking-be/pkg v0.0.0
 	github.com/valkey-io/valkey-go v1.0.79
 	go.uber.org/mock v0.6.0
-	golang.org/x/sync v0.22.0
+	golang.org/x/sync v0.25.0
 )
 
 require (
