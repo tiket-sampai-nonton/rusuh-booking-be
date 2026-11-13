@@ -396,6 +396,15 @@ func (s *fakeStore) ExpiredActive(_ context.Context, _ string, nowMs int64, limi
 }
 
 func (s *fakeStore) SetSale(context.Context, string, string, bool) error { return nil }
+func (s *fakeStore) SetSaleCapacity(context.Context, string, int, int64) error {
+	return nil
+}
+func (s *fakeStore) AdmissionsPerMinute(_ context.Context, _ string, fromMin, toMin int64) ([]int64, error) {
+	if toMin < fromMin {
+		return nil, nil
+	}
+	return make([]int64, toMin-fromMin+1), nil
+}
 func (s *fakeStore) SetSaleWindow(_ context.Context, ev string, startsMs, endsMs int64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -75,6 +75,21 @@ func (mr *MockIQueueStoreMockRecorder) ActiveCount(ctx, eventID any) *gomock.Cal
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ActiveCount", reflect.TypeOf((*MockIQueueStore)(nil).ActiveCount), ctx, eventID)
 }
 
+// AdmissionsPerMinute mocks base method.
+func (m *MockIQueueStore) AdmissionsPerMinute(ctx context.Context, eventID string, fromMin, toMin int64) ([]int64, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "AdmissionsPerMinute", ctx, eventID, fromMin, toMin)
+	ret0, _ := ret[0].([]int64)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// AdmissionsPerMinute indicates an expected call of AdmissionsPerMinute.
+func (mr *MockIQueueStoreMockRecorder) AdmissionsPerMinute(ctx, eventID, fromMin, toMin any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AdmissionsPerMinute", reflect.TypeOf((*MockIQueueStore)(nil).AdmissionsPerMinute), ctx, eventID, fromMin, toMin)
+}
+
 // AdvanceNotifyWatermark mocks base method.
 func (m *MockIQueueStore) AdvanceNotifyWatermark(ctx context.Context, eventID string, upToSeq int64) (int64, error) {
 	m.ctrl.T.Helper()
@@ -390,6 +405,20 @@ func (m *MockIQueueStore) SetSale(ctx context.Context, eventID, saleState string
 func (mr *MockIQueueStoreMockRecorder) SetSale(ctx, eventID, saleState, soldOut any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetSale", reflect.TypeOf((*MockIQueueStore)(nil).SetSale), ctx, eventID, saleState, soldOut)
+}
+
+// SetSaleCapacity mocks base method.
+func (m *MockIQueueStore) SetSaleCapacity(ctx context.Context, eventID string, capacity int, sinceMs int64) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "SetSaleCapacity", ctx, eventID, capacity, sinceMs)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// SetSaleCapacity indicates an expected call of SetSaleCapacity.
+func (mr *MockIQueueStoreMockRecorder) SetSaleCapacity(ctx, eventID, capacity, sinceMs any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetSaleCapacity", reflect.TypeOf((*MockIQueueStore)(nil).SetSaleCapacity), ctx, eventID, capacity, sinceMs)
 }
 
 // SetSaleWindow mocks base method.

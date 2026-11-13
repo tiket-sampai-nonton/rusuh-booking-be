@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"sync"
 	"time"
 
@@ -75,6 +76,12 @@ func (p *StatusPublisher) runEvent(ctx context.Context, eventID string) error {
 	}
 
 	doc := p.build(eventID, settings, sale, supply, serr == nil)
+	rate, err := p.admissionRate(ctx, eventID, settings, sale, supply, serr == nil, doc.SoldOut)
+	if err != nil {
+		// Best-effort: the rate only feeds the client ETA, so the document is still published with it hidden.
+		slog.Warn("status publisher: admission rate unavailable", "eventId", eventID, "error", err)
+	}
+	doc.AdmissionRatePerMin = rate
 	rankErr := p.ranks(ctx, eventID, settings, supply, serr == nil, &doc)
 	if rankErr != nil {
 		// The zone fields could not be read: publish the last known ones instead of an empty zone (P3-15), then
@@ -172,6 +179,58 @@ func (p *StatusPublisher) build(eventID string, s entity.EventSettings, sale out
 		Categories:            categoriesFrom(supply, s.CategoryLimitedThresholdPct, haveSupply),
 		UpdatedAt:             now.Format(time.RFC3339),
 	}
+}
+
+// Admission rate window (FR-09, SRS-F-05-10): the rate averages the most recent complete minutes that hold at least
+// rateMinAdmissions admissions, looking back at most rateMaxWindowMin minutes (promote.lua keeps each counter 1200 s).
+const (
+	rateMinAdmissions = 10
+	rateMaxWindowMin  = 15
+	minuteMs          = int64(60_000)
+)
+
+// admissionRate measures admissionRatePerMin from promote.lua's per-minute counters, rounded to whole admissions per
+// minute. It returns 0, which hides the client ETA, while the rate says nothing about the wait: Booking unreadable,
+// sold out or no free units (admission waits for held stock), sale not open, active over capacity (draining after a
+// cut), or fewer than rateMinAdmissions admissions in the window. Minutes before the sale opening or a capacity change
+// has settled (one full minute after it) are left out, so the burst that fills all slots at once is not counted.
+func (p *StatusPublisher) admissionRate(ctx context.Context, eventID string, s entity.EventSettings, sale outbound.SaleState, supply outbound.SupplySnapshot, haveSupply, soldOut bool) (int, error) {
+	if !haveSupply || soldOut || supply.FreeUnits <= 0 || supply.SalesStartsAt.IsZero() || s.ActiveSlotCapacity <= 0 {
+		return 0, nil
+	}
+	nowMs := p.clock.Now().UnixMilli()
+	sinceMs := sale.CapacitySinceMs
+	if sale.Capacity != s.ActiveSlotCapacity {
+		if err := p.store.SetSaleCapacity(ctx, eventID, s.ActiveSlotCapacity, nowMs); err != nil {
+			return 0, err
+		}
+		sinceMs = nowMs
+	}
+	active, err := p.store.ActiveCount(ctx, eventID)
+	if err != nil {
+		return 0, err
+	}
+	if active > s.ActiveSlotCapacity {
+		return 0, nil
+	}
+	settledMs := max(supply.SalesStartsAt.UnixMilli(), sinceMs) + minuteMs
+	lastMin := nowMs/minuteMs - 1                                                // last complete minute
+	firstMin := max((settledMs+minuteMs-1)/minuteMs, lastMin-rateMaxWindowMin+1) // first minute starting after settling
+	if lastMin < firstMin {
+		return 0, nil
+	}
+	counts, err := p.store.AdmissionsPerMinute(ctx, eventID, firstMin, lastMin)
+	if err != nil {
+		return 0, err
+	}
+	var total int64
+	for i := len(counts) - 1; i >= 0; i-- {
+		total += counts[i]
+		if total >= rateMinAdmissions {
+			return int(math.Round(float64(total) / float64(len(counts)-i))), nil
+		}
+	}
+	return 0, nil
 }
 
 // ranks fills the seq-based zone fields (ADR-030, R05.1): G = ceil(F/M) and P = ceil((F+A+H)/M) front-most LIVE

@@ -105,6 +105,11 @@ func (s *QueueStore) kStatus(e string) string { return s.keyer.Key(s.tag(e) + ":
 func (s *QueueStore) kSale(e string) string   { return s.keyer.Key(s.tag(e) + ":sale") }
 func (s *QueueStore) kLease(e string) string  { return s.keyer.Key(s.tag(e) + ":promoter:lock") }
 
+// kAdm is the admissions counter of one epoch minute (promote.lua INCRBY, EXPIRE 1200 s).
+func (s *QueueStore) kAdm(e string, minute int64) string {
+	return s.keyer.Key(s.tag(e) + ":adm:" + strconv.FormatInt(minute, 10))
+}
+
 // kNotifySeq is the pre-turn notify watermark (C8.3): the highest seq whose waiting entries were announced.
 func (s *QueueStore) kNotifySeq(e string) string { return s.keyer.Key(s.tag(e) + ":notify_seq") }
 
@@ -198,7 +203,7 @@ func (s *QueueStore) Promote(ctx context.Context, eventID string, cands []outbou
 	if len(cands) == 0 {
 		return outbound.PromoteResult{}, nil
 	}
-	keys := []string{s.kWaiting(eventID), s.kActive(eventID), s.kLease(eventID)}
+	keys := []string{s.kWaiting(eventID), s.kActive(eventID), s.kLease(eventID), s.kAdm(eventID, nowMs/60_000)}
 	for _, c := range cands {
 		keys = append(keys, s.kEntry(eventID, c.EntryID))
 	}
@@ -538,7 +543,49 @@ func (s *QueueStore) GetSale(ctx context.Context, eventID string) (outbound.Sale
 	st.SalesStartsMs = parseMs(m["salesStartsMs"])
 	st.SalesEndsMs = parseMs(m["salesEndsMs"])
 	st.WindowAtMs = parseMs(m["windowAtMs"])
+	st.Capacity = int(parseMs(m["capacity"]))
+	st.CapacitySinceMs = parseMs(m["capacitySinceMs"])
 	return st, nil
+}
+
+// SetSaleCapacity records the active slot capacity and when it took effect in the sale hash, next to the fields of
+// SetSale and SetSaleWindow, so RetireEvent expires it with them. It writes only its own fields.
+func (s *QueueStore) SetSaleCapacity(ctx context.Context, eventID string, capacity int, sinceMs int64) error {
+	return s.c.Do(ctx, s.c.B().Hset().Key(s.kSale(eventID)).FieldValue().
+		FieldValue("capacity", strconv.Itoa(capacity)).
+		FieldValue("capacitySinceMs", strconv.FormatInt(sinceMs, 10)).Build()).Error()
+}
+
+// AdmissionsPerMinute reads the per-minute admission counters fromMin..toMin in one MGET (all keys share the
+// event's hash tag, so one slot). A missing counter reads as 0.
+func (s *QueueStore) AdmissionsPerMinute(ctx context.Context, eventID string, fromMin, toMin int64) ([]int64, error) {
+	if toMin < fromMin {
+		return nil, nil
+	}
+	keys := make([]string, 0, toMin-fromMin+1)
+	for m := fromMin; m <= toMin; m++ {
+		keys = append(keys, s.kAdm(eventID, m))
+	}
+	arr, err := s.c.Do(ctx, s.c.B().Mget().Key(keys...).Build()).ToArray()
+	if err != nil {
+		return nil, fmt.Errorf("valkey: mget admissions: %w", err)
+	}
+	out := make([]int64, len(arr))
+	for i, v := range arr {
+		str, err := v.ToString()
+		if vk.IsValkeyNil(err) {
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("valkey: admissions counter: %w", err)
+		}
+		n, err := strconv.ParseInt(str, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("valkey: admissions counter %q: %w", str, err)
+		}
+		out[i] = n
+	}
+	return out, nil
 }
 
 // SetSaleWindow caches the sale window in the same hash as SetSale and stamps when it was cached (windowAtMs). It

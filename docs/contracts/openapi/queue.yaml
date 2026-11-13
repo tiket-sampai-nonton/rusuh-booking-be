@@ -975,6 +975,7 @@ components:
           type: integer
         admissionRatePerMin:
           type: integer
+          description: Laju admisi terukur (admisi per menit, dibulatkan) dari menit penuh terbaru dengan minimal 10 admisi, maksimal 15 menit. 0 = belum stabil, klien menyembunyikan ETA (ETA = posisi / laju).
         removedBuckets:
           type: object
           properties:

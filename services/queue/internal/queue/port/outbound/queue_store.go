@@ -32,6 +32,12 @@ type IQueueStore interface {
 	GetSale(ctx context.Context, eventID string) (SaleState, error)
 	// SetSaleWindow caches the event's sale window (epoch ms) in the sale hash without touching saleState/soldOut.
 	SetSaleWindow(ctx context.Context, eventID string, startsMs, endsMs int64) error
+	// SetSaleCapacity records in the sale hash the active slot capacity in effect since sinceMs (epoch ms), read back
+	// by GetSale as Capacity / CapacitySinceMs. Only its own fields are written.
+	SetSaleCapacity(ctx context.Context, eventID string, capacity int, sinceMs int64) error
+	// AdmissionsPerMinute returns how many entries promote.lua admitted in each epoch minute fromMin..toMin
+	// (inclusive, minute = epochMs/60000), oldest first; a minute without admissions, or whose counter expired, is 0.
+	AdmissionsPerMinute(ctx context.Context, eventID string, fromMin, toMin int64) ([]int64, error)
 	SetStatusDoc(ctx context.Context, eventID string, doc []byte, ttl time.Duration) error
 	GetStatusDoc(ctx context.Context, eventID string) ([]byte, bool, error)
 	// AdvanceNotifyWatermark moves the event's pre-turn notify watermark up to upToSeq (never back) and returns the value it
