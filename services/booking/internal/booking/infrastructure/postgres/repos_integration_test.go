@@ -101,7 +101,7 @@ func TestEventRepo_ListFilterSortAndDetail(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, d.Categories, 1)
 	assert.Equal(t, "VIP", d.Categories[0].Category.Code)
-	assert.Equal(t, 10, d.Categories[0].Available)
+	assert.Equal(t, 9, d.Categories[0].Available, "min(kategori 10, event 10 - dialokasikan 1 untuk admission seed)")
 
 	_, err = repo.GetByID(ctx, "00000000-0000-0000-0000-000000000000")
 	assert.ErrorIs(t, err, inbound.ErrNotFound)
@@ -733,14 +733,15 @@ func TestEventRepo_OnSaleAvailability_ClampsAndHonoursTheSalesWindow(t *testing.
 
 	got, err := repo.OnSaleAvailability(ctx, now)
 	require.NoError(t, err)
-	require.Len(t, got[f.eventID], 1)
-	assert.Equal(t, 10, got[f.eventID][0].Available)
+	require.Len(t, got[f.eventID].Categories, 1)
+	assert.Equal(t, 10, got[f.eventID].Categories[0].Available)
+	assert.Equal(t, 9, got[f.eventID].EventFree, "event 10 - dialokasikan 1")
 
 	_, err = f.pool.Exec(ctx, `UPDATE booking.category_inventories SET held_quantity = 4, sold_quantity = 3 WHERE event_id=$1::uuid`, f.eventID)
 	require.NoError(t, err)
 	got, err = repo.OnSaleAvailability(ctx, now)
 	require.NoError(t, err)
-	assert.Equal(t, 3, got[f.eventID][0].Available, "kapasitas - ditahan - terjual")
+	assert.Equal(t, 3, got[f.eventID].Categories[0].Available, "kapasitas - ditahan - terjual")
 
 	got, err = repo.OnSaleAvailability(ctx, now.Add(-72*time.Hour))
 	require.NoError(t, err)
@@ -751,6 +752,41 @@ func TestEventRepo_OnSaleAvailability_ClampsAndHonoursTheSalesWindow(t *testing.
 	got, err = repo.OnSaleAvailability(ctx, now)
 	require.NoError(t, err)
 	assert.Empty(t, got, "event CLOSED tidak diproyeksikan")
+
+	// C5.1: a cancelled event is not projected either, and neither is an unpublished one.
+	_, err = f.pool.Exec(ctx, `UPDATE booking.events SET status='CANCELLED' WHERE id=$1::uuid`, f.eventID)
+	require.NoError(t, err)
+	got, err = repo.OnSaleAvailability(ctx, now)
+	require.NoError(t, err)
+	assert.Empty(t, got, "event CANCELLED tidak diproyeksikan")
+
+	_, err = f.pool.Exec(ctx, `UPDATE booking.events SET status='AVAILABLE', published_at=NULL WHERE id=$1::uuid`, f.eventID)
+	require.NoError(t, err)
+	got, err = repo.OnSaleAvailability(ctx, now)
+	require.NoError(t, err)
+	assert.Empty(t, got, "event belum terbit tidak diproyeksikan")
+}
+
+// C5.1: a category never shows more than the event still has free. The event supply is the cap shared by all categories.
+func TestEventRepo_DetailAvailabilityIsCappedByEventFree(t *testing.T) {
+	f := seed(t)
+	ctx := context.Background()
+	repo := NewEventRepo(f.pool)
+
+	// Seed: category capacity 10, event total 10 with 1 allocated (the seeded admission). Allocate 8 more.
+	_, err := f.pool.Exec(ctx, `UPDATE booking.event_supply SET allocated_units = 8 WHERE event_id=$1::uuid`, f.eventID)
+	require.NoError(t, err)
+	d, err := repo.GetDetail(ctx, f.eventID)
+	require.NoError(t, err)
+	require.Len(t, d.Categories, 1)
+	assert.Equal(t, 2, d.Categories[0].Available, "min(kategori 10, event 10-8)")
+
+	_, err = f.pool.Exec(ctx, `UPDATE booking.event_supply SET held_units = 1 WHERE event_id=$1::uuid`, f.eventID)
+	require.NoError(t, err)
+	d, err = repo.GetDetail(ctx, f.eventID)
+	require.NoError(t, err)
+	require.Len(t, d.Categories, 1)
+	assert.Equal(t, 1, d.Categories[0].Available, "min(kategori 10, event 10-8-1)")
 }
 
 func TestEventWriteRepo_SetImageURL(t *testing.T) {

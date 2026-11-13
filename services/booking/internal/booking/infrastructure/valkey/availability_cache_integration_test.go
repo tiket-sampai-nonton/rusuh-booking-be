@@ -38,22 +38,22 @@ func TestAvailabilityCache_ReadsSnapshotAndCountsConnections(t *testing.T) {
 
 	none, err := cache.GetAvailability(ctx, "no-such-event")
 	require.NoError(t, err)
-	assert.Nil(t, none, "tanpa snapshot: nil, bukan error")
+	assert.Equal(t, outbound.AvailabilitySnapshot{}, none, "tanpa snapshot: kosong, bukan error")
 
-	raw, _ := json.Marshal([]outbound.CategoryAvailabilitySnap{{CategoryID: "c1", Available: 7}})
+	raw, _ := json.Marshal(outbound.AvailabilitySnapshot{EventFree: 4, Categories: []outbound.CategoryAvailabilitySnap{{CategoryID: "c1", Available: 7}}})
 	require.NoError(t, c.VK().Do(ctx, c.VK().B().Set().Key("booking:avail:"+ev1).Value(string(raw)).Build()).Error())
 	got, err := cache.GetAvailability(ctx, ev1)
 	require.NoError(t, err)
-	assert.Equal(t, []outbound.CategoryAvailabilitySnap{{CategoryID: "c1", Available: 7}}, got)
+	assert.Equal(t, outbound.AvailabilitySnapshot{EventFree: 4, Categories: []outbound.CategoryAvailabilitySnap{{CategoryID: "c1", Available: 7}}}, got)
 
 	require.NoError(t, c.VK().Do(ctx, c.VK().B().Set().Key("booking:avail:"+bad).Value("{bukan json").Build()).Error())
 	_, err = cache.GetAvailability(ctx, bad)
 	assert.Error(t, err, "snapshot rusak dilaporkan")
 
-	require.NoError(t, cache.SetAvailability(ctx, ev1, []outbound.CategoryAvailabilitySnap{{CategoryID: "c9", Available: 2}}, time.Minute))
+	require.NoError(t, cache.SetAvailability(ctx, ev1, outbound.AvailabilitySnapshot{EventFree: 2, Categories: []outbound.CategoryAvailabilitySnap{{CategoryID: "c9", Available: 2}}}, time.Minute))
 	got, err = cache.GetAvailability(ctx, ev1)
 	require.NoError(t, err)
-	assert.Equal(t, []outbound.CategoryAvailabilitySnap{{CategoryID: "c9", Available: 2}}, got, "snapshot ditulis lalu terbaca")
+	assert.Equal(t, outbound.AvailabilitySnapshot{EventFree: 2, Categories: []outbound.CategoryAvailabilitySnap{{CategoryID: "c9", Available: 2}}}, got, "snapshot ditulis lalu terbaca")
 
 	n, err := cache.IncrConn(ctx, inst)
 	require.NoError(t, err)

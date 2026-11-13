@@ -91,8 +91,8 @@ func (uc *ProjectAvailability) ProjectAvailability(ctx context.Context) error {
 		return err
 	}
 	var errs []error
-	for eventID, snaps := range byEvent {
-		if err := uc.cache.SetAvailability(ctx, eventID, snaps, availabilityTTL); err != nil {
+	for eventID, snap := range byEvent {
+		if err := uc.cache.SetAvailability(ctx, eventID, snap, availabilityTTL); err != nil {
 			errs = append(errs, err)
 		}
 	}

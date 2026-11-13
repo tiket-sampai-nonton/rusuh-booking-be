@@ -227,9 +227,11 @@ func (r *EventRepo) GetDetail(ctx context.Context, eventID string) (entity.Event
 	}
 	rows, err := r.pool.Query(ctx, `
 		SELECT c.id::text, c.code, c.name, c.price_minor,
-		       (ci.capacity - ci.held_quantity - ci.sold_quantity) AS available
+		       LEAST(GREATEST(ci.capacity - ci.held_quantity - ci.sold_quantity, 0),
+		             GREATEST(s.total_capacity - s.allocated_units - s.held_units - s.sold_units, 0)) AS available
 		  FROM booking.ticket_categories c
 		  JOIN booking.category_inventories ci ON ci.category_id = c.id
+		  JOIN booking.event_supply s ON s.event_id = c.event_id
 		 WHERE c.event_id = $1::uuid
 		 ORDER BY c.display_order`, eventID)
 	if err != nil {
@@ -278,29 +280,38 @@ func genresParam(g []string) []string {
 	return g
 }
 
-// OnSaleAvailability returns per-category availability (capacity - held - sold, clamped at 0) for every
-// event whose sales window contains now and that is not closed, keyed by event ID.
-func (r *EventRepo) OnSaleAvailability(ctx context.Context, now time.Time) (map[string][]outbound.CategoryAvailabilitySnap, error) {
+// OnSaleAvailability returns the availability snapshot of every published event whose sales window contains now and
+// that is neither closed nor cancelled, keyed by event ID. Category free is capacity - held - sold (clamped at 0);
+// event free is total - allocated - held - sold (clamped at 0) from event_supply.
+func (r *EventRepo) OnSaleAvailability(ctx context.Context, now time.Time) (map[string]outbound.AvailabilitySnapshot, error) {
 	rows, err := r.pool.Query(ctx, `
-		SELECT e.id::text, c.id::text,
+		SELECT e.id::text,
+		       GREATEST(s.total_capacity - s.allocated_units - s.held_units - s.sold_units, 0),
+		       c.id::text,
 		       GREATEST(ci.capacity - ci.held_quantity - ci.sold_quantity, 0)
 		  FROM booking.events e
+		  JOIN booking.event_supply s ON s.event_id = e.id
 		  JOIN booking.ticket_categories c ON c.event_id = e.id
 		  JOIN booking.category_inventories ci ON ci.category_id = c.id
-		 WHERE e.status <> 'CLOSED' AND e.sales_starts_at <= $1 AND e.sales_ends_at > $1
+		 WHERE e.status NOT IN ('CLOSED','CANCELLED') AND e.published_at IS NOT NULL
+		   AND e.sales_starts_at <= $1 AND e.sales_ends_at > $1
 		 ORDER BY e.id, c.display_order`, now)
 	if err != nil {
 		return nil, fmt.Errorf("events: on-sale availability: %w", err)
 	}
 	defer rows.Close()
-	out := map[string][]outbound.CategoryAvailabilitySnap{}
+	out := map[string]outbound.AvailabilitySnapshot{}
 	for rows.Next() {
 		var eventID string
+		var eventFree int
 		var s outbound.CategoryAvailabilitySnap
-		if err := rows.Scan(&eventID, &s.CategoryID, &s.Available); err != nil {
+		if err := rows.Scan(&eventID, &eventFree, &s.CategoryID, &s.Available); err != nil {
 			return nil, fmt.Errorf("events: scan on-sale availability: %w", err)
 		}
-		out[eventID] = append(out[eventID], s)
+		snap := out[eventID]
+		snap.EventFree = eventFree
+		snap.Categories = append(snap.Categories, s)
+		out[eventID] = snap
 	}
 	return out, rows.Err()
 }

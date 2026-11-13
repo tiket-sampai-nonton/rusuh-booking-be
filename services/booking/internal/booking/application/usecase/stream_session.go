@@ -83,13 +83,19 @@ func (uc *StreamSession) Stream(ctx context.Context, sessionID, visitorID string
 	for {
 		now := uc.clock.Now()
 
-		// availability frame
-		snaps, _ := uc.cache.GetAvailability(ctx, adm.EventID)
-		if snaps == nil {
-			snaps = []outbound.CategoryAvailabilitySnap{}
+		// availability frame: a category shows what is free for everyone, plus this buyer's own reserved units
+		// (already counted out of event free, and reserved for this buyer by invariant 2).
+		snap, _ := uc.cache.GetAvailability(ctx, adm.EventID)
+		cats := make([]outbound.CategoryAvailabilitySnap, 0, len(snap.Categories))
+		for _, c := range snap.Categories {
+			avail := snap.EventFree + adm.OutstandingUnits
+			if c.Available < avail {
+				avail = c.Available
+			}
+			cats = append(cats, outbound.CategoryAvailabilitySnap{CategoryID: c.CategoryID, Available: avail})
 		}
 		availData, _ := json.Marshal(map[string]any{
-			"categories": snaps,
+			"categories": cats,
 			"serverTime": now.Format(time.RFC3339),
 		})
 		_, _ = fmt.Fprintf(w, "event: availability\ndata: %s\n\n", availData)

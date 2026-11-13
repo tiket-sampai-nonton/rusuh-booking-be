@@ -178,17 +178,24 @@ type CategoryAvailabilitySnap struct {
 	Available  int    `json:"available"`
 }
 
+// AvailabilitySnapshot is the point-in-time availability of one event: the units the event still has free
+// (total - allocated - held - sold, clamped at 0) and each category's own free count.
+type AvailabilitySnapshot struct {
+	EventFree  int                        `json:"eventFree"`
+	Categories []CategoryAvailabilitySnap `json:"categories"`
+}
+
 // IAvailabilityCache reads live category availability from Valkey (written by the stock projection
 // after each hold/settle/expire) and tracks SSE connection count per instance.
 type IAvailabilityCache interface {
-	GetAvailability(ctx context.Context, eventID string) ([]CategoryAvailabilitySnap, error)
-	SetAvailability(ctx context.Context, eventID string, snaps []CategoryAvailabilitySnap, ttl time.Duration) error
+	GetAvailability(ctx context.Context, eventID string) (AvailabilitySnapshot, error)
+	SetAvailability(ctx context.Context, eventID string, snap AvailabilitySnapshot, ttl time.Duration) error
 	IncrConn(ctx context.Context, instance string) (int, error)
 	DecrConn(ctx context.Context, instance string) error
 }
 
-// IAvailabilitySource lists the live availability of every event whose sales window is open at now,
-// keyed by event ID (the source of the SSE snapshot written by ProjectAvailability).
+// IAvailabilitySource lists the live availability of every event whose sales window is open at now and that is
+// published and not closed or cancelled, keyed by event ID (the source of the SSE snapshot written by ProjectAvailability).
 type IAvailabilitySource interface {
-	OnSaleAvailability(ctx context.Context, now time.Time) (map[string][]CategoryAvailabilitySnap, error)
+	OnSaleAvailability(ctx context.Context, now time.Time) (map[string]AvailabilitySnapshot, error)
 }

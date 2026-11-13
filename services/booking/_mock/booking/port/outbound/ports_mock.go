@@ -780,10 +780,10 @@ func (mr *MockIAvailabilityCacheMockRecorder) DecrConn(ctx, instance any) *gomoc
 }
 
 // GetAvailability mocks base method.
-func (m *MockIAvailabilityCache) GetAvailability(ctx context.Context, eventID string) ([]outbound.CategoryAvailabilitySnap, error) {
+func (m *MockIAvailabilityCache) GetAvailability(ctx context.Context, eventID string) (outbound.AvailabilitySnapshot, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "GetAvailability", ctx, eventID)
-	ret0, _ := ret[0].([]outbound.CategoryAvailabilitySnap)
+	ret0, _ := ret[0].(outbound.AvailabilitySnapshot)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
@@ -810,17 +810,17 @@ func (mr *MockIAvailabilityCacheMockRecorder) IncrConn(ctx, instance any) *gomoc
 }
 
 // SetAvailability mocks base method.
-func (m *MockIAvailabilityCache) SetAvailability(ctx context.Context, eventID string, snaps []outbound.CategoryAvailabilitySnap, ttl time.Duration) error {
+func (m *MockIAvailabilityCache) SetAvailability(ctx context.Context, eventID string, snap outbound.AvailabilitySnapshot, ttl time.Duration) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "SetAvailability", ctx, eventID, snaps, ttl)
+	ret := m.ctrl.Call(m, "SetAvailability", ctx, eventID, snap, ttl)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // SetAvailability indicates an expected call of SetAvailability.
-func (mr *MockIAvailabilityCacheMockRecorder) SetAvailability(ctx, eventID, snaps, ttl any) *gomock.Call {
+func (mr *MockIAvailabilityCacheMockRecorder) SetAvailability(ctx, eventID, snap, ttl any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetAvailability", reflect.TypeOf((*MockIAvailabilityCache)(nil).SetAvailability), ctx, eventID, snaps, ttl)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetAvailability", reflect.TypeOf((*MockIAvailabilityCache)(nil).SetAvailability), ctx, eventID, snap, ttl)
 }
 
 // MockIAvailabilitySource is a mock of IAvailabilitySource interface.
@@ -848,10 +848,10 @@ func (m *MockIAvailabilitySource) EXPECT() *MockIAvailabilitySourceMockRecorder 
 }
 
 // OnSaleAvailability mocks base method.
-func (m *MockIAvailabilitySource) OnSaleAvailability(ctx context.Context, now time.Time) (map[string][]outbound.CategoryAvailabilitySnap, error) {
+func (m *MockIAvailabilitySource) OnSaleAvailability(ctx context.Context, now time.Time) (map[string]outbound.AvailabilitySnapshot, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "OnSaleAvailability", ctx, now)
-	ret0, _ := ret[0].(map[string][]outbound.CategoryAvailabilitySnap)
+	ret0, _ := ret[0].(map[string]outbound.AvailabilitySnapshot)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
