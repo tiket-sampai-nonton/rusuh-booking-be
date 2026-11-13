@@ -6,6 +6,8 @@ import (
 	"math/rand/v2"
 	"time"
 
+	"golang.org/x/sync/singleflight"
+
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/clock"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/domain/dto"
@@ -50,6 +52,8 @@ type JoinQueue struct {
 	s       JoinSettings
 	metrics outbound.IPromoterMetrics
 	logger  *slog.Logger
+	// saleFill collapses concurrent cold reads of the sale window, keyed by event id (PF-P1-20).
+	saleFill singleflight.Group
 }
 
 type noopMetrics struct{}
@@ -179,34 +183,31 @@ func (u *JoinQueue) Join(ctx context.Context, in inbound.JoinInput) (dto.QueueEn
 	return out, nil
 }
 
+// saleWindowKnownFor is how long a window Booking reported without bounds counts as known (PF-P1-20).
+const saleWindowKnownFor = 30 * time.Second
+
+// saleWindow is the sale window one join is decided by; 0 means unbounded on that side.
+type saleWindow struct {
+	startsMs int64
+	endsMs   int64
+}
+
 // checkSale refuses a join outside the sale: before salesStartsAt (ErrNotOnSale), after sold out (ErrSoldOut) or
 // from salesEndsAt on (ErrNotOnSale), in that order of precedence. salesStartsAt <= now < salesEndsAt is open. It
 // runs after the rate limit and before Store.Join, so a refused join creates no entry and consumes no seq. The window
-// is cached by the status publisher; only a cold cache costs one Booking read, and if that fails the join fails
-// closed (ErrDependencyUnavailable) rather than being accepted blindly.
+// is cached by the status publisher; only an unknown window costs a Booking read (see saleWindowKnown), and if that
+// read fails the join fails closed (ErrDependencyUnavailable) rather than being accepted blindly.
 func (u *JoinQueue) checkSale(ctx context.Context, eventID string, now time.Time) error {
 	sale, err := u.d.Store.GetSale(ctx, eventID)
 	if err != nil {
 		return err
 	}
-	if sale.SalesStartsMs == 0 && sale.SalesEndsMs == 0 {
-		supply, serr := u.d.Booking.Supply(ctx, eventID)
-		if serr != nil {
-			u.logger.Warn("jendela penjualan tidak diketahui dan Booking tidak tersedia", "eventId", eventID, "error", serr)
-			return entity.ErrDependencyUnavailable
+	if !saleWindowKnown(sale, now) {
+		window, werr := u.fillSaleWindow(ctx, eventID)
+		if werr != nil {
+			return werr
 		}
-		sale.SalesStartsMs, sale.SalesEndsMs = supply.SalesStartsAt.UnixMilli(), supply.SalesEndsAt.UnixMilli()
-		if supply.SalesStartsAt.IsZero() {
-			sale.SalesStartsMs = 0
-		}
-		if supply.SalesEndsAt.IsZero() {
-			sale.SalesEndsMs = 0
-		}
-		if sale.SalesStartsMs != 0 && sale.SalesEndsMs != 0 {
-			if werr := u.d.Store.SetSaleWindow(ctx, eventID, sale.SalesStartsMs, sale.SalesEndsMs); werr != nil {
-				u.logger.Warn("cache jendela penjualan gagal", "eventId", eventID, "error", werr)
-			}
-		}
+		sale.SalesStartsMs, sale.SalesEndsMs = window.startsMs, window.endsMs
 	}
 	nowMs := now.UnixMilli()
 	switch {
@@ -218,6 +219,54 @@ func (u *JoinQueue) checkSale(ctx context.Context, eventID string, now time.Time
 		return entity.ErrNotOnSale
 	}
 	return nil
+}
+
+// saleWindowKnown reports whether the cached window can decide a join without a Booking read. A window with a bound is
+// known. A window without bounds (Booking reported none) is known for saleWindowKnownFor after it was cached, so an
+// event without a window does not cost a Booking read on every join.
+func saleWindowKnown(sale outbound.SaleState, now time.Time) bool {
+	if sale.SalesStartsMs != 0 || sale.SalesEndsMs != 0 {
+		return true
+	}
+	return sale.WindowAtMs != 0 && now.UnixMilli()-sale.WindowAtMs < saleWindowKnownFor.Milliseconds()
+}
+
+// fillSaleWindow reads the sale window from Booking and caches it. Concurrent cold joins of one event share that single
+// read (PF-P1-20), so a cold cache under a burst costs one Booking call. A failed read fails the join closed.
+func (u *JoinQueue) fillSaleWindow(ctx context.Context, eventID string) (saleWindow, error) {
+	v, err, _ := u.saleFill.Do(eventID, func() (any, error) {
+		// The shared read outlives the join that started it, so one cancelled client does not fail the others.
+		fctx := context.WithoutCancel(ctx)
+		supply, serr := u.d.Booking.Supply(fctx, eventID)
+		if serr != nil {
+			u.logger.Warn("jendela penjualan tidak diketahui dan Booking tidak tersedia", "eventId", eventID, "error", serr)
+			return nil, entity.ErrDependencyUnavailable
+		}
+		window := saleWindow{startsMs: unixMsOrZero(supply.SalesStartsAt), endsMs: unixMsOrZero(supply.SalesEndsAt)}
+		// Only a complete window is cached as a window. Anything else is cached as the zero window with its time, so
+		// the joins of the next 30 s treat it as known and do not read Booking again.
+		cached := window
+		if window.startsMs == 0 || window.endsMs == 0 {
+			cached = saleWindow{}
+		}
+		if werr := u.d.Store.SetSaleWindow(fctx, eventID, cached.startsMs, cached.endsMs); werr != nil {
+			u.logger.Warn("cache jendela penjualan gagal", "eventId", eventID, "error", werr)
+		}
+		return window, nil
+	})
+	if err != nil {
+		return saleWindow{}, err
+	}
+	window, _ := v.(saleWindow)
+	return window, nil
+}
+
+// unixMsOrZero is the epoch-ms of t, or 0 for the zero time (Booking's "no bound").
+func unixMsOrZero(t time.Time) int64 {
+	if t.IsZero() {
+		return 0
+	}
+	return t.UnixMilli()
 }
 
 // resolveAccount returns the account id of a valid User bearer, or "" for a guest or an invalid bearer. The

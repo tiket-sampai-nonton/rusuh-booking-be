@@ -4,7 +4,10 @@ package valkey
 
 import (
 	"context"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -132,4 +135,53 @@ func TestEventSettingsCache_InvalidateDropsKey(t *testing.T) {
 	assert.True(t, found)
 	assert.Equal(t, 2, src.calls, "pembacaan berikutnya harus ke source")
 	assert.Equal(t, 350, s.ActiveSlotCapacity)
+}
+
+// gatedSettingsSource holds every Get until release is closed, so concurrent misses overlap the source read.
+type gatedSettingsSource struct {
+	calls   atomic.Int32
+	release chan struct{}
+	result  entity.EventSettings
+}
+
+func (s *gatedSettingsSource) Get(_ context.Context, _ string) (entity.EventSettings, bool, error) {
+	s.calls.Add(1)
+	<-s.release
+	return s.result, true, nil
+}
+
+func (s *gatedSettingsSource) ListEventIDs(_ context.Context) ([]string, error) { return nil, nil }
+
+// C8.6 (PF-P3-2): 20 concurrent misses on one event read Postgres once; every caller gets the same settings.
+func TestEventSettingsCache_SingleflightOnMiss(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	const callers = 20
+	src := &gatedSettingsSource{
+		release: make(chan struct{}),
+		result:  entity.EventSettings{EventID: "ev-sf", ActiveSlotCapacity: 250},
+	}
+	c := NewEventSettingsCache(store.c, store.keyer, src)
+
+	var wg sync.WaitGroup
+	got := make([]entity.EventSettings, callers)
+	found := make([]bool, callers)
+	errs := make([]error, callers)
+	for i := 0; i < callers; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			got[i], found[i], errs[i] = c.Get(ctx, "ev-sf")
+		}(i)
+	}
+	time.Sleep(100 * time.Millisecond) // every caller misses the cache and waits on the one in-flight read
+	close(src.release)
+	wg.Wait()
+
+	assert.Equal(t, int32(1), src.calls.Load(), "source harus dipanggil sekali untuk miss bersamaan")
+	for i := 0; i < callers; i++ {
+		require.NoError(t, errs[i], "caller %d", i)
+		assert.True(t, found[i], "caller %d", i)
+		assert.Equal(t, 250, got[i].ActiveSlotCapacity, "caller %d", i)
+	}
 }

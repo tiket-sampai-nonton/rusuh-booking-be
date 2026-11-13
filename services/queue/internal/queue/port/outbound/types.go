@@ -152,6 +152,9 @@ type SaleState struct {
 	// 0 means unknown: the join gate then reads Booking once and caches the answer.
 	SalesStartsMs int64
 	SalesEndsMs   int64
+	// WindowAtMs is when the window was cached (epoch ms). A window Booking reported without bounds stays known
+	// for 30 s from this instant, so an event without a window does not cost a Booking read on every join.
+	WindowAtMs int64
 }
 
 // AuditRecord is one entry_audit row.

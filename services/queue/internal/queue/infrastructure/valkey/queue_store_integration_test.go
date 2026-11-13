@@ -394,6 +394,15 @@ func TestJoinLua_ConcurrencyProofs(t *testing.T) {
 	})
 }
 
+// withoutWindowStamp returns st with WindowAtMs cleared, after checking that SetSaleWindow stamped it: the window
+// assertions below pin the sale fields, and the stamp has its own subtest.
+func withoutWindowStamp(t *testing.T, st outbound.SaleState) outbound.SaleState {
+	t.Helper()
+	require.NotZero(t, st.WindowAtMs, "SetSaleWindow stamps windowAtMs")
+	st.WindowAtMs = 0
+	return st
+}
+
 // TC-QUE-40 (P15): the sale window and the sold-out flag share one hash but neither writer clobbers the other.
 func TestQueueStore_SaleWindow(t *testing.T) {
 	ctx := context.Background()
@@ -412,7 +421,7 @@ func TestQueueStore_SaleWindow(t *testing.T) {
 		require.NoError(t, s.SetSale(ctx, ev, "CLOSED", true))
 		got, err := s.GetSale(ctx, ev)
 		require.NoError(t, err)
-		assert.Equal(t, outbound.SaleState{SaleState: "CLOSED", SoldOut: true, SalesStartsMs: starts, SalesEndsMs: ends}, got)
+		assert.Equal(t, outbound.SaleState{SaleState: "CLOSED", SoldOut: true, SalesStartsMs: starts, SalesEndsMs: ends}, withoutWindowStamp(t, got))
 	})
 	t.Run("SetSale then window: both survive", func(t *testing.T) {
 		s := newTestStore(t)
@@ -421,7 +430,7 @@ func TestQueueStore_SaleWindow(t *testing.T) {
 		require.NoError(t, s.SetSaleWindow(ctx, ev, starts, ends))
 		got, err := s.GetSale(ctx, ev)
 		require.NoError(t, err)
-		assert.Equal(t, outbound.SaleState{SaleState: "CLOSED", SoldOut: true, SalesStartsMs: starts, SalesEndsMs: ends}, got)
+		assert.Equal(t, outbound.SaleState{SaleState: "CLOSED", SoldOut: true, SalesStartsMs: starts, SalesEndsMs: ends}, withoutWindowStamp(t, got))
 	})
 	t.Run("window rewrite replaces only the window", func(t *testing.T) {
 		s := newTestStore(t)
@@ -431,6 +440,19 @@ func TestQueueStore_SaleWindow(t *testing.T) {
 		require.NoError(t, s.SetSaleWindow(ctx, ev, starts+1, ends+1))
 		got, err := s.GetSale(ctx, ev)
 		require.NoError(t, err)
-		assert.Equal(t, outbound.SaleState{SaleState: "OPEN", SalesStartsMs: starts + 1, SalesEndsMs: ends + 1}, got)
+		assert.Equal(t, outbound.SaleState{SaleState: "OPEN", SalesStartsMs: starts + 1, SalesEndsMs: ends + 1}, withoutWindowStamp(t, got))
+	})
+	t.Run("window stamps windowAtMs from the store clock, zero bounds included", func(t *testing.T) {
+		s := newTestStore(t)
+		ev := evID(t)
+		before := time.Now().UnixMilli()
+		require.NoError(t, s.SetSaleWindow(ctx, ev, 0, 0))
+		after := time.Now().UnixMilli()
+		got, err := s.GetSale(ctx, ev)
+		require.NoError(t, err)
+		assert.GreaterOrEqual(t, got.WindowAtMs, before)
+		assert.LessOrEqual(t, got.WindowAtMs, after)
+		assert.Equal(t, int64(0), got.SalesStartsMs)
+		assert.Equal(t, int64(0), got.SalesEndsMs)
 	})
 }

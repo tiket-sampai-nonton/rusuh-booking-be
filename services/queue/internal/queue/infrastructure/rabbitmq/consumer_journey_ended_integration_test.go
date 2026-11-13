@@ -161,8 +161,10 @@ func TestConsumer_SoldOut_DuplicateLeavesSaleStateUnchanged(t *testing.T) {
 	second, err := s.GetSale(ctx, ev)
 	require.NoError(t, err)
 
-	assert.Equal(t, outbound.SaleState{SaleState: "CLOSED", SoldOut: true, SalesStartsMs: 1_000, SalesEndsMs: 2_000}, first)
 	assert.Equal(t, first, second, "second delivery changes nothing")
+	require.NotZero(t, first.WindowAtMs, "SetSaleWindow stamps windowAtMs")
+	first.WindowAtMs = 0 // the stamp is when the test wrote the window, not part of the sold-out outcome
+	assert.Equal(t, outbound.SaleState{SaleState: "CLOSED", SoldOut: true, SalesStartsMs: 1_000, SalesEndsMs: 2_000}, first)
 }
 
 // TC-QUE-40 (5.5): a buyer admitted into WAITING in the race window before booking.sold_out is consumed is told

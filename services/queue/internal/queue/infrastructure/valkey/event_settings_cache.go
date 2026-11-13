@@ -6,6 +6,7 @@ import (
 	"time"
 
 	vk "github.com/valkey-io/valkey-go"
+	"golang.org/x/sync/singleflight"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/domain/entity"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/queue/internal/queue/port/outbound"
@@ -19,6 +20,14 @@ type EventSettingsCache struct {
 	c      vk.Client
 	keyer  Keyer
 	source outbound.IEventSettingsRepo
+	// fill collapses concurrent Postgres reads of one event, so a cold key under load costs one read (PF-P3-2).
+	fill singleflight.Group
+}
+
+// settingsFill is the shared result of one Postgres read.
+type settingsFill struct {
+	s     entity.EventSettings
+	found bool
 }
 
 // NewEventSettingsCache returns a caching decorator around source.
@@ -31,6 +40,7 @@ func (r *EventSettingsCache) cacheKey(eventID string) string {
 }
 
 // Get reads from Valkey first; on miss or any Valkey error it falls through to Postgres and populates the cache.
+// Concurrent misses for one event share a single Postgres read.
 func (r *EventSettingsCache) Get(ctx context.Context, eventID string) (entity.EventSettings, bool, error) {
 	if raw, err := r.c.Do(ctx, r.c.B().Get().Key(r.cacheKey(eventID)).Build()).AsBytes(); err == nil {
 		var s entity.EventSettings
@@ -38,14 +48,19 @@ func (r *EventSettingsCache) Get(ctx context.Context, eventID string) (entity.Ev
 			return s, true, nil
 		}
 	}
-	s, found, err := r.source.Get(ctx, eventID)
-	if err != nil || !found {
-		return s, found, err
-	}
-	if b, jerr := json.Marshal(s); jerr == nil {
-		_ = r.c.Do(ctx, r.c.B().Set().Key(r.cacheKey(eventID)).Value(string(b)).Ex(eventSettingsCacheTTL).Build()).Error()
-	}
-	return s, true, nil
+	v, err, _ := r.fill.Do(eventID, func() (any, error) {
+		// The shared read outlives the caller that started it: one cancelled request must not fail the others.
+		fctx := context.WithoutCancel(ctx)
+		s, found, err := r.source.Get(fctx, eventID)
+		if err == nil && found {
+			if b, jerr := json.Marshal(s); jerr == nil {
+				_ = r.c.Do(fctx, r.c.B().Set().Key(r.cacheKey(eventID)).Value(string(b)).Ex(eventSettingsCacheTTL).Build()).Error()
+			}
+		}
+		return settingsFill{s: s, found: found}, err
+	})
+	res, _ := v.(settingsFill)
+	return res.s, res.found, err
 }
 
 // Invalidate deletes the cached row of eventID; the next Get reads Postgres. DEL of a missing key is not an error.
