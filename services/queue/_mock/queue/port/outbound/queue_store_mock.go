@@ -74,6 +74,21 @@ func (mr *MockIQueueStoreMockRecorder) ActiveCount(ctx, eventID any) *gomock.Cal
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ActiveCount", reflect.TypeOf((*MockIQueueStore)(nil).ActiveCount), ctx, eventID)
 }
 
+// CheckTokenGen mocks base method.
+func (m *MockIQueueStore) CheckTokenGen(ctx context.Context, eventID, visitorID string, gen int64) (outbound.TokenGenCheck, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CheckTokenGen", ctx, eventID, visitorID, gen)
+	ret0, _ := ret[0].(outbound.TokenGenCheck)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// CheckTokenGen indicates an expected call of CheckTokenGen.
+func (mr *MockIQueueStoreMockRecorder) CheckTokenGen(ctx, eventID, visitorID, gen any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CheckTokenGen", reflect.TypeOf((*MockIQueueStore)(nil).CheckTokenGen), ctx, eventID, visitorID, gen)
+}
+
 // Claim mocks base method.
 func (m *MockIQueueStore) Claim(ctx context.Context, eventID, entryID, visitorID string, nowMs int64) (outbound.ClaimResult, error) {
 	m.ctrl.T.Helper()
@@ -387,22 +402,6 @@ func (m *MockIQueueStore) SweepLivenessTick(ctx context.Context, eventID string,
 func (mr *MockIQueueStoreMockRecorder) SweepLivenessTick(ctx, eventID, staleBeforeMs, endBeforeMs, batch, nowMs, ttl, topN any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SweepLivenessTick", reflect.TypeOf((*MockIQueueStore)(nil).SweepLivenessTick), ctx, eventID, staleBeforeMs, endBeforeMs, batch, nowMs, ttl, topN)
-}
-
-// TokenGen mocks base method.
-func (m *MockIQueueStore) TokenGen(ctx context.Context, eventID, visitorID string) (int64, bool, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "TokenGen", ctx, eventID, visitorID)
-	ret0, _ := ret[0].(int64)
-	ret1, _ := ret[1].(bool)
-	ret2, _ := ret[2].(error)
-	return ret0, ret1, ret2
-}
-
-// TokenGen indicates an expected call of TokenGen.
-func (mr *MockIQueueStoreMockRecorder) TokenGen(ctx, eventID, visitorID any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "TokenGen", reflect.TypeOf((*MockIQueueStore)(nil).TokenGen), ctx, eventID, visitorID)
 }
 
 // TopWaiting mocks base method.

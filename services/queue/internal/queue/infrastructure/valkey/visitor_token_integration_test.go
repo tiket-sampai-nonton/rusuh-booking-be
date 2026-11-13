@@ -10,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	vk "github.com/valkey-io/valkey-go"
 	"go.uber.org/mock/gomock"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/clock"
@@ -54,7 +55,7 @@ func TestVisitorToken_RotatedOutTokenCannotTouchALiveAdmittedEntry(t *testing.T)
 	// Same account joins from a new device without the token -> REATTACH rotates the generation.
 	re := vjoin(t, s, ev, outbound.JoinParams{NewVisitorID: "dev-b", AccountID: "acct-1"})
 	require.Equal(t, outbound.JoinReattach, re.Outcome)
-	require.EqualValues(t, 2, re.Gen)
+	require.Greater(t, re.Gen, first.Gen)
 
 	ctrl := gomock.NewController(t)
 	booking := mock_outbound.NewMockIBookingClient(ctrl) // any ReleaseAllocation call fails the test
@@ -172,4 +173,88 @@ func TestVisitorToken_ExistingJoinRefreshesRecordTTL(t *testing.T) {
 		require.Equal(t, outbound.JoinExisting, r.Outcome)
 		assert.False(t, keyExists(t, s, vtokKey(s, ev, c.VisitorID)), "no record is resurrected")
 	})
+}
+
+// tokenGenRecord reads the stored generation of the visitor's record on the event. Test-only: production code checks
+// through CheckTokenGen and never reads the raw value.
+func tokenGenRecord(ctx context.Context, s *QueueStore, ev, vis string) (int64, bool, error) {
+	g, err := s.c.Do(ctx, s.c.B().Get().Key(vtokKey(s, ev, vis)).Build()).AsInt64()
+	if vk.IsValkeyNil(err) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, err
+	}
+	return g, true, nil
+}
+
+// checkGen runs the generation check on the event's record and fails the test on a store error.
+func checkGen(t *testing.T, s *QueueStore, ev, vis string, gen int64) outbound.TokenGenCheck {
+	t.Helper()
+	r, err := s.CheckTokenGen(context.Background(), ev, vis, gen)
+	require.NoError(t, err)
+	return r
+}
+
+// rejoinEndedEvent gives a visitor (account acct in A) a token for event B through event A: join A (g1), join B with that token, end
+// the B entry and rejoin B with the same token, which rotates B's generation (g2 > g1).
+func rejoinEndedEvent(t *testing.T, s *QueueStore, evA, evB, entryA, acct string) (vis string, g1, g2 int64) {
+	t.Helper()
+	ctx := context.Background()
+	a := vjoin(t, s, evA, outbound.JoinParams{EntryID: entryA, NewVisitorID: "vis-" + entryA, AccountID: acct})
+	require.Equal(t, outbound.JoinCreated, a.Outcome)
+	b := vjoin(t, s, evB, outbound.JoinParams{EntryID: entryA + "-b1", NewVisitorID: "nv-" + entryA + "-b1", TokenVisitorID: a.VisitorID, TokenGen: a.Gen})
+	require.Equal(t, outbound.JoinCreated, b.Outcome)
+	// Booking's PAID only ends an ADMITTED/CLAIMED entry (end_entry.lua class C): admit the B entry first.
+	promoteOne(t, s, evB, entryA+"-b1", "alloc-"+entryA, time.Now().Add(time.Minute).UnixMilli(), time.Now().UnixMilli(), 10)
+	_, err := s.EndEntry(ctx, evB, entryA+"-b1", "PAID", time.Now().UnixMilli())
+	require.NoError(t, err)
+	b2 := vjoin(t, s, evB, outbound.JoinParams{EntryID: entryA + "-b2", NewVisitorID: "nv-" + entryA + "-b2", TokenVisitorID: a.VisitorID, TokenGen: a.Gen})
+	require.Equal(t, outbound.JoinCreated, b2.Outcome)
+	require.Equal(t, a.VisitorID, b2.VisitorID)
+	return a.VisitorID, a.Gen, b2.Gen
+}
+
+// D-C6.1 (AC-C6.1 P0-8): a token that rotated in event B keeps working in event A. The generation ratchets up per
+// event: a newer generation is accepted and stored, an older one is refused.
+func TestTokenGen_MultiEventRejoinKeepsOtherEventValid(t *testing.T) {
+	s := mustStore(t)
+	ctx := context.Background()
+	evA, evB := evID(t)+"-A", evID(t)+"-B"
+	vis, g1, g2 := rejoinEndedEvent(t, s, evA, evB, "e-a", "acct-m-"+evA)
+	require.Greater(t, g2, g1)
+
+	hb, err := s.Heartbeat(ctx, evA, vis, g2, time.Now().UnixMilli())
+	require.NoError(t, err)
+	assert.Equal(t, outbound.HeartbeatOK, hb.Tag, "A accepts the newer generation of the same visitor")
+	assert.Equal(t, outbound.TokenGenOK, checkGen(t, s, evA, vis, g2))
+	assert.Equal(t, outbound.TokenGenInvalid, checkGen(t, s, evA, vis, g1), "older generation is refused once ratcheted")
+}
+
+// D-C6.1: a REATTACH rotation in A makes the old generation invalid everywhere it was ratcheted; the new generation
+// is accepted in B on first use, and then B refuses the older one.
+func TestTokenGen_ReattachRotatesAndRatchets(t *testing.T) {
+	s := mustStore(t)
+	ctx := context.Background()
+	evA, evB := evID(t)+"-A", evID(t)+"-B"
+	acct := "acct-r-" + evA
+	vis, _, g2 := rejoinEndedEvent(t, s, evA, evB, "e-r", acct)
+
+	hb, err := s.Heartbeat(ctx, evA, vis, g2, time.Now().UnixMilli())
+	require.NoError(t, err)
+	require.Equal(t, outbound.HeartbeatOK, hb.Tag)
+
+	// the same account re-attaches from a new device in A (no token): the visitor's generation rotates to g3 > g2
+	re := vjoin(t, s, evA, outbound.JoinParams{NewVisitorID: "dev-r3", AccountID: acct})
+	require.Equal(t, outbound.JoinReattach, re.Outcome)
+	g3 := re.Gen
+	require.Greater(t, g3, g2)
+
+	assert.Equal(t, outbound.TokenGenInvalid, checkGen(t, s, evA, vis, g2), "A: pre-rotation generation is refused")
+	assert.Equal(t, outbound.TokenGenOK, checkGen(t, s, evB, vis, g3), "B: new generation accepted on first use")
+	assert.Equal(t, outbound.TokenGenInvalid, checkGen(t, s, evB, vis, g2), "B: older generation refused after the ratchet")
+	assert.Equal(t, outbound.TokenGenInvalid, checkGen(t, s, evB, vis, 0), "a non-positive generation is refused")
+	neverEv := evID(t) + "-never"
+	assert.Equal(t, outbound.TokenGenAbsent, checkGen(t, s, neverEv, vis, g3), "an event the visitor never joined")
+	assert.False(t, keyExists(t, s, vtokKey(s, neverEv, vis)), "the absent check never creates a record")
 }

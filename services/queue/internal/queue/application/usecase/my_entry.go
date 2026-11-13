@@ -106,23 +106,24 @@ func (u *GetMyEntry) GetMyEntry(ctx context.Context, in inbound.MyEntryInput) (d
 // and does not depend on the entry id, so a rotated token cannot probe entries. Outcomes:
 //   - empty eventId                       -> ErrVisitorTokenInvalid (401, unchanged)
 //   - no generation record for the event  -> entity.ErrNotFound (404: the visitor never joined this event)
-//   - record present, gen <= 0 or differs -> ErrVisitorTokenInvalid (401: rotated out / legacy token)
-//   - match                               -> nil
+//   - gen older than the stored one, or <= 0 -> ErrVisitorTokenInvalid (401: rotated out / legacy token)
+//   - gen equal to or newer than the stored one -> nil (a newer gen is ratcheted up by the store, D-C6.1)
 func checkTokenGen(ctx context.Context, store outbound.IQueueStore, eventID, visitorID string, gen int64) error {
 	if eventID == "" {
 		return entity.ErrVisitorTokenInvalid
 	}
-	cur, ok, err := store.TokenGen(ctx, eventID, visitorID)
+	res, err := store.CheckTokenGen(ctx, eventID, visitorID, gen)
 	if err != nil {
 		return err
 	}
-	if !ok {
+	switch res {
+	case outbound.TokenGenOK:
+		return nil
+	case outbound.TokenGenAbsent:
 		return entity.ErrNotFound
-	}
-	if gen <= 0 || cur != gen {
+	default:
 		return entity.ErrVisitorTokenInvalid
 	}
-	return nil
 }
 
 func readDoc(ctx context.Context, store outbound.IQueueStore, eventID string) (dto.StatusDocument, bool) {

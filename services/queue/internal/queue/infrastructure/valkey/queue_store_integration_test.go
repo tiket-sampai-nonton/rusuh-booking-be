@@ -236,13 +236,13 @@ func TestJoinLua_DecisionTable(t *testing.T) {
 		require.NoError(t, s.c.Do(context.Background(), s.c.B().Del().Key(s.kVisitor("ev-t18-A", "v-t18")).Build()).Error())
 		a2 := join(t, s, "ev-t18-A", outbound.JoinParams{EntryID: "eA2", NewVisitorID: "v-t18-x", TokenVisitorID: "v-t18"})
 		assert.Equal(t, outbound.JoinCreated, a2.Outcome)
-		assert.EqualValues(t, 2, a2.Gen, "gen di Event A seharusnya sudah dirotasi ke 2")
+		require.Greater(t, a2.Gen, a1.Gen, "gen di Event A seharusnya sudah dirotasi (naik)")
 
 		// join Event B dengan token gen=2 dari Event A
-		b := join(t, s, "ev-t18-B", outbound.JoinParams{EntryID: "eB", NewVisitorID: "v-t18-new", TokenVisitorID: "v-t18", TokenGen: 2})
+		b := join(t, s, "ev-t18-B", outbound.JoinParams{EntryID: "eB", NewVisitorID: "v-t18-new", TokenVisitorID: "v-t18", TokenGen: a2.Gen})
 		assert.Equal(t, outbound.JoinCreated, b.Outcome)
 		assert.Equal(t, "v-t18", b.VisitorID, "visitor id harus sama")
-		assert.EqualValues(t, 2, b.Gen, "gen di Event B harus = tokGen (2), bukan 1 atau hasil rotate")
+		assert.Equal(t, a2.Gen, b.Gen, "gen di Event B harus = tokGen, bukan 1 atau hasil rotate")
 	})
 
 	t.Run("T19 guard: vtok+visitor expired tapi vlast masih ada -> EXISTING dikembalikan, bukan duplikat", func(t *testing.T) {

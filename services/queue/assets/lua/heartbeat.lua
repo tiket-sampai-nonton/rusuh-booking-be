@@ -4,11 +4,17 @@
 -- hbstale:{s} (ARGV[6]) so the WAITING write and the STALE→WAITING revive address the shard the entry lives in.
 -- ARGV: 1=P 2=visitorId 3=tokenGen 4=nowMs 5=hbShardKey 6=hbstaleShardKey
 -- Reply: {INVALID} | {NOT_FOUND} | {OK, entryId, status, seq, revived(0/1)}
+-- The generation is a monotonic ratchet (D-C6.1, token_gen.lua): an absent record (never joined), or a generation that
+-- is older or not positive, is INVALID; a newer one is accepted and stored (KEEPTTL).
 local P, v, now = ARGV[1], ARGV[2], ARGV[4]
 local hbKey, hbstaleKey = ARGV[5], ARGV[6]
-if tostring(redis.call('GET', P .. 'vtok:' .. v) or '0') ~= ARGV[3] or ARGV[3] == '0' then
+local vtokKey = P .. 'vtok:' .. v
+local cur = tonumber(redis.call('GET', vtokKey) or '0')
+local tg = tonumber(ARGV[3]) or 0
+if cur <= 0 or tg <= 0 or tg < cur then
   return {'INVALID'}
 end
+if tg > cur then redis.call('SET', vtokKey, ARGV[3], 'KEEPTTL') end
 local id = redis.call('GET', P .. 'vlast:' .. v)
 if not id then return {'NOT_FOUND'} end
 local ek = P .. 'entry:' .. id

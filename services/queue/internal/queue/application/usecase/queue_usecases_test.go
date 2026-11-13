@@ -26,7 +26,7 @@ var fixedNow = clock.Fixed{T: time.Date(2026, 10, 20, 10, 0, 0, 0, time.UTC)}
 func TestClaim_Success(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	store := mock_outbound.NewMockIQueueStore(ctrl)
-	store.EXPECT().TokenGen(gomock.Any(), "ev1", gomock.Any()).Return(int64(1), true, nil).AnyTimes()
+	store.EXPECT().CheckTokenGen(gomock.Any(), "ev1", gomock.Any(), gomock.Any()).Return(outbound.TokenGenOK, nil).AnyTimes()
 	tokens := mock_outbound.NewMockITokenIssuer(ctrl)
 	ctx := context.Background()
 
@@ -46,7 +46,7 @@ func TestClaim_Success(t *testing.T) {
 func TestClaim_EmptyAllocationIDIsDependencyUnavailableAndSignsNothing(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	store := mock_outbound.NewMockIQueueStore(ctrl)
-	store.EXPECT().TokenGen(gomock.Any(), "ev1", gomock.Any()).Return(int64(1), true, nil).AnyTimes()
+	store.EXPECT().CheckTokenGen(gomock.Any(), "ev1", gomock.Any(), gomock.Any()).Return(outbound.TokenGenOK, nil).AnyTimes()
 	tokens := mock_outbound.NewMockITokenIssuer(ctrl) // IssueAdmission must never be called
 	ctx := context.Background()
 	store.EXPECT().Claim(ctx, "ev1", "e1", "v1", gomock.Any()).Return(outbound.ClaimResult{Status: "CLAIMED"}, nil)
@@ -66,7 +66,7 @@ func TestClaim_StoreErrorsAreReturned(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			ctrl := gomock.NewController(t)
 			store := mock_outbound.NewMockIQueueStore(ctrl)
-			store.EXPECT().TokenGen(gomock.Any(), "ev1", gomock.Any()).Return(int64(1), true, nil).AnyTimes()
+			store.EXPECT().CheckTokenGen(gomock.Any(), "ev1", gomock.Any(), gomock.Any()).Return(outbound.TokenGenOK, nil).AnyTimes()
 			tokens := mock_outbound.NewMockITokenIssuer(ctrl)
 			ctx := context.Background()
 			store.EXPECT().Claim(ctx, "ev1", "e1", "v1", gomock.Any()).Return(outbound.ClaimResult{}, storeErr)
@@ -83,7 +83,7 @@ func TestClaim_StoreErrorsAreReturned(t *testing.T) {
 func TestLeave_WaitingDoesNotCallBooking(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	store := mock_outbound.NewMockIQueueStore(ctrl)
-	store.EXPECT().TokenGen(gomock.Any(), "ev1", gomock.Any()).Return(int64(1), true, nil).AnyTimes()
+	store.EXPECT().CheckTokenGen(gomock.Any(), "ev1", gomock.Any(), gomock.Any()).Return(outbound.TokenGenOK, nil).AnyTimes()
 	booking := mock_outbound.NewMockIBookingClient(ctrl) // any call fails the test
 	ctx := context.Background()
 	store.EXPECT().Leave(ctx, "ev1", "e1", "v1", gomock.Any()).Return(outbound.LeaveResult{Tag: "OK", PrevStatus: "WAITING"}, nil)
@@ -95,7 +95,7 @@ func TestLeave_WaitingDoesNotCallBooking(t *testing.T) {
 func TestLeave_AdmittedReleasesTheAllocationAfterTheCommit(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	store := mock_outbound.NewMockIQueueStore(ctrl)
-	store.EXPECT().TokenGen(gomock.Any(), "ev1", gomock.Any()).Return(int64(1), true, nil).AnyTimes()
+	store.EXPECT().CheckTokenGen(gomock.Any(), "ev1", gomock.Any(), gomock.Any()).Return(outbound.TokenGenOK, nil).AnyTimes()
 	booking := mock_outbound.NewMockIBookingClient(ctrl)
 	ctx := context.Background()
 	gomock.InOrder(
@@ -109,7 +109,7 @@ func TestLeave_AdmittedReleasesTheAllocationAfterTheCommit(t *testing.T) {
 func TestLeave_AdmittedReleaseFailureDoesNotFailTheRequest(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	store := mock_outbound.NewMockIQueueStore(ctrl)
-	store.EXPECT().TokenGen(gomock.Any(), "ev1", gomock.Any()).Return(int64(1), true, nil).AnyTimes()
+	store.EXPECT().CheckTokenGen(gomock.Any(), "ev1", gomock.Any(), gomock.Any()).Return(outbound.TokenGenOK, nil).AnyTimes()
 	booking := mock_outbound.NewMockIBookingClient(ctrl)
 	ctx := context.Background()
 	store.EXPECT().Leave(ctx, "ev1", "e1", "v1", gomock.Any()).Return(outbound.LeaveResult{Tag: "OK", PrevStatus: "ADMITTED", AllocationID: "alloc-42"}, nil)
@@ -125,7 +125,7 @@ func TestLeave_AdmittedReleaseFailureDoesNotFailTheRequest(t *testing.T) {
 func TestLeave_StrangerCausesNoBookingCall(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	store := mock_outbound.NewMockIQueueStore(ctrl)
-	store.EXPECT().TokenGen(gomock.Any(), "ev1", gomock.Any()).Return(int64(1), true, nil).AnyTimes()
+	store.EXPECT().CheckTokenGen(gomock.Any(), "ev1", gomock.Any(), gomock.Any()).Return(outbound.TokenGenOK, nil).AnyTimes()
 	booking := mock_outbound.NewMockIBookingClient(ctrl) // any call fails the test
 	ctx := context.Background()
 	store.EXPECT().Leave(ctx, "ev1", "e1", "intruder", gomock.Any()).Return(outbound.LeaveResult{}, entity.ErrNotFound)
@@ -138,7 +138,7 @@ func TestLeave_StrangerCausesNoBookingCall(t *testing.T) {
 func TestLeave_StoreErrorMeansBookingIsNeverCalled(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	store := mock_outbound.NewMockIQueueStore(ctrl)
-	store.EXPECT().TokenGen(gomock.Any(), "ev1", gomock.Any()).Return(int64(1), true, nil).AnyTimes()
+	store.EXPECT().CheckTokenGen(gomock.Any(), "ev1", gomock.Any(), gomock.Any()).Return(outbound.TokenGenOK, nil).AnyTimes()
 	booking := mock_outbound.NewMockIBookingClient(ctrl)
 	ctx := context.Background()
 	store.EXPECT().Leave(ctx, "ev1", "e1", "v1", gomock.Any()).Return(outbound.LeaveResult{}, errors.New("valkey: down"))
@@ -152,7 +152,7 @@ func TestLeave_IgnoredStatusesReleaseNothing(t *testing.T) {
 		t.Run(st, func(t *testing.T) {
 			ctrl := gomock.NewController(t)
 			store := mock_outbound.NewMockIQueueStore(ctrl)
-			store.EXPECT().TokenGen(gomock.Any(), "ev1", gomock.Any()).Return(int64(1), true, nil).AnyTimes()
+			store.EXPECT().CheckTokenGen(gomock.Any(), "ev1", gomock.Any(), gomock.Any()).Return(outbound.TokenGenOK, nil).AnyTimes()
 			booking := mock_outbound.NewMockIBookingClient(ctrl)
 			ctx := context.Background()
 			store.EXPECT().Leave(ctx, "ev1", "e1", "v1", gomock.Any()).Return(outbound.LeaveResult{Tag: "IGNORED", PrevStatus: st, AllocationID: "alloc-42"}, nil)
@@ -208,7 +208,7 @@ func TestClaimAndLeave_RotatedOutTokenIsRefused(t *testing.T) {
 			tokens := mock_outbound.NewMockITokenIssuer(ctrl)
 			booking := mock_outbound.NewMockIBookingClient(ctrl)
 			ctx := context.Background()
-			store.EXPECT().TokenGen(ctx, "ev1", "v1").Return(int64(2), true, nil).Times(2)
+			store.EXPECT().CheckTokenGen(ctx, "ev1", "v1", gomock.Any()).Return(outbound.TokenGenInvalid, nil).Times(2)
 
 			_, err := usecase.NewClaimTurn(store, tokens, fixedNow, "https://app/book").
 				Claim(ctx, inbound.ClaimInput{EntryID: "e1", VisitorID: "v1", EventID: "ev1", Gen: gen})
@@ -236,7 +236,7 @@ func TestClaim_BookingURLShape(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			ctrl := gomock.NewController(t)
 			store := mock_outbound.NewMockIQueueStore(ctrl)
-			store.EXPECT().TokenGen(gomock.Any(), tt.eventID, gomock.Any()).Return(int64(1), true, nil).AnyTimes()
+			store.EXPECT().CheckTokenGen(gomock.Any(), tt.eventID, gomock.Any(), gomock.Any()).Return(outbound.TokenGenOK, nil).AnyTimes()
 			tokens := mock_outbound.NewMockITokenIssuer(ctrl)
 			ctx := context.Background()
 			store.EXPECT().Claim(ctx, tt.eventID, "entry-secret-id", "visitor-secret-id", gomock.Any()).

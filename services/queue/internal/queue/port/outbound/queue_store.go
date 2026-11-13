@@ -45,8 +45,10 @@ type IQueueStore interface {
 
 	// Heartbeat records a liveness signal for the visitor's current entry, reviving a STALE entry at its seq.
 	Heartbeat(ctx context.Context, eventID, visitorID string, gen, nowMs int64) (HeartbeatResult, error)
-	// TokenGen returns the visitor's current token generation (false when there is no record).
-	TokenGen(ctx context.Context, eventID, visitorID string) (int64, bool, error)
+	// CheckTokenGen checks a visitor token generation on the event (D-C6.1, token_gen.lua): TokenGenOK when gen equals
+	// or exceeds the stored one (a higher gen is stored, a ratchet), TokenGenInvalid when gen is lower or not positive,
+	// TokenGenAbsent when the visitor has no record for the event (never joined).
+	CheckTokenGen(ctx context.Context, eventID, visitorID string, gen int64) (TokenGenCheck, error)
 	// FindLastByVisitor returns the visitor's most recent entry in any state (me on an ENDED entry).
 	FindLastByVisitor(ctx context.Context, eventID, visitorID string) (entity.Entry, bool, error)
 	// SweepLiveness marks silent WAITING entries STALE and ends long-silent ones, fenced by the lease token. It
@@ -65,3 +67,13 @@ type IQueueStore interface {
 	// LivePosition returns 1 + the number of live entries with a smaller seq.
 	LivePosition(ctx context.Context, eventID string, seq int64) (int64, error)
 }
+
+// TokenGenCheck is the token_gen.lua outcome. The zero value is deliberately not an outcome.
+type TokenGenCheck int
+
+// Token generation outcomes.
+const (
+	TokenGenOK      TokenGenCheck = iota + 1 // gen is the stored generation or newer (a newer one is stored)
+	TokenGenInvalid                          // gen is older than the stored one, or not positive -> 401
+	TokenGenAbsent                           // no generation record for this event: the visitor never joined -> 404
+)

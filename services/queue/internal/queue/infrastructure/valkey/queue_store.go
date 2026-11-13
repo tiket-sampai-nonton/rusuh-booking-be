@@ -48,6 +48,8 @@ type QueueStore struct {
 	heartbeat    *vk.Lua
 	liveness     *vk.Lua
 	livenessTick *vk.Lua
+
+	tokenGen *vk.Lua
 }
 
 // NewQueueStore returns the store with the embedded scripts loaded. shards is the liveness-index shard count
@@ -70,6 +72,8 @@ func NewQueueStore(c vk.Client, keyer Keyer, clk clock.IClock, shards int) *Queu
 		heartbeat:    vk.NewLuaScript(lua.Heartbeat),
 		liveness:     vk.NewLuaScript(lua.Liveness),
 		livenessTick: vk.NewLuaScript(lua.LivenessTick),
+
+		tokenGen: vk.NewLuaScript(lua.TokenGen),
 	}
 }
 
@@ -604,16 +608,22 @@ func (s *QueueStore) Heartbeat(ctx context.Context, eventID, visitorID string, g
 	return res, nil
 }
 
-// TokenGen reads vtok:<visitor>.
-func (s *QueueStore) TokenGen(ctx context.Context, eventID, visitorID string) (int64, bool, error) {
-	g, err := s.c.Do(ctx, s.c.B().Get().Key(s.k(eventID, "vtok:"+visitorID)).Build()).AsInt64()
-	if vk.IsValkeyNil(err) {
-		return 0, false, nil
-	}
+// CheckTokenGen runs token_gen.lua on the visitor's vtok key of the event (D-C6.1): the key is in the event's hash slot,
+// and the script ratchets a higher generation up (KEEPTTL) or refuses a lower one.
+func (s *QueueStore) CheckTokenGen(ctx context.Context, eventID, visitorID string, gen int64) (outbound.TokenGenCheck, error) {
+	n, err := s.tokenGen.Exec(ctx, s.c, []string{s.k(eventID, "vtok:"+visitorID)}, []string{strconv.FormatInt(gen, 10)}).AsInt64()
 	if err != nil {
-		return 0, false, fmt.Errorf("valkey: get vtok: %w", err)
+		return 0, fmt.Errorf("valkey: token_gen.lua: %w", err)
 	}
-	return g, true, nil
+	switch n {
+	case 1:
+		return outbound.TokenGenOK, nil
+	case 0:
+		return outbound.TokenGenInvalid, nil
+	case -1:
+		return outbound.TokenGenAbsent, nil
+	}
+	return 0, fmt.Errorf("valkey: token_gen.lua: unexpected reply %d", n)
 }
 
 // FindLastByVisitor follows vlast:<visitor> to the most recent entry in any state.

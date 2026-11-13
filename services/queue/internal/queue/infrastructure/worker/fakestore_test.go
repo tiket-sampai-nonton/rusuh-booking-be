@@ -367,8 +367,8 @@ func (s *fakeStore) ReleasePromoterLease(_ context.Context, _, token string) err
 func (s *fakeStore) Heartbeat(context.Context, string, string, int64, int64) (outbound.HeartbeatResult, error) {
 	return outbound.HeartbeatResult{Tag: outbound.HeartbeatOK, Status: "WAITING"}, nil
 }
-func (s *fakeStore) TokenGen(context.Context, string, string) (int64, bool, error) {
-	return 1, true, nil
+func (s *fakeStore) CheckTokenGen(context.Context, string, string, int64) (outbound.TokenGenCheck, error) {
+	return outbound.TokenGenOK, nil
 }
 func (s *fakeStore) FindLastByVisitor(context.Context, string, string) (entity.Entry, bool, error) {
 	return entity.Entry{}, false, nil

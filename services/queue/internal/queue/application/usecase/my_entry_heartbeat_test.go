@@ -43,7 +43,7 @@ func meSetup(t *testing.T) (*mock_outbound.MockIQueueStore, *usecase.GetMyEntry)
 func TestGetMyEntry_SeqAndServerZone(t *testing.T) {
 	store, uc := meSetup(t)
 	ctx := context.Background()
-	store.EXPECT().TokenGen(ctx, "ev1", "v1").Return(int64(2), true, nil)
+	store.EXPECT().CheckTokenGen(ctx, "ev1", "v1", gomock.Any()).Return(outbound.TokenGenOK, nil)
 	store.EXPECT().FindByVisitor(ctx, "ev1", "v1").Return(entity.Entry{ID: "e", Seq: 480, Status: valueobject.StatusWaiting}, true, nil)
 	store.EXPECT().GetStatusDoc(ctx, "ev1").Return(docRaw(t, dto.StatusDocument{HeadSeq: i64(1), GuaranteedUntilSeq: i64(3), PossibleUntilSeq: i64(4), PreTurnNotifyPosition: 100}), true, nil)
 	store.EXPECT().LivePosition(ctx, "ev1", int64(480)).Return(int64(37), nil)
@@ -80,7 +80,7 @@ func TestGetMyEntry_EndedReasons(t *testing.T) {
 		t.Run(tt.endReason, func(t *testing.T) {
 			store, uc := meSetup(t)
 			ctx := context.Background()
-			store.EXPECT().TokenGen(ctx, "ev1", "v1").Return(int64(1), true, nil)
+			store.EXPECT().CheckTokenGen(ctx, "ev1", "v1", gomock.Any()).Return(outbound.TokenGenOK, nil)
 			store.EXPECT().FindByVisitor(ctx, "ev1", "v1").Return(entity.Entry{}, false, nil)
 			store.EXPECT().FindLastByVisitor(ctx, "ev1", "v1").Return(entity.Entry{ID: "e", Seq: 9, Status: tt.status, EndReason: tt.endReason}, true, nil)
 			got, err := uc.GetMyEntry(ctx, inbound.MyEntryInput{EventID: "ev1", VisitorID: "v1", Gen: 1})
@@ -95,7 +95,7 @@ func TestGetMyEntry_EndedReasons(t *testing.T) {
 func TestGetMyEntry_TokenStates(t *testing.T) {
 	t.Run("rotated-out token is 401", func(t *testing.T) {
 		store, uc := meSetup(t)
-		store.EXPECT().TokenGen(gomock.Any(), "ev1", "v1").Return(int64(3), true, nil)
+		store.EXPECT().CheckTokenGen(gomock.Any(), "ev1", "v1", gomock.Any()).Return(outbound.TokenGenInvalid, nil)
 		_, err := uc.GetMyEntry(context.Background(), inbound.MyEntryInput{EventID: "ev1", VisitorID: "v1", Gen: 2})
 		assert.ErrorIs(t, err, entity.ErrVisitorTokenInvalid)
 		assert.Equal(t, 401, inbound.MapError(err).HTTPStatus)
@@ -103,20 +103,20 @@ func TestGetMyEntry_TokenStates(t *testing.T) {
 	})
 	t.Run("visitor never joined this event is 404 (REQ-QVT-03)", func(t *testing.T) {
 		store, uc := meSetup(t)
-		store.EXPECT().TokenGen(gomock.Any(), "ev1", "v1").Return(int64(0), false, nil)
+		store.EXPECT().CheckTokenGen(gomock.Any(), "ev1", "v1", gomock.Any()).Return(outbound.TokenGenAbsent, nil)
 		_, err := uc.GetMyEntry(context.Background(), inbound.MyEntryInput{EventID: "ev1", VisitorID: "v1", Gen: 1})
 		assert.ErrorIs(t, err, entity.ErrNotFound)
 		assert.Equal(t, 404, inbound.MapError(err).HTTPStatus)
 	})
 	t.Run("cross-event: record exists for A only, event B is 404 and reads no entry", func(t *testing.T) {
 		store, uc := meSetup(t)
-		store.EXPECT().TokenGen(gomock.Any(), "evB", "v1").Return(int64(0), false, nil)
+		store.EXPECT().CheckTokenGen(gomock.Any(), "evB", "v1", gomock.Any()).Return(outbound.TokenGenAbsent, nil)
 		_, err := uc.GetMyEntry(context.Background(), inbound.MyEntryInput{EventID: "evB", VisitorID: "v1", Gen: 1})
 		assert.ErrorIs(t, err, entity.ErrNotFound)
 	})
 	t.Run("valid token, no entry ever: 404", func(t *testing.T) {
 		store, uc := meSetup(t)
-		store.EXPECT().TokenGen(gomock.Any(), "ev1", "v1").Return(int64(1), true, nil)
+		store.EXPECT().CheckTokenGen(gomock.Any(), "ev1", "v1", gomock.Any()).Return(outbound.TokenGenOK, nil)
 		store.EXPECT().FindByVisitor(gomock.Any(), "ev1", "v1").Return(entity.Entry{}, false, nil)
 		store.EXPECT().FindLastByVisitor(gomock.Any(), "ev1", "v1").Return(entity.Entry{}, false, nil)
 		_, err := uc.GetMyEntry(context.Background(), inbound.MyEntryInput{EventID: "ev1", VisitorID: "v1", Gen: 1})
@@ -174,7 +174,7 @@ func TestHeartbeatAndMe_PerVisitorLimit(t *testing.T) {
 	require.ErrorAs(t, err, &ae)
 	assert.Equal(t, 429, ae.HTTPStatus)
 
-	store.EXPECT().TokenGen(ctx, "ev1", "v1").Return(int64(1), true, nil)
+	store.EXPECT().CheckTokenGen(ctx, "ev1", "v1", gomock.Any()).Return(outbound.TokenGenOK, nil)
 	limiter.EXPECT().Allow(ctx, "me:v:ev1:v1", 120, window).Return(false, nil)
 	_, err = usecase.NewGetMyEntry(store).WithLimiter(limiter, 120, window).
 		GetMyEntry(ctx, inbound.MyEntryInput{EventID: "ev1", VisitorID: "v1", Gen: 1})

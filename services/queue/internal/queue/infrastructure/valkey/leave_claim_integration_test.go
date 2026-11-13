@@ -236,7 +236,7 @@ func TestSoldOutEntryIsTerminal(t *testing.T) {
 	ev := evID(t)
 	now := time.Now().UnixMilli()
 	id, vis, acct := joinOne(t, s, ev, 1, now)
-	gen, ok, err := s.TokenGen(ctx, ev, vis)
+	gen, ok, err := tokenGenRecord(ctx, s, ev, vis)
 	require.NoError(t, err)
 	require.True(t, ok)
 
