@@ -6,7 +6,7 @@ package valueobject
 // entry forever, so a release for an entry that is merely deferred would end a live buyer.
 func ShouldRelease(skipStatus string) bool {
 	switch skipStatus {
-	case "NO_ENTRY", "LEFT", "ENDED", "COMPLETED", "MISSED", "ADMITTED_OTHER":
+	case "NO_ENTRY", "LEFT", "ENDED", "COMPLETED", "MISSED", "SOLD_OUT", "ADMITTED_OTHER":
 		return true
 	}
 	return false

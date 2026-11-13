@@ -45,7 +45,7 @@ local function active(key)
   local id = redis.call('GET', key)
   if not id then return nil end
   local st = redis.call('HGET', ekey(id), 'status')
-  if (not st) or st == 'COMPLETED' or st == 'ENDED' or st == 'LEFT' or st == 'MISSED' then return nil end
+  if (not st) or st == 'COMPLETED' or st == 'ENDED' or st == 'LEFT' or st == 'MISSED' or st == 'SOLD_OUT' then return nil end
   return id
 end
 
@@ -100,7 +100,7 @@ if v ~= '' and serverGen == 0 then
   local lastId = redis.call('GET', P .. 'vlast:' .. v)
   if lastId then
     local st = redis.call('HGET', ekey(lastId), 'status')
-    if st and st ~= 'ENDED' and st ~= 'COMPLETED' and st ~= 'LEFT' and st ~= 'MISSED' then
+    if st and st ~= 'ENDED' and st ~= 'COMPLETED' and st ~= 'LEFT' and st ~= 'MISSED' and st ~= 'SOLD_OUT' then
       return describe('EXISTING', lastId)
     end
   end

@@ -13,7 +13,7 @@ local id = redis.call('GET', P .. 'vlast:' .. v)
 if not id then return {'NOT_FOUND'} end
 local ek = P .. 'entry:' .. id
 local st = redis.call('HGET', ek, 'status')
-if (not st) or st == 'COMPLETED' or st == 'ENDED' or st == 'LEFT' or st == 'MISSED' then return {'NOT_FOUND'} end
+if (not st) or st == 'COMPLETED' or st == 'ENDED' or st == 'LEFT' or st == 'MISSED' or st == 'SOLD_OUT' then return {'NOT_FOUND'} end
 local seq = tonumber(redis.call('HGET', ek, 'seq') or '0')
 local revived = 0
 if st == 'WAITING' then

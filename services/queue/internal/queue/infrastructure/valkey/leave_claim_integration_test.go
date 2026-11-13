@@ -227,3 +227,47 @@ func TestLeaveWaitingReserved_ClearsEveryTraceAndReportsNothingToRelease(t *test
 	assert.False(t, keyExists(t, s, s.kAccount(ev, nikLater)), "kunci constraint bersih")
 	assert.False(t, keyExists(t, s, s.kVisitor(ev, visLater)))
 }
+
+// SRS-F-10-02 / req 5.5: SOLD_OUT is terminal. An entry ended by booking.sold_out is not revived by a heartbeat, is not
+// overwritten by a leave, answers claim with ErrSoldOut, and does not block a fresh join with the same visitor token.
+func TestSoldOutEntryIsTerminal(t *testing.T) {
+	s := mustStore(t)
+	ctx := context.Background()
+	ev := evID(t)
+	now := time.Now().UnixMilli()
+	id, vis, acct := joinOne(t, s, ev, 1, now)
+	gen, ok, err := s.TokenGen(ctx, ev, vis)
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	ended, err := s.EndWaitingSoldOut(ctx, ev, now, 100)
+	require.NoError(t, err)
+	require.Equal(t, 1, ended.Ended)
+	require.Equal(t, "SOLD_OUT", status(t, s, ev, id))
+
+	hb, err := s.Heartbeat(ctx, ev, vis, gen, now)
+	require.NoError(t, err)
+	assert.Equal(t, outbound.HeartbeatNotFound, hb.Tag, "heartbeat tidak boleh menghidupkan entry SOLD_OUT")
+	assert.Equal(t, "SOLD_OUT", status(t, s, ev, id))
+
+	// Join 4b (join.lua): the generation record is gone (serverGen 0) while vlast still names the ended entry. A SOLD_OUT
+	// entry must not be handed back as EXISTING; the fresh join is created with the same token.
+	require.NoError(t, s.c.Do(ctx, s.c.B().Del().Key(vtokKey(s, ev, vis)).Build()).Error())
+	joined, err := s.Join(ctx, outbound.JoinParams{
+		EventID: ev, EntryID: "entry-fresh", NewVisitorID: vis, TokenVisitorID: vis, TokenGen: gen,
+		AccountID: acct, NowMs: now, OneActivePerVisitor: true,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, outbound.JoinCreated, joined.Outcome)
+	assert.Equal(t, "entry-fresh", joined.EntryID, "join dengan token yang sama membuat entry baru")
+	assert.Equal(t, "WAITING", hget(t, s, s.kEntry(ev, "entry-fresh"), "status"))
+
+	_, err = s.Claim(ctx, ev, id, vis, now)
+	assert.ErrorIs(t, err, entity.ErrSoldOut)
+
+	lr, err := s.Leave(ctx, ev, id, vis, now)
+	require.NoError(t, err)
+	assert.Equal(t, "IGNORED", lr.Tag)
+	assert.Equal(t, "SOLD_OUT", lr.PrevStatus)
+	assert.Equal(t, "SOLD_OUT", status(t, s, ev, id), "leave tidak boleh menimpa SOLD_OUT dengan LEFT")
+}

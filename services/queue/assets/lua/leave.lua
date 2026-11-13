@@ -8,7 +8,7 @@ local st = redis.call('HGET', KEYS[1], 'status')
 if not st then return {'ERR','NOT_FOUND'} end
 if redis.call('HGET', KEYS[1], 'visitorId') ~= ARGV[2] then return {'ERR','NOT_FOUND'} end
 -- terminal / sudah diklaim: tidak ada yang diubah (status tidak boleh ditimpa jadi LEFT)
-if st=='COMPLETED' or st=='ENDED' or st=='LEFT' or st=='MISSED' then return {'IGNORED', st} end
+if st=='COMPLETED' or st=='ENDED' or st=='LEFT' or st=='MISSED' or st=='SOLD_OUT' then return {'IGNORED', st} end
 if st=='CLAIMED' then return {'IGNORED', st} end -- Booking owns a claimed session; LeaveQueue answers ErrEntryClaimed (409 ENTRY_CLAIMED)
 local alloc = redis.call('HGET', KEYS[1], 'allocationId') or ''
 redis.call('ZREM', KEYS[2], ARGV[1])

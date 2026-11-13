@@ -266,6 +266,8 @@ func (s *QueueStore) Claim(ctx context.Context, eventID, entryID, visitorID stri
 			return outbound.ClaimResult{}, entity.ErrNotAdmitted
 		case "TURN_MISSED":
 			return outbound.ClaimResult{}, entity.ErrTurnMissed
+		case "SOLD_OUT":
+			return outbound.ClaimResult{}, entity.ErrSoldOut
 		}
 		return outbound.ClaimResult{}, fmt.Errorf("valkey: claim.lua err %q", detail)
 	}
