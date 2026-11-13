@@ -87,6 +87,51 @@ func TestTerminalEntriesGetRetention(t *testing.T) {
 		retained(t, ev, id)
 	})
 
+	t.Run("SweepLivenessTick END", func(t *testing.T) {
+		ev := evID(t)
+		id, _, _ := joinOne(t, s, ev, 8, now)
+		staleAt := now + 90_002
+		_, _, err := s.SweepLivenessTick(ctx, ev, staleAt-90_000, staleAt-300_000, 100, staleAt, 5*time.Second, 0)
+		require.NoError(t, err)
+		endAt := now + 300_002
+		r, _, err := s.SweepLivenessTick(ctx, ev, endAt-90_000, endAt-300_000, 100, endAt, 5*time.Second, 0)
+		require.NoError(t, err)
+		require.Equal(t, 1, r.Ended)
+		assert.Equal(t, "ENDED", hget(t, s, s.kEntry(ev, id), "status"))
+		retained(t, ev, id)
+	})
+
+	t.Run("EndEntry SWEEP_MISSED", func(t *testing.T) {
+		ev := evID(t)
+		id, _, _ := joinAdmit(t, s, ev, 9, now-1_000, now)
+		r, err := s.EndEntry(ctx, ev, id, "SWEEP_MISSED", now)
+		require.NoError(t, err)
+		require.True(t, r.Changed())
+		assert.Equal(t, "MISSED", hget(t, s, s.kEntry(ev, id), "status"))
+		retained(t, ev, id)
+	})
+
+	t.Run("EndEntry ALREADY_ACTIVE", func(t *testing.T) {
+		ev := evID(t)
+		id, _, _ := joinOne(t, s, ev, 10, now)
+		r, err := s.EndEntry(ctx, ev, id, "ALREADY_ACTIVE", now)
+		require.NoError(t, err)
+		require.True(t, r.Changed())
+		assert.Equal(t, "ENDED", hget(t, s, s.kEntry(ev, id), "status"))
+		retained(t, ev, id)
+	})
+
+	t.Run("EndWaitingSoldOut two entries", func(t *testing.T) {
+		ev := evID(t)
+		a, _, _ := joinOne(t, s, ev, 11, now)
+		b, _, _ := joinOne(t, s, ev, 12, now+1)
+		r, err := s.EndWaitingSoldOut(ctx, ev, now, 10)
+		require.NoError(t, err)
+		require.Equal(t, 2, r.Ended)
+		retained(t, ev, a)
+		retained(t, ev, b)
+	})
+
 	t.Run("CLAIMED has no TTL", func(t *testing.T) {
 		ev := evID(t)
 		id, vis, _ := joinAdmit(t, s, ev, 6, now+60_000, now)
@@ -102,8 +147,8 @@ func TestTerminalEntriesGetRetention(t *testing.T) {
 	})
 }
 
-// TC-C8.2 (P3-13): RetireEvent gives every fixed key of a finished event a TTL, and a repeat call never moves a
-// deadline forward (the status publisher calls it on every tick).
+// TC-C8.2 (P3-13): RetireEvent gives the fixed keys of a drained, finished event a TTL, and a repeat call never moves a
+// deadline forward (the status publisher calls it on every tick). A vtok key is never part of it (D-C6.1).
 func TestRetireEvent_ExpiresFixedKeys(t *testing.T) {
 	s := mustStore(t)
 	ctx := context.Background()
@@ -111,31 +156,28 @@ func TestRetireEvent_ExpiresFixedKeys(t *testing.T) {
 	now := time.Now().UnixMilli()
 	const ttl = time.Hour
 
-	_, _, _ = joinAdmit(t, s, ev, 1, now+60_000, now) // ADMITTED: in active
-	b, _, _ := joinOne(t, s, ev, 2, now)              // silent: STALE
-	c, _, _ := joinOne(t, s, ev, 3, now+10_000)       // still WAITING
-	tok := lease(t, s, ev)
-	r, err := s.SweepLiveness(ctx, ev, tok, now+5, now-1_000_000, 100, now+5)
+	id, vis, _ := joinAdmit(t, s, ev, 1, now+60_000, now)
+	_, err := s.EndEntry(ctx, ev, id, "PAID", now) // nothing live is left in the event
 	require.NoError(t, err)
-	require.Equal(t, 1, r.Staled)
 	require.NoError(t, s.SetSale(ctx, ev, "OPEN", false))
 	require.NoError(t, s.c.Do(ctx, s.c.B().Set().Key(s.kStatus(ev)).Value("{}").Build()).Error())
+	// A token record without a TTL: RetireEvent must leave it alone (vtok is not in the fixed list).
+	require.NoError(t, s.c.Do(ctx, s.c.B().Set().Key(s.k(ev, "vtok:"+vis)).Value("1").Build()).Error())
 
-	fixed := []string{
-		s.kSeq(ev), s.kWaiting(ev), s.k(ev, "stale"), s.kActive(ev),
-		s.kHbShard(ev, s.shardOf(c)), s.kHbStaleShard(ev, s.shardOf(b)),
-		s.kStatus(ev), s.kSale(ev),
-	}
+	fixed := []string{s.kSeq(ev), s.kStatus(ev), s.kSale(ev)}
 	for _, k := range fixed {
 		require.True(t, keyExists(t, s, k), "fixture key %s must exist", k)
 		require.Equal(t, int64(-1), pttl(t, s, k), "fixture key %s starts without a TTL", k)
 	}
 	// The held promoter lease already carries its own short TTL; RetireEvent must leave that deadline alone.
+	require.NoError(t, s.c.Do(ctx, s.c.B().Set().Key(s.kLease(ev)).Value("held").Px(5*time.Second).Build()).Error())
 	lockBefore := pttl(t, s, s.kLease(ev))
-	require.Greater(t, lockBefore, int64(0), "the held lease has its own short TTL")
+	require.Greater(t, lockBefore, int64(0))
 	fixed = append(fixed, s.kLease(ev))
 
-	require.NoError(t, s.RetireEvent(ctx, ev, ttl))
+	ok, err := s.RetireEvent(ctx, ev, ttl)
+	require.NoError(t, err)
+	require.True(t, ok, "a drained event is retired")
 	first := map[string]int64{}
 	for _, k := range fixed {
 		p := pttl(t, s, k)
@@ -143,10 +185,53 @@ func TestRetireEvent_ExpiresFixedKeys(t *testing.T) {
 		assert.Greater(t, p, int64(0), "%s must expire", k)
 		assert.LessOrEqual(t, p, ttl.Milliseconds(), "%s expires within the retention", k)
 	}
-	assert.LessOrEqual(t, pttl(t, s, s.kLease(ev)), lockBefore, "RetireEvent must not extend the lease's own TTL")
+	assert.LessOrEqual(t, first[s.kLease(ev)], lockBefore, "RetireEvent must not extend the lease's own TTL")
+	assert.Equal(t, int64(-1), pttl(t, s, s.k(ev, "vtok:"+vis)), "vtok is never retired")
 
-	require.NoError(t, s.RetireEvent(ctx, ev, ttl))
+	ok, err = s.RetireEvent(ctx, ev, ttl)
+	require.NoError(t, err)
+	require.True(t, ok)
 	for _, k := range fixed {
 		assert.LessOrEqual(t, pttl(t, s, k), first[k], "a repeat call must not push %s's deadline forward", k)
 	}
+}
+
+// TC-C8.2 (P3-13, D-C8.2): retirement is one atomic step. A WAITING entry present when the script runs blocks it, so
+// neither waiting nor seq (nor the hb shard) gets a TTL while the entry is live.
+func TestRetireEvent_WaitingEntryBlocksAtomically(t *testing.T) {
+	s := mustStore(t)
+	ctx := context.Background()
+	ev := evID(t)
+	now := time.Now().UnixMilli()
+
+	id, _, _ := joinOne(t, s, ev, 1, now)
+	ok, err := s.RetireEvent(ctx, ev, time.Hour)
+	require.NoError(t, err)
+	assert.False(t, ok, "a WAITING entry blocks retirement")
+
+	assert.Equal(t, int64(-1), pttl(t, s, s.kWaiting(ev)), "waiting of a live entry must not expire")
+	assert.Equal(t, int64(-1), pttl(t, s, s.kSeq(ev)), "seq of a live entry must not expire")
+	assert.Equal(t, int64(-1), pttl(t, s, s.kHbShard(ev, s.shardOf(id))), "hb shard of a live entry must not expire")
+	assert.Equal(t, "WAITING", hget(t, s, s.kEntry(ev, id), "status"))
+}
+
+// TC-C8.2 (P3-13): a join after a finished event was retired must not leave the live entry under the old seq TTL.
+func TestRetireEvent_JoinAfterRetireLeavesSeqPersistent(t *testing.T) {
+	s := mustStore(t)
+	ctx := context.Background()
+	ev := evID(t)
+	now := time.Now().UnixMilli()
+
+	done, _, _ := joinAdmit(t, s, ev, 1, now+60_000, now)
+	_, err := s.EndEntry(ctx, ev, done, "PAID", now)
+	require.NoError(t, err)
+	ok, err := s.RetireEvent(ctx, ev, time.Hour)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Greater(t, pttl(t, s, s.kSeq(ev)), int64(0), "retired event: seq carries the TTL")
+
+	live, _, _ := joinOne(t, s, ev, 2, now+1)
+	assert.Equal(t, int64(-1), pttl(t, s, s.kSeq(ev)), "a live join must persist seq")
+	assert.Equal(t, int64(-1), pttl(t, s, s.kWaiting(ev)), "waiting of the live entry must not expire")
+	assert.Equal(t, int64(-1), pttl(t, s, s.kEntry(ev, live)), "the live entry must not expire")
 }

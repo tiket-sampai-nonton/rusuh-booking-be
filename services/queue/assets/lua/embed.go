@@ -30,4 +30,6 @@ var (
 	LivenessTick string
 	//go:embed token_gen.lua
 	TokenGen string
+	//go:embed retire_event.lua
+	RetireEvent string
 )

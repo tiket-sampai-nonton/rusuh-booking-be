@@ -332,11 +332,12 @@ func (mr *MockIQueueStoreMockRecorder) ReleasePromoterLease(ctx, eventID, token 
 }
 
 // RetireEvent mocks base method.
-func (m *MockIQueueStore) RetireEvent(ctx context.Context, eventID string, ttl time.Duration) error {
+func (m *MockIQueueStore) RetireEvent(ctx context.Context, eventID string, ttl time.Duration) (bool, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "RetireEvent", ctx, eventID, ttl)
-	ret0, _ := ret[0].(error)
-	return ret0
+	ret0, _ := ret[0].(bool)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
 }
 
 // RetireEvent indicates an expected call of RetireEvent.
@@ -385,21 +386,6 @@ func (m *MockIQueueStore) SetStatusDoc(ctx context.Context, eventID string, doc 
 func (mr *MockIQueueStoreMockRecorder) SetStatusDoc(ctx, eventID, doc, ttl any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetStatusDoc", reflect.TypeOf((*MockIQueueStore)(nil).SetStatusDoc), ctx, eventID, doc, ttl)
-}
-
-// StaleCount mocks base method.
-func (m *MockIQueueStore) StaleCount(ctx context.Context, eventID string) (int64, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "StaleCount", ctx, eventID)
-	ret0, _ := ret[0].(int64)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// StaleCount indicates an expected call of StaleCount.
-func (mr *MockIQueueStoreMockRecorder) StaleCount(ctx, eventID any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "StaleCount", reflect.TypeOf((*MockIQueueStore)(nil).StaleCount), ctx, eventID)
 }
 
 // SweepLiveness mocks base method.

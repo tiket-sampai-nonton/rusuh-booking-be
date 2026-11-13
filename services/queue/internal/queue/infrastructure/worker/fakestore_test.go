@@ -401,24 +401,22 @@ func (s *fakeStore) WaitingCount(context.Context, string) (int64, error) {
 	defer s.mu.Unlock()
 	return int64(len(s.waiting)), nil
 }
-func (s *fakeStore) StaleCount(context.Context, string) (int64, error) {
+
+// RetireEvent mirrors retire_event.lua: nothing is recorded while an active, waiting or stale entry exists. The fake does
+// not model Valkey TTLs, so a drained event is only recorded.
+func (s *fakeStore) RetireEvent(_ context.Context, ev string, ttl time.Duration) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	var n int64
+	if len(s.active) > 0 || len(s.waiting) > 0 {
+		return false, nil
+	}
 	for _, e := range s.entries {
 		if e.Status == valueobject.StatusStale {
-			n++
+			return false, nil
 		}
 	}
-	return n, nil
-}
-
-// RetireEvent only records the call: the fake does not model Valkey key TTLs.
-func (s *fakeStore) RetireEvent(_ context.Context, ev string, ttl time.Duration) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.retired = append(s.retired, retireCall{eventID: ev, ttl: ttl})
-	return nil
+	return true, nil
 }
 
 func (s *fakeStore) LivePosition(context.Context, string, int64) (int64, error) { return 1, nil }

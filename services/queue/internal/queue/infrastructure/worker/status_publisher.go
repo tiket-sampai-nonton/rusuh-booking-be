@@ -86,28 +86,16 @@ func (p *StatusPublisher) runEvent(ctx context.Context, eventID string) error {
 	return errors.Join(rankErr, p.retireIfEnded(ctx, eventID, supply, serr == nil))
 }
 
-// retireIfEnded gives a finished event's fixed keys a TTL (D-C8.2, P3-13) once its sale has ended and nothing in it is
-// live: ADMITTED and CLAIMED hold a slot, WAITING and STALE can still be admitted or revived. Ended entries are not
-// live; the write that ended each one set its own TTL (end_entry.lua, liveness.lua, ...). It runs on every tick;
-// RetireEvent is idempotent (EXPIRE NX), so a repeat is harmless.
-// Without a readable Booking supply the sale end is unknown, so nothing is retired on that tick.
+// retireIfEnded gives a finished event's fixed keys a TTL (D-C8.2, P3-13) once its sale has ended. Whether anything is
+// still live is decided inside RetireEvent's atomic script, so a join cannot land between a check and the TTL. Ended
+// entries are not live; the write that ended each one set its own TTL (end_entry.lua, liveness.lua, ...). It runs on
+// every tick and RetireEvent is idempotent. Without a readable Booking supply the sale end is unknown, so nothing runs.
 func (p *StatusPublisher) retireIfEnded(ctx context.Context, eventID string, supply outbound.SupplySnapshot, haveSupply bool) error {
 	if !haveSupply || supply.SalesEndsAt.IsZero() || p.clock.Now().Before(supply.SalesEndsAt) {
 		return nil
 	}
-	active, err := p.store.ActiveCount(ctx, eventID)
-	if err != nil || active > 0 {
-		return err
-	}
-	waiting, err := p.store.WaitingCount(ctx, eventID)
-	if err != nil || waiting > 0 {
-		return err
-	}
-	stale, err := p.store.StaleCount(ctx, eventID)
-	if err != nil || stale > 0 {
-		return err
-	}
-	return p.store.RetireEvent(ctx, eventID, outbound.EntryRetention)
+	_, err := p.store.RetireEvent(ctx, eventID, outbound.EntryRetention)
+	return err
 }
 
 // cacheSaleWindow stores Booking's sale window for the join gate. Best-effort: a failed write is logged and the

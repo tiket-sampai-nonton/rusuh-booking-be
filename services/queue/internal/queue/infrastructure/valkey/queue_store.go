@@ -50,6 +50,8 @@ type QueueStore struct {
 	livenessTick *vk.Lua
 
 	tokenGen *vk.Lua
+
+	retireEvent *vk.Lua
 }
 
 // NewQueueStore returns the store with the embedded scripts loaded. shards is the liveness-index shard count
@@ -74,6 +76,8 @@ func NewQueueStore(c vk.Client, keyer Keyer, clk clock.IClock, shards int) *Queu
 		livenessTick: vk.NewLuaScript(lua.LivenessTick),
 
 		tokenGen: vk.NewLuaScript(lua.TokenGen),
+
+		retireEvent: vk.NewLuaScript(lua.RetireEvent),
 	}
 }
 
@@ -723,39 +727,25 @@ func (s *QueueStore) WaitingCount(ctx context.Context, eventID string) (int64, e
 	return n, nil
 }
 
-// StaleCount is ZCARD stale: silent entries a heartbeat can still revive, or the liveness sweep will end.
-func (s *QueueStore) StaleCount(ctx context.Context, eventID string) (int64, error) {
-	n, err := s.c.Do(ctx, s.c.B().Zcard().Key(s.k(eventID, "stale")).Build()).AsInt64()
-	if err != nil {
-		return 0, fmt.Errorf("valkey: zcard stale: %w", err)
-	}
-	return n, nil
-}
-
-// RetireEvent sets EXPIRE NX on the fixed keys of a finished event, so Valkey reclaims them after ttl (D-C8.2, P3-13).
-// NX is what makes it safe to call on every status tick: a key keeps the first deadline it got, instead of the
-// deadline moving forward each second and the keys never expiring. A key written again later (for example the sale
-// hash) without a TTL gets one on the next call.
-func (s *QueueStore) RetireEvent(ctx context.Context, eventID string, ttl time.Duration) error {
-	keys := []string{
-		s.kSeq(eventID), s.kWaiting(eventID), s.k(eventID, "stale"), s.k(eventID, "pending"), s.kActive(eventID),
-		s.kStatus(eventID), s.kSale(eventID), s.kUnused(eventID), s.kLease(eventID),
-	}
+// RetireEvent retires a finished event's fixed keys in one atomic script (retire_event.lua, D-C8.2, P3-13). It reports
+// false, with nothing written, while an active, waiting or stale entry (or a heartbeat index entry) still exists: the
+// check and the EXPIRE NX calls share one EVAL, so a join cannot slip in between. EXPIRE NX keeps a key's first deadline,
+// so a repeat call on a later status tick never pushes it forward.
+func (s *QueueStore) RetireEvent(ctx context.Context, eventID string, ttl time.Duration) (bool, error) {
+	keys := []string{s.kActive(eventID), s.kWaiting(eventID), s.k(eventID, "stale")}
 	for sh := 0; sh < s.shards; sh++ {
 		shard := strconv.Itoa(sh)
 		keys = append(keys, s.kHbShard(eventID, shard), s.kHbStaleShard(eventID, shard))
 	}
-	secs := int64(ttl / time.Second)
-	cmds := make(vk.Commands, 0, len(keys))
-	for _, k := range keys {
-		cmds = append(cmds, s.c.B().Expire().Key(k).Seconds(secs).Nx().Build())
+	zsets := len(keys)
+	keys = append(keys, s.kSeq(eventID), s.k(eventID, "pending"), s.kStatus(eventID), s.kSale(eventID),
+		s.kUnused(eventID), s.kLease(eventID))
+	args := []string{strconv.FormatInt(int64(ttl/time.Second), 10), strconv.Itoa(zsets)}
+	n, err := s.retireEvent.Exec(ctx, s.c, keys, args).AsInt64()
+	if err != nil {
+		return false, fmt.Errorf("valkey: retire_event.lua: %w", err)
 	}
-	for _, res := range s.c.DoMulti(ctx, cmds...) {
-		if err := res.Error(); err != nil {
-			return fmt.Errorf("valkey: retire event: %w", err)
-		}
-	}
-	return nil
+	return n == 1, nil
 }
 
 // LivePosition returns 1 + ZCOUNT waiting -inf (seq.

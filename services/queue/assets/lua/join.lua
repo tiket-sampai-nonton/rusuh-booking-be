@@ -131,6 +131,8 @@ else
   redis.call('SET', P .. 'vtok:' .. vid, 1, 'EX', tokenTTL)
 end
 local seq = redis.call('INCR', P .. 'seq')
+-- D-C8.2: a retired event leaves seq with a TTL (retire_event.lua); the live entry created here must not inherit it.
+redis.call('PERSIST', P .. 'seq')
 local id = ARGV[2]
 redis.call('HSET', ekey(id), 'seq', seq, 'visitorId', vid, 'accountId', acct, 'status', 'WAITING',
   'joinedAtMs', now, 'lastSignalMs', now, 'shard', shardIdx)
