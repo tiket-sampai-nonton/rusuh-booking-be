@@ -28,6 +28,10 @@ func TestRenderer_Eticket(t *testing.T) {
 	assert.Contains(t, out, "Budi")
 	assert.Contains(t, out, "3174********0001") // TC-TKT-02: masked NIK present
 	assert.Contains(t, out, "Konser ABC")
+	// Email e-tiket tidak memuat tautan "buka e-tiket", walaupun TicketURL diberikan: halaman itu tidak dipakai.
+	assert.NotContains(t, out, "Buka e-tiket")
+	assert.NotContains(t, out, "Lihat e-tiket")
+	assert.NotContains(t, out, "tickets/b?t=tok")
 }
 
 // The start time is shown in WIB (the payload has no zone); an unparsable value is shown as is.
@@ -62,7 +66,7 @@ func TestRenderer_EticketHTML(t *testing.T) {
 	assert.Contains(t, out, "RBT:RB-TESTRSND")
 	assert.NotContains(t, out, "<script>")
 	assert.Contains(t, out, "&lt;script&gt;")
-	assert.NotContains(t, out, "Lihat e-tiket", "tanpa token tidak ada baris tautan")
+	assert.NotContains(t, out, "Lihat e-tiket", "tidak ada baris tautan e-tiket")
 }
 
 func TestRenderer_Expired(t *testing.T) {
@@ -155,16 +159,19 @@ func renderPaid(t *testing.T, tokenField string) string {
 
 func TestRenderer_Eticket_ContractPayload(t *testing.T) {
 	out := renderPaid(t, `, "ticketLinkToken": "opaque-token"`)
-	for _, want := range []string{"RB-7K2M9Q", "Konser A", "GBK", "TK-AAAA1111", "TK-BBBB2222", "Budi Santoso", "Sari Dewi", "3174********0001", "3174********0002", "Lihat e-tiket: https://rusuh.example/tickets/b?t=opaque-token"} {
+	for _, want := range []string{"RB-7K2M9Q", "Konser A", "GBK", "TK-AAAA1111", "TK-BBBB2222", "Budi Santoso", "Sari Dewi", "3174********0001", "3174********0002"} {
 		assert.Contains(t, out, want)
 	}
 	assert.NotRegexp(t, `\d{16}`, out, "NIK lengkap tidak boleh muncul di email")
+	assert.NotContains(t, out, "Buka e-tiket", "tidak ada ajakan membuka e-tiket meski token tautan ikut di payload")
+	assert.NotContains(t, out, "tickets/b?t=opaque-token")
 }
 
 func TestRenderer_Eticket_WithoutLinkTokenOmitsLinkLine(t *testing.T) {
 	out := renderPaid(t, "")
 	assert.Contains(t, out, "TK-AAAA1111")
 	assert.NotContains(t, out, "Lihat e-tiket")
+	assert.NotContains(t, out, "Buka e-tiket")
 }
 
 func TestRenderer_Review_AmountMatchesBookingPrice(t *testing.T) {

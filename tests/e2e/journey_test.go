@@ -205,7 +205,6 @@ func TestJourney_LoginToPaidTicketAndEmail(t *testing.T) {
 	}
 	assert.Equal(t, 404, call(t, "GET", bookingURL+"/api/v1/bookings/"+bookingID+"/tickets?t=bukan-token", nil, nil).Status, "tautan palsu")
 
-	var ticketLink string
 	eventually(t, 25*time.Second, "email e-tiket", func() bool {
 		for _, m := range mailsTo(t, b.email) {
 			if contains(m.Text, code) {
@@ -215,22 +214,13 @@ func TestJourney_LoginToPaidTicketAndEmail(t *testing.T) {
 		return false
 	})
 	n := 0
-	linkRe := regexp.MustCompile(`tickets/([0-9a-f-]{36})\?t=([A-Za-z0-9_-]+)`)
 	for _, m := range mailsTo(t, b.email) {
 		if contains(m.Text, code) {
 			n++
-			if g := linkRe.FindStringSubmatch(m.Text); g != nil {
-				ticketLink = g[2]
-				assert.Equal(t, bookingID, g[1], "tautan menunjuk booking ini")
-			}
+			// Email e-tiket tidak lagi memuat tautan "buka e-tiket": tiket dibaca lewat aplikasi, bukan tautan bertoken.
+			assert.NotContains(t, m.Text, "?t=", "email e-tiket tidak memuat tautan bertoken")
 		}
 	}
-	require.NotEmpty(t, ticketLink, "email e-tiket memuat tautan bertoken")
-	viaLink := call(t, "GET", bookingURL+"/api/v1/bookings/"+bookingID+"/tickets?t="+ticketLink, nil, nil)
-	mustStatus(t, 200, viaLink, "tiket lewat tautan email tanpa login")
-	assert.Contains(t, viaLink.Raw, code)
-	other := call(t, "GET", bookingURL+"/api/v1/bookings/"+hold.str("bookingId")+"x/tickets?t="+ticketLink, nil, nil)
-	assert.NotEqual(t, 200, other.Status, "token tidak berlaku untuk booking lain")
 	assert.Equal(t, 1, n, "webhook duplikat tidak mengirim e-tiket dua kali")
 }
 
