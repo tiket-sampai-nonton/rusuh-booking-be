@@ -18,6 +18,7 @@ import (
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/pkg/token"
 
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/application/usecase"
+	bookingcache "github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/infrastructure/cache"
 	bookinghttp "github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/infrastructure/http"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/infrastructure/ids"
 	"github.com/tiket-sampai-nonton/rusuh-booking-be/services/booking/internal/booking/infrastructure/paymentclient"
@@ -56,6 +57,8 @@ func newBookingModule(cfg config.Config, clients *Clients, logger *slog.Logger) 
 
 	// Outbound adapters.
 	eventRepo := bookingpg.NewEventRepo(pool)
+	// Catalog and detail reads (and the hold's price/rule read) share one 2 s in-process cache; stock never does.
+	eventReads := bookingcache.NewEventReadCache(eventRepo, 2*time.Second, clk.Now)
 	eventWriteRepo := bookingpg.NewEventWriteRepo(pool)
 	admissionRepo := bookingpg.NewAdmissionRepo(pool)
 	bookingRepo := bookingpg.NewBookingRepo(pool)
@@ -82,8 +85,8 @@ func newBookingModule(cfg config.Config, clients *Clients, logger *slog.Logger) 
 	paymentAuth := buildPaymentAuth(logger, clk.Now)
 
 	// Usecases.
-	listEvents := usecase.NewListEvents(eventRepo, clk)
-	getDetail := usecase.NewGetEventDetail(eventRepo, clk)
+	listEvents := usecase.NewListEvents(eventReads, clk)
+	getDetail := usecase.NewGetEventDetail(eventReads, clk)
 	listFacets := usecase.NewListFacets(eventRepo)
 	createEvent := usecase.NewCreateEvent(eventWriteRepo, idGen)
 	updateConfig := usecase.NewUpdateEventConfig(eventWriteRepo)
@@ -92,7 +95,7 @@ func newBookingModule(cfg config.Config, clients *Clients, logger *slog.Logger) 
 	sessions := usecase.NewSession(admissionRepo, eventRepo, admissionVerifier, clk)
 	attendee := usecase.NewCheckAttendee(admissionRepo, eventRepo, attendeeRepo, pii, clk)
 	cancelSess := usecase.NewCancelSession(admissionRepo)
-	hold := usecase.NewHold(admissionRepo, eventRepo, idemStore, uow, pii, idGen, clk, usecase.HoldPolicy{
+	hold := usecase.NewHold(admissionRepo, eventReads, idemStore, uow, pii, idGen, clk, usecase.HoldPolicy{
 		RefusalBudget: cfg.Hold.BuyerNikAttemptBudget,
 		ThrottleBase:  cfg.Hold.ThrottleBase,
 		ThrottleMax:   cfg.Hold.ThrottleMax,

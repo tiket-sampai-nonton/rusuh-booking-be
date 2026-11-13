@@ -108,7 +108,11 @@ func filterWhereAt(base int) string {
 // placeholderRe matches a positional parameter token like $1 or $12.
 var placeholderRe = regexp.MustCompile(`\$\d+`)
 
-// ListEvents returns catalog rows filtered by the query.
+// catalogListLimit caps the public list (D-C7.7). The query has no keyset cursor, so a larger page would scale with
+// the whole catalog on every request.
+const catalogListLimit = 500
+
+// ListEvents returns catalog rows filtered by the query, at most catalogListLimit rows in the query's sort order.
 func (r *EventRepo) ListEvents(ctx context.Context, q dto.EventListQuery) ([]entity.Event, error) {
 	order := "e.starts_at ASC, e.id"
 	switch q.Sort {
@@ -127,7 +131,8 @@ func (r *EventRepo) ListEvents(ctx context.Context, q dto.EventListQuery) ([]ent
 		  FROM booking.events e
 		  LEFT JOIN booking.ticket_categories c ON c.event_id = e.id%s
 		 GROUP BY e.id
-		 ORDER BY %s`, eventCols, eventFilterWhere, order)
+		 ORDER BY %s
+		 LIMIT %d`, eventCols, eventFilterWhere, order, catalogListLimit)
 
 	rows, err := r.pool.Query(ctx, sql, filterArgs(q)...)
 	if err != nil {
